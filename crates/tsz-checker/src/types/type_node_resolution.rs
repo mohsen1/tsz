@@ -481,42 +481,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Look up the member in the resolved symbol's exports
             if let Some(exports) = resolved_symbol.exports.as_ref()
-                && let Some(member_sym_id) = exports.get(right_name) {
-                    return Some(self.ctx.get_or_create_def_id(member_sym_id));
-                }
+                && let Some(member_sym_id) = exports.get(right_name)
+            {
+                return Some(self.ctx.get_or_create_def_id(member_sym_id));
+            }
 
             // TYPE_ALIAS+ALIAS merge: resolve member through ALIAS partner
             if let Some(&alias_id) = self.ctx.binder.alias_partners.get(&resolved_sym_id)
                 && let Some(alias_sym) =
                     self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
+            {
+                // Check direct exports first
+                if let Some(exports) = alias_sym.exports.as_ref()
+                    && let Some(member_sym_id) = exports.get(right_name)
                 {
-                    // Check direct exports first
-                    if let Some(exports) = alias_sym.exports.as_ref()
-                        && let Some(member_sym_id) = exports.get(right_name)
-                    {
+                    return Some(self.ctx.get_or_create_def_id(member_sym_id));
+                }
+                // Follow the ALIAS's import_module, resolving from the
+                // ALIAS's source file perspective (cross-file), then
+                // falling back to the merged binder (same-file).
+                if let Some(module_name) = alias_sym.import_module.as_ref() {
+                    let member = self
+                        .ctx
+                        .resolve_alias_import_member(alias_id, module_name, right_name)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .resolve_import_with_reexports_type_only(module_name, right_name)
+                                .map(|(sym_id, _)| sym_id)
+                        });
+                    if let Some(member_sym_id) = member {
                         return Some(self.ctx.get_or_create_def_id(member_sym_id));
                     }
-                    // Follow the ALIAS's import_module, resolving from the
-                    // ALIAS's source file perspective (cross-file), then
-                    // falling back to the merged binder (same-file).
-                    if let Some(module_name) = alias_sym.import_module.as_ref() {
-                        let member = self
-                            .ctx
-                            .resolve_alias_import_member(alias_id, module_name, right_name)
-                            .or_else(|| {
-                                self.ctx
-                                    .binder
-                                    .resolve_import_with_reexports_type_only(
-                                        module_name,
-                                        right_name,
-                                    )
-                                    .map(|(sym_id, _)| sym_id)
-                            });
-                        if let Some(member_sym_id) = member {
-                            return Some(self.ctx.get_or_create_def_id(member_sym_id));
-                        }
-                    }
                 }
+            }
 
             // Also check lib contexts for the member (e.g., global namespace types)
             for lib_ctx in &self.ctx.lib_contexts {

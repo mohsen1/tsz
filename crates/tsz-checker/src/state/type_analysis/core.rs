@@ -250,28 +250,25 @@ impl<'a> CheckerState<'a> {
                         if let Some(alias_id) = alias_id
                             && let Some(alias_sym) =
                                 self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
+                        {
+                            result = alias_sym
+                                .exports
+                                .as_ref()
+                                .and_then(|exports| exports.get(&right_name));
+                            if result.is_none()
+                                && let Some(module) = alias_sym.import_module.as_ref()
                             {
-                                result = alias_sym
-                                    .exports
-                                    .as_ref()
-                                    .and_then(|exports| exports.get(&right_name));
-                                if result.is_none()
-                                    && let Some(module) = alias_sym.import_module.as_ref() {
-                                        // Resolve from ALIAS's source file, then
-                                        // fall back to current-file resolution.
-                                        result = self
-                                            .ctx
-                                            .resolve_alias_import_member(
-                                                alias_id,
-                                                module,
-                                                &right_name,
-                                            )
-                                            .or_else(|| {
-                                                self.resolve_effective_module_exports(module)
-                                                    .and_then(|e| e.get(&right_name))
-                                            });
-                                    }
+                                // Resolve from ALIAS's source file, then
+                                // fall back to current-file resolution.
+                                result = self
+                                    .ctx
+                                    .resolve_alias_import_member(alias_id, module, &right_name)
+                                    .or_else(|| {
+                                        self.resolve_effective_module_exports(module)
+                                            .and_then(|e| e.get(&right_name))
+                                    });
                             }
+                        }
                     }
                     result
                 } else {
