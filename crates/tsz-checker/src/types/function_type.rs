@@ -1726,11 +1726,15 @@ impl<'a> CheckerState<'a> {
                     .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
                 let atom = self.ctx.types.intern_string(&name);
 
+                let is_const = self
+                    .ctx
+                    .arena
+                    .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
                 let info = tsz_solver::TypeParamInfo {
                     name: atom,
                     constraint: None,
                     default: None,
-                    is_const: false,
+                    is_const,
                 };
                 let type_id = factory.type_param(info);
 
@@ -1768,11 +1772,15 @@ impl<'a> CheckerState<'a> {
             let constraint = (constraint_type != TypeId::ERROR).then_some(constraint_type);
 
             // Update scope with constrained version
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
             let info = tsz_solver::TypeParamInfo {
                 name: atom,
                 constraint,
                 default: None,
-                is_const: false,
+                is_const,
             };
             let constrained_type_id = factory.type_param(info);
             self.ctx

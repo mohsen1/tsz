@@ -1303,11 +1303,15 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
             let info = tsz_solver::TypeParamInfo {
                 name: atom,
                 constraint,
                 default,
-                is_const: false,
+                is_const,
             };
             params.push(info.clone());
 
