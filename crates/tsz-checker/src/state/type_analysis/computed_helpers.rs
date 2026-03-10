@@ -1764,9 +1764,10 @@ impl<'a> CheckerState<'a> {
             }
             // Nested module: recursively check
             if (ef & symbol_flags::VALUE_MODULE) != 0
-                && !self.is_module_uninstantiated(export_sym_id) {
-                    return false;
-                }
+                && !self.is_module_uninstantiated(export_sym_id)
+            {
+                return false;
+            }
         }
         true
     }
