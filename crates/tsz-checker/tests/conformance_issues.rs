@@ -416,6 +416,29 @@ someGenerics9('', 0, []);
 }
 
 #[test]
+fn test_ts2403_widens_generic_call_literal_result_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function someGenerics9<T>(a: T, b: T, c: T): T {
+    return null as any;
+}
+var a9a = someGenerics9('', 0, []);
+var a9a: {};
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2403
+                && message.contains("Variable 'a9a' must be of type 'string'")
+                && !message.contains("Variable 'a9a' must be of type '\"\"'")
+        }),
+        "Expected TS2403 to widen the generic call result to string for redeclaration display. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_aliased_base_preserves_instance_members() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
