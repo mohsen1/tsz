@@ -70,6 +70,54 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        let evaluated_target = self.checker.evaluate_type(self.target);
+        if evaluated_target != self.target
+            && self
+                .checker
+                .check_subtype(self.source, evaluated_target)
+                .is_true()
+        {
+            return SubtypeResult::True;
+        }
+
+        if let Some(target_operand) =
+            crate::visitor::keyof_inner_type(self.checker.interner, self.target)
+        {
+            match value {
+                LiteralValue::String(name) => {
+                    if self
+                        .checker
+                        .try_get_keyof_keys(target_operand)
+                        .is_some_and(|keys| keys.contains(name))
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+                LiteralValue::Number(_) => {
+                    let evaluated_target = self.checker.evaluate_type(self.target);
+                    if evaluated_target != self.target
+                        && self
+                            .checker
+                            .check_subtype(self.source, evaluated_target)
+                            .is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+                _ => {}
+            }
+
+            let evaluated_target = self.checker.evaluate_type(self.target);
+            if evaluated_target != self.target
+                && self
+                    .checker
+                    .check_subtype(self.source, evaluated_target)
+                    .is_true()
+            {
+                return SubtypeResult::True;
+            }
+        }
+
         if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
             return self.checker.check_literal_to_intrinsic(value, t_kind);
         }

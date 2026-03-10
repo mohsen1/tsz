@@ -619,6 +619,24 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     from_index_signature,
                 } => {
+                    if from_index_signature
+                        && crate::query_boundaries::state::checking::is_type_parameter_like(
+                            self.ctx.types,
+                            object_type,
+                        )
+                        && !self.type_parameter_constraint_has_explicit_property(
+                            object_type,
+                            property_name,
+                        )
+                    {
+                        self.error_property_not_exist_at(
+                            property_name,
+                            object_type,
+                            access.name_or_argument,
+                        );
+                        return TypeId::ERROR;
+                    }
+
                     let union_has_explicit_member = from_index_signature
                         && self.union_has_explicit_property_member(
                             object_type_for_access,
@@ -1706,6 +1724,30 @@ impl<'a> CheckerState<'a> {
                 }
             )
         })
+    }
+
+    fn type_parameter_constraint_has_explicit_property(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        let Some(constraint) = crate::query_boundaries::state::checking::type_parameter_constraint(
+            self.ctx.types,
+            object_type,
+        ) else {
+            return false;
+        };
+
+        let resolved_constraint = self.resolve_type_for_property_access(constraint);
+        matches!(
+            self.resolve_property_access_with_env(resolved_constraint, prop_name),
+            PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
     }
 
     fn strict_bind_call_apply_method_type(

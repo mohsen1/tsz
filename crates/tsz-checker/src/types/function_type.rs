@@ -156,8 +156,7 @@ impl<'a> CheckerState<'a> {
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
-
-        // Setup contextual typing context, evaluating compound types first
+        // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
             tracing::debug!(

@@ -1279,6 +1279,12 @@ impl<'a> CheckerState<'a> {
                         round2_contextual_types.push(ctx_type);
                     }
 
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if i < sensitive_args.len() && sensitive_args[i] {
+                            self.clear_type_cache_recursive(arg_idx);
+                        }
+                    }
+
                     // === Round 2: Collect ALL argument types with contextual typing ===
                     // Now that type parameters are partially inferred, lambdas get proper contextual types.
                     self.collect_call_argument_types_with_context(

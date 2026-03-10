@@ -1223,6 +1223,32 @@ function g<T, U extends T, K extends keyof U>(x: T, y: U, k: K) {
 }
 
 #[test]
+fn test_element_access_union_receiver_with_noncommon_generic_keys_emits_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f<T, U>(
+    x: T | U,
+    k1: keyof (T | U),
+    k2: keyof T & keyof U,
+    k3: keyof (T & U),
+    k4: keyof T | keyof U,
+) {
+    x[k1];
+    x[k2];
+    x[k3];
+    x[k4];
+}
+        "#,
+    );
+
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 2,
+        "Expected TS2536 for indexing a union receiver with non-common generic key spaces.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
     if !lib_files_available() {
         return;
@@ -7359,6 +7385,34 @@ var arguments = 1;
 }
 
 #[test]
+fn test_for_in_key_assignment_preserves_extract_keyof_string_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f3<T, K extends Extract<keyof T, string>>(t: T, k: K) {
+    for (let key in t) {
+        k = key;
+    }
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'Extract<keyof T, string>' is not assignable to type 'K'")
+        }),
+        "Expected for-in key assignment to preserve Extract<keyof T, string> in TS2322.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_plain_js_binder_errors_use_module_and_cross_function_diagnostics() {
     let diagnostics = compile_and_get_diagnostics_named(
         "plainJSBinderErrors.js",
@@ -7415,5 +7469,33 @@ import public = require("1");
     assert!(
         has_error(&diagnostics, 1214),
         "Expected `import public = require(...)` to report TS1214 in module context.\nGot: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_for_in_index_access_preserves_extract_keyof_string_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f3<T, K extends Extract<keyof T, string>>(t: T, k: K, tk: T[K]) {
+    for (let key in t) {
+        tk = t[key];
+    }
+}
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.iter().any(|(_, message)| {
+            message.contains("Type 'T[Extract<keyof T, string>]' is not assignable to type 'T[K]'")
+        }),
+        "Expected generic for-in indexed access to preserve Extract<keyof T, string> in TS2322.\nGot: {diagnostics:?}"
     );
 }

@@ -872,6 +872,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
+        // Empty object target or top-like union `{}` | null | undefined
+        if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target) {
+            return self.is_assignable_to_empty_object_or_nullish(
+                source,
+                allow_null,
+                allow_undefined,
+            );
+        }
+
         // Empty object target
         if self.is_empty_object_target(target) {
             return self.is_assignable_to_empty_object(source);
@@ -1220,6 +1229,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
+        // Empty object target or top-like union `{}` | null | undefined
+        if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target)
+            && self.is_assignable_to_empty_object_or_nullish(source, allow_null, allow_undefined)
+        {
+            return None;
+        }
+
         // Empty object target
         if self.is_empty_object_target(target) && self.is_assignable_to_empty_object(source) {
             return None;
@@ -1463,6 +1479,42 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Uses the visitor pattern from `solver::visitor`.
     fn is_empty_object_target(&self, target: TypeId) -> bool {
         is_empty_object_type_through_type_constraints(self.interner, target)
+    }
+
+    fn empty_object_with_nullish_target(&self, target: TypeId) -> Option<(bool, bool)> {
+        let TypeData::Union(members) = self.interner.lookup(target)? else {
+            return None;
+        };
+        let members = self.interner.type_list(members);
+        let mut saw_empty_object = false;
+        let mut allow_null = false;
+        let mut allow_undefined = false;
+        for &member in members.iter() {
+            if self.is_empty_object_target(member) {
+                saw_empty_object = true;
+                continue;
+            }
+            match member {
+                TypeId::NULL => allow_null = true,
+                TypeId::UNDEFINED => allow_undefined = true,
+                _ => return None,
+            }
+        }
+        saw_empty_object.then_some((allow_null, allow_undefined))
+    }
+
+    fn is_assignable_to_empty_object_or_nullish(
+        &self,
+        source: TypeId,
+        allow_null: bool,
+        allow_undefined: bool,
+    ) -> bool {
+        match source {
+            TypeId::NULL => return allow_null,
+            TypeId::UNDEFINED => return allow_undefined,
+            _ => {}
+        }
+        self.is_assignable_to_empty_object(source)
     }
 
     fn is_assignable_to_empty_object(&self, source: TypeId) -> bool {

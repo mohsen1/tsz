@@ -1556,11 +1556,9 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_symbol(sym_id);
         }
 
-        // Self-reference: `globalThis.globalThis` resolves to typeof globalThis itself.
-        // Since typeof globalThis is currently modeled as ANY, return ANY to avoid
-        // false TS2318 errors. tsc would resolve this as a readonly property.
+        // Self-reference: `globalThis.globalThis` resolves to `typeof globalThis`.
         if name == "globalThis" {
-            return TypeId::ANY;
+            return TypeId::UNKNOWN;
         }
 
         if self.is_known_global_value_name(name) {

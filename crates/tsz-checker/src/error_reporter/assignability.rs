@@ -280,9 +280,9 @@ impl<'a> CheckerState<'a> {
                 self.missing_required_properties_from_index_signature_source(source, target)
                 && missing_props.len() > 1
             {
-                let evaluated_source = self.evaluate_type_for_assignability(source);
-                let src_str = self.format_type_diagnostic(evaluated_source);
-                let tgt_str = self.format_type_diagnostic(target);
+                let src_str =
+                    self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+                let tgt_str = self.format_type_for_assignability_message(target);
                 let prop_list: Vec<String> = missing_props
                     .iter()
                     .take(4)

@@ -8,6 +8,107 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn format_extract_keyof_string_type(&mut self, ty: TypeId) -> Option<String> {
+        let members = tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, ty)?;
+        if members.len() != 2 || !members.contains(&TypeId::STRING) {
+            return None;
+        }
+
+        let other = members
+            .iter()
+            .copied()
+            .find(|&member| member != TypeId::STRING)?;
+        if !tsz_solver::type_queries::is_keyof_type(self.ctx.types, other) {
+            return None;
+        }
+
+        Some(format!(
+            "Extract<{}, string>",
+            self.format_type_for_assignability_message(other)
+        ))
+    }
+
+    fn format_annotation_like_type(&mut self, text: &str) -> String {
+        let formatted = text.trim().to_string();
+        if formatted.starts_with("{ ")
+            && formatted.ends_with(" }")
+            && formatted.contains(':')
+            && !formatted.ends_with("; }")
+        {
+            return format!("{}; }}", &formatted[..formatted.len() - 2]);
+        }
+        formatted
+    }
+
+    fn should_use_evaluated_assignability_display(&self, ty: TypeId, evaluated: TypeId) -> bool {
+        if ty == evaluated || evaluated == TypeId::ERROR {
+            return false;
+        }
+
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, evaluated)
+        {
+            return false;
+        }
+
+        if evaluated == TypeId::NEVER
+            || tsz_solver::literal_value(self.ctx.types, evaluated).is_some()
+        {
+            return true;
+        }
+
+        matches!(
+            evaluated,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::UNDEFINED
+                | TypeId::NULL
+                | TypeId::VOID
+        )
+    }
+
+    fn format_structural_indexed_object_type(&mut self, ty: TypeId) -> Option<String> {
+        let shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)?;
+        if shape.string_index.is_none() && shape.number_index.is_none() {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        if let Some(idx) = &shape.string_index {
+            let key_name = idx
+                .param_name
+                .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "[{key_name}: string]: {}",
+                self.format_type(idx.value_type)
+            ));
+        }
+        if let Some(idx) = &shape.number_index {
+            let key_name = idx
+                .param_name
+                .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "[{key_name}: number]: {}",
+                self.format_type(idx.value_type)
+            ));
+        }
+        for prop in &shape.properties {
+            let name = self.ctx.types.resolve_atom_ref(prop.name);
+            let optional = if prop.optional { "?" } else { "" };
+            let readonly = if prop.readonly { "readonly " } else { "" };
+            parts.push(format!(
+                "{readonly}{name}{optional}: {}",
+                self.format_type(prop.type_id)
+            ));
+        }
+
+        Some(format!("{{ {}; }}", parts.join("; ")))
+    }
+
     pub(super) fn literal_expression_display(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
@@ -51,32 +152,75 @@ impl<'a> CheckerState<'a> {
     }
 
     fn assignment_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
-        let node = self.ctx.arena.get(anchor_idx)?;
-        match node.kind {
-            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-                let stmt = self.ctx.arena.get_expression_statement(node)?;
-                let expr = self.ctx.arena.get(stmt.expression)?;
-                let bin = self.ctx.arena.get_binary_expr(expr)?;
-                Some(bin.right)
+        let mut current = anchor_idx;
+        let mut guard = 0;
+
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
             }
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                let decl = self.ctx.arena.get_variable_declaration(node)?;
-                decl.initializer.is_some().then_some(decl.initializer)
+
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                    let bin = self.ctx.arena.get_binary_expr(node)?;
+                    if self.is_assignment_operator(bin.operator_token) {
+                        return Some(bin.right);
+                    }
+                }
+                k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                    let stmt = self.ctx.arena.get_expression_statement(node)?;
+                    let expr = self.ctx.arena.get(stmt.expression)?;
+                    let bin = self.ctx.arena.get_binary_expr(expr)?;
+                    return self
+                        .is_assignment_operator(bin.operator_token)
+                        .then_some(bin.right);
+                }
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.ctx.arena.get_variable_declaration(node)?;
+                    return decl.initializer.is_some().then_some(decl.initializer);
+                }
+                k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                    let ret = self.ctx.arena.get_return_statement(node)?;
+                    return ret.expression.is_some().then_some(ret.expression);
+                }
+                _ => {}
             }
-            k if k == syntax_kind_ext::RETURN_STATEMENT => {
-                let ret = self.ctx.arena.get_return_statement(node)?;
-                ret.expression.is_some().then_some(ret.expression)
+
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
             }
-            _ => None,
+            current = ext.parent;
         }
+
+        None
     }
 
     fn declared_type_annotation_text_for_expression(&self, expr_idx: NodeIndex) -> Option<String> {
         fn sanitize_type_annotation_text(text: String) -> Option<String> {
             let mut text = text.trim().trim_start_matches(':').trim().to_string();
-            while matches!(text.chars().last(), Some(',') | Some(')') | Some(';')) {
+            while matches!(text.chars().last(), Some(',') | Some(';')) {
                 text.pop();
                 text = text.trim_end().to_string();
+            }
+            while matches!(text.chars().last(), Some(')')) {
+                let open_count = text.chars().filter(|&ch| ch == '(').count();
+                let close_count = text.chars().filter(|&ch| ch == ')').count();
+                if close_count <= open_count {
+                    break;
+                }
+                text.pop();
+                text = text.trim_end().to_string();
+            }
+            if text.starts_with('{') || text.starts_with('[') {
+                return None;
+            }
+            let open_count = text.chars().filter(|&ch| ch == '(').count();
+            let close_count = text.chars().filter(|&ch| ch == ')').count();
+            if open_count != close_count {
+                return None;
             }
             (!text.is_empty()).then_some(text)
         }
@@ -137,13 +281,55 @@ impl<'a> CheckerState<'a> {
             } else {
                 source
             };
-            return self.format_type_for_assignability_message(display_type);
+            let maybe_evaluated = if tsz_solver::keyof_inner_type(self.ctx.types, display_type)
+                .is_some()
+            {
+                self.evaluate_type_for_assignability(display_type)
+            } else {
+                display_type
+            };
+            let display_type = tsz_solver::widening::widen_type(self.ctx.types, maybe_evaluated);
+            let formatted = self.format_type_for_assignability_message(display_type);
+            let resolved_for_access = self.resolve_type_for_property_access(display_type);
+            let resolved = self.judge_evaluate(resolved_for_access);
+            let resolver =
+                tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+            if !formatted.contains('{')
+                && !formatted.contains('[')
+                && !formatted.contains('|')
+                && !formatted.contains('&')
+                && !formatted.contains('<')
+                && !tsz_solver::type_queries::contains_type_parameters_db(
+                    self.ctx.types,
+                    display_type,
+                )
+                && (resolver.has_index_signature(
+                    resolved,
+                    tsz_solver::objects::index_signatures::IndexKind::String,
+                ) || resolver.has_index_signature(
+                    resolved,
+                    tsz_solver::objects::index_signatures::IndexKind::Number,
+                ))
+            {
+                if let Some(structural) = self.format_structural_indexed_object_type(resolved) {
+                    return structural;
+                }
+                return self.format_type(resolved);
+            }
+            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
+                && !display.starts_with("keyof ")
+                && !display.contains("[P in ")
+                && !display.contains("[K in ")
+            {
+                return self.format_annotation_like_type(&display);
+            }
+            return formatted;
         }
 
         self.format_type_for_assignability_message(source)
     }
 
-    fn is_literal_sensitive_assignment_target(&mut self, target: TypeId) -> bool {
+    pub(super) fn is_literal_sensitive_assignment_target(&mut self, target: TypeId) -> bool {
         let target = self.evaluate_type_for_assignability(target);
         self.is_literal_sensitive_assignment_target_inner(target)
     }
@@ -287,6 +473,23 @@ impl<'a> CheckerState<'a> {
 
         if let Some(enum_name) = self.format_qualified_enum_name_for_message(ty) {
             return enum_name;
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(ty);
+        if self.should_use_evaluated_assignability_display(ty, evaluated) {
+            return self.format_type_for_assignability_message(evaluated);
+        }
+
+        if let Some((object_type, index_type)) =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, ty)
+            && let Some(extract_display) = self.format_extract_keyof_string_type(index_type)
+        {
+            let object_display = self.format_type_for_assignability_message(object_type);
+            return format!("{object_display}[{extract_display}]");
+        }
+
+        if let Some(extract_display) = self.format_extract_keyof_string_type(ty) {
+            return extract_display;
         }
 
         let mut formatted = self.format_type_diagnostic(ty);
