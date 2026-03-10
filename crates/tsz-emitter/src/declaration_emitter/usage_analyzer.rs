@@ -512,9 +512,11 @@ impl<'a> UsageAnalyzer<'a> {
             self.walk_inferred_type(prop_idx);
         }
 
-        // For computed properties, also walk the inferred type to catch symbols in the name expression
-        // This handles cases like [Symbol.iterator]: Type where Symbol needs to be marked as used
-        // Check the name node to see if it's a computed property
+        // For computed properties, analyze the name expression to mark referenced symbols
+        // (e.g., `const symb = Symbol(); class C { [symb]: boolean }` — symb needs to be tracked)
+        self.analyze_computed_property_name(prop.name);
+
+        // Also walk the inferred type for computed properties
         if let Some(name_node) = self.arena.get(prop.name)
             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
         {
@@ -530,6 +532,9 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(method) = self.arena.get_method_decl(method_node) else {
             return;
         };
+
+        // Track symbols referenced in computed property names
+        self.analyze_computed_property_name(method.name);
 
         // Walk type parameters
         if let Some(ref type_params) = method.type_parameters {
@@ -568,6 +573,9 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(accessor) = self.arena.get_accessor(accessor_node) else {
             return;
         };
+
+        // Track symbols referenced in computed property names
+        self.analyze_computed_property_name(accessor.name);
 
         // Walk parameters
 
@@ -632,14 +640,18 @@ impl<'a> UsageAnalyzer<'a> {
 
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node)
-                    && sig.type_annotation.is_some()
-                {
-                    self.analyze_type_node(sig.type_annotation);
+                if let Some(sig) = self.arena.get_signature(member_node) {
+                    if sig.type_annotation.is_some() {
+                        self.analyze_type_node(sig.type_annotation);
+                    }
+                    // Track symbols referenced in computed property names
+                    self.analyze_computed_property_name(sig.name);
                 }
             }
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(member_node) {
+                    // Track symbols referenced in computed property names
+                    self.analyze_computed_property_name(sig.name);
                     // Walk type parameters
                     if let Some(ref type_params) = sig.type_parameters {
                         for &param_idx in &type_params.nodes {
@@ -1048,6 +1060,26 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         // Restore the previous in_value_pos
+        self.in_value_pos = old_in_value_pos;
+    }
+
+    /// Analyze the expression inside a computed property name (e.g., `[symb]`).
+    /// This ensures that symbols referenced in computed names are tracked as used,
+    /// so their declarations (e.g., `const symb: unique symbol`) are emitted in .d.ts.
+    fn analyze_computed_property_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return;
+        };
+        // The expression inside [] may be an identifier, property access, etc.
+        let old_in_value_pos = self.in_value_pos;
+        self.in_value_pos = true;
+        self.analyze_entity_name(computed.expression);
         self.in_value_pos = old_in_value_pos;
     }
 
