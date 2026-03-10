@@ -1199,7 +1199,51 @@ impl<'a> CheckerState<'a> {
                 let key = (current_file_idx, current_sym_id.0 as usize);
                 if visited.contains(&key) {
                     if key.0 == self.ctx.current_file_idx && key.1 == sym_id.0 as usize {
-                        cycle_detected = true;
+                        // When we get an immediate self-reference (one-step cycle),
+                        // it may be a self-import pattern:
+                        //   export { f as g } from "./a";  // re-export
+                        //   import { g } from "./b";       // self-import
+                        // The binder merges both into one symbol. The self-import
+                        // resolves to the merged symbol → appears circular.
+                        // Don't flag it as circular if the symbol has a re-export
+                        // declaration (EXPORT_SPECIFIER with a `from` clause) that
+                        // points to a different module, providing a real resolution.
+                        if visited.len() == 1 {
+                            let has_reexport_from = sym.declarations.iter().any(|&decl_idx| {
+                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                    && decl_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+                                {
+                                    // Check if the parent export declaration has a module
+                                    // specifier (`from "..."` clause).
+                                    if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                                        let parent = ext.parent;
+                                        if let Some(parent_node) = self.ctx.arena.get(parent)
+                                            && parent_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                                            && let Some(grandparent_ext) =
+                                                self.ctx.arena.get_extended(parent)
+                                            {
+                                                let gp = grandparent_ext.parent;
+                                                if let Some(gp_node) = self.ctx.arena.get(gp)
+                                                    && gp_node.kind
+                                                        == syntax_kind_ext::EXPORT_DECLARATION
+                                                    && let Some(export_decl) =
+                                                        self.ctx.arena.get_export_decl(gp_node)
+                                                {
+                                                    return export_decl.module_specifier.is_some();
+                                                }
+                                            }
+                                    }
+                                    false
+                                } else {
+                                    false
+                                }
+                            });
+                            if !has_reexport_from {
+                                cycle_detected = true;
+                            }
+                        } else {
+                            cycle_detected = true;
+                        }
                     }
                     break;
                 }

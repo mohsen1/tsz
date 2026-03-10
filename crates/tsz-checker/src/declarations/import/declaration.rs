@@ -1280,6 +1280,11 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::NAMED_IMPORTS
                                         | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                                         | syntax_kind_ext::IMPORT_DECLARATION
+                                        // Re-exports (`export { x } from "./b"`) don't
+                                        // introduce local bindings, so they must not
+                                        // conflict with imports.
+                                        | syntax_kind_ext::EXPORT_SPECIFIER
+                                        | syntax_kind_ext::EXPORT_DECLARATION
                                         // Type aliases live in the type declaration space
                                         // and do not conflict with value imports.
                                         | syntax_kind_ext::TYPE_ALIAS_DECLARATION
@@ -1352,11 +1357,34 @@ impl<'a> CheckerState<'a> {
                                     if !decl_in_same_scope {
                                         continue;
                                     }
-                                    // Must be in the current file
+                                    // Must be in the current file and not an
+                                    // import/export specifier (re-exports like
+                                    // `export { x } from "./b"` don't create local
+                                    // bindings and must not conflict with imports).
                                     let has_local_decl =
                                         other_sym.declarations.iter().any(|&decl_idx| {
-                                            self.ctx.binder.node_symbols.get(&decl_idx.0)
-                                                == Some(&other_sym_id)
+                                            if self.ctx.binder.node_symbols.get(&decl_idx.0)
+                                                != Some(&other_sym_id)
+                                            {
+                                                return false;
+                                            }
+                                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                                !matches!(
+                                                    decl_node.kind,
+                                                    syntax_kind_ext::EXPORT_SPECIFIER
+                                                        | syntax_kind_ext::EXPORT_DECLARATION
+                                                        | syntax_kind_ext::IMPORT_CLAUSE
+                                                        | syntax_kind_ext::NAMESPACE_IMPORT
+                                                        | syntax_kind_ext::IMPORT_SPECIFIER
+                                                        | syntax_kind_ext::NAMED_IMPORTS
+                                                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                                        | syntax_kind_ext::IMPORT_DECLARATION
+                                                        | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                        | syntax_kind_ext::INTERFACE_DECLARATION
+                                                )
+                                            } else {
+                                                false
+                                            }
                                         });
                                     if has_local_decl {
                                         has_conflict = true;
