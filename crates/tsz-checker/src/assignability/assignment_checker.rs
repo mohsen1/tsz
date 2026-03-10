@@ -1269,9 +1269,64 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if let Some(generic_target) =
+            self.deferred_generic_element_write_target(left_idx, source_type)
+        {
+            let _ = self.check_assignable_or_report_at(
+                source_type,
+                generic_target,
+                right_idx,
+                left_idx,
+            );
+            return;
+        }
+
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
         let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
+    }
+
+    fn deferred_generic_element_write_target(
+        &mut self,
+        left_idx: NodeIndex,
+        source_type: TypeId,
+    ) -> Option<TypeId> {
+        if source_type == TypeId::ANY
+            || source_type == TypeId::NEVER
+            || crate::query_boundaries::assignability::contains_type_parameters(
+                self.ctx.types,
+                source_type,
+            )
+        {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(left_idx)?;
+        if node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let object_type = self.get_type_of_node(access.expression);
+        if !tsz_solver::visitor::is_type_parameter(self.ctx.types, object_type) {
+            return None;
+        }
+
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let index_type = self.get_type_of_node(access.name_or_argument);
+        self.ctx.preserve_literal_types = prev_preserve;
+
+        if !self.is_valid_index_for_type_param(index_type, object_type) {
+            return None;
+        }
+
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .index_access(object_type, index_type),
+        )
     }
 }
 

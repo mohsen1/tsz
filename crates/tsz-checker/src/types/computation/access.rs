@@ -295,6 +295,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // In write context, preserve `T[keyof T]` / `T[K]` on generic receivers
+        // before resolving through the receiver's constraint. Otherwise the
+        // write target collapses to the constraint's index-signature value type
+        // (e.g. `number`) and incorrectly accepts writes that should produce
+        // generic TS2322 errors.
+        if self.ctx.skip_flow_narrowing
+            && tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+            && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+
         // TS2476: A const enum member can only be accessed using a string literal.
         if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -1064,7 +1080,11 @@ impl<'a> CheckerState<'a> {
     /// Returns true for:
     /// - `keyof T` where T is the target type param (direct keyof)
     /// - `K extends keyof T` where T is the target type param (constrained key)
-    fn is_valid_index_for_type_param(&mut self, index_type: TypeId, type_param: TypeId) -> bool {
+    pub(crate) fn is_valid_index_for_type_param(
+        &mut self,
+        index_type: TypeId,
+        type_param: TypeId,
+    ) -> bool {
         use tsz_solver::visitor;
         if let Some(members) =
             tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, index_type)

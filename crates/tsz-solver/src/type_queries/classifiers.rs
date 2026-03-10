@@ -112,6 +112,11 @@ pub fn classify_for_assignability_eval(
 
     match key {
         TypeData::Application(_) | TypeData::Lazy(_) => AssignabilityEvalKind::Application,
+        TypeData::IndexAccess(_, _) | TypeData::KeyOf(_)
+            if crate::type_queries::contains_type_parameters_db(db, type_id) =>
+        {
+            AssignabilityEvalKind::Resolved
+        }
         TypeData::IndexAccess(_, _)
         | TypeData::KeyOf(_)
         | TypeData::Mapped(_)

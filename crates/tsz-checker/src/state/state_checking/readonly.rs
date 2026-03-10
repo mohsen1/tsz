@@ -295,12 +295,7 @@ impl<'a> CheckerState<'a> {
                     // writing through an index signature is unsafe because T could have more specific
                     // property types than the constraint. Only emit when the index type is broad
                     // (not a specific literal that would resolve to a named property).
-                    let bare_generic_receiver =
-                        self.ctx.arena.get(access.expression).is_some_and(|expr| {
-                            expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                        });
-                    if self.is_generic_indexed_write(object_type, index_type, bare_generic_receiver)
-                    {
+                    if self.is_generic_indexed_write(object_type, index_type) {
                         self.error_generic_only_indexed_for_reading(object_type, target_idx);
                         return true;
                     }
@@ -465,21 +460,16 @@ impl<'a> CheckerState<'a> {
     /// Check if an element access on a generic type parameter would be an unsafe write.
     ///
     /// Returns `true` when the object type is a type parameter (generic) and the
-    /// index type is a broad primitive (`string`, `number`, `symbol`, or a union of them),
-    /// AND the type parameter's constraint has an applicable index signature.
-    /// In this case, TS2862 should be emitted.
+    /// index type is a broad primitive key space (`string`, `number`, `symbol`, or
+    /// a union of them), AND the type parameter's constraint has an applicable index
+    /// signature. In this case, TS2862 should be emitted.
     ///
     /// Does NOT fire when:
     /// - The index is a specific literal (`"x"`, `1`) — resolves to a named property
-    /// - The index is `keyof T` — constrains to specific keys of T
+    /// - The index is `keyof T` — constrains to the receiver's own key space
     /// - The index is `K extends keyof T` — a type parameter constrained to keyof
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
-    fn is_generic_indexed_write(
-        &mut self,
-        object_type: TypeId,
-        index_type: TypeId,
-        bare_generic_receiver: bool,
-    ) -> bool {
+    fn is_generic_indexed_write(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
         use tsz_solver::is_type_parameter;
 
         // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
@@ -492,22 +482,17 @@ impl<'a> CheckerState<'a> {
             return self.constraint_has_index_signature(object_type, index_type);
         }
 
-        bare_generic_receiver
-            && tsz_solver::type_queries::get_keyof_type(self.ctx.types, index_type).is_some_and(
-                |operand| {
-                    operand == object_type
-                        || tsz_solver::type_queries::get_type_parameter_info(
-                            self.ctx.types,
-                            operand,
-                        )
-                        .zip(tsz_solver::type_queries::get_type_parameter_info(
-                            self.ctx.types,
-                            object_type,
-                        ))
-                        .is_some_and(|(left, right)| left.name == right.name)
-                },
-            )
-            && self.constraint_has_any_index_signature(object_type)
+        if let Some(key_source) =
+            tsz_solver::type_queries::get_keyof_type(self.ctx.types, index_type)
+            && key_source != object_type
+        {
+            let evaluated_index = self.evaluate_type_with_env(index_type);
+            if self.is_broad_index_type(evaluated_index) {
+                return self.constraint_has_index_signature(object_type, evaluated_index);
+            }
+        }
+
+        false
     }
 
     /// Check if the constraint of a type parameter has an index signature
@@ -531,7 +516,6 @@ impl<'a> CheckerState<'a> {
         // E.g., Record<string, any> is stored as Application(Mapped) and needs
         // evaluation to produce { [key: string]: any }.
         let resolved = self.evaluate_type_with_env(constraint);
-
         let resolver = IndexSignatureResolver::new(self.ctx.types);
 
         // Check if the constraint has an index signature matching the broad index type
@@ -542,23 +526,6 @@ impl<'a> CheckerState<'a> {
             return resolver.has_index_signature(resolved, IndexKind::Number);
         }
         // For symbol or unions, check for string index signature (most permissive)
-        resolver.has_index_signature(resolved, IndexKind::String)
-            || resolver.has_index_signature(resolved, IndexKind::Number)
-    }
-
-    fn constraint_has_any_index_signature(&mut self, type_param: TypeId) -> bool {
-        use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
-        use tsz_solver::type_param_info;
-
-        let Some(info) = type_param_info(self.ctx.types, type_param) else {
-            return false;
-        };
-        let Some(constraint) = info.constraint else {
-            return false;
-        };
-
-        let resolved = self.evaluate_type_with_env(constraint);
-        let resolver = IndexSignatureResolver::new(self.ctx.types);
         resolver.has_index_signature(resolved, IndexKind::String)
             || resolver.has_index_signature(resolved, IndexKind::Number)
     }
