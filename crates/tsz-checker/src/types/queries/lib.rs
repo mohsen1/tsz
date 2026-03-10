@@ -463,6 +463,63 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Cross-file fallback: the module specifier is relative to the
+            // declaring file, not the current file.  Use cross_file_symbol_targets
+            // to find the source file and resolve_import_target_from_file to
+            // convert the relative specifier into a target file index.
+            let source_file_idx = self
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .copied()
+                .unwrap_or(self.ctx.current_file_idx);
+            if let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(source_file_idx, module_name)
+                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            {
+                let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                if let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name) {
+                    // Namespace imports (`import * as X` / `export * as X`)
+                    // resolve to the module symbol rather than a specific export.
+                    // The symbol itself acts as the namespace container; record
+                    // all target exports for cross-file member resolution.
+                    let is_namespace_import = export_name == "*"
+                        || (symbol.import_name.is_none() && symbol.escaped_name != "default");
+                    if is_namespace_import {
+                        if let Some(exports) = target_binder.module_exports.get(file_name) {
+                            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
+                            for (_, &sid) in exports.iter() {
+                                targets.insert(sid, target_idx);
+                            }
+                        }
+                        // Return the alias symbol itself — the caller
+                        // resolves members through resolve_symbol_export
+                        // which follows import_module re-exports.
+                        return Some(sym_id);
+                    }
+                    if let Some(exports) = target_binder.module_exports.get(file_name) {
+                        if let Some(target_sym_id) = exports.get(export_name) {
+                            self.ctx
+                                .cross_file_symbol_targets
+                                .borrow_mut()
+                                .insert(target_sym_id, target_idx);
+                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                        }
+                        // For require imports, also try "export="
+                        if symbol.import_name.is_none()
+                            && let Some(target_sym_id) = exports.get("export=")
+                        {
+                            self.ctx
+                                .cross_file_symbol_targets
+                                .borrow_mut()
+                                .insert(target_sym_id, target_idx);
+                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                        }
+                    }
+                }
+            }
             // For ES6 imports, if we can't find the export, return the alias symbol itself
             // This allows the type checker to use the symbol reference
             return Some(sym_id);
