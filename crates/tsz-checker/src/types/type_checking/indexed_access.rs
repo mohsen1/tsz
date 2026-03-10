@@ -459,6 +459,16 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(index_type_for_check, keyof_object) {
             return;
         }
+        // When the solver TypeData doesn't carry the constraint (common for type
+        // parameters in generic signatures), use the AST-resolved constraint.
+        // E.g. `emit<Event extends keyof M>(...args: M[Event])` — Event's
+        // constraint `keyof M` is found from the AST but not in the TypeId.
+        if let Some(constraint) = index_constraint {
+            let constraint_eval = self.evaluate_type_with_env(constraint);
+            if self.is_assignable_to(constraint_eval, keyof_object) {
+                return;
+            }
+        }
         if self.is_mapped_key_index_for_current_object(node_idx, data.object_type, data.index_type)
         {
             return;
