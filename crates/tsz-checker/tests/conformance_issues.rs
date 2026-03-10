@@ -416,6 +416,38 @@ someGenerics9('', 0, []);
 }
 
 #[test]
+fn test_delete_index_signature_and_mapped_type_properties_are_allowed() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface AA {
+    [s: string]: number
+}
+
+type BB = {
+    [P in keyof any]: number
+}
+
+declare const a: AA;
+declare const b: BB;
+
+delete a.a;
+delete a.b;
+delete b.a;
+delete b.b;
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2790),
+        "Did not expect TS2790 for index-signature-like delete operands. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

@@ -971,6 +971,7 @@ impl<'a> CheckerState<'a> {
                 // TS2790: In strictNullChecks, delete is only allowed for optional properties.
                 // With exactOptionalPropertyTypes disabled, properties whose declared type
                 // includes `undefined` are also treated as deletable.
+                // tsc also exempts: any/unknown/never property types, index signature properties.
                 if self.ctx.compiler_options.strict_null_checks
                     && let Some(operand_node) = self.ctx.arena.get(unary.operand)
                     && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -985,26 +986,48 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.get_literal_string_from_node(access.name_or_argument));
                     if let Some(prop_name) = prop_name {
                         let object_type = self.get_type_of_node(access.expression);
+                        // Use operand_type (computed above via get_type_of_node on the
+                        // full property access expression) for property-type checks.
+                        // resolve_property_access_with_env may return ANY for interface
+                        // properties, but operand_type gives the correctly resolved type.
+                        let prop_type = operand_type;
                         if object_type != TypeId::ANY
                             && object_type != TypeId::UNKNOWN
                             && object_type != TypeId::ERROR
                             && object_type != TypeId::NEVER
-                            && let PropertyAccessResult::Success { type_id, .. } =
-                                self.resolve_property_access_with_env(object_type, &prop_name)
+                            // Property types of any/unknown/never are exempt from TS2790
+                            && prop_type != TypeId::ANY
+                            && prop_type != TypeId::UNKNOWN
+                            && prop_type != TypeId::NEVER
+                            && prop_type != TypeId::ERROR
                         {
-                            let is_optional = self.is_property_optional(object_type, &prop_name);
-                            let optional_via_undefined =
-                                !self.ctx.compiler_options.exact_optional_property_types
-                                    && tsz_solver::type_queries::type_includes_undefined(
-                                        self.ctx.types,
-                                        type_id,
+                            // Check if property comes from an index signature or mapped type.
+                            // Mapped types like `{ [P in keyof any]: number }` are effectively
+                            // index-signature-like — all properties are dynamically computed.
+                            let from_idx_sig = matches!(
+                                self.resolve_property_access_with_env(object_type, &prop_name),
+                                PropertyAccessResult::Success {
+                                    from_index_signature: true,
+                                    ..
+                                }
+                            );
+                            let is_mapped = tsz_solver::is_mapped_type(self.ctx.types, object_type);
+                            if !from_idx_sig && !is_mapped {
+                                let is_optional =
+                                    self.is_property_optional(object_type, &prop_name);
+                                let optional_via_undefined =
+                                    !self.ctx.compiler_options.exact_optional_property_types
+                                        && tsz_solver::type_queries::type_includes_undefined(
+                                            self.ctx.types,
+                                            prop_type,
+                                        );
+                                if !is_optional && !optional_via_undefined {
+                                    self.error_at_node(
+                                        unary.operand,
+                                        crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
+                                        crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                     );
-                            if !is_optional && !optional_via_undefined {
-                                self.error_at_node(
-                                    unary.operand,
-                                    crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
-                                    crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
-                                );
+                                }
                             }
                         }
                     }
