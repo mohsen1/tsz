@@ -32,6 +32,18 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let index_type = self.get_type_of_node(access.name_or_argument);
+                    let enum_member_name = self
+                        .get_literal_string_from_node(access.name_or_argument)
+                        .or_else(|| {
+                            self.get_literal_index_from_node(access.name_or_argument)
+                                .map(|idx| idx.to_string())
+                        });
+                    if let Some(name) = enum_member_name
+                        && self.is_enum_member_property(access.expression, &name)
+                    {
+                        self.error_delete_readonly_property_at(target_idx);
+                        return true;
+                    }
                     if let Some(name) = self.get_readonly_element_access_name(
                         object_type,
                         access.name_or_argument,
@@ -702,8 +714,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        (symbol.flags & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION))
-            != 0
+        (symbol.flags & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION)) != 0
     }
 
     /// Check if a readonly property assignment is allowed in the current constructor context.
