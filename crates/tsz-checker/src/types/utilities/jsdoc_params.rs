@@ -1543,9 +1543,20 @@ impl<'a> CheckerState<'a> {
                     && !comment_text.contains("@memberof");
 
             if !has_type && !has_property {
-                // Emit TS8021 at the @typedef position
-                let error_pos = comment.pos + typedef_pos as u32;
-                let error_len = "@typedef".len() as u32;
+                // Emit TS8021 at the typedef name position (TSC points at the name, not @typedef)
+                let name_start =
+                    after_typedef + rest.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+                let name_end = name_start
+                    + comment_text[name_start..]
+                        .find(|c: char| c.is_whitespace() || c == '*' || c == '/')
+                        .unwrap_or(comment_text.len() - name_start);
+                let name_len = name_end - name_start;
+                let error_pos = comment.pos + name_start as u32;
+                let error_len = if name_len > 0 {
+                    name_len as u32
+                } else {
+                    "@typedef".len() as u32
+                };
                 self.ctx.error(
                     error_pos,
                     error_len,
