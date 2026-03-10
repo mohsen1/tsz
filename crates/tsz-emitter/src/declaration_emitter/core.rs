@@ -1880,6 +1880,9 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
+                    } else if !is_private && !self.source_is_declaration_file {
+                        // Fallback: no explicit type, no inferred type, no initializer
+                        self.write(": any");
                     }
 
                     // Note: No initializer for parameter properties in .d.ts
