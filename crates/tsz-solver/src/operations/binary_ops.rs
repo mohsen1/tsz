@@ -857,7 +857,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Check if a type is bigint-like (bigint, bigint literal, bigint enum, or any).
-    fn is_bigint_like(&self, type_id: TypeId) -> bool {
+    pub fn is_bigint_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
             return true;
         }
