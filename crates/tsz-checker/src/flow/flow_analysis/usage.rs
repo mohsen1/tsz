@@ -514,12 +514,14 @@ impl<'a> CheckerState<'a> {
         // so tsz conservatively suppresses TS2454 for captured locals.
         //
         // Source-file globals are more nuanced:
-        // - tsc suppresses TS2454 for reads in deferred (non-IIFE) nested
-        //   functions, but still reports it when every crossed function boundary
+        // - For scripts: suppress TS2454 for reads in deferred (non-IIFE) nested
+        //   functions — external scripts could assign the global variable.
+        // - For external modules: module-scope variables can only be assigned
+        //   within the module. If the variable has ANY assignment anywhere in the
+        //   file, suppress (the deferred function might be called after it). If
+        //   it has NO assignments at all, emit TS2454 — no code can ever assign it.
+        // - In both cases, still report when every crossed function boundary
         //   is an IIFE that executes immediately.
-        // - This applies to both scripts and external modules — in both cases,
-        //   a non-IIFE function body is deferred and could be called after the
-        //   variable is assigned.
         let decl_scope = self.find_enclosing_function_or_source_file(decl_id_to_check);
         let usage_scope = self.find_enclosing_function_or_source_file(idx);
         if decl_scope != usage_scope && !decl_scope.is_none() {
@@ -533,7 +535,17 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope) {
-                return false;
+                // In external modules, only suppress if the variable has some
+                // assignment reachable in the file. If it is never assigned,
+                // the deferred function can never see a valid value.
+                if self.ctx.binder.is_external_module()
+                    && !has_initializer
+                    && !self.symbol_has_any_assignment_in_file(sym_id)
+                {
+                    // Fall through — continue to the flow analysis check below
+                } else {
+                    return false;
+                }
             }
         }
 
@@ -1717,6 +1729,68 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             current = ext.parent;
+        }
+        false
+    }
+
+    /// Check whether a symbol has any flow ASSIGNMENT node in the current file.
+    /// Used for external modules to determine if a module-scope variable is
+    /// ever assigned — if not, TS2454 should fire even in deferred functions.
+    fn symbol_has_any_assignment_in_file(&self, sym_id: SymbolId) -> bool {
+        use tsz_binder::flow_flags;
+        let flow_arena = &self.ctx.binder.flow_nodes;
+        for i in 0..flow_arena.len() {
+            let flow_id = tsz_binder::FlowNodeId(i as u32);
+            let Some(flow) = flow_arena.get(flow_id) else {
+                continue;
+            };
+            if (flow.flags & flow_flags::ASSIGNMENT) == 0 || flow.node.is_none() {
+                continue;
+            }
+            if self.flow_assignment_targets_symbol(flow.node, sym_id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a flow assignment's AST node targets the given symbol.
+    fn flow_assignment_targets_symbol(&self, node_idx: NodeIndex, target_sym: SymbolId) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        // Binary expression with assignment operator (e.g., `x = value`)
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+                return self.node_resolves_to_symbol(bin.left, target_sym);
+            }
+        // Variable declaration (e.g., `let x = value` — though these have initializers)
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.ctx.arena.get_variable_declaration(node) {
+                return self.node_resolves_to_symbol(decl.name, target_sym);
+            }
+        // Prefix/postfix unary (e.g., `++x`, `x--`)
+        if (node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                return self.node_resolves_to_symbol(unary.operand, target_sym);
+            }
+        // For-in/for-of statement initializer
+        if (node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+            && let Some(for_data) = self.ctx.arena.get_for_in_of(node) {
+                return self.node_resolves_to_symbol(for_data.initializer, target_sym);
+            }
+        false
+    }
+
+    /// Check if a node resolves to the given symbol via the binder.
+    fn node_resolves_to_symbol(&self, idx: NodeIndex, target_sym: SymbolId) -> bool {
+        if let Some(sym) = self.ctx.binder.get_node_symbol(idx) {
+            return sym == target_sym;
+        }
+        if let Some(sym) = self.ctx.binder.resolve_identifier(self.ctx.arena, idx) {
+            return sym == target_sym;
         }
         false
     }
