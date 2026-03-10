@@ -443,6 +443,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+
+            if symbol.import_name.is_some()
+                && let Some(target_sym_id) =
+                    self.resolve_named_export_via_export_equals(module_name, export_name)
+            {
+                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+            }
+
             // For namespace/require imports (`import X = require("m")`), import_name
             // is None and the symbol's escaped_name won't match any module export.
             // Try the module's `export =` value (stored under key "export=").

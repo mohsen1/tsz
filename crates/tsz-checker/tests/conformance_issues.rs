@@ -4673,6 +4673,79 @@ fn compile_two_files_get_diagnostics(
         .collect()
 }
 
+fn compile_ambient_module_and_consumer_get_diagnostics(
+    ambient_source: &str,
+    consumer_source: &str,
+    module_spec: &str,
+) -> Vec<(u32, String)> {
+    let mut parser_a = ParserState::new("ambient.d.ts".to_string(), ambient_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new("consumer.ts".to_string(), consumer_source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
+
+    let ambient_exports = binder_a.module_exports.get(module_spec).cloned();
+    if let Some(exports) = &ambient_exports {
+        binder_b
+            .module_exports
+            .insert(module_spec.to_string(), exports.clone());
+    }
+
+    let mut cross_file_targets = FxHashMap::default();
+    if let Some(exports) = &ambient_exports {
+        for (_, &sym_id) in exports.iter() {
+            cross_file_targets.insert(sym_id, 0usize);
+        }
+    }
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        no_lib: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        arena_b.as_ref(),
+        binder_b.as_ref(),
+        &types,
+        "consumer.ts".to_string(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(1);
+
+    for (sym_id, file_idx) in &cross_file_targets {
+        checker
+            .ctx
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .insert(*sym_id, *file_idx);
+    }
+
+    checker.check_source_file(root_b);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Type-only export filtering: namespace import value access
 // ---------------------------------------------------------------------------
@@ -4700,6 +4773,42 @@ types.A;
     assert!(
         !ts2339_errors.is_empty(),
         "Expected TS2339 for type-only export accessed as namespace value member. Got: {relevant:?}"
+    );
+}
+
+#[test]
+fn test_named_import_from_export_equals_ambient_module_preserves_ts2454() {
+    let ambient_source = r#"
+declare namespace Express {
+    export interface Request {}
+}
+
+declare module "express" {
+    function e(): e.Express;
+    namespace e {
+        interface Request extends Express.Request {
+            get(name: string): string;
+        }
+        interface Express {}
+    }
+    export = e;
+}
+"#;
+    let consumer_source = r#"
+import { Request } from "express";
+let x: Request;
+const y = x.get("a");
+"#;
+
+    let diagnostics = compile_ambient_module_and_consumer_get_diagnostics(
+        ambient_source,
+        consumer_source,
+        "express",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2454),
+        "Expected TS2454 for local variable typed from named import via export=. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
