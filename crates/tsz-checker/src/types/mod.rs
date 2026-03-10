@@ -3,6 +3,7 @@ pub mod computation;
 pub mod function_iife_inference;
 pub mod function_type;
 pub(crate) mod function_type_circular;
+pub(crate) mod function_type_signature_display;
 pub mod interface_type;
 pub mod literal_type;
 pub mod object_type;
