@@ -945,6 +945,9 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        if self.try_elaborate_assignment_source_error(source_idx, target) {
+            return false;
+        }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
     }
