@@ -756,6 +756,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // TS2736: unary + cannot be applied to bigint types.
+                // JavaScript throws at runtime for +bigint, so tsc rejects it.
+                // Unary - on bigint IS valid (-1n === -(1n)).
+                if k == SyntaxKind::PlusToken as u16
+                    && operand_type != TypeId::ANY
+                    && operand_type != TypeId::ERROR
+                {
+                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    if evaluator.is_bigint_like(operand_type)
+                        && let Some(operand_node) = self.ctx.arena.get(unary.operand)
+                    {
+                        let type_str = self.format_type(operand_type);
+                        let message = format_message(
+                            diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                            &["+", &type_str],
+                        );
+                        self.ctx.error(
+                            operand_node.pos,
+                            operand_node.end.saturating_sub(operand_node.pos),
+                            message,
+                            diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                        );
+                        return TypeId::NUMBER;
+                    }
+                }
+
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
                     if self.contextual_literal_type(literal_type).is_some() {
                         return literal_type;
