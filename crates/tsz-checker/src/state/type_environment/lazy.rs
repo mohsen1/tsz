@@ -201,6 +201,22 @@ impl<'a> CheckerState<'a> {
             query::classify_for_property_access_resolution(self.ctx.types, type_id);
         let result = match classification {
             query::PropertyAccessResolutionKind::Lazy(def_id) => {
+                // First consult the type environment. Cross-file interface and
+                // alias references commonly register their structural body there
+                // even when the current binder cannot re-compute the symbol.
+                let env_resolved = if let Ok(env) = self.ctx.type_env.try_borrow() {
+                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                } else {
+                    None
+                };
+                if let Some(resolved) = env_resolved
+                    && resolved != type_id
+                {
+                    let resolved = self.resolve_type_for_property_access_inner(resolved, visited);
+                    self.ctx.leave_recursion();
+                    return resolved;
+                }
+
                 // Resolve lazy type from definition store
                 let body_opt = self.ctx.definition_store.get_body(def_id);
                 if let Some(body) = body_opt {

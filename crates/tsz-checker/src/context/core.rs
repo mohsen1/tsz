@@ -261,9 +261,23 @@ impl<'a> CheckerContext<'a> {
         source_file_idx: usize,
         specifier: &str,
     ) -> Option<usize> {
-        let paths = self.resolved_module_paths.as_ref()?;
+        if let Some(paths) = self.resolved_module_paths.as_ref() {
+            for candidate in module_specifier_candidates(specifier) {
+                if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
+                    return Some(*target_idx);
+                }
+            }
+        }
+
+        let arenas = self.all_arenas.as_ref()?;
+        let file_names: Vec<String> = arenas
+            .iter()
+            .filter_map(|arena| arena.source_files.first().map(|sf| sf.file_name.clone()))
+            .collect();
+        let (fallback_paths, _) =
+            crate::module_resolution::build_module_resolution_maps(&file_names);
         for candidate in module_specifier_candidates(specifier) {
-            if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
+            if let Some(target_idx) = fallback_paths.get(&(source_file_idx, candidate)) {
                 return Some(*target_idx);
             }
         }

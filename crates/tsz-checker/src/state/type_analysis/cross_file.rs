@@ -552,15 +552,47 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
-        // Find the symbol's home arena
-        let delegate_arena: Option<&tsz_parser::NodeArena> = self
+        // Prefer the symbol's declared arena, but fall back to explicit
+        // cross-file ownership when the current binder does not know it.
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx
             .binder
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let mut delegate_file_idx = None;
+
+        let needs_cross_file_delegation = delegate_arena
+            .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
+            && self
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .is_some_and(|&file_idx| {
+                    let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    !std::ptr::eq(target_arena, self.ctx.arena)
+                });
+
+        if needs_cross_file_delegation {
+            let file_idx = *self
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .unwrap();
+            delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
+            delegate_file_idx = Some(file_idx);
+        }
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+        let delegate_binder = if let Some(file_idx) = delegate_file_idx {
+            self.ctx
+                .get_binder_for_file(file_idx)
+                .unwrap_or(self.ctx.binder)
+        } else {
+            self.ctx.binder
+        };
 
         // Guard against deep cross-arena recursion
         if !Self::enter_cross_arena_delegation() {
@@ -580,13 +612,22 @@ impl<'a> CheckerState<'a> {
 
         let mut checker = Box::new(CheckerState::with_parent_cache(
             symbol_arena,
-            self.ctx.binder,
+            delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
+            *checker.ctx.cross_file_symbol_targets.borrow_mut() =
+                self.ctx.cross_file_symbol_targets.borrow().clone();
+        }
+        checker.ctx.all_arenas = self.ctx.all_arenas.clone();
+        checker.ctx.all_binders = self.ctx.all_binders.clone();
+        checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+        checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.symbol_resolution_set {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);

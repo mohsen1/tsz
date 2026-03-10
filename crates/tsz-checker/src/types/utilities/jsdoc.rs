@@ -128,7 +128,7 @@ impl<'a> CheckerState<'a> {
                     if let Some((module_specifier, member_name)) =
                         Self::parse_jsdoc_import_type(type_expr)
                         && let Some(sym_id) =
-                            self.resolve_cross_file_export(&module_specifier, &member_name)
+                            self.resolve_jsdoc_import_member(&module_specifier, &member_name)
                     {
                         let resolved = self.type_reference_symbol_type(sym_id);
                         if resolved != TypeId::ERROR {
@@ -180,7 +180,7 @@ impl<'a> CheckerState<'a> {
                     if let Some((module_specifier, member_name)) =
                         Self::parse_jsdoc_import_type(type_expr)
                         && let Some(sym_id) =
-                            self.resolve_cross_file_export(&module_specifier, &member_name)
+                            self.resolve_jsdoc_import_member(&module_specifier, &member_name)
                     {
                         let resolved = self.type_reference_symbol_type(sym_id);
                         if resolved != TypeId::ERROR {
@@ -433,7 +433,7 @@ impl<'a> CheckerState<'a> {
                 if let Some((module_specifier, member_name)) =
                     Self::parse_jsdoc_import_type(type_expr)
                     && let Some(sym_id) =
-                        self.resolve_cross_file_export(&module_specifier, &member_name)
+                        self.resolve_jsdoc_import_member(&module_specifier, &member_name)
                 {
                     let resolved = self.type_reference_symbol_type(sym_id);
                     if resolved != TypeId::ERROR {
