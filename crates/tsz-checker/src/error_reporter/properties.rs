@@ -379,6 +379,15 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Report TS2704: The operand of a 'delete' operator cannot be a read-only property.
+    pub fn error_delete_readonly_property_at(&mut self, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_CANNOT_BE_A_READ_ONLY_PROPERTY,
+            &[],
+        );
+    }
+
     /// Report TS2862: Type '{0}' is generic and can only be indexed for reading.
     pub fn error_generic_only_indexed_for_reading(
         &mut self,

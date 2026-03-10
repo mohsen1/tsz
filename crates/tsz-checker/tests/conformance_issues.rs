@@ -472,6 +472,81 @@ class A {
 }
 
 #[test]
+fn test_delete_readonly_named_property_reports_ts2704() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A {
+    readonly b: number;
+}
+declare const a: A;
+delete a.b;
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 2704),
+        "Expected TS2704 for delete on a readonly named property. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2540),
+        "Did not expect TS2540 for delete on a readonly named property. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2790),
+        "Did not expect TS2790 once readonly delete is detected first. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_delete_readonly_index_signature_still_reports_ts2542() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface B {
+    readonly [k: string]: string;
+}
+declare const b: B;
+delete b["test"];
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 2542),
+        "Expected TS2542 for delete through a readonly index signature. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2704),
+        "Did not expect TS2704 for delete through a readonly index signature. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_delete_class_name_property_reports_ts2704() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Function { readonly name: string; }
+class Foo {}
+delete Foo.name;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2704),
+        "Expected TS2704 for delete on class constructor name. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2790),
+        "Did not expect TS2790 for delete on class constructor name. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

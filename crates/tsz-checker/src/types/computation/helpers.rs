@@ -961,9 +961,11 @@ impl<'a> CheckerState<'a> {
                 // TS2542: Cannot delete a readonly index signature element.
                 // For `delete v[expr]` where v has a readonly index signature
                 // (e.g., readonly tuples, readonly arrays, objects with readonly index sigs).
-                if is_property_reference {
-                    self.check_readonly_assignment(operand_idx, idx);
-                }
+                let has_readonly_delete_error = if is_property_reference {
+                    self.check_readonly_delete_operand(operand_idx)
+                } else {
+                    false
+                };
 
                 // TS18011: The operand of a 'delete' operator cannot be a private identifier.
                 if is_property_reference
@@ -983,7 +985,8 @@ impl<'a> CheckerState<'a> {
                 // With exactOptionalPropertyTypes disabled, properties whose declared type
                 // includes `undefined` are also treated as deletable.
                 // tsc also exempts: any/unknown/never property types, index signature properties.
-                if self.ctx.compiler_options.strict_null_checks
+                if !has_readonly_delete_error
+                    && self.ctx.compiler_options.strict_null_checks
                     && let Some(operand_node) = self.ctx.arena.get(operand_idx)
                     && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     && let Some(access) = self.ctx.arena.get_access_expr(operand_node)
