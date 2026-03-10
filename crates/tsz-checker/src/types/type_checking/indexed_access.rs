@@ -987,6 +987,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type)
+            || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
+            || tsz_solver::is_generic_application(self.ctx.types, object_type)
+            || tsz_solver::is_index_access_type(self.ctx.types, object_type)
+            || tsz_solver::is_conditional_type(self.ctx.types, object_type)
+            || (tsz_solver::is_primitive_type(self.ctx.types, object_type)
+                && !tsz_solver::type_queries::is_object_like_type(self.ctx.types, object_type))
+        {
+            return false;
+        }
+
         if let Some(members) =
             tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
         {
