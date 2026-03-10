@@ -703,6 +703,7 @@ fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
         | 1433 // Neither decorators nor modifiers may be applied to 'this' parameters
         | 1434 // Top-level 'await' expressions are only allowed...
         | 1436 // Decorators are not valid here
+        | 1389 // '{0}' is not allowed as a variable declaration name
         | 1440 // Variable declaration not allowed at this location
         | 1489 // Decimals with leading zeros are not allowed
     )

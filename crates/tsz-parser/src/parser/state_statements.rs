@@ -557,16 +557,24 @@ impl ParserState {
         if self.next_token_is_on_new_line() {
             self.parse_expression_statement()
         } else if self.look_ahead_is_modifier_before_declaration() {
-            // TS1044: '{0}' modifier cannot appear on a module or namespace element.
-            let modifier_text = self.scanner.get_token_text();
-            self.parse_error_at_current_token(
-                &format!(
-                    "'{modifier_text}' modifier cannot appear on a module or namespace element."
-                ),
-                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
-            );
-            self.next_token();
-            self.parse_statement()
+            if self.look_ahead_next_token_is_export_keyword() {
+                // Modifier keyword followed by `export as namespace ...`:
+                // TSC silently accepts the modifier and parses the export statement.
+                // e.g., `static export as namespace Foo;` → no error.
+                self.next_token();
+                self.parse_statement()
+            } else {
+                // TS1044: '{0}' modifier cannot appear on a module or namespace element.
+                let modifier_text = self.scanner.get_token_text();
+                self.parse_error_at_current_token(
+                    &format!(
+                        "'{modifier_text}' modifier cannot appear on a module or namespace element."
+                    ),
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+                );
+                self.next_token();
+                self.parse_statement()
+            }
         } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
             self.parse_error_at_current_token(
                 "Declaration or statement expected.",
@@ -646,6 +654,7 @@ impl ParserState {
                 | SyntaxKind::VarKeyword
                 | SyntaxKind::LetKeyword
                 | SyntaxKind::TypeKeyword
+                | SyntaxKind::ExportKeyword
         );
 
         self.scanner.restore_state(snapshot);
@@ -724,6 +733,20 @@ impl ParserState {
         let has_line_break = self.scanner.has_preceding_line_break();
         self.scanner.restore_state(snapshot);
         has_line_break
+    }
+
+    /// Look ahead to see if the next token is `export` on the same line.
+    /// Used to distinguish `static export as namespace ...` (modifier as expression + export statement)
+    /// from `static class ...` (modifier before declaration).
+    fn look_ahead_next_token_is_export_keyword(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result =
+            !self.scanner.has_preceding_line_break() && self.token() == SyntaxKind::ExportKeyword;
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Look ahead to see if we have "async function"
@@ -1178,7 +1201,9 @@ impl ParserState {
                 break;
             }
 
+            let diag_count_before_decl = self.parse_diagnostics.len();
             let decl = self.parse_variable_declaration_with_flags(flags);
+            let decl_had_error = self.parse_diagnostics.len() > diag_count_before_decl;
             declarations.push(decl);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
@@ -1193,6 +1218,13 @@ impl ParserState {
                 // "';' expected." at the `=` position, matching tsc's diagnostic.
                 // Example: `var tt = (a, (b, c)) => ...` — rejected arrow function.
                 if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    break;
+                }
+
+                // When the variable name itself was erroneous (e.g., TS1389 for a
+                // reserved word like `const export`), suppress the follow-up TS1005
+                // comma error to match tsc's recovery behavior.
+                if decl_had_error {
                     break;
                 }
 

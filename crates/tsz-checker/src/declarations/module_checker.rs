@@ -1318,4 +1318,167 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    // =========================================================================
+    // verbatimModuleSyntax Export Checks (TS1205, TS1284, TS1285)
+    // =========================================================================
+
+    /// TS1205: Re-exporting a type when 'verbatimModuleSyntax' is enabled
+    /// requires using `export type`.
+    pub(crate) fn check_verbatim_module_syntax_named_exports(
+        &mut self,
+        named_exports_idx: NodeIndex,
+        module_specifier_idx: NodeIndex,
+    ) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.ctx.compiler_options.verbatim_module_syntax {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
+            return;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return;
+        }
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return;
+        };
+
+        // Get the module specifier text (if this is a re-export with `from`)
+        let module_specifier_text = if module_specifier_idx.is_some() {
+            self.ctx
+                .arena
+                .get(module_specifier_idx)
+                .and_then(|n| self.ctx.arena.get_literal(n))
+                .map(|l| l.text.clone())
+        } else {
+            None
+        };
+
+        for &specifier_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
+                continue;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(spec_node) else {
+                continue;
+            };
+
+            if specifier.is_type_only {
+                continue;
+            }
+
+            let source_name_idx = if specifier.property_name.is_some() {
+                specifier.property_name
+            } else {
+                specifier.name
+            };
+            let Some(source_name) = self.get_identifier_text_from_idx(source_name_idx) else {
+                continue;
+            };
+
+            let is_type_only = if let Some(ref module_spec) = module_specifier_text {
+                self.is_import_specifier_type_only(module_spec, &source_name)
+                    || self.is_export_type_only_across_binders(module_spec, &source_name)
+            } else {
+                self.is_local_symbol_type_only(&source_name)
+            };
+
+            if is_type_only {
+                let message = format_message(
+                    diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
+                    &["verbatimModuleSyntax"],
+                );
+                self.error_at_node(
+                    source_name_idx,
+                    &message,
+                    diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
+                );
+            }
+        }
+    }
+
+    /// Check if a local symbol is purely a type entity.
+    fn is_local_symbol_type_only(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            if sym.is_type_only {
+                return true;
+            }
+            if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// TS1284/TS1285: export default checks under verbatimModuleSyntax.
+    pub(crate) fn check_verbatim_module_syntax_export_default(&mut self, clause_idx: NodeIndex) {
+        use tsz_binder::symbol_flags;
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if !self.ctx.compiler_options.verbatim_module_syntax {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+            return;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(clause_node) else {
+            return;
+        };
+        let name = ident.escaped_text.clone();
+
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(&name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            // TS1285: type-only import
+            if sym.is_type_only {
+                let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                        &[&name],
+                    );
+                self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                    );
+                return;
+            }
+
+            // TS1284: pure type (interface/type alias)
+            if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                        &[&name],
+                    );
+                self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                    );
+            }
+        }
+    }
 }

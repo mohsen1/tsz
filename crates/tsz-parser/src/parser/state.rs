@@ -1436,6 +1436,34 @@ impl ParserState {
             if keyword == SyntaxKind::ClassKeyword && self.is_token(SyntaxKind::SemicolonToken) {
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             }
+
+            // After consuming the reserved word, if the next token can't continue the
+            // variable declaration (not `;`, `,`, `=`, `:`, `!`, `}`, or EOF), skip
+            // remaining tokens on this statement to prevent cascading errors.
+            // e.g., `const export as namespace oo4;` — after consuming `export` (TS1389),
+            // skip `as namespace oo4` so only the semicolon remains.
+            if !matches!(
+                self.token(),
+                SyntaxKind::SemicolonToken
+                    | SyntaxKind::CommaToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::ExclamationToken
+                    | SyntaxKind::CloseBraceToken
+                    | SyntaxKind::EndOfFileToken
+            ) && !self.scanner.has_preceding_line_break()
+            {
+                // Skip tokens until we reach a statement boundary
+                while !matches!(
+                    self.token(),
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CloseBraceToken
+                        | SyntaxKind::EndOfFileToken
+                ) && !self.scanner.has_preceding_line_break()
+                {
+                    self.next_token();
+                }
+            }
         }
     }
 

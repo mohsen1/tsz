@@ -314,7 +314,12 @@ impl BinderState {
                         && let Some(sym) = self.symbols.get_mut(sym_id)
                     {
                         sym.is_exported = true;
-                        sym.is_type_only = export_type_only;
+                        // Only escalate is_type_only to true; never downgrade.
+                        // The import site (e.g. `import type C`) sets this flag,
+                        // and `export default C` must not clear it.
+                        if export_type_only {
+                            sym.is_type_only = true;
+                        }
                     }
                 } else if let Some(clause_node) = arena.get(export.export_clause)
                     && Self::is_declaration(clause_node.kind)

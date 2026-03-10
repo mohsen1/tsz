@@ -1049,6 +1049,7 @@ pub(super) fn create_binder_from_bound_file(
     binder.is_external_module = file.is_external_module;
     // Track lib-originating symbols so unused checking can skip them
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+
     binder
 }
 
