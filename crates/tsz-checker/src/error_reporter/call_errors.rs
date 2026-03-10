@@ -10,6 +10,77 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn elaboration_source_expression_type(&mut self, expr_idx: NodeIndex) -> TypeId {
+        let prev_contextual = self.ctx.contextual_type;
+        let diag_len = self.ctx.diagnostics.len();
+        let emitted = self.ctx.emitted_diagnostics.clone();
+
+        self.ctx.contextual_type = None;
+        let ty = self.compute_type_of_node(expr_idx);
+        self.ctx.contextual_type = prev_contextual;
+
+        self.ctx.diagnostics.truncate(diag_len);
+        self.ctx.emitted_diagnostics = emitted;
+        ty
+    }
+
+    fn object_literal_target_property_type(
+        &mut self,
+        target_type: TypeId,
+        prop_name_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<(TypeId, TypeId)> {
+        let resolved_target = self.resolve_type_for_property_access(target_type);
+        let evaluated_target = self.judge_evaluate(resolved_target);
+
+        if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            self.resolve_property_access_with_env(target_type, prop_name)
+        {
+            let prop_atom = self.ctx.types.intern_string(prop_name);
+            let declared_optional_type = [target_type, resolved_target, evaluated_target]
+                .into_iter()
+                .filter_map(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+                })
+                .find_map(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .find(|p| p.name == prop_atom && p.optional)
+                        .map(|p| p.type_id)
+                });
+
+            return Some((type_id, declared_optional_type.unwrap_or(type_id)));
+        }
+
+        let prop_node = self.ctx.arena.get(prop_name_idx)?;
+
+        let prefer_number_index = prop_node.kind == SyntaxKind::NumericLiteral as u16;
+
+        let index_value_type = [target_type, resolved_target, evaluated_target]
+            .into_iter()
+            .filter_map(|candidate| {
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+            })
+            .find_map(|shape| {
+                if prefer_number_index {
+                    shape
+                        .number_index
+                        .as_ref()
+                        .map(|sig| sig.value_type)
+                        .or_else(|| shape.string_index.as_ref().map(|sig| sig.value_type))
+                } else {
+                    shape
+                        .string_index
+                        .as_ref()
+                        .map(|sig| sig.value_type)
+                        .or_else(|| shape.number_index.as_ref().map(|sig| sig.value_type))
+                }
+            })?;
+
+        Some((index_value_type, index_value_type))
+    }
+
     fn literal_call_argument_display(&self, arg_idx: NodeIndex) -> Option<String> {
         self.literal_expression_display(arg_idx)
     }
@@ -426,39 +497,18 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
-            // Look up the expected property type in the target parameter type
-            let target_prop_type = match self
-                .resolve_property_access_with_env(effective_param_type, &prop_name)
-            {
-                tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id, ..
-                } => type_id,
-                _ => continue,
-            };
-
-            // For the error message, use the property's declared type (without the
-            // `undefined` added by optional_property_type for optional properties).
-            // TSC displays `'string'` not `'string | undefined'` when the property
-            // is declared as `name?: string`.
-            let target_prop_type_for_diagnostic = {
-                let prop_atom = self.ctx.types.intern_string(&prop_name);
-                let declared = tsz_solver::type_queries::get_object_shape(
-                    self.ctx.types,
+            let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
+                .object_literal_target_property_type(
                     effective_param_type,
+                    prop_name_idx,
+                    &prop_name,
                 )
-                .and_then(|shape| {
-                    shape
-                        .properties
-                        .iter()
-                        .find(|p| p.name == prop_atom)
-                        .filter(|p| p.optional)
-                        .map(|p| p.type_id)
-                });
-                declared.unwrap_or(target_prop_type)
+            else {
+                continue;
             };
 
             // Get the type of the property value in the object literal
-            let source_prop_type = self.get_type_of_node(prop_value_idx);
+            let source_prop_type = self.elaboration_source_expression_type(prop_value_idx);
 
             if self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
                 matches!(
@@ -562,7 +612,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let elem_type = self.get_type_of_node(elem_idx);
+            let elem_type = self.elaboration_source_expression_type(elem_idx);
 
             if matches!(
                 elem_node.kind,

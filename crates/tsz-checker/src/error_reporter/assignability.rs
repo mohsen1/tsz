@@ -243,7 +243,7 @@ impl<'a> CheckerState<'a> {
             }
             None => {
                 // Fallback to generic message
-                self.error_type_not_assignable_generic_at(source, target, anchor_idx);
+                self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
             }
         }
     }
@@ -256,7 +256,15 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+        self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
+    }
 
+    fn error_type_not_assignable_generic_with_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
         // Suppress cascade errors from unresolved types
         if source == TypeId::ERROR
             || target == TypeId::ERROR
