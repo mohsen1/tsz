@@ -642,6 +642,129 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn validate_non_tuple_spreads_for_signature(&mut self, args: &[NodeIndex], func_type: TypeId) {
+        let ctx = ContextualTypeContext::with_expected(self.ctx.types, func_type);
+        let mut expanded_count = 0usize;
+        for &arg_idx in args {
+            if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+            {
+                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.resolve_lazy_type(spread_type);
+                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                    expanded_count += elems.len();
+                    continue;
+                }
+                if array_element_type_for_type(self.ctx.types, spread_type).is_some()
+                    && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                    && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+                {
+                    expanded_count += literal.elements.nodes.len();
+                    continue;
+                }
+            }
+            expanded_count += 1;
+        }
+
+        let mut effective_index = 0usize;
+        for &arg_idx in args {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                effective_index += 1;
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+                effective_index += 1;
+                continue;
+            }
+            let Some(spread_data) = self.ctx.arena.get_spread(arg_node) else {
+                effective_index += 1;
+                continue;
+            };
+            let spread_type = self.get_type_of_node(spread_data.expression);
+            let spread_type = self.resolve_type_for_property_access(spread_type);
+            let spread_type = self.resolve_lazy_type(spread_type);
+            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                effective_index += elems.len();
+                continue;
+            }
+            if is_type_parameter_type(self.ctx.types, spread_type)
+                && let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+                    self.ctx.types,
+                    spread_type,
+                )
+                && (array_element_type_for_type(self.ctx.types, constraint).is_some()
+                    || tuple_elements_for_type(self.ctx.types, constraint).is_some())
+            {
+                effective_index += 1;
+                continue;
+            }
+            let is_non_tuple_spread = array_element_type_for_type(self.ctx.types, spread_type)
+                .is_some()
+                || self.is_iterable_type(spread_type);
+            if is_non_tuple_spread
+                && !ctx.allows_non_tuple_spread_position(effective_index, expanded_count)
+            {
+                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                return;
+            }
+            effective_index += 1;
+        }
+    }
+
+    fn find_prior_non_tuple_spread_for_mismatch(
+        &mut self,
+        args: &[NodeIndex],
+        mismatch_index: usize,
+    ) -> Option<NodeIndex> {
+        let mut effective_index = 0usize;
+        let mut prior_non_tuple_spread = None;
+
+        for &arg_idx in args {
+            if effective_index > mismatch_index {
+                break;
+            }
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                effective_index += 1;
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+                if effective_index == mismatch_index {
+                    return prior_non_tuple_spread;
+                }
+                effective_index += 1;
+                continue;
+            }
+            let Some(spread_data) = self.ctx.arena.get_spread(arg_node) else {
+                effective_index += 1;
+                continue;
+            };
+            let spread_type = self.get_type_of_node(spread_data.expression);
+            let spread_type = self.resolve_type_for_property_access(spread_type);
+            let spread_type = self.resolve_lazy_type(spread_type);
+            if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
+                if mismatch_index < effective_index + elems.len() {
+                    return prior_non_tuple_spread;
+                }
+                effective_index += elems.len();
+                continue;
+            }
+            let is_non_tuple_spread = array_element_type_for_type(self.ctx.types, spread_type)
+                .is_some()
+                || self.is_iterable_type(spread_type);
+            if effective_index == mismatch_index {
+                return prior_non_tuple_spread;
+            }
+            if is_non_tuple_spread {
+                prior_non_tuple_spread = Some(arg_idx);
+            }
+            effective_index += 1;
+        }
+
+        prior_non_tuple_spread
+    }
+
     // =========================================================================
     // Overload Resolution
     // =========================================================================
@@ -738,7 +861,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_types = std::mem::take(&mut original_node_types);
 
         // First pass: try each signature with union-contextual argument types.
-        for (idx, (_sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
+        for (idx, (sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_relation_input_ready(func_type);
             let resolved_func_type =
@@ -778,6 +901,7 @@ impl<'a> CheckerState<'a> {
                 CallResult::Success(return_type) => {
                     // Merge the node types inferred during argument collection
                     self.ctx.node_types.extend(temp_node_types);
+                    self.validate_non_tuple_spreads_for_signature(args, func_type);
 
                     // CRITICAL FIX - Check excess properties against the MATCHED signature,
                     // not the union. Using the union would allow properties that exist in other overloads
@@ -793,6 +917,15 @@ impl<'a> CheckerState<'a> {
 
                     return Some(return_type);
                 }
+                CallResult::ArgumentTypeMismatch { index, .. } => {
+                    if let Some(spread_idx) =
+                        self.find_prior_non_tuple_spread_for_mismatch(args, index)
+                    {
+                        self.error_spread_must_be_tuple_or_rest_at(spread_idx);
+                        self.ctx.node_types.extend(temp_node_types);
+                        return Some(sig.return_type);
+                    }
+                }
                 CallResult::TypeParameterConstraintViolation { return_type, .. } => {
                     // Constraint violation from callback return - overload matched
                     // but with constraint error. Treat as match for overload resolution.
@@ -807,7 +940,7 @@ impl<'a> CheckerState<'a> {
         // Some overload sets require contextual typing from a specific candidate to
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
-        for (_sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
+        for (sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 func_type,
@@ -847,16 +980,31 @@ impl<'a> CheckerState<'a> {
                 actual_this_type,
             );
 
-            if let CallResult::Success(return_type) = result {
-                let sig_node_types = std::mem::take(&mut self.ctx.node_types);
-                self.ctx.node_types = std::mem::take(&mut original_node_types);
-                self.ctx.node_types.extend(sig_node_types);
+            match result {
+                CallResult::Success(return_type) => {
+                    let sig_node_types = std::mem::take(&mut self.ctx.node_types);
+                    self.ctx.node_types = std::mem::take(&mut original_node_types);
+                    self.ctx.node_types.extend(sig_node_types);
+                    self.validate_non_tuple_spreads_for_signature(args, func_type);
 
-                self.check_call_argument_excess_properties(args, &sig_arg_types, |i, arg_count| {
-                    sig_helper.get_parameter_type_for_call(i, arg_count)
-                });
+                    self.check_call_argument_excess_properties(
+                        args,
+                        &sig_arg_types,
+                        |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
+                    );
 
-                return Some(return_type);
+                    return Some(return_type);
+                }
+                CallResult::ArgumentTypeMismatch { index, .. } => {
+                    if let Some(spread_idx) =
+                        self.find_prior_non_tuple_spread_for_mismatch(args, index)
+                    {
+                        self.ctx.node_types = std::mem::take(&mut original_node_types);
+                        self.error_spread_must_be_tuple_or_rest_at(spread_idx);
+                        return Some(sig.return_type);
+                    }
+                }
+                _ => {}
             }
 
             self.ctx.diagnostics.truncate(diagnostics_checkpoint);
