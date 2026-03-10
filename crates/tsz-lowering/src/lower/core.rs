@@ -423,16 +423,33 @@ impl<'a> TypeLowering<'a> {
                 continue;
             };
 
-            // If we haven't collected type params yet, do it now
-            if !type_params_collected
-                && let Some(params) = &interface.type_parameters
+            // Collect or merge type parameters from this declaration
+            if let Some(params) = &interface.type_parameters
                 && !params.nodes.is_empty()
             {
-                // Push scope on the shared state
-                self.push_type_param_scope();
-                // Use the specific lowerer to resolve param nodes in that arena
-                collected_params = lowerer.collect_type_parameters(params);
-                type_params_collected = true;
+                if !type_params_collected {
+                    // First declaration with type params: collect them
+                    self.push_type_param_scope();
+                    collected_params = lowerer.collect_type_parameters(params);
+                    type_params_collected = true;
+                } else {
+                    // Subsequent declaration: merge missing defaults/constraints
+                    // from this declaration into the already-collected params.
+                    // This handles cases like Uint8Array where the default is
+                    // declared in lib.es5.d.ts but other declarations in
+                    // es2015.iterable.d.ts etc. omit it.
+                    let extra = lowerer.collect_type_parameters_raw(params);
+                    for (i, ep) in extra.into_iter().enumerate() {
+                        if i < collected_params.len() {
+                            if collected_params[i].default.is_none() && ep.default.is_some() {
+                                collected_params[i].default = ep.default;
+                            }
+                            if collected_params[i].constraint.is_none() && ep.constraint.is_some() {
+                                collected_params[i].constraint = ep.constraint;
+                            }
+                        }
+                    }
+                }
             }
 
             // Collect members using the arena-specific lowerer
@@ -459,6 +476,9 @@ impl<'a> TypeLowering<'a> {
         &self,
         declarations: &[(NodeIndex, &NodeArena)],
     ) -> Vec<TypeParamInfo> {
+        let mut collected = Vec::new();
+        let mut scope_pushed = false;
+
         for (decl_idx, decl_arena) in declarations {
             let Some(node) = decl_arena.get(*decl_idx) else {
                 continue;
@@ -473,14 +493,31 @@ impl<'a> TypeLowering<'a> {
                 continue;
             }
 
-            self.push_type_param_scope();
             let lowerer = self.with_arena(decl_arena);
-            let collected = lowerer.collect_type_parameters(params);
-            self.pop_type_param_scope();
-            return collected;
+            if !scope_pushed {
+                self.push_type_param_scope();
+                collected = lowerer.collect_type_parameters(params);
+                scope_pushed = true;
+            } else {
+                // Merge missing defaults/constraints from subsequent declarations
+                let extra = lowerer.collect_type_parameters_raw(params);
+                for (i, ep) in extra.into_iter().enumerate() {
+                    if i < collected.len() {
+                        if collected[i].default.is_none() && ep.default.is_some() {
+                            collected[i].default = ep.default;
+                        }
+                        if collected[i].constraint.is_none() && ep.constraint.is_some() {
+                            collected[i].constraint = ep.constraint;
+                        }
+                    }
+                }
+            }
         }
 
-        Vec::new()
+        if scope_pushed {
+            self.pop_type_param_scope();
+        }
+        collected
     }
 
     /// Collect type parameters for a type alias declaration without lowering the alias body.
@@ -1026,6 +1063,19 @@ impl<'a> TypeLowering<'a> {
             if let Some(info) = self.lower_type_parameter(idx) {
                 let type_id = self.interner.type_param(info.clone());
                 self.add_type_param_binding(info.name, type_id);
+                params.push(info);
+            }
+        }
+        params
+    }
+
+    /// Collect type parameters without adding scope bindings.
+    /// Used for merging defaults/constraints from additional declarations
+    /// when the type params are already in scope from a prior declaration.
+    pub(super) fn collect_type_parameters_raw(&self, list: &NodeList) -> Vec<TypeParamInfo> {
+        let mut params = Vec::with_capacity(list.nodes.len());
+        for &idx in &list.nodes {
+            if let Some(info) = self.lower_type_parameter(idx) {
                 params.push(info);
             }
         }
