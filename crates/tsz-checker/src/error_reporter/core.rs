@@ -323,9 +323,9 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.literal_expression_display(expr_idx)
                 && (self.assignment_source_is_return_expression(anchor_idx)
                     || self.is_literal_sensitive_assignment_target(target))
-                {
-                    return display;
-                }
+            {
+                return display;
+            }
 
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
                 return display;
