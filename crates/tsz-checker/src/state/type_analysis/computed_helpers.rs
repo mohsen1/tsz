@@ -265,6 +265,13 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    // Always mark the target itself as circular.  For same-file
+                    // cycles, the target is on the stack and already marked above.
+                    // For cross-file cycles, the target comes from the parent's
+                    // resolution set but is NOT on this checker's stack — mark it
+                    // explicitly so the parent can detect circularity after the
+                    // delegation returns.
+                    self.ctx.circular_type_aliases.insert(target_sym_id);
                 }
 
                 return is_direct;
@@ -412,6 +419,166 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Detect cross-file circular type alias cycles by following the Lazy chain
+    /// through the shared `DefinitionStore`.
+    ///
+    /// For cross-file cycles like `type A = B` (a.ts) + `type B = A` (b.ts),
+    /// `is_direct_circular_reference` fails because by the time we check A's body,
+    /// B has already been fully resolved and removed from `symbol_resolution_set`.
+    /// But B's body was set to `Lazy(DefId_A)` in the shared `DefinitionStore`.
+    ///
+    /// This method follows: `alias_type` → `Lazy(DefId_B)` → body → `Lazy(DefId_A)`
+    /// and checks if any DefId in the chain maps back to `sym_id`.
+    pub(crate) fn is_cross_file_circular_alias(
+        &self,
+        sym_id: SymbolId,
+        alias_type: TypeId,
+    ) -> bool {
+        let own_def_id = match self.ctx.symbol_to_def.borrow().get(&sym_id).copied() {
+            Some(def_id) => def_id,
+            None => return false,
+        };
+
+        let mut current = alias_type;
+        let mut visited = FxHashSet::default();
+        visited.insert(own_def_id);
+
+        loop {
+            let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, current)
+            else {
+                return false;
+            };
+
+            if def_id == own_def_id {
+                return true;
+            }
+            if !visited.insert(def_id) {
+                return false;
+            }
+
+            // Verify the target is a type alias (not interface/class which can be recursive)
+            if let Some(&target_sym) = self.ctx.def_to_symbol.borrow().get(&def_id) {
+                let is_type_alias = self
+                    .get_symbol_globally(target_sym)
+                    .or_else(|| self.ctx.binder.get_symbol(target_sym))
+                    .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+                if !is_type_alias {
+                    return false;
+                }
+            }
+
+            let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+                return false;
+            };
+            current = body;
+        }
+    }
+
+    /// Post-processing: detect cross-file circular type aliases (TS2456).
+    ///
+    /// During `build_type_environment`, type alias bodies are resolved but
+    /// cross-file symbols might not be fully resolved yet (their delegation
+    /// happens later).  By the time this method runs (after all statements
+    /// are checked), the `DefinitionStore` contains bodies for all resolved
+    /// type aliases, including cross-file ones.
+    ///
+    /// For each `TYPE_ALIAS` symbol in the current file whose type was NOT
+    /// already flagged as circular, check if the resolved type chains
+    /// through the `DefinitionStore` back to itself.
+    pub(crate) fn check_cross_file_circular_type_aliases(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+
+        // Collect type alias symbols from the current file's node_symbols.
+        let type_alias_syms: Vec<SymbolId> = self
+            .ctx
+            .binder
+            .node_symbols
+            .values()
+            .copied()
+            .filter(|&sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
+            })
+            .collect::<FxHashSet<_>>()
+            .into_iter()
+            .collect();
+
+        for sym_id in type_alias_syms {
+            // Skip if already detected as circular during compute_type_of_symbol.
+            if self.ctx.circular_type_aliases.contains(&sym_id) {
+                continue;
+            }
+
+            // Get the cached resolved type for this symbol.
+            let Some(&resolved) = self.ctx.symbol_types.get(&sym_id) else {
+                continue;
+            };
+
+            // Only check if the resolved type is a Lazy reference (unresolved
+            // cross-file placeholder).
+            if tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved).is_none() {
+                continue;
+            }
+
+            if self.is_cross_file_circular_alias(sym_id, resolved) {
+                // Get the symbol name for the diagnostic message.
+                let name = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|s| s.escaped_name.to_string())
+                    .unwrap_or_default();
+
+                let message = format_message(
+                    diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                    &[&name],
+                );
+
+                // Find the type alias declaration node for error positioning.
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    for &decl_idx in &symbol.declarations {
+                        if let Some(node) = self.ctx.arena.get(decl_idx)
+                            && node.kind
+                                == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            && let Some(ta) = self.ctx.arena.get_type_alias(node)
+                        {
+                            // Verify the name matches (prevent NodeIndex collision).
+                            let name_matches = self
+                                .ctx
+                                .arena
+                                .get(ta.name)
+                                .and_then(|n| self.ctx.arena.get_identifier(n))
+                                .map(|ident| {
+                                    self.ctx.arena.resolve_identifier_text(ident)
+                                        == symbol.escaped_name.as_str()
+                                })
+                                .unwrap_or(false);
+                            if name_matches {
+                                self.error_at_node(
+                                    ta.name,
+                                    &message,
+                                    diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                                );
+                                // Mark as circular so we don't re-emit.
+                                self.ctx.circular_type_aliases.insert(sym_id);
+
+                                // Update the symbol's type to `any` (same as inline
+                                // circular detection).
+                                self.ctx
+                                    .symbol_types
+                                    .insert(sym_id, tsz_solver::TypeId::ANY);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Report TS2310 for a class/interface whose instantiated base type needs
