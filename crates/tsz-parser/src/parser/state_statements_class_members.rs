@@ -1487,7 +1487,8 @@ impl ParserState {
             // use keyword-aware semicolon error (TS1434/TS1435) instead of
             // the generic "';' expected". This produces "Unexpected keyword or
             // identifier" for bare identifiers like `NoMove` in class bodies.
-            if type_annotation == NodeIndex::NONE
+            if !has_var_let_modifier
+                && type_annotation == NodeIndex::NONE
                 && initializer == NodeIndex::NONE
                 && !self.is_token(SyntaxKind::SemicolonToken)
                 && !self.can_parse_semicolon()

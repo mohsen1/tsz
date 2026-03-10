@@ -149,3 +149,20 @@ fn class_field_initializer_does_not_asi_before_computed_member() {
         "should recover as a semicolon error, not TS1068, got {diags:?}"
     );
 }
+
+#[test]
+fn invalid_var_like_class_member_does_not_emit_keyword_suggestion_cascade() {
+    let (parser, _root) = parse_source(
+        "class C {\n    public const var export foo = 10;\n\n    var constructor() { }\n}",
+    );
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::VARIABLE_DECLARATION_NOT_ALLOWED_AT_THIS_LOCATION),
+        "expected TS1440 on invalid class member var recovery, got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN),
+        "should not emit TS1435 after TS1440 var-like class member recovery, got {diags:?}"
+    );
+}
