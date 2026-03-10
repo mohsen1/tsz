@@ -547,6 +547,27 @@ delete Foo.name;
 }
 
 #[test]
+fn test_nullish_plus_still_reports_ts2365_without_strict_null_checks() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+null + undefined;
+null + null;
+undefined + undefined;
+"#,
+        CheckerOptions {
+            strict_null_checks: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2365_count = diagnostics.iter().filter(|(code, _)| *code == 2365).count();
+    assert_eq!(
+        ts2365_count, 3,
+        "Expected TS2365 for each nullish + expression without strictNullChecks. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2403_widens_generic_call_literal_result_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
