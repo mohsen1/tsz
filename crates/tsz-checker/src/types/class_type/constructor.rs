@@ -2,7 +2,7 @@
 
 use crate::query_boundaries::class_type::{callable_shape_for_type, construct_signatures_for_type};
 use crate::state::{CheckerState, MemberAccessLevel};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -183,6 +183,44 @@ impl<'a> CheckerState<'a> {
         let mut static_number_index: Option<IndexSignature> = None;
         let mut has_static_late_bound_members = false;
 
+        // Pre-scan all static member names so that partial constructor types
+        // built during static initializer evaluation include not-yet-processed
+        // members as `any`-typed placeholders. Without this, references like
+        // `Class.laterMember` inside an earlier static initializer would get a
+        // false TS2339 instead of resolving to `any`.
+        let mut all_static_member_names: Vec<Atom> = Vec::new();
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let name_opt = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(member_node)
+                    .filter(|p| self.has_static_modifier(&p.modifiers))
+                    .and_then(|p| self.get_property_name_resolved(p.name)),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(member_node)
+                    .filter(|m| self.has_static_modifier(&m.modifiers))
+                    .and_then(|m| self.get_property_name_resolved(m.name)),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .filter(|a| self.has_static_modifier(&a.modifiers))
+                        .and_then(|a| self.get_property_name_resolved(a.name))
+                }
+                _ => None,
+            };
+            if let Some(name) = name_opt {
+                let atom = self.ctx.types.intern_string(&name);
+                all_static_member_names.push(atom);
+            }
+        }
+
         // Process all static class members
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -263,6 +301,7 @@ impl<'a> CheckerState<'a> {
                                     declaration_order: 0,
                                 }),
                                 &inherited_static_props,
+                                &all_static_member_names,
                             );
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
                         }
@@ -367,6 +406,7 @@ impl<'a> CheckerState<'a> {
                             &static_number_index,
                             None,
                             &inherited_static_props,
+                            &all_static_member_names,
                         );
                         self.ctx.symbol_types.insert(sym_id, partial_ctor);
                     }
@@ -439,6 +479,7 @@ impl<'a> CheckerState<'a> {
                                     &static_number_index,
                                     None,
                                     &inherited_static_props,
+                                    &all_static_member_names,
                                 );
                                 self.ctx.symbol_types.insert(sym_id, partial_ctor);
                             }
@@ -1298,6 +1339,7 @@ impl<'a> CheckerState<'a> {
         static_number_index: &Option<IndexSignature>,
         extra_property: Option<PropertyInfo>,
         inherited_static_props: &[PropertyInfo],
+        all_static_member_names: &[Atom],
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         let mut partial_ctor_props: Vec<PropertyInfo> = properties.values().cloned().collect();
@@ -1369,6 +1411,28 @@ impl<'a> CheckerState<'a> {
         for prop in inherited_static_props {
             if !own_names.contains(&prop.name) {
                 partial_ctor_props.push(prop.clone());
+            }
+        }
+
+        // Add `any`-typed placeholders for static members that haven't been
+        // processed yet. This prevents false TS2339 when an earlier static
+        // initializer references a later-declared member (TSC resolves these
+        // to `any` / emits TS2729 instead).
+        let final_names: FxHashSet<_> = partial_ctor_props.iter().map(|p| p.name).collect();
+        for &name in all_static_member_names {
+            if !final_names.contains(&name) {
+                partial_ctor_props.push(PropertyInfo {
+                    name,
+                    type_id: TypeId::ANY,
+                    write_type: TypeId::ANY,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: current_sym,
+                    declaration_order: 0,
+                });
             }
         }
 
