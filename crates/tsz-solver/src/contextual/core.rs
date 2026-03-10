@@ -5,9 +5,9 @@
 use crate::TypeDatabase;
 use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
-    PropertyExtractor, RestParameterExtractor, RestPositionCheckExtractor, ReturnTypeExtractor,
-    ThisTypeExtractor, ThisTypeMarkerExtractor, TupleElementExtractor, collect_single_or_union,
-    collect_single_or_union_no_reduce,
+    PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
+    RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
+    TupleElementExtractor, collect_single_or_union, collect_single_or_union_no_reduce,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -452,6 +452,47 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         let mut extractor = RestPositionCheckExtractor::new(self.interner, index, arg_count);
+        extractor.extract(expected)
+    }
+
+    /// Check if a non-tuple spread is allowed because it lands on a rest
+    /// parameter or only covers optional trailing parameters.
+    pub fn allows_non_tuple_spread_position(&self, index: usize, arg_count: usize) -> bool {
+        let Some(expected) = self.expected else {
+            return false;
+        };
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            return ctx.allows_non_tuple_spread_position(index, arg_count);
+        }
+
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.allows_non_tuple_spread_position(index, arg_count);
+        }
+
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.allows_non_tuple_spread_position(index, arg_count);
+            }
+            if let Some(TypeData::IndexAccess(_, _)) = self.interner.lookup(expected) {
+                return true;
+            }
+        }
+
+        let mut extractor =
+            RestOrOptionalTailPositionExtractor::new(self.interner, index, arg_count);
         extractor.extract(expected)
     }
 
