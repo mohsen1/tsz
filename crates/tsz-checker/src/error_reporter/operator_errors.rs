@@ -439,12 +439,7 @@ impl<'a> CheckerState<'a> {
         // For + operator, TSC emits TS2365 ("Operator '+' cannot be applied to types"),
         // never TS2362/TS2363. But if null/undefined operands already got TS18050,
         // don't also emit TS2365 - tsc only emits the per-operand TS18050 errors.
-        // When strictNullChecks is off, null/undefined are implicitly valid operands
-        // (assignable to number), so suppress TS2365 when both operands are nullish.
         if op == "+" {
-            if snc_off && left_is_nullish && right_is_nullish {
-                return;
-            }
             if !emitted_nullish_error {
                 self.error_at_node_msg(
                     node_idx,
