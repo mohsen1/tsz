@@ -7292,3 +7292,22 @@ const arguments = 10
         "Did not expect TS1116 once the cross-function boundary diagnostic is selected.\nGot: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_import_equals_reserved_word_uses_ts1214() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+// @target: es2015
+// @module: commonjs
+"use strict"
+import public = require("1");
+"#,
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        has_error(&diagnostics, 1214),
+        "Expected `import public = require(...)` to report TS1214 in module context.\nGot: {diagnostics:?}"
+    );
+}

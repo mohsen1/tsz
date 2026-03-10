@@ -126,6 +126,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::state_checking::is_strict_mode_reserved_name;
         use tsz_binder::symbol_flags;
 
         // In JS files, `import x = require(...)` is TS-only syntax (TS8002).
@@ -140,6 +141,16 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+
+        if let Some(name_node) = self.ctx.arena.get(import.import_clause)
+            && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+            && is_strict_mode_reserved_name(&name_ident.escaped_text)
+        {
+            self.emit_module_strict_mode_reserved_word_error(
+                import.import_clause,
+                &name_ident.escaped_text,
+            );
+        }
 
         // TS2438: Import name cannot be a reserved type name (string, number, etc.).
         // TSC checks this for namespace alias imports like `import string = ns.Foo`
