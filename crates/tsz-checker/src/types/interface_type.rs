@@ -73,6 +73,7 @@ impl<'a> CheckerState<'a> {
         struct AccessorAggregate {
             getter: Option<TypeId>,
             setter: Option<TypeId>,
+            declaration_order: u32,
         }
 
         let mut call_signatures: Vec<SolverCallSignature> = Vec::new();
@@ -81,6 +82,7 @@ impl<'a> CheckerState<'a> {
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
+        let mut member_order: u32 = 0;
 
         // Iterate over this interface's own members
         for &member_idx in &interface.members.nodes {
@@ -190,6 +192,7 @@ impl<'a> CheckerState<'a> {
                             self.pop_type_parameters(updates);
                         }
 
+                        member_order += 1;
                         properties.push(PropertyInfo {
                             name: name_atom,
                             type_id,
@@ -200,7 +203,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
-                            declaration_order: 0,
+                            declaration_order: member_order,
                         });
                     }
                 }
@@ -213,9 +216,12 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
+                        member_order += 1;
+                        let current_order = member_order;
                         let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                             getter: None,
                             setter: None,
+                            declaration_order: current_order,
                         });
 
                         if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
@@ -323,7 +329,7 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: 0,
+                declaration_order: accessor.declaration_order,
             });
         }
 
@@ -913,15 +919,24 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::{FxHashMap, FxHashSet};
         use tsz_common::interner::Atom;
 
+        // Find the max declaration_order from base so derived-only properties
+        // can be offset to come after all base properties.
+        let base_max_order = base.iter().map(|p| p.declaration_order).max().unwrap_or(0);
+
         let total_len = derived.len() + base.len();
         if total_len <= 32 {
             let mut merged = Vec::with_capacity(total_len);
             merged.extend_from_slice(base);
             for prop in derived {
                 if let Some(pos) = merged.iter().position(|p| p.name == prop.name) {
+                    // Override keeps base declaration_order for proper ordering
+                    let base_order = merged[pos].declaration_order;
                     merged[pos] = prop.clone();
+                    merged[pos].declaration_order = base_order;
                 } else {
-                    merged.push(prop.clone());
+                    let mut new_prop = prop.clone();
+                    new_prop.declaration_order = base_max_order + prop.declaration_order;
+                    merged.push(new_prop);
                 }
             }
             return merged;
@@ -939,7 +954,10 @@ impl<'a> CheckerState<'a> {
 
         for base_prop in base {
             if let Some(derived_prop) = derived_map.get(&base_prop.name) {
-                merged.push((*derived_prop).clone());
+                // Override keeps base declaration_order for proper ordering
+                let mut prop = (*derived_prop).clone();
+                prop.declaration_order = base_prop.declaration_order;
+                merged.push(prop);
                 processed.insert(base_prop.name);
             } else {
                 merged.push(base_prop.clone());
@@ -948,7 +966,9 @@ impl<'a> CheckerState<'a> {
 
         for prop in derived {
             if !processed.contains(&prop.name) {
-                merged.push(prop.clone());
+                let mut new_prop = prop.clone();
+                new_prop.declaration_order = base_max_order + prop.declaration_order;
+                merged.push(new_prop);
             }
         }
 
@@ -1049,6 +1069,7 @@ impl<'a> CheckerState<'a> {
             self.get_module_augmentation_declarations(module_spec, interface_name);
 
         let mut members = Vec::new();
+        let mut aug_member_order: u32 = 0;
 
         for augmentation in augmentation_decls {
             // Use the stored arena from the augmentation (cross-file resolution)
@@ -1083,6 +1104,7 @@ impl<'a> CheckerState<'a> {
                             TypeId::ANY
                         };
 
+                        aug_member_order += 1;
                         members.push(PropertyInfo {
                             name: self.ctx.types.intern_string(&id_data.escaped_text),
                             type_id,
@@ -1093,7 +1115,7 @@ impl<'a> CheckerState<'a> {
                             is_class_prototype: false,
                             visibility: Visibility::Public,
                             parent_id: None,
-                            declaration_order: 0,
+                            declaration_order: aug_member_order,
                         });
                     }
                 }

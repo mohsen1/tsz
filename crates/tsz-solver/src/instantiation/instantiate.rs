@@ -248,7 +248,7 @@ impl<'a> TypeInstantiator<'a> {
                 is_class_prototype: p.is_class_prototype,
                 visibility: p.visibility,
                 parent_id: p.parent_id,
-                declaration_order: 0,
+                declaration_order: p.declaration_order,
             })
             .collect()
     }
