@@ -324,24 +324,24 @@ impl<'a> TypePrinter<'a> {
     }
 
     /// For a "default" export alias symbol, resolve the underlying declaration's
-    /// actual name (e.g., `export default class MyComponent` → "MyComponent").
+    /// actual name (e.g., `export default class MyComponent` → "`MyComponent`").
     fn resolve_default_export_name(&self, sym: &Symbol) -> Option<String> {
         let node_arena = self.node_arena?;
         let decl_idx = sym.value_declaration;
         let decl_node = node_arena.get(decl_idx)?;
 
         // Check if it's a class declaration/expression with a name
-        if let Some(class_data) = node_arena.get_class(decl_node) {
-            if let Some(name) = node_arena.get_identifier_text(class_data.name) {
-                return Some(name.to_string());
-            }
+        if let Some(class_data) = node_arena.get_class(decl_node)
+            && let Some(name) = node_arena.get_identifier_text(class_data.name)
+        {
+            return Some(name.to_string());
         }
 
         // Check if it's a function declaration with a name
-        if let Some(func_data) = node_arena.get_function(decl_node) {
-            if let Some(name) = node_arena.get_identifier_text(func_data.name) {
-                return Some(name.to_string());
-            }
+        if let Some(func_data) = node_arena.get_function(decl_node)
+            && let Some(name) = node_arena.get_identifier_text(func_data.name)
+        {
+            return Some(name.to_string());
         }
 
         None
