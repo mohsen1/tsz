@@ -2194,6 +2194,31 @@ fn collect_functions_from_node(
 /// # Returns
 /// `CheckResult` with diagnostics from all functions
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
+    let shared_binders: Vec<Arc<BinderState>> = program
+        .files
+        .iter()
+        .enumerate()
+        .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
+        .collect();
+    let all_binders = Arc::new(shared_binders.clone());
+    let all_arenas = Arc::new(
+        program
+            .files
+            .iter()
+            .map(|file| Arc::clone(&file.arena))
+            .collect::<Vec<_>>(),
+    );
+    let symbol_file_targets: Vec<(tsz_binder::SymbolId, usize)> = program
+        .symbol_arenas
+        .iter()
+        .filter_map(|(sym_id, arena)| {
+            all_arenas
+                .iter()
+                .position(|file_arena| Arc::ptr_eq(file_arena, arena))
+                .map(|file_idx| (*sym_id, file_idx))
+        })
+        .collect();
+
     // First, collect all functions from all files (sequential)
     let mut all_functions: Vec<(usize, NodeIndex)> = Vec::new();
 
@@ -2217,18 +2242,26 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
         .map(|(file_idx, file)| {
             let functions = collect_functions(&file.arena, file.source_file);
 
-            // Create a binder state from the node_symbols
-            let binder = create_binder_from_bound_file(file, program, file_idx);
+            let binder = Arc::clone(&shared_binders[file_idx]);
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
             let mut checker = CheckerState::new(
                 &file.arena,
-                &binder,
+                binder.as_ref(),
                 &query_cache,
                 file.file_name.clone(),
                 compiler_options, // default options for internal operations
             );
+            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            checker.ctx.set_current_file_idx(file_idx);
+            {
+                let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
+                for (sym_id, owner_idx) in &symbol_file_targets {
+                    targets.insert(*sym_id, *owner_idx);
+                }
+            }
 
             let mut function_results = Vec::new();
 
@@ -2288,19 +2321,52 @@ pub fn check_files_parallel(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     // This is thread-safe (uses RwLock internally) and shared across all file checks.
     let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let shared_binders: Vec<Arc<BinderState>> = program
+        .files
+        .iter()
+        .enumerate()
+        .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
+        .collect();
+    let all_binders = Arc::new(shared_binders.clone());
+    let all_arenas = Arc::new(
+        program
+            .files
+            .iter()
+            .map(|file| Arc::clone(&file.arena))
+            .collect::<Vec<_>>(),
+    );
+    let symbol_file_targets: Vec<(tsz_binder::SymbolId, usize)> = program
+        .symbol_arenas
+        .iter()
+        .filter_map(|(sym_id, arena)| {
+            all_arenas
+                .iter()
+                .position(|file_arena| Arc::ptr_eq(file_arena, arena))
+                .map(|file_idx| (*sym_id, file_idx))
+        })
+        .collect();
 
     let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
-            let binder = create_binder_from_bound_file(file, program, file_idx);
+            let binder = Arc::clone(&shared_binders[file_idx]);
 
             let mut checker = CheckerState::with_options(
                 &file.arena,
-                &binder,
+                binder.as_ref(),
                 &query_cache,
                 file.file_name.clone(),
                 checker_options,
             );
+            checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+            checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            checker.ctx.set_current_file_idx(file_idx);
+            {
+                let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
+                for (sym_id, owner_idx) in &symbol_file_targets {
+                    targets.insert(*sym_id, *owner_idx);
+                }
+            }
 
             if !lib_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(lib_contexts.clone());

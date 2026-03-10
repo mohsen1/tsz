@@ -325,6 +325,59 @@ fn test_merged_program_residency_stats_deduplicate_shared_arena_handles() {
 }
 
 #[test]
+fn test_check_files_parallel_preserves_ts2454_for_named_import_from_export_equals_module() {
+    let files = vec![
+        (
+            "express.d.ts".to_string(),
+            r#"
+declare namespace Express { export interface Request {} }
+declare module "express" {
+    function e(): e.Express;
+    namespace e {
+        interface Request extends Express.Request { get(name: string): string; }
+        interface Express {}
+    }
+    export = e;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "consumer.ts".to_string(),
+            r#"
+import { Request } from "express";
+let x: Request;
+const y = x.get("a");
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let consumer = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "consumer.ts")
+        .expect("expected consumer.ts result");
+
+    assert!(
+        consumer.diagnostics.iter().any(|diag| diag.code == 2454),
+        "Expected TS2454 in consumer.ts. Actual diagnostics: {:#?}",
+        consumer.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)

@@ -189,6 +189,18 @@ pub(super) fn collect_diagnostics(
             .map(|file| Arc::clone(&file.arena))
             .collect()
     });
+    let symbol_file_targets: Arc<Vec<(tsz::binder::SymbolId, usize)>> = Arc::new(
+        program
+            .symbol_arenas
+            .iter()
+            .filter_map(|(sym_id, arena)| {
+                all_arenas
+                    .iter()
+                    .position(|file_arena| Arc::ptr_eq(file_arena, arena))
+                    .map(|file_idx| (*sym_id, file_idx))
+            })
+            .collect(),
+    );
 
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
@@ -455,6 +467,12 @@ pub(super) fn collect_diagnostics(
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        {
+            let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
+            for (sym_id, owner_idx) in symbol_file_targets.iter() {
+                targets.insert(*sym_id, *owner_idx);
+            }
+        }
         checker.prime_boxed_types();
     }
 
@@ -557,6 +575,7 @@ pub(super) fn collect_diagnostics(
                             lib_contexts: &lib_ctx_for_parallel,
                             all_arenas: &all_arenas,
                             all_binders: &all_binders,
+                            symbol_file_targets: &symbol_file_targets,
                             resolved_module_paths: &resolved_module_paths,
                             resolved_module_specifiers: &resolved_module_specifiers,
                             resolved_module_errors: &resolved_module_errors,
@@ -588,6 +607,7 @@ pub(super) fn collect_diagnostics(
                             lib_contexts: &lib_ctx_for_parallel,
                             all_arenas: &all_arenas,
                             all_binders: &all_binders,
+                            symbol_file_targets: &symbol_file_targets,
                             resolved_module_paths: &resolved_module_paths,
                             resolved_module_specifiers: &resolved_module_specifiers,
                             resolved_module_errors: &resolved_module_errors,
@@ -621,6 +641,7 @@ pub(super) fn collect_diagnostics(
                     lib_contexts: &lib_ctx_for_parallel,
                     all_arenas: &all_arenas,
                     all_binders: &all_binders,
+                    symbol_file_targets: &symbol_file_targets,
                     resolved_module_paths: &resolved_module_paths,
                     resolved_module_specifiers: &resolved_module_specifiers,
                     resolved_module_errors: &resolved_module_errors,
@@ -710,6 +731,12 @@ pub(super) fn collect_diagnostics(
             }
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
+            {
+                let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
+                for (sym_id, owner_idx) in symbol_file_targets.iter() {
+                    targets.insert(*sym_id, *owner_idx);
+                }
+            }
             checker
                 .ctx
                 .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
@@ -954,6 +981,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     lib_contexts: &'a [LibContext],
     all_arenas: &'a Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,
     all_binders: &'a Arc<Vec<Arc<BinderState>>>,
+    symbol_file_targets: &'a Arc<Vec<(tsz::binder::SymbolId, usize)>>,
     resolved_module_paths: &'a Arc<FxHashMap<(usize, String), usize>>,
     resolved_module_specifiers: &'a Arc<FxHashSet<(usize, String)>>,
     resolved_module_errors:
@@ -990,6 +1018,7 @@ pub(super) fn check_file_for_parallel<'a>(
         lib_contexts,
         all_arenas,
         all_binders,
+        symbol_file_targets,
         resolved_module_paths,
         resolved_module_specifiers,
         resolved_module_errors,
@@ -1040,6 +1069,12 @@ pub(super) fn check_file_for_parallel<'a>(
 
     checker.ctx.set_all_arenas(Arc::clone(all_arenas));
     checker.ctx.set_all_binders(Arc::clone(all_binders));
+    {
+        let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
+        for (sym_id, owner_idx) in symbol_file_targets.iter() {
+            targets.insert(*sym_id, *owner_idx);
+        }
+    }
     checker
         .ctx
         .set_resolved_module_paths(Arc::clone(resolved_module_paths));
