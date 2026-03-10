@@ -233,7 +233,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     left_sym_for_missing = Some(sym_id);
                     left_module_specifier = symbol.import_module.clone();
-                    let mut result = self.resolve_symbol_export(symbol, &right_name, &lib_binders);
+                    let mut result = self.resolve_symbol_export_for(
+                        Some(sym_id),
+                        symbol,
+                        &right_name,
+                        &lib_binders,
+                    );
                     // TYPE_ALIAS+ALIAS merge: look up alias_partner and
                     // resolve the member through the ALIAS symbol's namespace
                     if result.is_none() {
@@ -330,9 +335,12 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_with_libs(fallback_sym, &lib_binders)
         {
             // Use the helper to resolve the member from exports, members, or re-exports
-            if let Some(member_sym_id) =
-                self.resolve_symbol_export(symbol, &right_name, &lib_binders)
-            {
+            if let Some(member_sym_id) = self.resolve_symbol_export_for(
+                Some(fallback_sym),
+                symbol,
+                &right_name,
+                &lib_binders,
+            ) {
                 // Check value-only, but skip for namespaces since they can be used
                 // to navigate to types (e.g., Outer.Inner.Type)
                 if let Some(member_symbol) = self
@@ -390,8 +398,9 @@ impl<'a> CheckerState<'a> {
     /// 3. Re-exports (for imported namespaces)
     ///
     /// Returns `Some(member_sym_id)` if found, `None` otherwise.
-    fn resolve_symbol_export(
+    fn resolve_symbol_export_for(
         &mut self,
+        sym_id: Option<tsz_binder::SymbolId>,
         symbol: &tsz_binder::Symbol,
         member_name: &str,
         lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
@@ -418,11 +427,11 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(member_id);
             }
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(member_name)
-                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+            if let Some(local_sym_id) = self.ctx.binder.file_locals.get(member_name)
+                && let Some(sym) = self.ctx.binder.get_symbol(local_sym_id)
                 && sym.is_exported
             {
-                return Some(sym_id);
+                return Some(local_sym_id);
             }
         }
 
@@ -440,6 +449,15 @@ impl<'a> CheckerState<'a> {
                 self.resolve_reexported_member(module_specifier, member_name, lib_binders)
             {
                 return Some(reexported_sym_id);
+            }
+            // Cross-file fallback: resolve the relative module specifier from
+            // the ALIAS symbol's source file perspective.
+            if let Some(alias_id) = sym_id
+                && let Some(resolved) =
+                    self.ctx
+                        .resolve_alias_import_member(alias_id, module_specifier, member_name)
+            {
+                return Some(resolved);
             }
         }
 
