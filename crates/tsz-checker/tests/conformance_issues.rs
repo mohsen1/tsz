@@ -1140,6 +1140,28 @@ class C extends A implements B extends C {
     );
 }
 
+#[test]
+fn test_static_block_break_continue_cannot_target_outer_labels() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+function foo(v: number) {
+    label: while (v) {
+        class C {
+            static {
+                break label;
+            }
+        }
+    }
+}
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 1107),
+        "Expected TS1107 for jump from static block to outer label. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Forward-reference class relationships should not trigger TS2506.
 /// Derived extends Base, where Base is declared after Derived.
 /// The `class_instance_resolution_set` recursion guard should not be
