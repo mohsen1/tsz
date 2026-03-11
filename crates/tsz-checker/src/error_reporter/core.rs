@@ -282,35 +282,20 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_property_assignment_initializer(&self, anchor_idx: NodeIndex) -> bool {
-        let mut current = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
-        let mut guard = 0;
-
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-            if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                && let Some(prop) = self.ctx.arena.get_property_assignment(parent)
-                && prop.initializer == current
-            {
-                return true;
-            }
-            current = parent_idx;
-        }
-
-        false
+        let current = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        let Some(ext) = self.ctx.arena.get_extended(current) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && self
+                .ctx
+                .arena
+                .get_property_assignment(parent)
+                .is_some_and(|prop| prop.initializer == current)
     }
 
     fn direct_diagnostic_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
