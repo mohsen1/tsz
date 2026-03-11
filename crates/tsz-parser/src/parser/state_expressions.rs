@@ -270,17 +270,16 @@ impl ParserState {
         let mut saw_top_level_initializer = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            if depth == 1
-                && brace_depth == 0
-                && bracket_depth == 0
-                && matches!(
+            if depth == 1 && brace_depth == 0 && bracket_depth == 0 {
+                if matches!(
                     self.token(),
                     SyntaxKind::ColonToken | SyntaxKind::QuestionToken
                 )
-            {
-                saw_parameter_syntax = true;
-                if self.is_token(SyntaxKind::EqualsToken) {
-                    saw_top_level_initializer = true;
+                ) {
+                    saw_parameter_syntax = true;
+                    if self.is_token(SyntaxKind::EqualsToken) {
+                        saw_top_level_initializer = true;
+                    }
                 }
             }
             if self.is_token(SyntaxKind::OpenParenToken) {

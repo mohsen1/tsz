@@ -1280,7 +1280,8 @@ impl<'a> CheckerState<'a> {
         // Compound assignments also read the LHS value. For private setter-only
         // accessors, this triggers TS2806 ("Private accessor was defined without
         // a getter"). Evaluate in read context first.
-        let _ = self.get_type_of_node(left_idx);
+        let left_read_raw = self.get_type_of_node(left_idx);
+        let left_read_type = self.resolve_type_query_type(left_read_raw);
 
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
@@ -1331,25 +1332,32 @@ impl<'a> CheckerState<'a> {
             _ => "",
         };
 
-        if !op_str.is_empty() {
-            emitted_operator_error |= self.check_and_emit_nullish_binary_operands(
-                left_idx, right_idx, left_type, right_type, op_str,
-            );
-        }
+        let emitted_nullish_error = if !op_str.is_empty() {
+            self.check_and_emit_nullish_binary_operands(
+                left_idx,
+                right_idx,
+                left_read_type,
+                right_type,
+                op_str,
+            )
+        } else {
+            false
+        };
+        emitted_operator_error |= emitted_nullish_error;
 
         // TS2469: For += with symbol operands, emit when one side is symbol and the
         // other is string or any. Uses "+=" in the message (not "+").
         if operator == SyntaxKind::PlusEqualsToken as u16
-            && left_type != TypeId::ERROR
+            && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-            let left_is_symbol = evaluator.is_symbol_like(left_type);
+            let left_is_symbol = evaluator.is_symbol_like(left_read_type);
             let right_is_symbol = evaluator.is_symbol_like(right_type);
             if left_is_symbol || right_is_symbol {
-                let left_is_string_or_any = left_type == TypeId::ANY
-                    || left_type == TypeId::STRING
-                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_type);
+                let left_is_string_or_any = left_read_type == TypeId::ANY
+                    || left_read_type == TypeId::STRING
+                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_read_type);
                 let right_is_string_or_any = right_type == TypeId::ANY
                     || right_type == TypeId::STRING
                     || tsz_solver::type_queries::is_string_literal(self.ctx.types, right_type);
@@ -1384,14 +1392,14 @@ impl<'a> CheckerState<'a> {
         // was already emitted.
         if operator == SyntaxKind::PlusEqualsToken as u16
             && !emitted_operator_error
-            && left_type != TypeId::ERROR
+            && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
             // Evaluate types to resolve IndexAccess/Application types before checking.
             // e.g. `T[K]` where `T extends Record<K, number>` should resolve to `number`
             // so the += operator is correctly accepted.
-            let eval_left = self.evaluate_type_for_binary_ops(left_type);
+            let eval_left = self.evaluate_type_for_binary_ops(left_read_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
             let result = evaluator.evaluate(eval_left, eval_right, "+");
             if let tsz_solver::BinaryOpResult::TypeError { .. } = result {
@@ -1402,7 +1410,7 @@ impl<'a> CheckerState<'a> {
                 // "Operator '+=' cannot be applied to types 'boolean' and 'number'."
                 let left_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
                     self.ctx.types,
-                    left_type,
+                    left_read_type,
                 ));
                 let right_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
                     self.ctx.types,
@@ -1432,11 +1440,11 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::PercentEqualsToken as u16
                 || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
         );
-        if is_arithmetic_compound && !is_function_assignment {
+        if is_arithmetic_compound && !is_function_assignment && !emitted_nullish_error {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
-            if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+            if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 emitted_operator_error |=
-                    self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                    self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
             }
         }
 
@@ -1445,11 +1453,11 @@ impl<'a> CheckerState<'a> {
         if operator == SyntaxKind::AsteriskAsteriskEqualsToken as u16
             && (self.ctx.compiler_options.target as u32)
                 < (tsz_common::common::ScriptTarget::ES2016 as u32)
-            && left_type != TypeId::ANY
+            && left_read_type != TypeId::ANY
             && right_type != TypeId::ANY
-            && left_type != TypeId::UNKNOWN
+            && left_read_type != TypeId::UNKNOWN
             && right_type != TypeId::UNKNOWN
-            && self.is_subtype_of(left_type, TypeId::BIGINT)
+            && self.is_subtype_of(left_read_type, TypeId::BIGINT)
             && self.is_subtype_of(right_type, TypeId::BIGINT)
         {
             self.error_at_node_msg(
@@ -1473,10 +1481,10 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
                 || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
         );
-        if is_boolean_bitwise_compound && !is_function_assignment {
+        if is_boolean_bitwise_compound && !is_function_assignment && !emitted_nullish_error {
             // TS2447: For &=, |=, ^= with both boolean operands, emit special error
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-            let left_is_boolean = evaluator.is_boolean_like(left_type);
+            let left_is_boolean = evaluator.is_boolean_like(left_read_type);
             let right_is_boolean = evaluator.is_boolean_like(right_type);
             if left_is_boolean && right_is_boolean {
                 let (op_str, suggestion) = match operator {
@@ -1486,20 +1494,22 @@ impl<'a> CheckerState<'a> {
                 };
                 self.emit_boolean_operator_error(left_idx, op_str, suggestion);
                 emitted_operator_error = true;
-            } else if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+            } else if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 emitted_operator_error |=
-                    self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                    self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
             }
         } else if is_shift_compound
             && !is_function_assignment
-            && left_type != TypeId::ERROR
+            && !emitted_nullish_error
+            && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
             emitted_operator_error |=
-                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
         }
 
-        let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
+        let result_type =
+            self.compound_assignment_result_type(left_read_type, right_type, operator);
         let is_logical_assignment = matches!(
             operator,
             k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16

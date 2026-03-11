@@ -681,6 +681,7 @@ impl<'a> CheckerState<'a> {
             self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
 
             let mut conflicts = FxHashSet::default();
+            let mut propagate_type_alias_conflict_to_namespaces = false;
             let mut namespace_order_errors = FxHashSet::default();
 
             for i in 0..declarations.len() {
@@ -873,12 +874,27 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if Self::declarations_conflict(decl_flags, other_flags) {
+                        propagate_type_alias_conflict_to_namespaces |=
+                            (decl_flags & symbol_flags::TYPE_ALIAS) != 0
+                                || (other_flags & symbol_flags::TYPE_ALIAS) != 0;
                         if decl_is_local {
                             conflicts.insert(decl_idx);
                         }
                         if other_is_local {
                             conflicts.insert(other_idx);
                         }
+                    }
+                }
+            }
+
+            if propagate_type_alias_conflict_to_namespaces {
+                for &(decl_idx, decl_flags, is_local, _) in &declarations {
+                    if is_local
+                        && (decl_flags
+                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                            != 0
+                    {
+                        conflicts.insert(decl_idx);
                     }
                 }
             }

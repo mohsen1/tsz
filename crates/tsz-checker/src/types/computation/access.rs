@@ -726,6 +726,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let used_generic_element_resolution = result_type.is_none();
         let mut result_type = result_type.unwrap_or_else(|| {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
                 && self.is_generic_index_type(index_type)
@@ -813,6 +814,23 @@ impl<'a> CheckerState<'a> {
             }
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
+
+        if used_generic_element_resolution
+            && literal_index.is_none()
+            && self.ctx.no_unchecked_indexed_access()
+            && !self.ctx.skip_flow_narrowing
+            && result_type != TypeId::ERROR
+            && result_type != TypeId::ANY
+            && result_type != TypeId::UNKNOWN
+            && result_type != TypeId::NEVER
+            && self.split_nullish_type(result_type).1.is_none()
+        {
+            result_type = self
+                .ctx
+                .types
+                .factory()
+                .union(vec![result_type, TypeId::UNDEFINED]);
+        }
 
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index

@@ -11,6 +11,48 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn check_destructuring_default_initializer(
+        &mut self,
+        default_idx: NodeIndex,
+        target_type: TypeId,
+    ) {
+        if default_idx.is_none() {
+            return;
+        }
+
+        let prev_context = self.ctx.contextual_type;
+        if target_type != TypeId::ANY
+            && target_type != TypeId::NEVER
+            && target_type != TypeId::UNKNOWN
+            && !self.type_contains_error(target_type)
+        {
+            self.ctx.contextual_type =
+                self.contextual_type_option_for_expression(Some(target_type));
+        }
+        let _ = self.get_type_of_node(default_idx);
+        self.ctx.contextual_type = prev_context;
+    }
+
+    pub(crate) fn destructuring_target_type_from_initializer(
+        &mut self,
+        init_idx: NodeIndex,
+    ) -> TypeId {
+        let Some(init_node) = self.ctx.arena.get(init_idx) else {
+            return TypeId::ANY;
+        };
+
+        if init_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.ctx.arena.get_binary_expr(init_node)
+            && bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+        {
+            let target_type = self.get_type_of_assignment_target(bin.left);
+            self.check_destructuring_default_initializer(bin.right, target_type);
+            return target_type;
+        }
+
+        self.get_type_of_assignment_target(init_idx)
+    }
+
     pub(crate) fn contextual_object_literal_property_type(
         &mut self,
         contextual_type: TypeId,
@@ -544,6 +586,8 @@ impl<'a> CheckerState<'a> {
                     // case to prevent a spurious TS2304 for the property name identifier.
                     let value_type = if prop.initializer == prop.name {
                         TypeId::ANY
+                    } else if self.ctx.in_destructuring_target {
+                        self.destructuring_target_type_from_initializer(prop.initializer)
                     } else {
                         self.get_type_of_node(prop.initializer)
                     };
@@ -562,24 +606,6 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_A,
                         );
                     }
-
-                    // In destructuring assignment targets with defaults
-                    // (e.g. `{ a: target = default } = source`), the property type
-                    // for the target object should be the target variable's type,
-                    // not the assignment expression's type.  The assignment
-                    // expression `target = default` returns the default's type
-                    // which may differ from the target's declared type.
-                    let value_type = if self.ctx.in_destructuring_target
-                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
-                        && init_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                        && let Some(bin) = self.ctx.arena.get_binary_expr(init_node)
-                        && bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
-                    {
-                        // Use the target (LHS) type as the property type
-                        self.get_type_of_assignment_target(bin.left)
-                    } else {
-                        value_type
-                    };
 
                     // Restore context
                     self.ctx.contextual_type = prev_context;
@@ -820,9 +846,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type.or(property_context_type),
                     );
+                    let shorthand_sym = if self.ctx.in_destructuring_target {
+                        self.ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, shorthand_name_idx)
+                    } else {
+                        self.resolve_identifier_symbol(shorthand_name_idx)
+                    };
 
-                    let value_type = if self.resolve_identifier_symbol(shorthand_name_idx).is_none()
-                    {
+                    let value_type = if shorthand_sym.is_none() {
                         // Don't emit TS18004 for strict reserved words that require `:` syntax.
                         // Example: `{ class }` — parser already emits TS1005 "':' expected".
                         // Checker should not also emit TS18004 (cascading error).
@@ -900,6 +932,15 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         TypeId::ANY
+                    } else if self.ctx.in_destructuring_target {
+                        let target_type = self.get_type_of_assignment_target(shorthand_name_idx);
+                        if shorthand.equals_token {
+                            self.check_destructuring_default_initializer(
+                                shorthand.object_assignment_initializer,
+                                target_type,
+                            );
+                        }
+                        target_type
                     } else {
                         // Use shorthand_name_idx (the identifier) so that get_type_of_identifier
                         // is invoked, which calls check_flow_usage and can emit TS2454
@@ -913,7 +954,6 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type = prev_context;
 
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
-                        let shorthand_sym = self.resolve_identifier_symbol(shorthand_name_idx);
                         let has_uninitialized_value_decl = shorthand_sym.is_some_and(|sym_id| {
                             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                                 return false;

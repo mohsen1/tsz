@@ -3,6 +3,7 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -135,7 +136,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// - If the expression is the literal `null`/`undefined` keyword → TS18050
     /// - If the expression is a variable with a null/undefined type → TS18048/TS18047
-    fn emit_nullish_operand_error(&mut self, idx: NodeIndex, cause: TypeId) {
+    pub(crate) fn emit_nullish_operand_error(&mut self, idx: NodeIndex, cause: TypeId) {
         let is_literal = self.is_literal_null_or_undefined_node(idx);
 
         if is_literal {
@@ -153,6 +154,25 @@ impl<'a> CheckerState<'a> {
                 &[value_name],
             );
         } else {
+            if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    if let Some(name) = self.expression_text(idx) {
+                        let code = if cause == TypeId::NULL {
+                            diagnostic_codes::IS_POSSIBLY_NULL
+                        } else if cause == TypeId::UNDEFINED {
+                            diagnostic_codes::IS_POSSIBLY_UNDEFINED
+                        } else {
+                            diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+                        };
+                        self.error_at_node_msg(idx, code, &[&name]);
+                        return;
+                    }
+                } else if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                    self.report_nullish_object(idx, cause, false);
+                    return;
+                }
+            }
+
             // Variable/expression with nullish type → TS18047/TS18048/TS18049
             let name = self.expression_text(idx);
 
