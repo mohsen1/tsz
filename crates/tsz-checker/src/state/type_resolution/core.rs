@@ -1011,6 +1011,9 @@ impl<'a> CheckerState<'a> {
         if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
             return type_id;
         }
+        if let Some(type_id) = self.resolve_global_jsdoc_typedef_type(name) {
+            return type_id;
+        }
         if name == "await" {
             self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
             return TypeId::ERROR;

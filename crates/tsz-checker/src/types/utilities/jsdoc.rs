@@ -24,6 +24,76 @@ pub(crate) struct JsdocCallbackInfo {
     pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
 }
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_global_jsdoc_typedef_type(&mut self, name: &str) -> Option<TypeId> {
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+
+        if let Some(source_file) = self.ctx.arena.source_files.first() {
+            let comments = source_file.comments.clone();
+            let source_text = source_file.text.to_string();
+            if let Some(ty) =
+                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+            {
+                self.register_jsdoc_typedef_def(name, ty);
+                return Some(ty);
+            }
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return None;
+        };
+        let Some(all_binders) = self.ctx.all_binders.clone() else {
+            return None;
+        };
+
+        for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+
+            let comments = source_file.comments.clone();
+            let source_text = source_file.text.to_string();
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                arena.as_ref(),
+                binder.as_ref(),
+                self.ctx.types,
+                source_file.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.all_arenas = Some(all_arenas.clone());
+            checker.ctx.all_binders = Some(all_binders.clone());
+            checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+            checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+            checker.ctx.current_file_idx = file_idx;
+            if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
+                *checker.ctx.cross_file_symbol_targets.borrow_mut() =
+                    self.ctx.cross_file_symbol_targets.borrow().clone();
+            }
+
+            if let Some(ty) =
+                checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+            {
+                for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
+                    self.ctx
+                        .cross_file_symbol_targets
+                        .borrow_mut()
+                        .insert(sym_id, target_idx);
+                }
+                self.register_jsdoc_typedef_def(name, ty);
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
     fn source_file_data_for_node(
         &self,
         idx: NodeIndex,
