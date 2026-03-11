@@ -51,7 +51,8 @@ impl<'a> CheckerState<'a> {
         let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
             return;
         };
-        if let Some((_, pos)) = self.try_leading_jsdoc_with_pos(comments, init_node.pos, source_text)
+        if let Some((_, pos)) =
+            self.try_leading_jsdoc_with_pos(comments, init_node.pos, source_text)
             && let Some(comment) = comments
                 .iter()
                 .find(|c| c.pos == pos)
