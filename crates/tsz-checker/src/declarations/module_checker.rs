@@ -1041,11 +1041,7 @@ impl<'a> CheckerState<'a> {
                         &[&name_str],
                     );
                 } else {
-                    self.error_at_node_msg(
-                        name_idx,
-                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
-                        &[&name_str],
-                    );
+                    self.error_cannot_find_name_at(&name_str, name_idx);
                 }
             }
         }
