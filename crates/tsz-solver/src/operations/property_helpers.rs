@@ -25,6 +25,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         let mapped = self.interner().mapped_type(mapped_id);
 
+        if let Some(property_type) =
+            crate::type_queries::get_finite_mapped_property_type(self.interner(), mapped_id, prop_name)
+        {
+            return Some(PropertyAccessResult::simple(property_type));
+        }
+
+        if let Some(names) =
+            crate::type_queries::collect_finite_mapped_property_names(self.interner(), mapped_id)
+            && !names.contains(&prop_atom)
+        {
+            return Some(PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().mapped(mapped.as_ref().clone()),
+                property_name: prop_atom,
+            });
+        }
+
         // SPECIAL CASE: Mapped types over array-like sources
         // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
         // to an array type, array methods (pop, push, concat, etc.) should NOT be mapped
@@ -605,7 +621,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         instantiate_type(self.interner(), prop.type_id, &substitution);
                     let instantiated_write_type =
                         instantiate_type(self.interner(), prop.write_type, &substitution);
-
                     let read_type = self.optional_property_type(&PropertyInfo {
                         name: prop.name,
                         type_id: instantiated_read_type,

@@ -22,12 +22,14 @@ use std::sync::Arc;
 
 /// Builder for creating type error diagnostics.
 pub struct DiagnosticBuilder<'a> {
+    interner: &'a dyn TypeDatabase,
     formatter: TypeFormatter<'a>,
 }
 
 impl<'a> DiagnosticBuilder<'a> {
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         DiagnosticBuilder {
+            interner,
             formatter: TypeFormatter::new(interner).with_diagnostic_mode(),
         }
     }
@@ -41,8 +43,230 @@ impl<'a> DiagnosticBuilder<'a> {
         symbol_arena: &'a tsz_binder::SymbolArena,
     ) -> Self {
         DiagnosticBuilder {
+            interner,
             formatter: TypeFormatter::with_symbols(interner, symbol_arena).with_diagnostic_mode(),
         }
+    }
+
+    fn materialize_finite_mapped_type_for_display(&self, ty: TypeId) -> Option<TypeId> {
+        match self.interner.lookup(ty) {
+            Some(crate::types::TypeData::Mapped(mapped_id)) => {
+                let mapped = self.interner.mapped_type(mapped_id);
+                let names =
+                    crate::type_queries::collect_finite_mapped_property_names(
+                        self.interner,
+                        mapped_id,
+                    )?;
+                let mut names: Vec<_> = names.into_iter().collect();
+                names.sort_by(|a, b| self.interner.resolve_atom_ref(*a).cmp(&self.interner.resolve_atom_ref(*b)));
+
+                let mut properties = Vec::with_capacity(names.len());
+                for name in names {
+                    let property_name = self.interner.resolve_atom_ref(name).to_string();
+                    let type_id = crate::type_queries::get_finite_mapped_property_type(
+                        self.interner,
+                        mapped_id,
+                        &property_name,
+                    )?;
+                    let type_id = self.normalize_excess_display_type(type_id);
+                    let mut property = crate::PropertyInfo::new(name, type_id);
+                    property.optional =
+                        mapped.optional_modifier == Some(crate::MappedModifier::Add);
+                    property.readonly =
+                        mapped.readonly_modifier == Some(crate::MappedModifier::Add);
+                    properties.push(property);
+                }
+
+                Some(self.interner.object(properties))
+            }
+            Some(crate::types::TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                let mut changed = false;
+                let remapped: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        if let Some(materialized) =
+                            self.materialize_finite_mapped_type_for_display(member)
+                        {
+                            changed = true;
+                            materialized
+                        } else {
+                            member
+                        }
+                    })
+                    .collect();
+                changed.then(|| self.interner.intersection(remapped))
+            }
+            Some(crate::types::TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                let mut changed = false;
+                let remapped: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        if let Some(materialized) =
+                            self.materialize_finite_mapped_type_for_display(member)
+                        {
+                            changed = true;
+                            materialized
+                        } else {
+                            member
+                        }
+                    })
+                    .collect();
+                changed.then(|| self.interner.union(remapped))
+            }
+            _ => None,
+        }
+    }
+
+    fn normalize_excess_display_type(&self, ty: TypeId) -> TypeId {
+        let ty = crate::evaluate_type(self.interner, ty);
+        match self.interner.lookup(ty) {
+            Some(crate::types::TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let args: Vec<_> = app
+                    .args
+                    .iter()
+                    .map(|&arg| self.normalize_excess_display_type(arg))
+                    .collect();
+                if args == app.args {
+                    ty
+                } else {
+                    self.interner.application(app.base, args)
+                }
+            }
+            Some(crate::types::TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                let params: Vec<_> = shape
+                    .params
+                    .iter()
+                    .map(|param| crate::ParamInfo {
+                        type_id: self.normalize_excess_display_type(param.type_id),
+                        ..param.clone()
+                    })
+                    .collect();
+                let return_type = self.normalize_excess_display_type(shape.return_type);
+                if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
+                    && return_type == shape.return_type
+                {
+                    ty
+                } else {
+                    self.interner.function(crate::FunctionShape {
+                        type_params: shape.type_params.clone(),
+                        params,
+                        this_type: shape.this_type,
+                        return_type,
+                        type_predicate: shape.type_predicate.clone(),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    })
+                }
+            }
+            Some(crate::types::TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                self.interner.union_preserve_members(
+                    members
+                        .iter()
+                        .map(|&member| self.normalize_excess_display_type(member))
+                        .collect(),
+                )
+            }
+            Some(crate::types::TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                self.interner.intersection(
+                    members
+                        .iter()
+                        .map(|&member| self.normalize_excess_display_type(member))
+                        .collect(),
+                )
+            }
+            _ => ty,
+        }
+    }
+
+    fn split_optional_object_for_excess_display(&self, ty: TypeId) -> TypeId {
+        let ty = crate::evaluate_type(self.interner, ty);
+        if let Some(crate::types::TypeData::Union(list_id)) = self.interner.lookup(ty) {
+            let members = self.interner.type_list(list_id);
+            let non_undefined: Vec<_> = members
+                .iter()
+                .copied()
+                .filter(|member| *member != TypeId::UNDEFINED)
+                .collect();
+            if non_undefined.len() == 1 && non_undefined.len() != members.len() {
+                return non_undefined[0];
+            }
+        }
+        ty
+    }
+
+    fn split_wildcard_object_for_excess_display(&mut self, ty: TypeId) -> Option<String> {
+        let ty = self
+            .materialize_finite_mapped_type_for_display(ty)
+            .unwrap_or(ty);
+        let ty = self.split_optional_object_for_excess_display(ty);
+        let shape = crate::type_queries::get_object_shape(self.interner, ty)?;
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            return None;
+        }
+
+        let wildcard_name = self.interner.intern_string("*");
+        let mut wildcard_props = Vec::new();
+        let mut named_props = Vec::new();
+
+        for prop in &shape.properties {
+            let mut cloned = prop.clone();
+            cloned.type_id = self.normalize_excess_display_type(cloned.type_id);
+            cloned.write_type = self.normalize_excess_display_type(cloned.write_type);
+            if cloned.name == wildcard_name {
+                wildcard_props.push(cloned);
+            } else {
+                named_props.push(cloned);
+            }
+        }
+
+        if wildcard_props.is_empty() || named_props.is_empty() {
+            return None;
+        }
+
+        let named_obj = self.interner.object(named_props);
+        let wildcard_obj = self.interner.object(wildcard_props);
+        Some(format!(
+            "{} & {}",
+            self.formatter.format(named_obj),
+            self.formatter.format(wildcard_obj)
+        ))
+    }
+
+    fn format_excess_property_target(&mut self, target: TypeId) -> String {
+        if let Some(display) = self.split_wildcard_object_for_excess_display(target) {
+            return display;
+        }
+
+        if let Some(crate::types::TypeData::Intersection(list_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(list_id);
+            let mut changed = false;
+            let parts: Vec<String> = members
+                .iter()
+                .map(|&member| {
+                    if let Some(materialized) = self.materialize_finite_mapped_type_for_display(member)
+                    {
+                        changed = true;
+                        self.formatter.format(materialized).to_string()
+                    } else {
+                        self.formatter.format(member).to_string()
+                    }
+                })
+                .collect();
+            if changed {
+                return parts.join(" & ");
+            }
+        }
+
+        let target = self
+            .materialize_finite_mapped_type_for_display(target)
+            .unwrap_or(target);
+        self.formatter.format(target).to_string()
     }
 
     /// Create a diagnostic builder with access to definition store.
@@ -228,7 +452,7 @@ impl<'a> DiagnosticBuilder<'a> {
 
     /// Create an "Excess property" diagnostic.
     pub fn excess_property(&mut self, prop_name: &str, target: TypeId) -> TypeDiagnostic {
-        let target_str = self.formatter.format(target);
+        let target_str = self.format_excess_property_target(target);
         TypeDiagnostic::error(
             format!(
                 "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{target_str}'."

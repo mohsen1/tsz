@@ -512,11 +512,16 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(name) = self.get_property_name(prop.name) {
-                    // Compute type without contextual type
-                    let prev_context = self.ctx.contextual_type;
-                    self.ctx.contextual_type = None;
-                    let value_type = self.get_type_of_node(prop.initializer);
-                    self.ctx.contextual_type = prev_context;
+                    let value_type = self
+                        .extract_non_sensitive_object_type(prop.initializer)
+                        .unwrap_or_else(|| {
+                            // Compute type without contextual type
+                            let prev_context = self.ctx.contextual_type;
+                            self.ctx.contextual_type = None;
+                            let value_type = self.get_type_of_node(prop.initializer);
+                            self.ctx.contextual_type = prev_context;
+                            value_type
+                        });
 
                     let name_atom = self.ctx.types.intern_string(&name);
                     properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));

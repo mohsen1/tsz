@@ -73,6 +73,21 @@ pub(crate) fn instantiate_mapped_template_for_property(
     )
 }
 
+pub(crate) fn collect_finite_mapped_property_names(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+) -> Option<rustc_hash::FxHashSet<Atom>> {
+    tsz_solver::type_queries::collect_finite_mapped_property_names(db, mapped_id)
+}
+
+pub(crate) fn get_finite_mapped_property_type(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_finite_mapped_property_type(db, mapped_id, property_name)
+}
+
 #[cfg(test)]
 #[path = "../../../tests/state_checking.rs"]
 mod tests;

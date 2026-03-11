@@ -235,3 +235,201 @@ var style: IBookStyle = {
         "Expected function-property diagnostic after elaboration, got {ts2322:?}"
     );
 }
+
+#[test]
+fn test_deferred_mapped_intersection_preserves_contextual_property_types() {
+    let source = r#"
+type Action<TEvent extends { type: string }> = (ev: TEvent) => void;
+
+interface MachineConfig2<TEvent extends { type: string }> {
+  schema: {
+    events: TEvent;
+  };
+  on?: {
+    [K in TEvent["type"] as K extends Uppercase<string> ? K : never]?: Action<TEvent extends { type: K } ? TEvent : never>;
+  } & {
+    "*"?: Action<TEvent>;
+  };
+}
+
+declare function createMachine2<TEvent extends { type: string }>(
+  config: MachineConfig2<TEvent>
+): void;
+
+createMachine2({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "bar" },
+  },
+  on: {
+    FOO: (ev) => {
+      ev.type;
+    },
+  },
+});
+
+createMachine2({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "bar" },
+  },
+  on: {
+    bar: (ev) => {
+      ev;
+    },
+  },
+});
+"#;
+
+    let diagnostics = check_default(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2353 || diag.code == 7006)
+        .collect();
+
+    assert_eq!(
+        relevant.iter().filter(|diag| diag.code == 7006).count(),
+        1,
+        "Expected exactly one implicit-any diagnostic for the invalid lowercase handler, got diagnostics={relevant:?}"
+    );
+    assert_eq!(
+        relevant.iter().filter(|diag| diag.code == 2353).count(),
+        1,
+        "Expected exactly one excess-property error for lowercase key, got diagnostics={relevant:?}"
+    );
+    let ts2353 = relevant
+        .iter()
+        .find(|diag| diag.code == 2353)
+        .expect("expected TS2353 for lowercase key");
+    assert!(
+        ts2353.message_text.contains("'bar'"),
+        "Expected TS2353 for lowercase key, got {ts2353:?}"
+    );
+    assert!(
+        ts2353.message_text.contains("{ FOO?:")
+            || ts2353.message_text.contains(r#"& { "*"?:"#)
+            || ts2353.message_text.contains(r#"& { '*'?:"#),
+        "Expected TS2353 target to mention the mapped intersection, got {ts2353:?}"
+    );
+}
+
+#[test]
+fn test_contextual_function_object_property_intersection_sequence() {
+    let source = r#"
+type Action<TEvent extends { type: string }> = (ev: TEvent) => void;
+
+interface MachineConfig<TEvent extends { type: string }> {
+  schema: {
+    events: TEvent;
+  };
+  on?: {
+    [K in TEvent["type"]]?: Action<TEvent extends { type: K } ? TEvent : never>;
+  } & {
+    "*"?: Action<TEvent>;
+  };
+}
+
+declare function createMachine<TEvent extends { type: string }>(
+  config: MachineConfig<TEvent>
+): void;
+
+createMachine({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "BAR" },
+  },
+  on: {
+    FOO: (ev) => {
+      ev.type;
+    },
+  },
+});
+
+createMachine({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "BAR" },
+  },
+  on: {
+    "*": (ev) => {
+      ev.type;
+    },
+  },
+});
+
+interface MachineConfig2<TEvent extends { type: string }> {
+  schema: {
+    events: TEvent;
+  };
+  on?: {
+    [K in TEvent["type"] as K extends Uppercase<string> ? K : never]?: Action<TEvent extends { type: K } ? TEvent : never>;
+  } & {
+    "*"?: Action<TEvent>;
+  };
+}
+
+declare function createMachine2<TEvent extends { type: string }>(
+  config: MachineConfig2<TEvent>
+): void;
+
+createMachine2({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "bar" },
+  },
+  on: {
+    FOO: (ev) => {
+      ev.type;
+    },
+  },
+});
+
+createMachine2({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "bar" },
+  },
+  on: {
+    "*": (ev) => {
+      ev.type;
+    },
+  },
+});
+
+createMachine2({
+  schema: {
+    events: {} as { type: "FOO" } | { type: "bar" },
+  },
+  on: {
+    bar: (ev) => {
+      ev;
+    },
+  },
+});
+"#;
+
+    let diagnostics = check_default(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2353 || diag.code == 7006)
+        .collect();
+
+    assert_eq!(
+        relevant.iter().filter(|diag| diag.code == 7006).count(),
+        1,
+        "Expected exactly one implicit-any diagnostic in the full sequence, got diagnostics={relevant:?}"
+    );
+    assert_eq!(
+        relevant.iter().filter(|diag| diag.code == 2353).count(),
+        1,
+        "Expected exactly one excess-property error for lowercase key, got diagnostics={relevant:?}"
+    );
+    let ts2353 = relevant
+        .iter()
+        .find(|diag| diag.code == 2353)
+        .expect("expected TS2353 for lowercase key");
+    assert!(
+        ts2353.message_text.contains("'bar'"),
+        "Expected TS2353 for lowercase key, got {ts2353:?}"
+    );
+    assert!(
+        ts2353.message_text.contains("{ FOO?:")
+            || ts2353.message_text.contains(r#"& { "*"?:"#)
+            || ts2353.message_text.contains(r#"& { '*'?:"#),
+        "Expected TS2353 target to mention the filtered mapped intersection, got {ts2353:?}"
+    );
+}

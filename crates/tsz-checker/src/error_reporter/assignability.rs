@@ -890,7 +890,7 @@ impl<'a> CheckerState<'a> {
                 target_type,
             } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let target_str = self.format_type_diagnostic(*target_type);
+                let target_str = self.format_excess_property_target_type(*target_type);
                 let message = format_message(
                     diagnostic_messages::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
                     &[&prop_name, &target_str],
