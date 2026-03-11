@@ -7974,18 +7974,15 @@ type TypeHardcodedAsParameterWithoutReturnType<
     F extends keyof DataFetchFns[T]
 > = DataFetchFns[T][F];
 
-type FailingCombo<
+    type FailingCombo<
     T extends 'Boat',
     F extends keyof DataFetchFns[T]
 > = ReturnType<TypeHardcodedAsParameterWithoutReturnType<T, F>>;
         ",
     );
-    // tsc defers constraint checking for composite indexed-access type arguments
-    // like `DataFetchFns[T][F]` because the type parameters are not yet resolved
-    // and cannot be reliably checked against the constraint.
     assert!(
-        !has_error(&diagnostics, 2344),
-        "Should NOT emit TS2344 for composite indexed-access type arguments (tsc defers to instantiation).\nActual: {diagnostics:?}"
+        has_error(&diagnostics, 2344),
+        "Should emit TS2344 for composite indexed-access type arguments when their resolved base constraint is not callable.\nActual: {diagnostics:?}"
     );
 }
 

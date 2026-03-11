@@ -448,11 +448,53 @@ impl<'a> CheckerState<'a> {
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
                     if !is_bare_type_param {
                         // Composite type with type parameters (e.g., `T[K]`, `GetProps<C>`,
-                        // `Parameters<Target[K]>`). Defer constraint checking to
-                        // instantiation time — the type parameters are not yet resolved
-                        // and cannot be reliably checked against the constraint.
-                        // This avoids false positive TS2344 in conditional type narrowing
-                        // contexts where the true branch narrows the type parameter.
+                        // `Parameters<Target[K]>`). Prefer checking against its resolved
+                        // base constraint when one exists; otherwise defer to instantiation
+                        // time. This matches tsc for generic indexed-access cases like
+                        // `ReturnType<DataFetchFns[T][F]>` while still avoiding false
+                        // positives for unconstrained composite generics.
+                        if let Some(base) = base_constraint_type
+                            && base != TypeId::UNKNOWN
+                            && base != type_arg
+                        {
+                            let constraint_resolved = self.resolve_lazy_type(constraint);
+                            let mut subst = tsz_solver::TypeSubstitution::new();
+                            for (j, p) in type_params.iter().enumerate() {
+                                if let Some(&arg) = type_args.get(j) {
+                                    subst.insert(p.name, arg);
+                                }
+                            }
+                            let inst_constraint = if subst.is_empty() {
+                                constraint_resolved
+                            } else {
+                                tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    constraint_resolved,
+                                    &subst,
+                                )
+                            };
+                            if query::contains_type_parameters(self.ctx.types, inst_constraint) {
+                                continue;
+                            }
+
+                            let db = self.ctx.types.as_type_database();
+                            let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
+                            let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
+                                || self.satisfies_array_like_constraint(base, inst_constraint);
+                            if !is_satisfied {
+                                is_satisfied = self.is_function_constraint(original_constraint)
+                                    && tsz_solver::type_queries::is_callable_type(db, base);
+                            }
+                            if !is_satisfied
+                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                            {
+                                self.error_type_constraint_not_satisfied(
+                                    type_arg,
+                                    inst_constraint,
+                                    arg_idx,
+                                );
+                            }
+                        }
                         continue;
                     }
                     if is_bare_type_param && let Some(base) = base_constraint_type {
