@@ -250,15 +250,33 @@ impl<'a> CheckerState<'a> {
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
                 {
                     let left_type = self.get_type_of_node(left_idx);
-                    // Right operand: use left type (minus nullish) as contextual type
                     let prev_context = self.ctx.contextual_type;
-                    let evaluated_left = self.evaluate_type_with_env(left_type);
-                    let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
-                    if non_nullish != TypeId::NEVER && non_nullish != TypeId::UNKNOWN {
-                        self.ctx.contextual_type = Some(non_nullish);
+                    // Right operand: prefer the whole-expression contextual type
+                    // inherited from the parent (e.g. assignment target). Fall back
+                    // to the left operand with nullish removed when there is no outer
+                    // context.
+                    if prev_context.is_none() {
+                        let evaluated_left = self.evaluate_type_with_env(left_type);
+                        let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
+                        if non_nullish != TypeId::NEVER && non_nullish != TypeId::UNKNOWN {
+                            self.ctx.contextual_type = Some(non_nullish);
+                        }
                     }
                     let right_type = self.get_type_of_node(right_idx);
                     self.ctx.contextual_type = prev_context;
+
+                    if let Some(contextual_type) = prev_context
+                        && right_type != TypeId::ANY
+                        && right_type != TypeId::ERROR
+                        && right_type != TypeId::UNKNOWN
+                    {
+                        let _ = self.check_assignable_or_report_at_exact_anchor(
+                            right_type,
+                            contextual_type,
+                            right_idx,
+                            right_idx,
+                        );
+                    }
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);

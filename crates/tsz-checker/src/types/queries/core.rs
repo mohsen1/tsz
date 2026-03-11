@@ -575,6 +575,50 @@ impl<'a> CheckerState<'a> {
         ident.escaped_text == "globalThis"
     }
 
+    /// Check if a node is an ambient global object alias that should resolve through
+    /// the global property table like `globalThis`.
+    ///
+    /// This intentionally accepts `self` and `window` only when they resolve to an
+    /// ambient/global symbol rather than a same-file local binding.
+    pub(crate) fn is_global_this_like_expression(&self, idx: NodeIndex) -> bool {
+        if self.is_global_this_expression(idx) {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        if !matches!(ident.escaped_text.as_str(), "self" | "window") {
+            return false;
+        }
+
+        if let Some(sym_id) = self.resolve_identifier_symbol(idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let mut same_file_decl = symbol
+                .declarations
+                .iter()
+                .copied()
+                .any(|decl_idx| self.ctx.arena.get(decl_idx).is_some());
+
+            if !same_file_decl
+                && symbol.value_declaration != NodeIndex::NONE
+                && self.ctx.arena.get(symbol.value_declaration).is_some()
+            {
+                same_file_decl = true;
+            }
+
+            if same_file_decl {
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// Check if a name is a known global value (e.g., console, Math, JSON).
     /// These are globals that should be available in most JavaScript environments.
     pub(crate) fn is_known_global_value_name(&self, name: &str) -> bool {

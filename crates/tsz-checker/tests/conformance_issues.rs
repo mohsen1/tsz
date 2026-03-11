@@ -9901,3 +9901,39 @@ both[sym] = 'not ok';
         "Expected the incompatible write to the shared numeric slot to stay TS2322.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_js_global_element_access_or_fallback_uses_contextual_target() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.js",
+        r#"
+var Common = {};
+globalThis["Common"] = globalThis["Common"] || {};
+/**
+ * @param {string} string
+ * @return {string}
+ */
+Common.localize = function (string) {
+    return string;
+};
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2741_count = diagnostics.iter().filter(|(code, _)| *code == 2741).count();
+    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+
+    assert_eq!(
+        ts2741_count, 1,
+        "Expected the JS global element-access `||` assignment to fail with one TS2741.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts7053_count, 0,
+        "Did not expect TS7053 for globalThis[\"Common\"] once it resolves through the global property path.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

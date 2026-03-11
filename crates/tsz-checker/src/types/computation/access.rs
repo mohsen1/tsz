@@ -168,7 +168,7 @@ impl<'a> CheckerState<'a> {
             .or(numeric_string_index);
 
         if let Some(name) = literal_string.as_deref()
-            && self.is_global_this_expression(access.expression)
+            && self.is_global_this_like_expression(access.expression)
         {
             // For element access (globalThis['y']), tsc reports TS2339 at the full
             // expression span. For property access (globalThis.y), at the property name.

@@ -1565,6 +1565,81 @@ impl<'a> CheckerState<'a> {
     /// Check if a type name is a built-in mapped type utility.
     /// These are standard TypeScript utility types that transform other types.
     /// When used with type arguments, they should not cause "cannot find type" errors.
+    fn augment_js_global_value_type_with_expandos(
+        &mut self,
+        root_name: &str,
+        sym_id: SymbolId,
+        base_type: TypeId,
+    ) -> TypeId {
+        use rustc_hash::FxHashSet;
+        use tsz_solver::{ObjectShape, PropertyInfo};
+
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return base_type;
+        }
+
+        let mut expando_props: FxHashSet<String> = FxHashSet::default();
+
+        if let Some(props) = self.ctx.binder.expando_properties.get(root_name) {
+            expando_props.extend(props.iter().cloned());
+        }
+
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if let Some(props) = binder.expando_properties.get(root_name) {
+                    expando_props.extend(props.iter().cloned());
+                }
+            }
+        }
+
+        if expando_props.is_empty() {
+            return base_type;
+        }
+
+        let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            base_type,
+        ) else {
+            return base_type;
+        };
+
+        let mut properties = shape.properties.clone();
+        let mut changed = false;
+
+        for prop_name in expando_props {
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+            if properties.iter().any(|prop| prop.name == prop_atom) {
+                continue;
+            }
+
+            properties.push(PropertyInfo {
+                name: prop_atom,
+                type_id: TypeId::ANY,
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: Some(sym_id),
+                declaration_order: properties.len() as u32,
+            });
+            changed = true;
+        }
+
+        if !changed {
+            return base_type;
+        }
+
+        self.ctx.types.factory().object_with_index(ObjectShape {
+            flags: shape.flags,
+            properties,
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+            symbol: shape.symbol.or(Some(sym_id)),
+        })
+    }
+
     pub(crate) fn resolve_global_this_property_type(
         &mut self,
         name: &str,
@@ -1590,7 +1665,8 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            return self.get_type_of_symbol(sym_id);
+            let base_type = self.get_type_of_symbol(sym_id);
+            return self.augment_js_global_value_type_with_expandos(name, sym_id, base_type);
         }
 
         // Self-reference: `globalThis.globalThis` resolves to `typeof globalThis`.
