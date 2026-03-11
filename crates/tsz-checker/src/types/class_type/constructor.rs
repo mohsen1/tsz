@@ -34,6 +34,29 @@ struct AccessorAggregate {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn class_constructor_display_name(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> String {
+        if class.name.is_some()
+            && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
+        {
+            return ident.escaped_text.clone();
+        }
+
+        if let Some(parent_idx) = self.ctx.arena.get_extended(class_idx).map(|ext| ext.parent)
+            && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node)
+            && let Some(name_ident) = self.ctx.arena.get_identifier_at(var_decl.name)
+        {
+            return name_ident.escaped_text.clone();
+        }
+
+        "(Anonymous class)".to_string()
+    }
+
     /// Get the constructor type of a class declaration.
     ///
     /// This is the type that the class constructor has. It includes:
@@ -107,11 +130,18 @@ impl<'a> CheckerState<'a> {
 
         // Register constructor type -> DefId(ClassConstructor) so the formatter
         // displays it as "typeof ClassName" instead of expanding the object shape.
-        if result != TypeId::ERROR
-            && let Some(sym_id) = current_sym
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-        {
-            let name = self.ctx.types.intern_string(&symbol.escaped_name);
+        if result != TypeId::ERROR {
+            let (name, symbol_id) = if let Some(sym_id) = current_sym
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                (
+                    self.ctx.types.intern_string(&symbol.escaped_name),
+                    Some(sym_id.0),
+                )
+            } else {
+                let display_name = self.class_constructor_display_name(class_idx, class);
+                (self.ctx.types.intern_string(&display_name), None)
+            };
             let ctor_def_id = self
                 .ctx
                 .definition_store
@@ -128,7 +158,7 @@ impl<'a> CheckerState<'a> {
                     exports: Vec::new(),
                     file_id: None,
                     span: None,
-                    symbol_id: Some(sym_id.0),
+                    symbol_id,
                 });
             self.ctx
                 .definition_store
