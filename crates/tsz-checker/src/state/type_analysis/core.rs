@@ -855,9 +855,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_type_query_import_type_symbol(&self, idx: NodeIndex) -> Option<u32> {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
             return None;
         }

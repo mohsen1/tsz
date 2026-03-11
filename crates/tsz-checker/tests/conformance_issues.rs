@@ -1549,14 +1549,13 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
             })
             .collect();
         binder.merge_lib_contexts_into_binder(&raw_contexts);
-        vec![CheckerLibContext {
-            arena: Arc::clone(&lib_files[0].arena),
-            binder: Arc::new({
-                let mut merged = BinderState::new();
-                merged.merge_lib_contexts_into_binder(&raw_contexts);
-                merged
-            }),
-        }]
+        lib_files
+            .iter()
+            .map(|lib| CheckerLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect()
     };
     binder.bind_source_file(parser.get_arena(), root);
 
