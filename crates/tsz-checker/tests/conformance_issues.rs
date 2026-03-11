@@ -10020,3 +10020,41 @@ Common.localize = function (string) {
         "Did not expect TS7053 for globalThis[\"Common\"] once it resolves through the global property path.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_intersection_index_signature_diagnostics_preserve_declared_identifier_annotations() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type A = { a: string };
+type B = { b: string };
+
+declare let sb1: { x: A } & { y: B };
+declare let tb1: { [key: string]: A };
+tb1 = sb1;
+
+declare let ss: { a: string } & { b: number };
+declare let tt: { [key: string]: string };
+tt = ss;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '{ x: A; } & { y: B; }' is not assignable")
+        }),
+        "Expected TS2322 to preserve the declared intersection source type for `sb1`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '{ a: string; } & { b: number; }' is not assignable")
+        }),
+        "Expected TS2322 to preserve the declared intersection source type for `ss`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

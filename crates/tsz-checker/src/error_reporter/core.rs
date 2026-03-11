@@ -633,11 +633,15 @@ impl<'a> CheckerState<'a> {
         Some(expr_idx)
     }
 
-    pub(crate) fn declared_type_annotation_text_for_expression(
+    fn declared_type_annotation_text_for_expression_with_options(
         &self,
         expr_idx: NodeIndex,
+        allow_object_shapes: bool,
     ) -> Option<String> {
-        fn sanitize_type_annotation_text(text: String) -> Option<String> {
+        fn sanitize_type_annotation_text(
+            text: String,
+            allow_object_shapes: bool,
+        ) -> Option<String> {
             let mut text = text.trim().trim_start_matches(':').trim().to_string();
             // If the extracted text contains a newline, take only the first line —
             // the node span may extend past the declaration.
@@ -663,7 +667,7 @@ impl<'a> CheckerState<'a> {
                 text.pop();
                 text = text.trim_end().to_string();
             }
-            if text.starts_with('{') || text.starts_with('[') {
+            if !allow_object_shapes && (text.starts_with('{') || text.starts_with('[')) {
                 return None;
             }
             let open_count = text.chars().filter(|&ch| ch == '(').count();
@@ -753,7 +757,7 @@ impl<'a> CheckerState<'a> {
             {
                 return self
                     .node_text(param.type_annotation)
-                    .and_then(sanitize_type_annotation_text);
+                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes));
             }
 
             if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
@@ -761,11 +765,84 @@ impl<'a> CheckerState<'a> {
             {
                 return self
                     .node_text(var_decl.type_annotation)
-                    .and_then(sanitize_type_annotation_text);
+                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes));
             }
         }
 
         None
+    }
+
+    pub(crate) fn declared_type_annotation_text_for_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        self.declared_type_annotation_text_for_expression_with_options(expr_idx, false)
+    }
+
+    fn declared_diagnostic_source_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        self.declared_type_annotation_text_for_expression_with_options(expr_idx, true)
+    }
+
+    fn should_prefer_declared_source_annotation_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        expr_type: TypeId,
+        annotation_text: &str,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let display_type = self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
+        let formatted = self.format_type_for_assignability_message(display_type);
+        let resolved = self.resolve_type_for_property_access(display_type);
+        let evaluated = self.judge_evaluate(resolved);
+        let resolver =
+            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+        let has_index_signature = resolver.has_index_signature(
+            evaluated,
+            tsz_solver::objects::index_signatures::IndexKind::String,
+        ) || resolver.has_index_signature(
+            evaluated,
+            tsz_solver::objects::index_signatures::IndexKind::Number,
+        );
+        if !formatted.starts_with('{') && !has_index_signature {
+            return false;
+        }
+
+        let annotation = annotation_text.trim();
+        annotation.contains('&') || !annotation.starts_with('{')
+    }
+
+    fn format_declared_annotation_for_diagnostic(&self, annotation_text: &str) -> String {
+        let mut formatted = annotation_text.trim().to_string();
+        if formatted.contains(':') {
+            formatted = formatted.replace(" }", "; }");
+        }
+        formatted
+    }
+
+    pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
+        let mut formatter = tsz_solver::TypeFormatter::with_symbols(
+            self.ctx.types,
+            &self.ctx.binder.symbols,
+        )
+        .with_namespace_module_names(&self.ctx.namespace_module_names)
+        .with_diagnostic_mode();
+        formatter.format(ty).into_owned()
+    }
+
+    pub(crate) fn format_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
+        if self.ctx.definition_store.find_def_for_type(ty).is_none()
+            && self.ctx.definition_store.find_type_alias_by_body(ty).is_some()
+        {
+            return self.format_type_diagnostic_structural(ty);
+        }
+        self.format_type_diagnostic(ty)
     }
 
     fn jsdoc_annotated_expression_display(
@@ -891,6 +968,16 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             if expr_type != TypeId::ERROR {
+                if let Some(annotation_text) =
+                    self.declared_diagnostic_source_annotation_text(expr_idx)
+                    && self.should_prefer_declared_source_annotation_display(
+                        expr_idx,
+                        expr_type,
+                        &annotation_text,
+                    )
+                {
+                    return self.format_declared_annotation_for_diagnostic(&annotation_text);
+                }
                 let display_type =
                     if self.should_widen_enum_member_assignment_source(expr_type, target) {
                         self.widen_enum_member_type(expr_type)
@@ -931,6 +1018,17 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
+            if expr_type != TypeId::ERROR
+                && let Some(annotation_text) =
+                    self.declared_diagnostic_source_annotation_text(expr_idx)
+                && self.should_prefer_declared_source_annotation_display(
+                    expr_idx,
+                    expr_type,
+                    &annotation_text,
+                )
+            {
+                return self.format_declared_annotation_for_diagnostic(&annotation_text);
+            }
             let display_type = if expr_type != TypeId::ERROR {
                 let widened_expr_type = self.widen_type_for_display(expr_type);
                 if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
