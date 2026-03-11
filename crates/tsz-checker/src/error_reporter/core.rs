@@ -257,6 +257,12 @@ impl<'a> CheckerState<'a> {
 
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
         let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && self.is_assignment_operator(binary.operator_token)
+        {
+            return None;
+        }
         let is_expression_like = matches!(
             node.kind,
             k if k == SyntaxKind::Identifier as u16
@@ -437,10 +443,6 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
-                return display;
-            }
-
             if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
@@ -462,6 +464,10 @@ impl<'a> CheckerState<'a> {
                     };
                 return self.format_assignability_type_for_message(display_type, target);
             }
+
+            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
         }
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
@@ -469,10 +475,6 @@ impl<'a> CheckerState<'a> {
                 && (self.assignment_source_is_return_expression(anchor_idx)
                     || self.is_literal_sensitive_assignment_target(target))
             {
-                return display;
-            }
-
-            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
                 return display;
             }
 
@@ -495,6 +497,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 source
             };
+
             if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
@@ -502,6 +505,13 @@ impl<'a> CheckerState<'a> {
             {
                 return self.format_assignability_type_for_message(display_type, target);
             }
+
+            if expr_type == TypeId::ERROR
+                && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
+            {
+                return display;
+            }
+
             let display_type =
                 if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
                     let evaluated = self.evaluate_type_for_assignability(display_type);
@@ -832,22 +842,41 @@ impl<'a> CheckerState<'a> {
     fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
         let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-        let mut parts = Vec::new();
-        let mut current = sym_id;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut parts = vec![symbol.escaped_name.clone()];
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied()?
+        };
+        let mut current = self.ctx.arena.get_extended(decl_idx)?.parent;
 
-        while current != tsz_binder::SymbolId::NONE {
-            let symbol = self.ctx.binder.get_symbol(current)?;
-            parts.push(symbol.escaped_name.clone());
-            current = symbol.parent;
-            if current != tsz_binder::SymbolId::NONE
-                && let Some(parent) = self.ctx.binder.get_symbol(current)
-                && (parent.flags
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_decl) = self.ctx.arena.get_module(node)
+                && let Some(name) = self.ctx.arena.get_identifier_text(module_decl.name)
+            {
+                parts.push(name.to_string());
+            }
+
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+
+        if parts.len() == 1 {
+            let mut current = symbol.parent;
+            while current != tsz_binder::SymbolId::NONE {
+                let parent = self.ctx.binder.get_symbol(current)?;
+                if (parent.flags
                     & (tsz_binder::symbol_flags::NAMESPACE_MODULE
                         | tsz_binder::symbol_flags::VALUE_MODULE
                         | tsz_binder::symbol_flags::ENUM))
                     == 0
-            {
-                break;
+                {
+                    break;
+                }
+                parts.push(parent.escaped_name.clone());
+                current = parent.parent;
             }
         }
 
