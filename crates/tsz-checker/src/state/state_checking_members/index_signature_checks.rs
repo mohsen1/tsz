@@ -3,6 +3,7 @@
 //! Extracted from `member_access.rs` to keep files focused and under the
 //! 2000-line threshold.
 
+use crate::query_boundaries::flow_analysis as flow_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -175,6 +176,10 @@ impl<'a> CheckerState<'a> {
         let mut static_string_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_number_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_symbol_index_nodes: Vec<NodeIndex> = Vec::new();
+        let mut synthesized_instance_string_index_types: Vec<TypeId> = Vec::new();
+        let mut synthesized_instance_number_index_types: Vec<TypeId> = Vec::new();
+        let mut synthesized_static_string_index_types: Vec<TypeId> = Vec::new();
+        let mut synthesized_static_number_index_types: Vec<TypeId> = Vec::new();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -182,6 +187,36 @@ impl<'a> CheckerState<'a> {
             };
 
             if member_node.kind != syntax_kind_ext::INDEX_SIGNATURE {
+                if let Some((key_type, value_type, is_static)) =
+                    self.synthesized_computed_member_index_info(member_idx)
+                {
+                    match key_type {
+                        TypeId::STRING => {
+                            if is_static {
+                                synthesized_static_string_index_types.push(value_type);
+                            } else {
+                                synthesized_instance_string_index_types.push(value_type);
+                            }
+                        }
+                        TypeId::NUMBER => {
+                            if is_static {
+                                synthesized_static_number_index_types.push(value_type);
+                            } else {
+                                synthesized_instance_number_index_types.push(value_type);
+                            }
+                        }
+                        TypeId::ANY => {
+                            if is_static {
+                                synthesized_static_string_index_types.push(value_type);
+                                synthesized_static_number_index_types.push(value_type);
+                            } else {
+                                synthesized_instance_string_index_types.push(value_type);
+                                synthesized_instance_number_index_types.push(value_type);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 continue;
             }
 
@@ -293,6 +328,46 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let synthesized_instance_string_value_type =
+            if !synthesized_instance_string_index_types.is_empty() {
+                Some(flow_query::union_types(
+                    self.ctx.types,
+                    synthesized_instance_string_index_types.clone(),
+                ))
+            } else {
+                None
+            };
+        let synthesized_instance_number_value_type =
+            if !synthesized_instance_number_index_types.is_empty() {
+                Some(flow_query::union_types(
+                    self.ctx.types,
+                    synthesized_instance_number_index_types.clone(),
+                ))
+            } else {
+                None
+            };
+
+        if string_index_nodes.is_empty()
+            && let Some(value_type) = synthesized_instance_string_value_type
+        {
+            index_info.string_index = Some(tsz_solver::IndexSignature {
+                key_type: TypeId::STRING,
+                value_type,
+                readonly: false,
+                param_name: None,
+            });
+        }
+        if number_index_nodes.is_empty()
+            && let Some(value_type) = synthesized_instance_number_value_type
+        {
+            index_info.number_index = Some(tsz_solver::IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type,
+                readonly: false,
+                param_name: None,
+            });
+        }
+
         // Extract static index signature value types for TS2411 checking.
         let static_string_value_type = if !static_string_index_nodes.is_empty() {
             let node_idx = static_string_index_nodes[0];
@@ -302,6 +377,11 @@ impl<'a> CheckerState<'a> {
                 .and_then(|n| self.ctx.arena.get_index_signature(n))
                 .filter(|sig| sig.type_annotation.is_some())
                 .map(|sig| self.get_type_from_type_node(sig.type_annotation))
+        } else if !synthesized_static_string_index_types.is_empty() {
+            Some(flow_query::union_types(
+                self.ctx.types,
+                synthesized_static_string_index_types,
+            ))
         } else {
             None
         };
@@ -313,6 +393,11 @@ impl<'a> CheckerState<'a> {
                 .and_then(|n| self.ctx.arena.get_index_signature(n))
                 .filter(|sig| sig.type_annotation.is_some())
                 .map(|sig| self.get_type_from_type_node(sig.type_annotation))
+        } else if !synthesized_static_number_index_types.is_empty() {
+            Some(flow_query::union_types(
+                self.ctx.types,
+                synthesized_static_number_index_types,
+            ))
         } else {
             None
         };
@@ -570,15 +655,30 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let is_numeric_property = prop_name.parse::<f64>().is_ok();
-
-            // TSC preserves the original quote style for string-literal property
-            // names in TS2411 diagnostics.
-            let diag_prop_name = if let Some(name_node) = self.ctx.arena.get(name_idx)
-                && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            let computed_key_type = if let Some(name_node) = self.ctx.arena.get(name_idx)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
             {
-                self.node_text(name_idx)
-                    .unwrap_or_else(|| prop_name.clone())
+                Some(self.get_type_of_node(computed.expression))
+            } else {
+                None
+            };
+            let is_numeric_property = prop_name.parse::<f64>().is_ok()
+                || computed_key_type.is_some_and(|ty| matches!(ty, TypeId::NUMBER | TypeId::ANY));
+
+            // TSC preserves the original text for computed names and the original
+            // quote style for string-literal property names in TS2411 diagnostics.
+            let diag_prop_name = if let Some(name_node) = self.ctx.arena.get(name_idx) {
+                if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    self.node_text(name_idx)
+                        .map(|text| text.trim_end_matches(':').to_string())
+                        .unwrap_or_else(|| prop_name.clone())
+                } else if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                    self.node_text(name_idx)
+                        .unwrap_or_else(|| prop_name.clone())
+                } else {
+                    prop_name.clone()
+                }
             } else {
                 prop_name.clone()
             };
@@ -589,12 +689,14 @@ impl<'a> CheckerState<'a> {
             let applicable_number_value = if is_static_member {
                 static_number_value_type
             } else {
-                index_info.number_index.as_ref().map(|idx| idx.value_type)
+                synthesized_instance_number_value_type
+                    .or_else(|| index_info.number_index.as_ref().map(|idx| idx.value_type))
             };
             let applicable_string_value = if is_static_member {
                 static_string_value_type
             } else {
-                index_info.string_index.as_ref().map(|idx| idx.value_type)
+                synthesized_instance_string_value_type
+                    .or_else(|| index_info.string_index.as_ref().map(|idx| idx.value_type))
             };
 
             // Check against number index signature first (for numeric properties)
@@ -750,6 +852,98 @@ impl<'a> CheckerState<'a> {
     fn is_symbol_or_unique_symbol(&self, type_id: TypeId) -> bool {
         use crate::query_boundaries::type_checking as query;
         query::is_symbol_or_unique_symbol(self.ctx.types, type_id)
+    }
+
+    fn synthesized_computed_member_index_info(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<(TypeId, TypeId, bool)> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        let (name_idx, value_type, is_static) = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let prop = self.ctx.arena.get_property_decl(member_node)?;
+            let is_static = self.has_static_modifier(&prop.modifiers);
+            let value_type = if let Some(declared_type) =
+                self.effective_class_property_declared_type(member_idx, prop)
+            {
+                declared_type
+            } else {
+                self.get_type_of_node(member_idx)
+            };
+            (prop.name, value_type, is_static)
+        } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            let method = self.ctx.arena.get_method_decl(member_node)?;
+            (
+                method.name,
+                self.get_type_of_function(member_idx),
+                self.has_static_modifier(&method.modifiers),
+            )
+        } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            let accessor = self.ctx.arena.get_accessor(member_node)?;
+            let value_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                if accessor.type_annotation.is_some() {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                } else {
+                    self.infer_getter_return_type(accessor.body)
+                }
+            } else {
+                let type_ann = accessor
+                    .parameters
+                    .nodes
+                    .first()
+                    .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                    .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                    .map(|param| param.type_annotation)
+                    .unwrap_or(NodeIndex::NONE);
+                if type_ann.is_some() {
+                    self.get_type_from_type_node(type_ann)
+                } else {
+                    self.get_type_of_node(member_idx)
+                }
+            };
+            (
+                accessor.name,
+                value_type,
+                self.has_static_modifier(&accessor.modifiers),
+            )
+        } else {
+            return None;
+        };
+
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+        if !self.computed_name_uses_entity_expression(computed.expression) {
+            return None;
+        }
+
+        let key_type = self.get_type_of_node(computed.expression);
+        if !matches!(key_type, TypeId::STRING | TypeId::NUMBER | TypeId::ANY) {
+            return None;
+        }
+        if self.type_contains_error(value_type) {
+            return None;
+        }
+
+        Some((key_type, value_type, is_static))
+    }
+
+    fn computed_name_uses_entity_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return true;
+        }
+        if expr_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+        {
+            return self.computed_name_uses_entity_expression(access.expression);
+        }
+        false
     }
 }
 

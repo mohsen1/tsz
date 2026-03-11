@@ -339,6 +339,8 @@ impl<'a> CheckerContext<'a> {
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
     /// Exceptions:
+    /// - TS2411 uses (start ^ `message_hash`, code) to allow a single property to
+    ///   fail against both string and number index signatures at the same span.
     /// - TS2430 uses (start ^ `message_hash`, code) to allow multiple
     ///   "incorrectly extends" errors at the same interface name when an interface
     ///   incompatibly extends several distinct bases.
@@ -365,9 +367,10 @@ impl<'a> CheckerContext<'a> {
         }
 
         // Check if we've already emitted this diagnostic
-        let key = if code == 2430 || code == 2536 {
+        let key = if code == 2411 || code == 2430 || code == 2536 {
             // TS2430: an interface can fail to correctly extend multiple bases, each producing
             // a separate diagnostic at the same name position with a different message.
+            // TS2411: one property can be incompatible with both number and string index types.
             // TS2536: nested indexed accesses can fail both at the outer access and at an
             // inner object access while sharing the same starting position.
             use std::hash::{Hash, Hasher};
@@ -403,6 +406,8 @@ impl<'a> CheckerContext<'a> {
     /// Exceptions:
     /// - TS2318 (missing global type) at position 0 uses message hash to allow multiple distinct
     ///   global type errors.
+    /// - TS2411 uses (start ^ `message_hash`, code) to allow a single property to
+    ///   report both string and number index incompatibilities.
     /// - TS2430 (incorrectly extends interface) uses (start ^ `message_hash`, code) to allow
     ///   multiple per-base diagnostics at the same interface name position.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
@@ -427,9 +432,10 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             diag.message_text.hash(&mut hasher);
             (hasher.finish() as u32, diag.code)
-        } else if diag.code == 2430 || diag.code == 2536 {
+        } else if diag.code == 2411 || diag.code == 2430 || diag.code == 2536 {
             // TS2430: an interface can incorrectly extend multiple bases, each producing a
             // separate diagnostic at the same name position with a different message.
+            // TS2411: one property can be incompatible with both number and string index types.
             // TS2536: nested indexed-access failures can legitimately produce multiple
             // distinct diagnostics at the same indexed-access start.
             use std::hash::{Hash, Hasher};
