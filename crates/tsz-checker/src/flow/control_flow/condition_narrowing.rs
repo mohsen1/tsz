@@ -145,6 +145,42 @@ impl<'a> FlowAnalyzer<'a> {
             return narrowed;
         }
 
+        // For `switch (typeof x)`, the default clause excludes runtime `typeof`
+        // domains, not the string literal case expression types themselves.
+        if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
+            && self.is_matching_reference(typeof_operand, target)
+        {
+            let mut narrowed = type_id;
+            let mut applied = false;
+
+            for &clause_idx in &case_block.statements.nodes {
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                    continue;
+                };
+                let case_expr = clause.expression;
+                if case_expr.is_none() {
+                    continue;
+                }
+                let Some(typeof_result) = self.literal_string_from_node(case_expr) else {
+                    applied = false;
+                    break;
+                };
+
+                applied = true;
+                narrowed = narrowing.narrow_by_typeof_negation(narrowed, typeof_result);
+                if narrowed == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+            }
+
+            if applied {
+                return narrowed;
+            }
+        }
+
         // Fast path: if this switch does not reference the target (directly or via discriminant
         // property access like switch(x.kind) when narrowing x), it cannot affect target's type.
         let target_is_switch_expr = self.is_matching_reference(switch_expr, target);

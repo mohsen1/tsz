@@ -33,7 +33,7 @@ impl<'a> NarrowingContext<'a> {
     /// This is the negation of `narrow_by_typeof`.
     /// For example, narrowing `string | number` with `typeof "string"` (sense=false)
     /// yields `number`.
-    pub(crate) fn narrow_by_typeof_negation(
+    pub fn narrow_by_typeof_negation(
         &self,
         source_type: TypeId,
         typeof_result: &str,
