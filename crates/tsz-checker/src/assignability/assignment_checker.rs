@@ -680,6 +680,82 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    fn is_js_namespace_enum_rebind_assignment_target(&self, target_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        if let Some(member_sym_id) = self.resolve_qualified_symbol(target_idx)
+            && let Some(member_symbol) = self
+                .get_cross_file_symbol(member_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
+            && (member_symbol.flags & symbol_flags::ENUM) != 0
+        {
+            let parent_sym_id = member_symbol.parent;
+            if let Some(parent_symbol) = self
+                .get_cross_file_symbol(parent_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+                && (parent_symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE
+                        | symbol_flags::NAMESPACE_MODULE))
+                    != 0
+                && (parent_symbol.flags & symbol_flags::ENUM) == 0
+            {
+                return true;
+            }
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+        let Some(prop_ident) = self.ctx.arena.get_identifier_at(access.name_or_argument) else {
+            return false;
+        };
+
+        let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression) else {
+            return false;
+        };
+        let Some(base_symbol) = self
+            .get_cross_file_symbol(base_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
+        else {
+            return false;
+        };
+        if (base_symbol.flags
+            & (symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE))
+            == 0
+        {
+            return false;
+        }
+
+        let Some(exports) = base_symbol.exports.as_ref() else {
+            return false;
+        };
+        let Some(member_sym_id) = exports.get(prop_ident.escaped_text.as_str()) else {
+            return false;
+        };
+        let Some(member_symbol) = self
+            .get_cross_file_symbol(member_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
+        else {
+            return false;
+        };
+
+        (member_symbol.flags & symbol_flags::ENUM) != 0
+    }
+
     /// Check an assignment expression (=).
     ///
     /// ## Contextual Typing:
@@ -837,6 +913,11 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
+
+        if !is_const && !is_readonly && self.is_js_namespace_enum_rebind_assignment_target(left_idx)
+        {
+            return right_type;
+        }
 
         if !is_const && !is_readonly && left_type != TypeId::ANY {
             // For destructuring assignments (both object and array patterns),
