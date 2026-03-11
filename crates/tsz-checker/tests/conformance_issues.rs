@@ -247,6 +247,46 @@ new cls3();
 }
 
 #[test]
+fn test_complicated_indexes_of_intersections_are_inferencable() {
+    let source = r#"
+interface FormikConfig<Values> {
+    initialValues: Values;
+    validate?: (props: Values) => void;
+    validateOnChange?: boolean;
+}
+
+declare function Func<Values = object, ExtraProps = {}>(
+    x: (string extends "validate" | "initialValues" | keyof ExtraProps
+        ? Readonly<FormikConfig<Values> & ExtraProps>
+        : Pick<Readonly<FormikConfig<Values> & ExtraProps>, "validate" | "initialValues" | Exclude<keyof ExtraProps, "validateOnChange">>
+        & Partial<Pick<Readonly<FormikConfig<Values> & ExtraProps>, "validateOnChange" | Extract<keyof ExtraProps, "validateOnChange">>>)
+): void;
+
+Func({
+    initialValues: {
+        foo: ""
+    },
+    validate: props => {
+        props.foo;
+    }
+});
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected no TS2339 for props.foo after inferring Values from initialValues. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_contextual_intersection_with_any_defaulted_alias_does_not_overconstrain_property() {
     let source = r#"
 type ComputedGetter<T> = (oldValue?: T) => T;

@@ -177,6 +177,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let evaluated = self.interner.evaluate_conditional(cond.as_ref());
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
+                } else {
+                    let mut visited = FxHashSet::default();
+                    if self.type_contains_placeholder(target, var_map, &mut visited) {
+                        self.constrain_types(ctx, var_map, source, cond.true_type, priority);
+                        self.constrain_types(ctx, var_map, source, cond.false_type, priority);
+                    }
                 }
             }
             (Some(TypeData::Mapped(mapped_id)), _) => {
@@ -1336,18 +1342,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// This follows tsc's `inferToMappedType` which handles:
     /// - Direct `keyof T` → returns T if T is an inference placeholder
+    /// - Direct `keyof X` → returns X if X structurally contains placeholders
     /// - `keyof T & keyof Constraint` (Intersection) → recurses into members
     /// - `keyof A | keyof B` (Union) → recurses into members
     ///
-    /// Returns the first `T` found where `keyof T` appears and T is a placeholder.
+    /// Returns the first `T` found where `keyof T` appears and T contains inference placeholders.
     fn find_keyof_inference_target(
         &self,
         constraint: TypeId,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> Option<TypeId> {
         match self.interner.lookup(constraint) {
-            Some(TypeData::KeyOf(keyof_target)) if var_map.contains_key(&keyof_target) => {
-                Some(keyof_target)
+            Some(TypeData::KeyOf(keyof_target)) => {
+                if var_map.contains_key(&keyof_target) {
+                    return Some(keyof_target);
+                }
+                let mut visited = FxHashSet::default();
+                if self.type_contains_placeholder(keyof_target, var_map, &mut visited) {
+                    return Some(keyof_target);
+                }
+                None
             }
             Some(TypeData::Intersection(members) | TypeData::Union(members)) => {
                 let member_list = self.interner.type_list(members);
