@@ -44,7 +44,7 @@ to ensure correct code generation.
 <!-- EMIT_START -->
 ```
 JavaScript:  [█████████████████░░░] 83.9% (11,342 / 13,526 tests)
-Declaration: [██████████████░░░░░░] 70.2% (1,167 / 1,662 tests)
+Declaration: [██████████████░░░░░░] 70.1% (1,165 / 1,662 tests)
 ```
 <!-- EMIT_END -->
 
@@ -55,7 +55,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████████████████] 100.0% (2,540 / 2,540 tests)
+Progress: [████████████████████] 99.8% (2,534 / 2,540 tests)
 ```
 <!-- FOURSLASH_END -->
 
