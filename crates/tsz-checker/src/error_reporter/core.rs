@@ -726,6 +726,24 @@ impl<'a> CheckerState<'a> {
 
         let mut current = expr_idx;
         loop {
+            if self
+                .ctx
+                .arena
+                .node_info(current)
+                .and_then(|info| self.ctx.arena.get(info.parent))
+                .is_some_and(|parent| {
+                    matches!(
+                        parent.kind,
+                        syntax_kind_ext::PROPERTY_ASSIGNMENT
+                            | syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                            | syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::GET_ACCESSOR
+                            | syntax_kind_ext::SET_ACCESSOR
+                    )
+                })
+            {
+                return None;
+            }
             if let Some(type_id) = self.jsdoc_type_annotation_for_node_direct(current) {
                 let display_type = self.widen_function_like_display_type(type_id);
                 return Some(self.format_assignability_type_for_message(display_type, target));

@@ -1444,6 +1444,41 @@ var s1 = obj.method2("0");
 }
 
 #[test]
+fn test_jsdoc_object_literal_property_initializer_uses_source_type_in_message() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+var obj = {
+  /** @type {string|undefined} */
+  bar: 42,
+};
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type 'string'.")
+        }),
+        "Expected object-literal JSDoc initializer mismatch to report the concrete source type, not the declared union. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type 'string | undefined' is not assignable to type 'string'.")
+        }),
+        "Did not expect object-literal JSDoc initializer mismatch to reuse the declared union as the source display. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_string_is_assignable_to_iterable_string_under_es2015() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r##"
