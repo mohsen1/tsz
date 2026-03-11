@@ -308,6 +308,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
         let source_shape = self.interner.object_shape(source_shape_id);
 
+        // Performance guard: skip discriminated union narrowing for large object types.
+        // DOM interfaces like HTMLElement have hundreds of properties; creating narrowed
+        // copies (clone + sort + hash + intern) for each discriminant combination is
+        // prohibitively expensive and never matches real discriminated union patterns.
+        const MAX_PROPERTIES_FOR_DISCRIMINATED: usize = 50;
+        if source_shape.properties.len() > MAX_PROPERTIES_FOR_DISCRIMINATED {
+            return SubtypeResult::False;
+        }
+
         // Find discriminant properties in the source that discriminate target
         let disc_props = find_discriminant_properties(
             self.interner,
