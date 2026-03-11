@@ -324,6 +324,28 @@ impl<'a> CheckerState<'a> {
         TypeId::UNKNOWN
     }
 
+    pub(crate) fn preferred_value_declaration(
+        &mut self,
+        sym_id: SymbolId,
+        value_decl: NodeIndex,
+        declarations: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        if value_decl.is_some() {
+            let preferred = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+            if preferred != TypeId::UNKNOWN && preferred != TypeId::ERROR {
+                return Some(value_decl);
+            }
+        }
+
+        declarations.iter().copied().find(|&decl_idx| {
+            if decl_idx.is_none() {
+                return false;
+            }
+            let ty = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+            ty != TypeId::UNKNOWN && ty != TypeId::ERROR
+        })
+    }
+
     /// Resolve a value declaration type, delegating to the declaration's arena
     /// when the node does not belong to the current checker arena.
     pub(crate) fn type_of_value_declaration_for_symbol(
