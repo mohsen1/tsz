@@ -824,6 +824,23 @@ impl<'a> CheckerState<'a> {
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
                 let inferred = self.infer_return_type_from_body(idx, body, return_context);
                 return_type = jsdoc_return_context.unwrap_or(inferred);
+
+                if self.is_js_file()
+                    && is_function_declaration
+                    && let Some(instance_type) =
+                        self.synthesize_js_constructor_instance_type(idx, TypeId::ANY, &[])
+                    && let Some(union_members) =
+                        tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
+                    && union_members.len() == 2
+                    && union_members.contains(&TypeId::UNDEFINED)
+                    && union_members.iter().copied().any(|member| {
+                        member != TypeId::UNDEFINED
+                            && self.is_assignable_to(member, instance_type)
+                            && self.is_assignable_to(instance_type, member)
+                    })
+                {
+                    return_type = instance_type;
+                }
             }
 
             // TS7010/TS7011 (implicit any return) is emitted for functions without
