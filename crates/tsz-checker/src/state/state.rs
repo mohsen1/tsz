@@ -1316,14 +1316,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn clear_contextual_resolution_cache(&mut self) {
-        self.ctx
-            .narrowing_cache
-            .contextual_resolve_cache
-            .borrow_mut()
-            .clear();
-    }
-
     pub(crate) fn is_keyword_type_used_as_value_position(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 

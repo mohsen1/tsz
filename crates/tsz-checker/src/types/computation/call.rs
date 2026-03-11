@@ -1835,12 +1835,13 @@ impl<'a> CheckerState<'a> {
                 } else {
                     result
                 };
-                let recovered_mismatch = match &result {
+                let recovered_mismatch = matches!(
+                    &result,
                     CallResult::ArgumentTypeMismatch {
-                        fallback_return, ..
-                    } if *fallback_return != TypeId::ERROR => true,
-                    _ => false,
-                };
+                        fallback_return,
+                        ..
+                    } if *fallback_return != TypeId::ERROR
+                );
                 let (result, should_epc) = match result {
                     CallResult::Success(return_type) => (CallResult::Success(return_type), true),
                     CallResult::ArgumentTypeMismatch {
