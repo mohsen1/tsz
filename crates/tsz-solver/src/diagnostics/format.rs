@@ -520,7 +520,15 @@ impl<'a> TypeFormatter<'a> {
 
     fn format_literal(&mut self, lit: &LiteralValue) -> String {
         match lit {
-            LiteralValue::String(s) => format!("\"{}\"", self.atom(*s)),
+            LiteralValue::String(s) => {
+                let raw = self.atom(*s);
+                let escaped = raw
+                    .replace('\\', "\\\\")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t");
+                format!("\"{escaped}\"")
+            }
             LiteralValue::Number(n) => {
                 let v = n.0;
                 if v.is_infinite() {
