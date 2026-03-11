@@ -707,14 +707,15 @@ impl<'a> CheckerState<'a> {
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
                         resolved_computed_name = self.get_property_name_resolved(prop.name);
-                        let literal_computed_name = crate::types_domain::queries::core::get_literal_property_name(
-                            self.ctx.arena,
-                            computed.expression,
-                        );
-                        let handled_by_name = literal_computed_name.is_some()
-                            || resolved_computed_name.is_some();
-                        if let Some(name) = literal_computed_name
-                            .or_else(|| resolved_computed_name.clone())
+                        let literal_computed_name =
+                            crate::types_domain::queries::core::get_literal_property_name(
+                                self.ctx.arena,
+                                computed.expression,
+                            );
+                        let handled_by_name =
+                            literal_computed_name.is_some() || resolved_computed_name.is_some();
+                        if let Some(name) =
+                            literal_computed_name.or_else(|| resolved_computed_name.clone())
                         {
                             let atom = self.ctx.types.intern_string(&name);
                             if !skip_duplicate_check
@@ -754,7 +755,9 @@ impl<'a> CheckerState<'a> {
                                         || self.ctx.js_strict_mode_diagnostics_enabled())
                                 {
                                     let name = self.ctx.types.resolve_atom(atom).to_string();
-                                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                    use crate::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages,
+                                    };
                                     let message = crate::diagnostics::format_message(
                                                 diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                                                 &[&name],
