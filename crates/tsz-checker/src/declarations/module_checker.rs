@@ -367,6 +367,10 @@ impl<'a> CheckerState<'a> {
             return; // Declared module exists
         }
 
+        if self.ctx.resolve_import_target(module_name).is_some() {
+            return; // Module exists via driver/module resolution candidate matching
+        }
+
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
@@ -866,6 +870,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_global_type_with_libs("Promise", &lib_binders)
         {
+            let _ = self.get_type_of_symbol(sym_id);
             let promise_base = self.ctx.create_lazy_type_ref(sym_id);
             return factory.application(promise_base, vec![inner_type]);
         }

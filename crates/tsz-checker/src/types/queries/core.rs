@@ -1005,12 +1005,32 @@ impl<'a> CheckerState<'a> {
         node.kind == SyntaxKind::SuperKeyword as u16
     }
 
-    /// Check if a call expression is a dynamic import (`import('...')`).
+    fn is_import_defer_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(base_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if base_node.kind != SyntaxKind::ImportKeyword as u16 {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .is_some_and(|ident| ident.escaped_text == "defer")
+    }
+
+    /// Check if a call expression is a dynamic import (`import('...')` or `import.defer('...')`).
     pub(crate) fn is_dynamic_import(&self, call: &tsz_parser::parser::node::CallExprData) -> bool {
         let Some(node) = self.ctx.arena.get(call.expression) else {
             return false;
         };
         node.kind == SyntaxKind::ImportKeyword as u16
+            || self.is_import_defer_expression(call.expression)
     }
 
     // =========================================================================
