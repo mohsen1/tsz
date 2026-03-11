@@ -2146,6 +2146,11 @@ impl<'a> CheckerState<'a> {
                     // a fresh structural check on the evaluated instantiated param.
                     if let Some(param) = instantiated_params.get(*index) {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let expected_param = if param.rest {
+                            self.contextual_rest_argument_element_type(evaluated_param)
+                        } else {
+                            evaluated_param
+                        };
                         let arg_type = args
                             .get(*index)
                             .copied()
@@ -2153,7 +2158,7 @@ impl<'a> CheckerState<'a> {
                                 self.refreshed_generic_call_arg_type_with_context(
                                     arg_idx,
                                     arg_types.get(*index).copied().unwrap_or(TypeId::UNKNOWN),
-                                    Some(evaluated_param),
+                                    Some(expected_param),
                                 )
                             })
                             .unwrap_or(TypeId::UNKNOWN);
@@ -2176,11 +2181,16 @@ impl<'a> CheckerState<'a> {
                         && param.type_id != TypeId::UNKNOWN
                     {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let expected_param = if param.rest {
+                            self.contextual_rest_argument_element_type(evaluated_param)
+                        } else {
+                            evaluated_param
+                        };
                         if !is_type_parameter_type(self.ctx.types, evaluated_param) {
                             let arg_type = self.refreshed_generic_call_arg_type_with_context(
                                 arg_idx,
                                 arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
-                                Some(evaluated_param),
+                                Some(expected_param),
                             );
                             self.check_object_literal_excess_properties(
                                 arg_type,

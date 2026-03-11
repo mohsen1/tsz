@@ -1023,7 +1023,9 @@ impl<'a> CheckerState<'a> {
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
-                        jsdoc_declared_type.or(initializer_context_type),
+                        jsdoc_declared_type
+                            .or(initializer_context_type)
+                            .or(property_context_type),
                     );
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
