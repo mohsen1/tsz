@@ -121,14 +121,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 let mut local_visited = FxHashSet::default();
                 for source_param in remaining_params {
-                    let source_param_type = if source_param.optional && strip_nullish_optionals {
-                        crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
-                    } else if source_param.optional {
-                        self.interner()
-                            .union2(source_param.type_id, TypeId::UNDEFINED)
-                    } else {
-                        source_param.type_id
-                    };
+                    let source_param_type =
+                        if strip_nullish_optionals && source_param.optional && !rest_param.optional
+                        {
+                            crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
+                        } else if source_param.optional {
+                            self.interner()
+                                .union2(source_param.type_id, TypeId::UNDEFINED)
+                        } else {
+                            source_param.type_id
+                        };
                     if !self.match_infer_pattern(
                         source_param_type,
                         rest_param.type_id,

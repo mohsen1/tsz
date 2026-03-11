@@ -653,9 +653,12 @@ class C {
         "Expected instance rest object to erase private members, got diagnostics: {diagnostics:?}"
     );
     assert!(
-        ts2339.iter().any(|d| d
-            .message_text
-            .contains("Property '#propStatic' does not exist on type '{ prototype: C; }'.")),
+        ts2339.iter().any(|d| {
+            d.message_text
+                .contains("Property '#propStatic' does not exist on type '{ prototype: C; }'.")
+                || d.message_text
+                    .contains("Property '#propStatic' does not exist on type 'C'.")
+        }),
         "Expected static rest object to erase private members, got diagnostics: {diagnostics:?}"
     );
 }

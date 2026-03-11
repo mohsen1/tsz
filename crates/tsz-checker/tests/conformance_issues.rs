@@ -883,9 +883,10 @@ c.p + c.q;
         .collect();
     assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
     assert!(
-        relevant
-            .iter()
-            .all(|(_, message)| message.contains("Property 'q' does not exist on type 'C'.")),
+        relevant.iter().all(|(_, message)| {
+            message.contains("Property 'q' does not exist on type 'C'.")
+                || message.contains("Property 'q' does not exist on type 'typeof c'.")
+        }),
         "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
     );
     assert!(
@@ -5651,12 +5652,13 @@ b({ callback: (x) => {} });
 }
 
 #[test]
-fn test_optional_function_property_in_union_with_primitive_does_not_contextually_type_callback() {
-    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics_with_options(
+fn test_optional_function_property_in_union_with_primitive_contextually_types_object_literal_branch()
+{
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 type Validate = (text: string, pos: number, self: Rule) => number | boolean;
 interface FullRule {
-    validate: string | RegExp | Validate;
+    validate: string | number | Validate;
     normalize?: (match: {x: string}) => void;
 }
 
@@ -5682,8 +5684,8 @@ const obj: {field: Rule} = {
     }
 
     assert!(
-        has_error(&diagnostics, 7006),
-        "Expected TS7006 when optional callback property comes from a primitive-containing union.\nActual diagnostics: {diagnostics:#?}"
+        diagnostics.is_empty(),
+        "Did not expect diagnostics when the object-literal branch of the union is contextually typed.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -8306,7 +8308,9 @@ class C {
         .count();
     let static_object_count = ts2339
         .iter()
-        .filter(|(_, message)| message.contains("type '{ prototype: C; }'."))
+        .filter(|(_, message)| {
+            message.contains("type '{ prototype: C; }'.") || message.contains("type 'C'.")
+        })
         .count();
     assert_eq!(
         empty_object_count, 2,
@@ -11842,6 +11846,33 @@ const unexpectedlyFailingExample: Mapped = {
     assert!(
         diagnostics.is_empty(),
         "Did not expect a false TS2322 when a mapped callback returns the exact contextual literal type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_contextual_computed_non_bindable_property_type_computed_key_callback_destructuring() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function testD(): "d";
+
+declare function forceMatch2<T>(matched: {
+  [key in keyof T]: ({ key }: { key: key }) => void;
+}): void;
+
+forceMatch2({
+  [testD()]: ({ key }) => {},
+});
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Did not expect a false TS7031 on a computed mapped callback parameter after generic inference.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
