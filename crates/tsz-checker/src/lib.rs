@@ -258,15 +258,15 @@ mod class_index_signature_compat_tests;
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
+#[path = "tests/contextual_return_wrapper_tests.rs"]
+mod contextual_return_wrapper_tests;
+#[cfg(test)]
 #[path = "../tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
 #[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
-#[cfg(test)]
-#[path = "tests/contextual_return_wrapper_tests.rs"]
-mod contextual_return_wrapper_tests;
 #[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;

@@ -230,10 +230,8 @@ impl<'a> CheckerState<'a> {
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
-            && !self.target_contains_blocking_return_context_type_params(
-                target,
-                tracked_type_params,
-            )
+            && !self
+                .target_contains_blocking_return_context_type_params(target, tracked_type_params)
         {
             if substitution.get(tp.name).is_none() {
                 substitution.insert(tp.name, target);
