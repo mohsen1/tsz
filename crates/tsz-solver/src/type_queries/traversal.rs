@@ -239,6 +239,7 @@ where
         type_id: TypeId,
         active: &mut FxHashSet<TypeId>,
         finished: &mut FxHashSet<TypeId>,
+        in_cond_branch: bool,
     ) -> bool
     where
         H: DeclarationTypeCycleHost,
@@ -250,66 +251,79 @@ where
             return false;
         }
         if !active.insert(type_id) {
-            return true;
+            // Only report cycle as non-serializable (TS5088) if the path
+            // went through a conditional type branch. Cycles through
+            // object/function/union types are serializable by the declaration
+            // emitter (tsc elides them with a symbol depth limit, no error).
+            return in_cond_branch;
         }
 
         let result = match db.lookup(type_id) {
-            Some(TypeData::Recursive(_)) => true,
+            Some(TypeData::Recursive(_)) => in_cond_branch,
             Some(TypeData::Lazy(def_id)) => host.resolve_lazy(def_id, db).is_some_and(|resolved| {
-                resolved != type_id && visit(db, host, resolved, active, finished)
+                resolved != type_id && visit(db, host, resolved, active, finished, in_cond_branch)
             }),
             Some(TypeData::Application(app_id)) => {
                 let evaluated = host.evaluate_application_for_serialization(type_id);
                 if evaluated != type_id {
-                    visit(db, host, evaluated, active, finished)
+                    visit(db, host, evaluated, active, finished, in_cond_branch)
                 } else {
                     let app = db.type_application(app_id);
-                    visit(db, host, app.base, active, finished)
+                    visit(db, host, app.base, active, finished, in_cond_branch)
                         || app
                             .args
                             .iter()
                             .copied()
-                            .any(|arg| visit(db, host, arg, active, finished))
+                            .any(|arg| visit(db, host, arg, active, finished, in_cond_branch))
                 }
             }
             Some(TypeData::Array(elem))
             | Some(TypeData::ReadonlyType(elem))
             | Some(TypeData::NoInfer(elem))
-            | Some(TypeData::KeyOf(elem)) => visit(db, host, elem, active, finished),
+            | Some(TypeData::KeyOf(elem)) => {
+                visit(db, host, elem, active, finished, in_cond_branch)
+            }
             Some(TypeData::IndexAccess(object, index)) => {
-                visit(db, host, object, active, finished)
-                    || visit(db, host, index, active, finished)
+                visit(db, host, object, active, finished, in_cond_branch)
+                    || visit(db, host, index, active, finished, in_cond_branch)
             }
             Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => db
                 .type_list(list_id)
                 .iter()
                 .copied()
-                .any(|member| visit(db, host, member, active, finished)),
+                .any(|member| visit(db, host, member, active, finished, in_cond_branch)),
             Some(TypeData::Tuple(list_id)) => db
                 .tuple_list(list_id)
                 .iter()
-                .any(|elem| visit(db, host, elem.type_id, active, finished)),
+                .any(|elem| visit(db, host, elem.type_id, active, finished, in_cond_branch)),
             Some(TypeData::Function(shape_id)) => {
                 let shape = db.function_shape(shape_id);
-                shape
-                    .this_type
-                    .is_some_and(|this_type| visit(db, host, this_type, active, finished))
-                    || shape
-                        .params
-                        .iter()
-                        .any(|param| visit(db, host, param.type_id, active, finished))
+                shape.this_type.is_some_and(|this_type| {
+                    visit(db, host, this_type, active, finished, in_cond_branch)
+                }) || shape
+                    .params
+                    .iter()
+                    .any(|param| visit(db, host, param.type_id, active, finished, in_cond_branch))
                     || shape.type_params.iter().any(|tp| {
-                        tp.constraint
-                            .is_some_and(|constraint| visit(db, host, constraint, active, finished))
-                            || tp
-                                .default
-                                .is_some_and(|default| visit(db, host, default, active, finished))
+                        tp.constraint.is_some_and(|constraint| {
+                            visit(db, host, constraint, active, finished, in_cond_branch)
+                        }) || tp.default.is_some_and(|default| {
+                            visit(db, host, default, active, finished, in_cond_branch)
+                        })
                     })
                     || shape.type_predicate.as_ref().is_some_and(|pred| {
-                        pred.type_id
-                            .is_some_and(|pred_type| visit(db, host, pred_type, active, finished))
+                        pred.type_id.is_some_and(|pred_type| {
+                            visit(db, host, pred_type, active, finished, in_cond_branch)
+                        })
                     })
-                    || visit(db, host, shape.return_type, active, finished)
+                    || visit(
+                        db,
+                        host,
+                        shape.return_type,
+                        active,
+                        finished,
+                        in_cond_branch,
+                    )
             }
             Some(TypeData::Callable(shape_id)) => {
                 let shape = db.callable_shape(shape_id);
@@ -317,25 +331,21 @@ where
                                      active: &mut FxHashSet<TypeId>,
                                      finished: &mut FxHashSet<TypeId>|
                  -> bool {
-                    sig.this_type
-                        .is_some_and(|this_type| visit(db, host, this_type, active, finished))
-                        || sig
-                            .params
-                            .iter()
-                            .any(|param| visit(db, host, param.type_id, active, finished))
-                        || sig.type_params.iter().any(|tp| {
-                            tp.constraint.is_some_and(|constraint| {
-                                visit(db, host, constraint, active, finished)
-                            }) || tp
-                                .default
-                                .is_some_and(|default| visit(db, host, default, active, finished))
+                    sig.this_type.is_some_and(|this_type| {
+                        visit(db, host, this_type, active, finished, in_cond_branch)
+                    }) || sig.params.iter().any(|param| {
+                        visit(db, host, param.type_id, active, finished, in_cond_branch)
+                    }) || sig.type_params.iter().any(|tp| {
+                        tp.constraint.is_some_and(|constraint| {
+                            visit(db, host, constraint, active, finished, in_cond_branch)
+                        }) || tp.default.is_some_and(|default| {
+                            visit(db, host, default, active, finished, in_cond_branch)
                         })
-                        || sig.type_predicate.as_ref().is_some_and(|pred| {
-                            pred.type_id.is_some_and(|pred_type| {
-                                visit(db, host, pred_type, active, finished)
-                            })
+                    }) || sig.type_predicate.as_ref().is_some_and(|pred| {
+                        pred.type_id.is_some_and(|pred_type| {
+                            visit(db, host, pred_type, active, finished, in_cond_branch)
                         })
-                        || visit(db, host, sig.return_type, active, finished)
+                    }) || visit(db, host, sig.return_type, active, finished, in_cond_branch)
                 };
 
                 shape
@@ -347,70 +357,81 @@ where
                         .iter()
                         .any(|sig| visit_sig(sig, active, finished))
                     || shape.properties.iter().any(|prop| {
-                        visit(db, host, prop.type_id, active, finished)
-                            || visit(db, host, prop.write_type, active, finished)
+                        visit(db, host, prop.type_id, active, finished, in_cond_branch)
+                            || visit(db, host, prop.write_type, active, finished, in_cond_branch)
                     })
-                    || shape
-                        .string_index
-                        .as_ref()
-                        .is_some_and(|index| visit(db, host, index.value_type, active, finished))
-                    || shape
-                        .number_index
-                        .as_ref()
-                        .is_some_and(|index| visit(db, host, index.value_type, active, finished))
+                    || shape.string_index.as_ref().is_some_and(|index| {
+                        visit(db, host, index.value_type, active, finished, in_cond_branch)
+                    })
+                    || shape.number_index.as_ref().is_some_and(|index| {
+                        visit(db, host, index.value_type, active, finished, in_cond_branch)
+                    })
             }
             Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
                 shape.properties.iter().any(|prop| {
-                    visit(db, host, prop.type_id, active, finished)
-                        || visit(db, host, prop.write_type, active, finished)
-                }) || shape
-                    .string_index
-                    .as_ref()
-                    .is_some_and(|index| visit(db, host, index.value_type, active, finished))
-                    || shape
-                        .number_index
-                        .as_ref()
-                        .is_some_and(|index| visit(db, host, index.value_type, active, finished))
+                    visit(db, host, prop.type_id, active, finished, in_cond_branch)
+                        || visit(db, host, prop.write_type, active, finished, in_cond_branch)
+                }) || shape.string_index.as_ref().is_some_and(|index| {
+                    visit(db, host, index.value_type, active, finished, in_cond_branch)
+                }) || shape.number_index.as_ref().is_some_and(|index| {
+                    visit(db, host, index.value_type, active, finished, in_cond_branch)
+                })
             }
             Some(TypeData::Conditional(cond_id)) => {
                 let cond = db.conditional_type(cond_id);
-                visit(db, host, cond.check_type, active, finished)
-                    || visit(db, host, cond.extends_type, active, finished)
-                    || visit(db, host, cond.true_type, active, finished)
-                    || visit(db, host, cond.false_type, active, finished)
+                // Check/extends use current flag; true/false branches set
+                // in_cond_branch=true so cycles through conditional branches
+                // are reported as TS5088 (matching tsc behavior).
+                visit(db, host, cond.check_type, active, finished, in_cond_branch)
+                    || visit(
+                        db,
+                        host,
+                        cond.extends_type,
+                        active,
+                        finished,
+                        in_cond_branch,
+                    )
+                    || visit(db, host, cond.true_type, active, finished, true)
+                    || visit(db, host, cond.false_type, active, finished, true)
             }
             Some(TypeData::Mapped(mapped_id)) => {
                 let mapped = db.mapped_type(mapped_id);
-                visit(db, host, mapped.constraint, active, finished)
-                    || visit(db, host, mapped.template, active, finished)
-                    || mapped
-                        .name_type
-                        .is_some_and(|name_type| visit(db, host, name_type, active, finished))
-                    || mapped
-                        .type_param
-                        .constraint
-                        .is_some_and(|constraint| visit(db, host, constraint, active, finished))
-                    || mapped
-                        .type_param
-                        .default
-                        .is_some_and(|default| visit(db, host, default, active, finished))
+                visit(
+                    db,
+                    host,
+                    mapped.constraint,
+                    active,
+                    finished,
+                    in_cond_branch,
+                ) || visit(db, host, mapped.template, active, finished, in_cond_branch)
+                    || mapped.name_type.is_some_and(|name_type| {
+                        visit(db, host, name_type, active, finished, in_cond_branch)
+                    })
+                    || mapped.type_param.constraint.is_some_and(|constraint| {
+                        visit(db, host, constraint, active, finished, in_cond_branch)
+                    })
+                    || mapped.type_param.default.is_some_and(|default| {
+                        visit(db, host, default, active, finished, in_cond_branch)
+                    })
             }
             Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
-                info.constraint
-                    .is_some_and(|constraint| visit(db, host, constraint, active, finished))
-                    || info
-                        .default
-                        .is_some_and(|default| visit(db, host, default, active, finished))
+                info.constraint.is_some_and(|constraint| {
+                    visit(db, host, constraint, active, finished, in_cond_branch)
+                }) || info.default.is_some_and(|default| {
+                    visit(db, host, default, active, finished, in_cond_branch)
+                })
             }
             Some(TypeData::TemplateLiteral(list_id)) => {
                 db.template_list(list_id).iter().any(|span| match span {
-                    TemplateSpan::Type(inner) => visit(db, host, *inner, active, finished),
+                    TemplateSpan::Type(inner) => {
+                        visit(db, host, *inner, active, finished, in_cond_branch)
+                    }
                     _ => false,
                 })
             }
             Some(TypeData::StringIntrinsic { type_arg, .. }) => {
-                visit(db, host, type_arg, active, finished)
+                visit(db, host, type_arg, active, finished, in_cond_branch)
             }
             _ => false,
         };
@@ -424,7 +445,7 @@ where
 
     let mut active = FxHashSet::default();
     let mut finished = FxHashSet::default();
-    visit(db, host, type_id, &mut active, &mut finished)
+    visit(db, host, type_id, &mut active, &mut finished, false)
 }
 
 /// Collect property names accessible on a type for spelling suggestions.
