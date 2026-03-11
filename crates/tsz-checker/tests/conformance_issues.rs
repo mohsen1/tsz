@@ -8989,3 +8989,42 @@ class Test {
         "Expected TS2345 for computed object literal argument mismatch.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_class_field_arrow_object_entries_computed_argument_reports_ts2345() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type State = {
+  a: number;
+  b: string;
+};
+
+class Test {
+  setState(state: State) {}
+
+  test = (e: any) => {
+    for (const [key, value] of Object.entries(e)) {
+      this.setState({
+        [key]: value,
+      });
+    }
+  };
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2017,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type")
+                && message.contains("is not assignable to parameter of type 'State'")
+        }),
+        "Expected TS2345 for computed object literal mismatch in class field arrow Object.entries path.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

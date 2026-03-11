@@ -1028,6 +1028,49 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    fn clear_binding_name_symbol_cache_recursive(&mut self, name_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        if name_idx.is_none() {
+            return;
+        }
+
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(name_idx) {
+            self.ctx.symbol_types.remove(&sym_id);
+        }
+
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            return;
+        }
+
+        if (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+            && let Some(pattern) = self.ctx.arena.get_binding_pattern(name_node)
+        {
+            for &element_idx in &pattern.elements.nodes {
+                if element_idx.is_none() {
+                    continue;
+                }
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(element_idx) {
+                    self.ctx.symbol_types.remove(&sym_id);
+                }
+                if let Some(element_node) = self.ctx.arena.get(element_idx)
+                    && let Some(element) = self.ctx.arena.get_binding_element(element_node)
+                {
+                    self.clear_binding_name_symbol_cache_recursive(element.name);
+                    if element.initializer.is_some() {
+                        self.clear_type_cache_recursive(element.initializer);
+                    }
+                }
+            }
+        }
+    }
+
     /// Clear type cache for a node and all its children recursively.
     ///
     /// This is used when we need to recompute types with different contextual information,
@@ -1201,6 +1244,10 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 if let Some(decl) = self.ctx.arena.get_variable_declaration(node) {
+                    if let Some(sym_id) = self.ctx.binder.get_node_symbol(idx) {
+                        self.ctx.symbol_types.remove(&sym_id);
+                    }
+                    self.clear_binding_name_symbol_cache_recursive(decl.name);
                     self.clear_type_cache_recursive(decl.initializer);
                 }
             }
@@ -1209,6 +1256,15 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(if_stmt.expression);
                     self.clear_type_cache_recursive(if_stmt.then_statement);
                     self.clear_type_cache_recursive(if_stmt.else_statement);
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_stmt) = self.ctx.arena.get_for_in_of(node) {
+                    self.clear_type_cache_recursive(for_stmt.initializer);
+                    self.clear_type_cache_recursive(for_stmt.expression);
+                    self.clear_type_cache_recursive(for_stmt.statement);
                 }
             }
             _ => {}
