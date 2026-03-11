@@ -22,6 +22,76 @@ use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    fn look_ahead_is_invalid_shebang(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::HashToken) || self.token_pos() == 0 {
+            return false;
+        }
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = self.is_token(SyntaxKind::ExclamationToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    fn recover_invalid_shebang_line(&mut self) {
+        let start = self.u32_from_usize(self.token_pos() as usize);
+        self.parse_error_at(
+            start,
+            2,
+            "'#!' can only be used at the start of a file.",
+            diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE,
+        );
+
+        let source = self.scanner.source_text().as_bytes();
+        let mut pos = self.token_pos() as usize + 2;
+        let line_end = source[pos..]
+            .iter()
+            .position(|b| *b == b'\n' || *b == b'\r')
+            .map_or(source.len(), |offset| pos + offset);
+
+        while pos < line_end && source[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        while pos < line_end && !source[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+
+        let mut arg_ranges = Vec::new();
+        while pos < line_end {
+            while pos < line_end && source[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if pos >= line_end {
+                break;
+            }
+            let arg_start = pos;
+            while pos < line_end && !source[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            arg_ranges.push((arg_start, pos - arg_start));
+        }
+
+        for (arg_start, arg_len) in arg_ranges {
+            self.parse_error_at(
+                self.u32_from_usize(arg_start),
+                self.u32_from_usize(arg_len),
+                "';' expected.",
+                diagnostic_codes::EXPECTED,
+            );
+        }
+
+        self.next_token(); // consume '#'
+        if self.is_token(SyntaxKind::ExclamationToken) {
+            self.next_token();
+        }
+        while !self.is_token(SyntaxKind::EndOfFileToken) && !self.scanner.has_preceding_line_break()
+        {
+            self.next_token();
+        }
+    }
+
     // =========================================================================
     // Parse Methods - Core Expressions
     // =========================================================================
@@ -133,6 +203,12 @@ impl ParserState {
             let pos_before = self.token_pos();
             if skip_after_binary_payload {
                 break;
+            }
+
+            if self.look_ahead_is_invalid_shebang() {
+                self.recover_invalid_shebang_line();
+                previous_statement_was_block = false;
+                continue;
             }
 
             if previous_statement_was_block && self.is_token(SyntaxKind::EqualsToken) {
@@ -301,6 +377,12 @@ impl ParserState {
             && !self.is_token(SyntaxKind::CloseBraceToken)
         {
             let pos_before = self.token_pos();
+
+            if self.look_ahead_is_invalid_shebang() {
+                self.recover_invalid_shebang_line();
+                previous_statement_was_block = false;
+                continue;
+            }
 
             if previous_statement_was_block && self.is_token(SyntaxKind::EqualsToken) {
                 self.parse_error_at_current_token(

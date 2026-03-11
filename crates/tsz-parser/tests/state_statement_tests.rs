@@ -74,6 +74,25 @@ fn parse_invalid_import_expression_start_reports_ts1128_instead_of_from_expected
 }
 
 #[test]
+fn parse_mid_file_shebang_reports_ts18026_and_argument_semicolon_error() {
+    let (parser, _root) = parse_source("var foo = 1;\n#!/usr/bin/env node\n");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE),
+        "expected TS18026 for mid-file shebang, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 for shebang argument recovery, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "should not fall back to TS1128, got {codes:?}"
+    );
+    assert!(!codes.contains(&1499), "should not emit regex flag errors, got {codes:?}");
+}
+
+#[test]
 fn parse_template_recovery_preserves_follow_up_statement() {
     let (parser, root) = parse_source("const bad = `head${1 + 2`;\nconst ok = 1;");
     let sf = parser.get_arena().get_source_file_at(root).unwrap();
