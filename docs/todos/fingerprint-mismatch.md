@@ -279,6 +279,12 @@ Example: deleteExpressionMustBeOptional.ts
   silently elided via symbol depth limits. Fixes 6 conformance tests
   (`declarationEmitInferredTypeAlias4/8`, `declarationEmitTypeAliasWithTypeParameters3/4/6`,
   `importCallExpressionDeclarationEmit1`).
+- ~~False positive TS2314 in heritage clauses~~ **FIXED** (2026-03-11)
+  Fix: Expanded the too-narrow allow-list (`Array|ReadonlyArray|ConcatArray`) for omitted
+  type args in extends clauses. Now checks JS files (never require type args) and symbols
+  with `VARIABLE` flag (constructor values infer type args from construct signatures).
+  Fixes 4 conformance tests (`overrideInterfaceProperty`, `extendingCollectionsWithCheckJs`,
+  `extendsTag1`, `jsdocAugments_withTypeParameter`).
 - ~~False positive TS2304 for class property and JSX attribute names~~ **FIXED** (2026-03-11)
   Fix: `direct_diagnostic_source_expression` in `error_reporter/core.rs` now returns
   `None` when the diagnostic anchor is a `PROPERTY_DECLARATION` or `JSX_ATTRIBUTE` name.
