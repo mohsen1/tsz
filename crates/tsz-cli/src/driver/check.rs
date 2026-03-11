@@ -141,6 +141,7 @@ pub(super) fn collect_diagnostics(
     base_dir: &Path,
     cache: Option<&mut CompilationCache>,
     lib_contexts: &[LibContext],
+    typescript_dom_replacement_globals: (bool, bool, bool),
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
 ) -> Vec<Diagnostic> {
@@ -473,6 +474,11 @@ pub(super) fn collect_diagnostics(
         );
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        checker.ctx.set_typescript_dom_replacement_globals(
+            typescript_dom_replacement_globals.0,
+            typescript_dom_replacement_globals.1,
+            typescript_dom_replacement_globals.2,
+        );
         checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
         checker.ctx.set_all_binders(Arc::clone(&all_binders));
         {
@@ -595,6 +601,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             has_deprecation_diagnostics,
+                            typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
                         };
                         check_file_for_parallel(context)
@@ -627,6 +634,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             has_deprecation_diagnostics,
+                            typescript_dom_replacement_globals,
                             program_has_real_syntax_errors,
                         };
                         check_file_for_parallel(context)
@@ -661,6 +669,7 @@ pub(super) fn collect_diagnostics(
                     explicit_check_js_false,
                     skip_lib_check,
                     has_deprecation_diagnostics,
+                    typescript_dom_replacement_globals,
                     program_has_real_syntax_errors,
                 };
                 check_file_for_parallel(context)
@@ -737,6 +746,11 @@ pub(super) fn collect_diagnostics(
                 checker.ctx.set_lib_contexts(lib_contexts.to_vec());
                 checker.ctx.set_actual_lib_file_count(lib_contexts.len());
             }
+            checker.ctx.set_typescript_dom_replacement_globals(
+                typescript_dom_replacement_globals.0,
+                typescript_dom_replacement_globals.1,
+                typescript_dom_replacement_globals.2,
+            );
             checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
             checker.ctx.set_all_binders(Arc::clone(&all_binders));
             {
@@ -1006,6 +1020,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     skip_lib_check: bool,
     /// When true, skip lib type resolution in the checker (TS5107/TS5101 mode).
     has_deprecation_diagnostics: bool,
+    typescript_dom_replacement_globals: (bool, bool, bool),
     program_has_real_syntax_errors: bool,
 }
 
@@ -1038,6 +1053,7 @@ pub(super) fn check_file_for_parallel<'a>(
         explicit_check_js_false,
         skip_lib_check,
         has_deprecation_diagnostics,
+        typescript_dom_replacement_globals,
         program_has_real_syntax_errors,
     } = context;
     let file = &program.files[file_idx];
@@ -1074,6 +1090,11 @@ pub(super) fn check_file_for_parallel<'a>(
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
     }
+    checker.ctx.set_typescript_dom_replacement_globals(
+        typescript_dom_replacement_globals.0,
+        typescript_dom_replacement_globals.1,
+        typescript_dom_replacement_globals.2,
+    );
 
     checker.ctx.set_all_arenas(Arc::clone(all_arenas));
     checker.ctx.set_all_binders(Arc::clone(all_binders));
@@ -1181,6 +1202,7 @@ mod tests {
             std::path::Path::new("/"),
             None,
             &[],
+            (false, false, false),
             &type_cache_output,
             false,
         )

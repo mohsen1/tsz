@@ -106,6 +106,19 @@ impl<'a> CheckerContext<'a> {
         self.actual_lib_file_count = count;
     }
 
+    /// Record whether a project-local `@typescript/lib-dom` replacement package was loaded
+    /// and which common globals it explicitly provides.
+    pub const fn set_typescript_dom_replacement_globals(
+        &mut self,
+        loaded: bool,
+        has_window: bool,
+        has_self: bool,
+    ) {
+        self.typescript_dom_replacement_loaded = loaded;
+        self.typescript_dom_replacement_has_window = has_window;
+        self.typescript_dom_replacement_has_self = has_self;
+    }
+
     /// Set all arenas for cross-file resolution.
     pub fn set_all_arenas(&mut self, arenas: Arc<Vec<Arc<NodeArena>>>) {
         // Build module specifiers map from arena file names.
