@@ -1126,6 +1126,11 @@ fn collect_exact_literal_property_keys_inner(
             keys.insert(atom);
             Some(())
         }
+        Some(TypeData::UniqueSymbol(sym)) => {
+            let atom = db.intern_string(&format!("__unique_{}", sym.0));
+            keys.insert(atom);
+            Some(())
+        }
         Some(TypeData::Union(members)) => {
             for &member in db.type_list(members).iter() {
                 collect_exact_literal_property_keys_inner(db, member, keys, visited)?;
@@ -1410,7 +1415,7 @@ fn collect_mapped_property_names_from_source_keys(
     let mut property_names = FxHashSet::default();
 
     for source_key in source_keys {
-        let key_literal = db.literal_string(db.resolve_atom(source_key).as_ref());
+        let key_literal = property_key_atom_to_type(db, source_key);
         let mapped_key = remap_mapped_property_key(db, mapped, key_literal);
         let mapped_names = collect_exact_literal_property_keys(db, mapped_key)?;
         property_names.extend(mapped_names);
@@ -1443,7 +1448,7 @@ pub fn get_finite_mapped_property_type(
     let mut matches = Vec::new();
 
     for source_key in source_keys {
-        let key_literal = db.literal_string(db.resolve_atom(source_key).as_ref());
+        let key_literal = property_key_atom_to_type(db, source_key);
         let remapped = remap_mapped_property_key(db, &mapped, key_literal);
         let remapped_keys = collect_exact_literal_property_keys(db, remapped)?;
         if !remapped_keys.contains(&target_atom) {
@@ -1471,6 +1476,16 @@ pub fn get_finite_mapped_property_type(
         1 => Some(matches[0]),
         _ => Some(db.union_preserve_members(matches)),
     }
+}
+
+fn property_key_atom_to_type(db: &dyn TypeDatabase, key: Atom) -> TypeId {
+    let key_str = db.resolve_atom(key);
+    if let Some(symbol_ref) = key_str.strip_prefix("__unique_")
+        && let Ok(id) = symbol_ref.parse::<u32>()
+    {
+        return db.unique_symbol(crate::types::SymbolRef(id));
+    }
+    db.literal_string(key_str.as_ref())
 }
 
 /// Backward-compatible alias for callers that only used this on deferred/remapped mapped types.
