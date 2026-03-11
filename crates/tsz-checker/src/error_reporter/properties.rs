@@ -26,6 +26,16 @@ impl<'a> CheckerState<'a> {
                 && let Some(shape) =
                     crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
                 && shape.symbol.is_none()
+                && self
+                    .resolve_identifier_symbol(receiver)
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| self.ctx.arena.get(symbol.value_declaration))
+                    .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
+                    .is_some_and(|decl| {
+                        self.ctx.arena.get(decl.initializer).is_some_and(|init| {
+                            init.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        })
+                    })
             {
                 return format!("typeof {}", ident.escaped_text);
             }
