@@ -154,13 +154,27 @@ impl<'a> CheckerState<'a> {
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
 
+        // The solver's ObjectShape only has string_index/number_index fields,
+        // so symbol index signatures get misclassified into string_index with
+        // key_type=SYMBOL.  Extract any inherited symbol index from string_index
+        // so we can check symbol-keyed properties against it.
+        let mut inherited_symbol_value_type: Option<TypeId> = None;
+        if let Some(ref si) = index_info.string_index {
+            if si.key_type == TypeId::SYMBOL {
+                inherited_symbol_value_type = Some(si.value_type);
+                index_info.string_index = None;
+            }
+        }
+
         // Scan members for own index signatures and detect duplicates (TS2374)
         // Static and instance index signatures are tracked separately --
         // a class can have both `[p: string]: any` and `static [p: string]: number`.
         let mut string_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut number_index_nodes: Vec<NodeIndex> = Vec::new();
+        let mut symbol_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_string_index_nodes: Vec<NodeIndex> = Vec::new();
         let mut static_number_index_nodes: Vec<NodeIndex> = Vec::new();
+        let mut static_symbol_index_nodes: Vec<NodeIndex> = Vec::new();
 
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -234,6 +248,12 @@ impl<'a> CheckerState<'a> {
                         param_name: None,
                     });
                 }
+            } else if param_type == TypeId::SYMBOL {
+                if is_static {
+                    static_symbol_index_nodes.push(member_idx);
+                } else {
+                    symbol_index_nodes.push(member_idx);
+                }
             }
         }
 
@@ -257,6 +277,17 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
                         &["number"],
+                    );
+                }
+            }
+        }
+        for nodes in [&symbol_index_nodes, &static_symbol_index_nodes] {
+            if nodes.len() > 1 {
+                for &node_idx in nodes {
+                    self.error_at_node_msg(
+                        node_idx,
+                        crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                        &["symbol"],
                     );
                 }
             }
@@ -286,10 +317,37 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        let has_instance_index =
-            index_info.string_index.is_some() || index_info.number_index.is_some();
-        let has_static_index =
-            static_string_value_type.is_some() || static_number_value_type.is_some();
+        // Extract symbol index value types (tracked locally, not in IndexInfo).
+        // Own symbol index takes priority over inherited.
+        let symbol_value_type = if !symbol_index_nodes.is_empty() {
+            let node_idx = symbol_index_nodes[0];
+            self.ctx
+                .arena
+                .get(node_idx)
+                .and_then(|n| self.ctx.arena.get_index_signature(n))
+                .filter(|sig| sig.type_annotation.is_some())
+                .map(|sig| self.get_type_from_type_node(sig.type_annotation))
+        } else {
+            inherited_symbol_value_type
+        };
+        let static_symbol_value_type = if !static_symbol_index_nodes.is_empty() {
+            let node_idx = static_symbol_index_nodes[0];
+            self.ctx
+                .arena
+                .get(node_idx)
+                .and_then(|n| self.ctx.arena.get_index_signature(n))
+                .filter(|sig| sig.type_annotation.is_some())
+                .map(|sig| self.get_type_from_type_node(sig.type_annotation))
+        } else {
+            None
+        };
+
+        let has_instance_index = index_info.string_index.is_some()
+            || index_info.number_index.is_some()
+            || symbol_value_type.is_some();
+        let has_static_index = static_string_value_type.is_some()
+            || static_number_value_type.is_some()
+            || static_symbol_value_type.is_some();
 
         // If no index signatures (neither inherited/own instance nor own static),
         // nothing to check.
@@ -311,9 +369,10 @@ impl<'a> CheckerState<'a> {
             index_info.string_index = None;
         }
 
-        // If all instance signatures were invalidated and no static ones, nothing to enforce.
+        // If all instance signatures were invalidated and no static/symbol ones, nothing to enforce.
         if index_info.string_index.is_none()
             && index_info.number_index.is_none()
+            && symbol_value_type.is_none()
             && !has_static_index
         {
             return;
@@ -481,9 +540,28 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-            // Skip symbol-keyed properties -- TSC does not check them against
-            // string or number index signatures.
+            // Symbol-keyed properties are NOT checked against string or number
+            // index signatures, but they ARE checked against symbol index
+            // signatures (TS2411).
             if self.is_symbol_named_property(name_idx) {
+                if !self.type_contains_error(prop_type) {
+                    let applicable_symbol_value = if is_static_member {
+                        static_symbol_value_type
+                    } else {
+                        symbol_value_type
+                    };
+                    if let Some(sym_value_type) = applicable_symbol_value
+                        && !self.is_assignable_to(prop_type, sym_value_type)
+                    {
+                        let prop_type_str = self.format_type(prop_type);
+                        let index_type_str = self.format_type(sym_value_type);
+                        self.error_at_node_msg(
+                            name_idx,
+                            diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &[&prop_name, &prop_type_str, "symbol", &index_type_str],
+                        );
+                    }
+                }
                 continue;
             }
 
@@ -734,6 +812,45 @@ interface C extends A, B {}
             !matching.is_empty(),
             "Expected TS2413 for inherited index signature conflict, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2411_symbol_index_signature_own_property() {
+        // Symbol-keyed properties must be assignable to symbol index signature type
+        let diags = check_source_diagnostics(
+            r#"
+interface I {
+    [Symbol.iterator]: number;
+    [s: symbol]: string;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2411 for symbol property not assignable to symbol index, got codes: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2411_symbol_index_signature_compatible_no_error() {
+        // Compatible symbol property should NOT produce TS2411
+        let diags = check_source_diagnostics(
+            r#"
+interface I {
+    [Symbol.iterator]: string;
+    [s: symbol]: string;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
+        assert_eq!(
+            matching.len(),
+            0,
+            "Expected no TS2411 when symbol property is assignable to symbol index, got: {matching:?}"
         );
     }
 }
