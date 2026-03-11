@@ -9,6 +9,17 @@ use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn current_file_commonjs_namespace_type(&mut self) -> TypeId {
+        self.current_file_commonjs_namespace_type_with_display_extension(false)
+    }
+
+    pub(crate) fn current_file_commonjs_module_exports_namespace_type(&mut self) -> TypeId {
+        self.current_file_commonjs_namespace_type_with_display_extension(true)
+    }
+
+    fn current_file_commonjs_namespace_type_with_display_extension(
+        &mut self,
+        preserve_js_extension: bool,
+    ) -> TypeId {
         let mut export_names = BTreeSet::new();
         for source_file in &self.ctx.arena.source_files {
             for &stmt_idx in &source_file.statements.nodes {
@@ -36,7 +47,10 @@ impl<'a> CheckerState<'a> {
         let namespace_type = self.ctx.types.factory().object(props);
         self.ctx
             .namespace_module_names
-            .insert(namespace_type, self.current_file_commonjs_module_name());
+            .insert(
+                namespace_type,
+                self.current_file_commonjs_module_name(preserve_js_extension),
+            );
         namespace_type
     }
 
@@ -202,7 +216,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "exports")
     }
 
-    fn current_file_commonjs_module_name(&self) -> String {
+    fn current_file_commonjs_module_name(&self, preserve_js_extension: bool) -> String {
         let file_name = self
             .ctx
             .arena
@@ -210,7 +224,11 @@ impl<'a> CheckerState<'a> {
             .first()
             .map(|sf| sf.file_name.as_str())
             .unwrap_or(self.ctx.file_name.as_str());
-        let stripped = Self::strip_known_module_extension(file_name);
+        let stripped = if preserve_js_extension {
+            Self::strip_typescript_module_extension(file_name)
+        } else {
+            Self::strip_known_module_extension(file_name)
+        };
         stripped
             .rsplit(|ch| ['/', '\\'].contains(&ch))
             .next()
@@ -223,6 +241,15 @@ impl<'a> CheckerState<'a> {
             ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
             ".mjs", ".cjs",
         ] {
+            if let Some(stripped) = path.strip_suffix(ext) {
+                return stripped;
+            }
+        }
+        path
+    }
+
+    fn strip_typescript_module_extension(path: &str) -> &str {
+        for ext in &[".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"] {
             if let Some(stripped) = path.strip_suffix(ext) {
                 return stripped;
             }
