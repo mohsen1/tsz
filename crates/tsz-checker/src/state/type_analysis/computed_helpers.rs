@@ -200,6 +200,45 @@ impl<'a> CheckerState<'a> {
         type_node: NodeIndex,
         in_union_or_intersection: bool,
     ) -> bool {
+        // Depth guard: this function recurses through union/intersection members
+        // and evaluated type expansions. For recursive type aliases like
+        // `type N<T, K> = T | { [P in K]: N<T, K> }[K]`, evaluation can produce
+        // a union containing N again, and the two TypeIds alternate indefinitely.
+        // A depth limit of 30 prevents stack overflow while allowing legitimate
+        // shallow circularity detection.
+        thread_local! {
+            static CIRC_REF_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        const MAX_CIRC_REF_DEPTH: u32 = 30;
+
+        let depth = CIRC_REF_DEPTH.with(|d| {
+            let v = d.get();
+            d.set(v + 1);
+            v
+        });
+        if depth >= MAX_CIRC_REF_DEPTH {
+            CIRC_REF_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            return false; // Conservatively: not a direct circular reference
+        }
+
+        let result = self.is_direct_circular_reference_inner(
+            sym_id,
+            resolved_type,
+            type_node,
+            in_union_or_intersection,
+        );
+        CIRC_REF_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        result
+    }
+
+    /// Inner implementation of circular reference detection (after depth guard).
+    fn is_direct_circular_reference_inner(
+        &mut self,
+        sym_id: SymbolId,
+        resolved_type: TypeId,
+        type_node: NodeIndex,
+        in_union_or_intersection: bool,
+    ) -> bool {
         // Check if resolved_type is Lazy(DefId) pointing to a type alias in the
         // current resolution chain.
         if let Some(def_id) =
