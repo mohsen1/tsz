@@ -10,15 +10,38 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn widen_function_like_display_type(&mut self, type_id: TypeId) -> TypeId {
+        let constructor_display_def = self
+            .ctx
+            .definition_store
+            .find_def_for_type(type_id)
+            .and_then(|def_id| {
+                self.ctx
+                    .definition_store
+                    .get(def_id)
+                    .filter(|def| matches!(def.kind, tsz_solver::def::DefKind::ClassConstructor))
+                    .map(|_| def_id)
+            });
+
         let type_id = self.evaluate_type_with_env(type_id);
         if tsz_solver::is_generic_application(self.ctx.types, type_id) {
-            return tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+            let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+            if let Some(def_id) = constructor_display_def {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(widened, def_id);
+            }
+            return widened;
         }
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
-
-        tsz_solver::operations::widening::widen_type(self.ctx.types, type_id)
+        let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+        if let Some(def_id) = constructor_display_def {
+            self.ctx
+                .definition_store
+                .register_type_to_def(widened, def_id);
+        }
+        widened
     }
 
     fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {

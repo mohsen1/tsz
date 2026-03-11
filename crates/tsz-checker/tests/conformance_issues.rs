@@ -8187,6 +8187,58 @@ b = a;
     );
 }
 
+#[test]
+fn class_expression_assignment_preserves_typeof_variable_name_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A {
+  prop: string;
+}
+
+const A: { new(): A } = class {}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type 'typeof A' is not assignable to type 'new () => A'.")
+        }),
+        "Expected class-expression assignment to display `typeof A`. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn anonymous_class_expression_argument_preserves_typeof_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo<T>(x = class { prop: T }): T {
+    return undefined;
+}
+
+foo(class { static prop = "hello" }).length;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains(
+                    "Argument of type 'typeof (Anonymous class)' is not assignable to parameter of type 'typeof (Anonymous class)'.",
+                )
+        }),
+        "Expected anonymous class-expression diagnostics to preserve `typeof (Anonymous class)`. Got: {diagnostics:?}"
+    );
+}
+
 // TS1479: CJS file importing ESM module
 // Tests the current_is_commonjs detection logic with different file extensions.
 

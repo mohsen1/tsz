@@ -74,6 +74,210 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn class_constructor_display_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
+        let def_id = self.ctx.definition_store.find_def_for_type(type_id)?;
+        self.ctx
+            .definition_store
+            .get(def_id)
+            .filter(|def| matches!(def.kind, tsz_solver::def::DefKind::ClassConstructor))
+            .map(|_| def_id)
+    }
+
+    fn call_signature_accepts_arg_count(
+        &self,
+        sig: &tsz_solver::CallSignature,
+        arg_count: usize,
+    ) -> bool {
+        let required_count = sig.params.iter().filter(|param| !param.optional).count();
+        let has_rest = sig.params.iter().any(|param| param.rest);
+        if has_rest {
+            arg_count >= required_count
+        } else {
+            arg_count >= required_count && arg_count <= sig.params.len()
+        }
+    }
+
+    fn raw_param_for_argument_index<'b>(
+        &self,
+        sig: &'b tsz_solver::CallSignature,
+        index: usize,
+    ) -> Option<&'b tsz_solver::ParamInfo> {
+        sig.params
+            .get(index)
+            .or_else(|| sig.params.last().filter(|param| param.rest))
+    }
+
+    fn type_display_skeleton(&self, type_id: TypeId, depth: usize) -> Option<String> {
+        if depth == 0 {
+            return Some("*".to_string());
+        }
+
+        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id) {
+            let properties = shape
+                .properties
+                .iter()
+                .map(|prop| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        self.ctx.types.resolve_atom_ref(prop.name),
+                        u8::from(prop.optional),
+                        u8::from(prop.is_method),
+                        u8::from(prop.is_class_prototype),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let call_sigs = shape
+                .call_signatures
+                .iter()
+                .filter_map(|sig| self.call_signature_display_skeleton(sig, depth - 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            let construct_sigs = shape
+                .construct_signatures
+                .iter()
+                .filter_map(|sig| self.call_signature_display_skeleton(sig, depth - 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            return Some(format!(
+                "callable|a{}|si{}|ni{}|props[{properties}]|calls[{call_sigs}]|ctors[{construct_sigs}]",
+                u8::from(shape.is_abstract),
+                u8::from(shape.string_index.is_some()),
+                u8::from(shape.number_index.is_some()),
+            ));
+        }
+
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id) {
+            let properties = shape
+                .properties
+                .iter()
+                .map(|prop| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        self.ctx.types.resolve_atom_ref(prop.name),
+                        u8::from(prop.optional),
+                        u8::from(prop.is_method),
+                        u8::from(prop.is_class_prototype),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            return Some(format!(
+                "object|si{}|ni{}|props[{properties}]",
+                u8::from(shape.string_index.is_some()),
+                u8::from(shape.number_index.is_some()),
+            ));
+        }
+
+        let key = self.ctx.types.lookup(type_id)?;
+        let kind = match key {
+            tsz_solver::TypeData::TypeParameter(info) => {
+                format!("type_param:{}", self.ctx.types.resolve_atom_ref(info.name))
+            }
+            _ => format!("kind:{:?}", std::mem::discriminant(&key)),
+        };
+        Some(kind)
+    }
+
+    fn call_signature_display_skeleton(
+        &self,
+        sig: &tsz_solver::CallSignature,
+        depth: usize,
+    ) -> Option<String> {
+        let params = sig
+            .params
+            .iter()
+            .map(|param| format!("{}:{}", u8::from(param.optional), u8::from(param.rest),))
+            .collect::<Vec<_>>()
+            .join(",");
+        let return_type = self.type_display_skeleton(sig.return_type, depth)?;
+        Some(format!(
+            "sig|params[{params}]|this{}|ret[{return_type}]",
+            u8::from(sig.this_type.is_some()),
+        ))
+    }
+
+    fn propagate_generic_constructor_display_defs(
+        &mut self,
+        callee_type: TypeId,
+        arg_count: usize,
+        instantiated_params: &[tsz_solver::ParamInfo],
+    ) {
+        let applicable: Vec<tsz_solver::CallSignature> = if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, callee_type)
+        {
+            let sig = tsz_solver::CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate.clone(),
+                is_method: shape.is_method,
+            };
+            self.call_signature_accepts_arg_count(&sig, arg_count)
+                .then_some(vec![sig])
+                .unwrap_or_default()
+        } else if let Some(signatures) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
+        {
+            signatures
+                .into_iter()
+                .filter(|sig| self.call_signature_accepts_arg_count(sig, arg_count))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if applicable.is_empty() {
+            return;
+        }
+
+        for (index, instantiated_param) in instantiated_params.iter().enumerate() {
+            if self
+                .ctx
+                .definition_store
+                .find_def_for_type(instantiated_param.type_id)
+                .is_some()
+            {
+                continue;
+            }
+
+            let Some(instantiated_skeleton) =
+                self.type_display_skeleton(instantiated_param.type_id, 2)
+            else {
+                continue;
+            };
+
+            let mut matched_def = None;
+            let mut ambiguous = false;
+
+            for sig in &applicable {
+                let Some(raw_param) = self.raw_param_for_argument_index(sig, index) else {
+                    continue;
+                };
+                let Some(def_id) = self.class_constructor_display_def_id(raw_param.type_id) else {
+                    continue;
+                };
+                let Some(raw_skeleton) = self.type_display_skeleton(raw_param.type_id, 2) else {
+                    continue;
+                };
+                if raw_skeleton != instantiated_skeleton {
+                    continue;
+                }
+                if matched_def.is_some_and(|existing| existing != def_id) {
+                    ambiguous = true;
+                    break;
+                }
+                matched_def = Some(def_id);
+            }
+
+            if !ambiguous && let Some(def_id) = matched_def {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(instantiated_param.type_id, def_id);
+            }
+        }
+    }
+
     /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
     ///
     /// Computes the return type of function/method calls.
@@ -1915,6 +2119,13 @@ impl<'a> CheckerState<'a> {
         // subtype cache entries from inference. When we have instantiated params and
         // a fresh assignability check passes, treat the call as successful and perform
         // EPC instead of reporting TS2345.
+        if let Some(ref instantiated_params) = generic_instantiated_params {
+            self.propagate_generic_constructor_display_defs(
+                callee_type_for_call,
+                args.len(),
+                instantiated_params,
+            );
+        }
         let (result, did_post_epc) = if let Some(ref instantiated_params) =
             generic_instantiated_params
         {
