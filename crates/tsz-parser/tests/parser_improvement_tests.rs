@@ -147,6 +147,27 @@ const cloneObjectGood = value => /** @type {T} */({ ...value });
 }
 
 #[test]
+fn test_parenthesized_destructuring_assignment_is_not_treated_as_missing_arrow() {
+    let source = r#"
+class C {
+    constructor() {
+        ({ x, y: y1, "y": y1 } = this);
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.message.contains("'=>' expected"))),
+        "Parenthesized destructuring assignments should not trigger missing-arrow recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parameters_with_line_break_no_comma() {
     // Function parameters without comma but with line break
     // Should be more permissive to avoid false positives

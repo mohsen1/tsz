@@ -275,7 +275,7 @@ impl ParserState {
                 && bracket_depth == 0
                 && matches!(
                     self.token(),
-                    SyntaxKind::ColonToken | SyntaxKind::QuestionToken | SyntaxKind::EqualsToken
+                    SyntaxKind::ColonToken | SyntaxKind::QuestionToken
                 )
             {
                 saw_parameter_syntax = true;
