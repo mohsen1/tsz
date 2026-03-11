@@ -15,7 +15,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::{ApplicationEvaluator, TupleElement, TypeId};
 
 #[derive(Clone, Copy, Debug)]
 struct DestructuringSource {
@@ -223,7 +223,21 @@ impl<'a> FlowAnalyzer<'a> {
                     rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 });
-                if !is_const || is_structural_literal {
+                if !is_const {
+                    return None;
+                }
+                if is_structural_literal {
+                    if let Some(annotation_type) =
+                        self.annotation_type_from_var_decl_node(assignment_node)
+                        && let Some(rhs_type) =
+                            self.node_types.and_then(|nt| nt.get(&rhs.0).copied())
+                        && self.is_assignable_to(rhs_type, annotation_type)
+                    {
+                        let reduced = self.narrow_assignment(annotation_type, rhs_type);
+                        if reduced != annotation_type {
+                            return Some(reduced);
+                        }
+                    }
                     return None;
                 }
             }
@@ -1700,6 +1714,7 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
+        let initial_type = self.resolve_assignment_reduction_type(initial_type);
         let members_opt = union_members_for_type(self.interner, initial_type);
         let members = match members_opt {
             Some(m) => m,
@@ -1716,7 +1731,7 @@ impl<'a> FlowAnalyzer<'a> {
         // (no annotation), while union members are already resolved. Without this,
         // the bare SubtypeChecker used by are_types_mutually_subtype cannot match
         // a Lazy(DefId) against a concrete Object type, causing narrowing to fail.
-        let assigned_type = self.resolve_lazy_via_env(assigned_type);
+        let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
 
         let mut kept = Vec::new();
         for &m in &members {
@@ -1758,5 +1773,15 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             type_id
         }
+    }
+
+    fn resolve_assignment_reduction_type(&self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_lazy_via_env(type_id);
+        let Some(env) = &self.type_environment else {
+            return resolved;
+        };
+        let env = env.borrow();
+        let evaluator = ApplicationEvaluator::new(self.interner, &*env);
+        evaluator.evaluate_or_original(resolved)
     }
 }

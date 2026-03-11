@@ -1197,22 +1197,17 @@ impl<'a> CheckerState<'a> {
                 && body_node.kind != syntax_kind_ext::BLOCK
             {
                 let raw_expected_return_type = expected_expression_return_type.unwrap();
-                let expected_return_type = if self
-                    .ctx
-                    .types
-                    .lookup(raw_expected_return_type)
-                    .is_some_and(|data| {
-                        matches!(data, tsz_solver::types::TypeData::IndexAccess(_, _))
-                    }) {
-                    let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
-                    if evaluated != TypeId::ERROR {
-                        evaluated
+                let expected_return_type =
+                    if tsz_solver::is_index_access_type(self.ctx.types, raw_expected_return_type) {
+                        let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
+                        if evaluated != TypeId::ERROR {
+                            evaluated
+                        } else {
+                            raw_expected_return_type
+                        }
                     } else {
                         raw_expected_return_type
-                    }
-                } else {
-                    raw_expected_return_type
-                };
+                    };
                 if expected_return_type != TypeId::ANY
                     && !self.type_contains_error(expected_return_type)
                 {
@@ -1947,12 +1942,11 @@ impl<'a> CheckerState<'a> {
                 };
                 let type_id = factory.type_param(info);
 
-                // Only add if not already in scope (inner scope should shadow outer)
-                if !self.ctx.type_parameter_scope.contains_key(&name) {
-                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                    updates.push((name, previous, false));
-                    added_params.push(param_idx);
-                }
+                // Function type parameters must shadow outer aliases/type parameters
+                // with the same name for the duration of this function signature.
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+                updates.push((name, previous, false));
+                added_params.push(param_idx);
             }
         }
 
