@@ -8,7 +8,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 impl<'a> CheckerState<'a> {
-    pub(crate) fn commonjs_namespace_type_for_file(&mut self, target_file_idx: usize) -> Option<TypeId> {
+    pub(crate) fn commonjs_namespace_type_for_file(
+        &mut self,
+        target_file_idx: usize,
+    ) -> Option<TypeId> {
         let mut props = Vec::new();
         self.augment_namespace_props_with_commonjs_exports_for_file(target_file_idx, &mut props);
         if props.is_empty() {

@@ -32,13 +32,16 @@ impl<'a> CheckerState<'a> {
         if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(left_access) = arena.get_access_expr(left_node)
         {
-            let direct_exports_name = arena.get_identifier_at(left_access.expression).and_then(
-                |ident| (ident.escaped_text == "exports").then(|| {
-                    arena
-                        .get_identifier_at(left_access.name_or_argument)
-                        .map(|name| name.escaped_text.to_string())
-                }),
-            ).flatten();
+            let direct_exports_name = arena
+                .get_identifier_at(left_access.expression)
+                .and_then(|ident| {
+                    (ident.escaped_text == "exports").then(|| {
+                        arena
+                            .get_identifier_at(left_access.name_or_argument)
+                            .map(|name| name.escaped_text.to_string())
+                    })
+                })
+                .flatten();
             let module_exports_name = arena.get(left_access.expression).and_then(|target_node| {
                 if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                     return None;
@@ -51,7 +54,8 @@ impl<'a> CheckerState<'a> {
                         .get_identifier_at(target_access.name_or_argument)
                         .is_some_and(|ident| ident.escaped_text == "exports");
                 is_module_exports.then(|| {
-                    arena.get_identifier_at(left_access.name_or_argument)
+                    arena
+                        .get_identifier_at(left_access.name_or_argument)
                         .map(|name| name.escaped_text.to_string())
                 })?
             });
@@ -390,7 +394,10 @@ impl<'a> CheckerState<'a> {
         target_file_idx: usize,
         props: &mut Vec<tsz_solver::PropertyInfo>,
     ) {
-        self.augment_namespace_props_with_direct_assignment_exports_for_file(target_file_idx, props);
+        self.augment_namespace_props_with_direct_assignment_exports_for_file(
+            target_file_idx,
+            props,
+        );
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let Some(source_file) = target_arena.source_files.first() else {
             return;
