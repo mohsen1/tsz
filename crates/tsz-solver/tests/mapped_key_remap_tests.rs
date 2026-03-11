@@ -265,3 +265,146 @@ fn test_finite_mapped_property_type_specializes_key_filtered_template() {
         "lowercase key should be filtered out when resolving the specialized property type"
     );
 }
+
+#[test]
+fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
+    let interner = TypeInterner::new();
+
+    let tag_name = interner.intern_string("_tag");
+    let a_name = interner.intern_string("A");
+    let b_name = interner.intern_string("B");
+    let tag_param_name = interner.intern_string("Tag");
+    let infer_name = interner.intern_string("X");
+
+    let a_key = interner.literal_string_atom(a_name);
+    let b_key = interner.literal_string_atom(b_name);
+
+    let a_value = interner.object(vec![PropertyInfo::new(tag_name, a_key)]);
+    let b_value = interner.object(vec![PropertyInfo::new(tag_name, b_key)]);
+    let values = interner.union(vec![a_value, b_value]);
+
+    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let record_pattern = interner.object(vec![PropertyInfo::new(tag_name, infer_x)]);
+    let tags = interner.conditional(ConditionalType {
+        check_type: values,
+        extends_type: record_pattern,
+        true_type: infer_x,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let tag_param = TypeParamInfo {
+        name: tag_param_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let tag_type = interner.intern(TypeData::TypeParameter(tag_param.clone()));
+    let string_constraint = interner.intersection(vec![tags, TypeId::STRING]);
+
+    let event_pattern = interner.object(vec![PropertyInfo::new(tag_name, tag_type)]);
+    let template = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("_")),
+            type_id: interner.conditional(ConditionalType {
+                check_type: values,
+                extends_type: event_pattern,
+                true_type: values,
+                false_type: TypeId::NEVER,
+                is_distributive: true,
+            }),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mapped = interner.mapped(MappedType {
+        type_param: tag_param,
+        constraint: string_constraint,
+        name_type: None,
+        template,
+        optional_modifier: Some(MappedModifier::Add),
+        readonly_modifier: Some(MappedModifier::Add),
+    });
+    let mapped_id = crate::mapped_type_id(&interner, mapped).expect("expected mapped type id");
+
+    let names =
+        collect_finite_mapped_property_names(&interner, mapped_id).expect("expected finite keys");
+    assert!(names.contains(&a_name), "expected A in finite keys, got {names:?}");
+    assert!(names.contains(&b_name), "expected B in finite keys, got {names:?}");
+
+    let a_type =
+        get_finite_mapped_property_type(&interner, mapped_id, "A").expect("expected A property");
+    let a_type = evaluate_type(&interner, a_type);
+    let function_type = crate::type_queries::get_union_members(&interner, a_type)
+        .unwrap_or_else(|| vec![a_type])
+        .into_iter()
+        .find(|&member| member != TypeId::UNDEFINED)
+        .expect("expected callable member");
+    let TypeData::Function(shape_id) =
+        interner.lookup(function_type).expect("expected function type")
+    else {
+        panic!("expected function type, got {:?}", interner.lookup(function_type));
+    };
+    let param_type = interner.function_shape(shape_id).params[0].type_id;
+    let param_type = evaluate_type(&interner, param_type);
+    let members =
+        crate::type_queries::get_union_members(&interner, param_type).unwrap_or_else(|| vec![param_type]);
+    assert_eq!(members, vec![a_value]);
+}
+
+#[test]
+fn test_finite_mapped_property_names_do_not_materialize_string_index_keys() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let keyof_source = interner.intern(TypeData::KeyOf(source));
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param.clone(),
+        constraint: keyof_source,
+        name_type: None,
+        template: TypeId::BOOLEAN,
+        optional_modifier: Some(MappedModifier::Add),
+        readonly_modifier: None,
+    });
+    let mapped_id = crate::mapped_type_id(&interner, mapped).expect("expected mapped type id");
+
+    assert!(
+        collect_finite_mapped_property_names(&interner, mapped_id).is_none(),
+        "string index constraints should remain non-finite"
+    );
+    assert!(
+        get_finite_mapped_property_type(&interner, mapped_id, "anything").is_none(),
+        "string index constraints should not synthesize exact property types"
+    );
+}

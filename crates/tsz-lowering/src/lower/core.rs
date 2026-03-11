@@ -1058,9 +1058,43 @@ impl<'a> TypeLowering<'a> {
     }
 
     pub(super) fn collect_type_parameters(&self, list: &NodeList) -> Vec<TypeParamInfo> {
-        let mut params = Vec::with_capacity(list.nodes.len());
+        let mut param_names = Vec::with_capacity(list.nodes.len());
         for &idx in &list.nodes {
-            if let Some(info) = self.lower_type_parameter(idx) {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            let Some(data) = self.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .map_or_else(
+                    || self.interner.intern_string("T"),
+                    |id_data| self.interner.intern_string(&id_data.escaped_text),
+                );
+            let is_const = self
+                .arena
+                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+
+            // Bind all local type parameters before lowering constraints/defaults so
+            // self-referential constraints like `Exclude<keyof P, ...>` can resolve P.
+            let placeholder = TypeParamInfo {
+                is_const,
+                name,
+                constraint: None,
+                default: None,
+            };
+            self.add_type_param_binding(name, self.interner.type_param(placeholder));
+            param_names.push((idx, name, is_const));
+        }
+
+        let mut params = Vec::with_capacity(param_names.len());
+        for (idx, name, is_const) in param_names {
+            if let Some(mut info) = self.lower_type_parameter(idx) {
+                info.name = name;
+                info.is_const = is_const;
                 let type_id = self.interner.type_param(info.clone());
                 self.add_type_param_binding(info.name, type_id);
                 params.push(info);

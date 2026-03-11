@@ -18,6 +18,19 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {
+        let expected = self.evaluate_type_with_env(expected);
+        let expected = self.resolve_type_for_property_access(expected);
+        let expected = self.resolve_lazy_type(expected);
+        let expected = self.evaluate_application_type(expected);
+        tsz_solver::contains_type_matching(self.ctx.types, expected, |key| {
+            matches!(
+                key,
+                tsz_solver::TypeData::Intrinsic(tsz_solver::IntrinsicKind::Never)
+            )
+        })
+    }
+
     fn preferred_literal_expected_for_mismatch(
         &self,
         arg_types: &[TypeId],
@@ -178,13 +191,6 @@ impl<'a> CheckerState<'a> {
                 actual,
                 fallback_return,
             } => {
-                if self.should_defer_contextual_argument_mismatch(actual, expected) {
-                    return if fallback_return != TypeId::ERROR {
-                        fallback_return
-                    } else {
-                        TypeId::ERROR
-                    };
-                }
                 if actual == TypeId::ERROR
                     || actual == TypeId::UNKNOWN
                     || expected == TypeId::ERROR
@@ -197,10 +203,29 @@ impl<'a> CheckerState<'a> {
                 let reported_actual = arg_types.get(index).copied().unwrap_or(actual);
                 let reported_expected =
                     self.preferred_literal_expected_for_mismatch(arg_types, index, expected);
+                let mut elaborated = false;
+                let should_try_deferred_elaboration =
+                    self.should_attempt_deferred_literal_elaboration(expected);
                 if let Some(arg_idx) = arg_idx {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
+                    if should_try_deferred_elaboration
+                        && !self.should_suppress_weak_key_arg_mismatch(
+                            callee_expr, args, index, actual,
+                        )
+                    {
+                        elaborated = self.try_elaborate_object_literal_arg_error(arg_idx, expected);
+                    }
+                    if !elaborated
+                        && self.should_defer_contextual_argument_mismatch(actual, expected)
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
-                        && !self.try_elaborate_object_literal_arg_error(arg_idx, expected)
+                        && !elaborated
                     {
                         let _ = self.check_argument_assignable_or_report(
                             reported_actual,
@@ -210,8 +235,24 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
+                    if should_try_deferred_elaboration
+                        && !self.should_suppress_weak_key_arg_mismatch(
+                            callee_expr, args, index, actual,
+                        )
+                    {
+                        elaborated = self.try_elaborate_object_literal_arg_error(last_arg, expected);
+                    }
+                    if !elaborated
+                        && self.should_defer_contextual_argument_mismatch(actual, expected)
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
-                        && !self.try_elaborate_object_literal_arg_error(last_arg, expected)
+                        && !elaborated
                     {
                         let _ = self.check_argument_assignable_or_report(
                             reported_actual,
@@ -220,6 +261,13 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 } else {
+                    if self.should_defer_contextual_argument_mismatch(actual, expected) {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
                     let _ = self.check_argument_assignable_or_report(
                         reported_actual,
                         reported_expected,

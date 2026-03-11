@@ -151,8 +151,11 @@ pub struct TypeInstantiator<'a> {
     visiting: FxHashMap<TypeId, TypeId>,
     /// Type parameter names that are shadowed in the current scope.
     shadowed: Vec<Atom>,
+    /// Freshly-instantiated local type parameters for the current nested generic scope.
+    local_type_params: Vec<(Atom, TypeId)>,
     substitute_infer: bool,
     preserve_meta_types: bool,
+    preserve_unsubstituted_type_params: bool,
     /// When set, substitutes `ThisType` with this concrete type.
     pub this_type: Option<TypeId>,
     depth: u32,
@@ -168,8 +171,10 @@ impl<'a> TypeInstantiator<'a> {
             substitution,
             visiting: FxHashMap::default(),
             shadowed: Vec::new(),
+            local_type_params: Vec::new(),
             substitute_infer: false,
             preserve_meta_types: false,
+            preserve_unsubstituted_type_params: false,
             this_type: None,
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
@@ -268,7 +273,9 @@ impl<'a> TypeInstantiator<'a> {
 
     /// Instantiate type parameter constraints and defaults.
     fn instantiate_type_params(&mut self, type_params: &[TypeParamInfo]) -> Vec<TypeParamInfo> {
-        type_params
+        let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
+        self.preserve_unsubstituted_type_params = true;
+        let instantiated = type_params
             .iter()
             .map(|tp| TypeParamInfo {
                 is_const: false,
@@ -276,7 +283,9 @@ impl<'a> TypeInstantiator<'a> {
                 constraint: tp.constraint.map(|c| self.instantiate(c)),
                 default: tp.default.map(|d| self.instantiate(d)),
             })
-            .collect()
+            .collect();
+        self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
+        instantiated
     }
 
     /// Instantiate function/signature parameters.
@@ -323,6 +332,13 @@ impl<'a> TypeInstantiator<'a> {
         if let Some(saved) = saved_visiting {
             self.visiting = saved;
         }
+    }
+
+    fn lookup_local_type_param(&self, name: Atom) -> Option<TypeId> {
+        self.local_type_params
+            .iter()
+            .rev()
+            .find_map(|(bound_name, type_id)| (*bound_name == name).then_some(*type_id))
     }
 
     /// Apply the substitution to a type, returning the instantiated type.
@@ -387,14 +403,20 @@ impl<'a> TypeInstantiator<'a> {
     fn instantiate_call_signature(&mut self, sig: &CallSignature) -> CallSignature {
         let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&sig.type_params);
 
+        let type_params = self.instantiate_type_params(&sig.type_params);
+        let local_start = self.local_type_params.len();
+        for type_param in &type_params {
+            self.local_type_params
+                .push((type_param.name, self.interner.type_param(type_param.clone())));
+        }
         let type_predicate = sig
             .type_predicate
             .as_ref()
             .map(|predicate| self.instantiate_type_predicate(predicate));
         let this_type = sig.this_type.map(|type_id| self.instantiate(type_id));
-        let type_params = self.instantiate_type_params(&sig.type_params);
         let params = self.instantiate_params(&sig.params);
         let return_type = self.instantiate(sig.return_type);
+        self.local_type_params.truncate(local_start);
 
         self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
@@ -422,6 +444,9 @@ impl<'a> TypeInstantiator<'a> {
         match key {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
+                if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
+                    return local_type_param;
+                }
                 if self.is_shadowed(info.name) {
                     tracing::trace!(
                         name = ?self.interner.resolve_atom_ref(info.name),
@@ -438,15 +463,22 @@ impl<'a> TypeInstantiator<'a> {
                     );
                     substituted
                 } else {
-                    // No direct substitution found. If the type parameter has a constraint
-                    // that references substituted type parameters, instantiate the constraint.
-                    // Example: Actions extends ActionsObject<State>, with {State: number}
-                    // → use ActionsObject<number> instead of Actions
-                    if let Some(constraint) = info.constraint {
-                        let instantiated_constraint = self.instantiate(constraint);
-                        // Only use the constraint if instantiation changed it
-                        if instantiated_constraint != constraint {
-                            return instantiated_constraint;
+                    if !self.preserve_unsubstituted_type_params {
+                        // No direct substitution found. If the type parameter has a constraint
+                        // that references substituted type parameters, instantiate the constraint.
+                        // Example: Actions extends ActionsObject<State>, with {State: number}
+                        // → use ActionsObject<number> instead of Actions.
+                        //
+                        // This fallback is intentionally disabled while instantiating
+                        // type-parameter declarations themselves so self-references like
+                        // `Exclude<keyof P, ...>` stay anchored to `P` instead of collapsing
+                        // into an error/constraint expansion.
+                        if let Some(constraint) = info.constraint {
+                            let instantiated_constraint = self.instantiate(constraint);
+                            // Only use the constraint if instantiation changed it
+                            if instantiated_constraint != constraint {
+                                return instantiated_constraint;
+                            }
                         }
                     }
                     // No substitution and no instantiated constraint, return original
@@ -559,14 +591,20 @@ impl<'a> TypeInstantiator<'a> {
                 let shape = self.interner.function_shape(*shape_id);
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
 
+                let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
+                let local_start = self.local_type_params.len();
+                for type_param in &instantiated_type_params {
+                    self.local_type_params
+                        .push((type_param.name, self.interner.type_param(type_param.clone())));
+                }
                 let type_predicate = shape
                     .type_predicate
                     .as_ref()
                     .map(|predicate| self.instantiate_type_predicate(predicate));
                 let this_type = shape.this_type.map(|type_id| self.instantiate(type_id));
-                let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
                 let instantiated_params = self.instantiate_params(&shape.params);
                 let instantiated_return = self.instantiate(shape.return_type);
+                self.local_type_params.truncate(local_start);
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 

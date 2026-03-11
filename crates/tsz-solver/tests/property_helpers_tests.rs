@@ -103,6 +103,85 @@ fn test_object_multiple_properties() {
     assert_property_not_found(&evaluator.resolve_property_access(obj, "d"));
 }
 
+#[test]
+fn test_validate_slice_case_reducers_keeps_plain_reducer_property_type() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let state_name = interner.intern_string("state");
+    let reducer_name = interner.intern_string("reducer");
+    let case_name = interner.intern_string("onClientUserChanged");
+    let empty_object = interner.object(vec![]);
+
+    let reducer_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(state_name),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let acr = interner.object(vec![PropertyInfo::new(case_name, reducer_fn)]);
+
+    let key_param_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param = interner.intern(TypeData::TypeParameter(key_param_info.clone()));
+    let check_type = interner.index_access(acr, key_param);
+
+    let reducer_shape = interner.object(vec![PropertyInfo::new(
+        reducer_name,
+        interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(state_name),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        }),
+    )]);
+
+    let template = interner.conditional(ConditionalType {
+        check_type,
+        extends_type: reducer_shape,
+        true_type: interner.object(vec![PropertyInfo::new(reducer_name, TypeId::ANY)]),
+        false_type: empty_object,
+        is_distributive: false,
+    });
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param_info,
+        constraint: interner.keyof(acr),
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let validate = interner.intersection(vec![acr, mapped]);
+
+    assert_property_success(
+        &evaluator.resolve_property_access(validate, "onClientUserChanged"),
+        reducer_fn,
+    );
+}
+
 // =============================================================================
 // Property lookup on union types
 // =============================================================================

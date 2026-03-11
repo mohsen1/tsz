@@ -341,6 +341,13 @@ impl<'a> CheckerState<'a> {
             return Some(current);
         }
 
+        if current == TypeId::NEVER && candidate != TypeId::NEVER {
+            return Some(candidate);
+        }
+        if candidate == TypeId::NEVER && current != TypeId::NEVER {
+            return Some(current);
+        }
+
         if matches!(current, TypeId::ANY | TypeId::UNKNOWN)
             && !matches!(candidate, TypeId::ANY | TypeId::UNKNOWN)
         {
@@ -530,7 +537,6 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type.or(property_context_type),
                     );
-
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that

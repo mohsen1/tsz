@@ -112,6 +112,45 @@ fn instantiate_function_shape_with_substitution(
 }
 
 impl<'a> CheckerState<'a> {
+    fn instantiate_contextual_constraint_without_unresolved_self(
+        &mut self,
+        type_param_type: TypeId,
+        tp_info: &tsz_solver::TypeParamInfo,
+        substitution: &tsz_solver::TypeSubstitution,
+    ) -> Option<TypeId> {
+        let constraint = tp_info.constraint?;
+        let should_drop_self = substitution.get(tp_info.name).is_some_and(|ty| {
+            ty == TypeId::ERROR
+                || ty == TypeId::UNKNOWN
+                || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty)
+        });
+        let mut contextual_substitution = tsz_solver::TypeSubstitution::new();
+        for (&name, &type_id) in substitution.map() {
+            let aliases_current_type_param = type_id == type_param_type;
+            if (should_drop_self && name == tp_info.name) || aliases_current_type_param {
+                continue;
+            }
+            contextual_substitution.insert(name, type_id);
+        }
+        Some(tsz_solver::instantiate_type(
+            self.ctx.types,
+            constraint,
+            &contextual_substitution,
+        ))
+    }
+
+    fn unresolved_contextual_substitution_target(
+        &self,
+        tp_info: &tsz_solver::TypeParamInfo,
+        substitution: &tsz_solver::TypeSubstitution,
+    ) -> Option<TypeId> {
+        let ty = substitution.get(tp_info.name)?;
+        (ty == TypeId::ERROR
+            || ty == TypeId::UNKNOWN
+            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty))
+        .then_some(ty)
+    }
+
     pub(crate) fn instantiate_generic_function_argument_against_target_for_refinement(
         &mut self,
         source_ty: TypeId,
@@ -700,13 +739,19 @@ impl<'a> CheckerState<'a> {
                     let original_param = shape_round2_param.map(|(type_id, _)| type_id);
                     if let Some(orig) = original_param
                         && let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, orig)
-                        && let Some(constraint) = tp_info.constraint
+                        && self
+                            .unresolved_contextual_substitution_target(&tp_info, current_substitution)
+                            .is_some()
                     {
-                        let instantiated_constraint = tsz_solver::instantiate_type(
-                            self.ctx.types,
-                            constraint,
-                            current_substitution,
-                        );
+                        let instantiated_constraint = match self
+                            .instantiate_contextual_constraint_without_unresolved_self(
+                                orig,
+                                &tp_info,
+                                current_substitution,
+                            ) {
+                            Some(instantiated_constraint) => instantiated_constraint,
+                            None => param_type,
+                        };
                         let evaluated_constraint =
                             self.evaluate_type_with_env(instantiated_constraint);
                         if !tsz_solver::type_queries::contains_type_parameters_db(
@@ -736,19 +781,50 @@ impl<'a> CheckerState<'a> {
                     } else {
                         param_type
                     };
-                    let inst = tsz_solver::instantiate_type(
-                        self.ctx.types,
-                        base_param_type,
-                        current_substitution,
-                    );
-                    if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, inst)
-                        && let Some(constraint) = tp_info.constraint
+                    let inst = if let Some(tp_info) =
+                        tsz_solver::type_param_info(self.ctx.types, base_param_type)
                     {
-                        let instantiated_constraint = tsz_solver::instantiate_type(
+                        if self
+                            .unresolved_contextual_substitution_target(&tp_info, current_substitution)
+                            .is_some()
+                        {
+                            self.instantiate_contextual_constraint_without_unresolved_self(
+                                base_param_type,
+                                &tp_info,
+                                current_substitution,
+                            )
+                            .unwrap_or_else(|| {
+                                tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    base_param_type,
+                                    current_substitution,
+                                )
+                            })
+                        } else {
+                            tsz_solver::instantiate_type(
+                                self.ctx.types,
+                                base_param_type,
+                                current_substitution,
+                            )
+                        }
+                    } else {
+                        tsz_solver::instantiate_type(
                             self.ctx.types,
-                            constraint,
+                            base_param_type,
                             current_substitution,
-                        );
+                        )
+                    };
+                    if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, inst)
+                    {
+                        let instantiated_constraint = match self
+                            .instantiate_contextual_constraint_without_unresolved_self(
+                                inst,
+                                &tp_info,
+                                current_substitution,
+                            ) {
+                            Some(instantiated_constraint) => instantiated_constraint,
+                            None => inst,
+                        };
                         let evaluated = self.evaluate_type_with_env(instantiated_constraint);
                         if !tsz_solver::type_queries::contains_type_parameters_db(
                             self.ctx.types,

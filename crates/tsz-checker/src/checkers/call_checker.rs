@@ -925,6 +925,11 @@ impl<'a> CheckerState<'a> {
             union_contextual,
             self.ctx.compiler_options.no_implicit_any,
         );
+        let contextual_refresh_args: Vec<_> = args
+            .iter()
+            .copied()
+            .filter(|&arg_idx| self.argument_needs_contextual_type(arg_idx))
+            .collect();
 
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
 
@@ -939,6 +944,9 @@ impl<'a> CheckerState<'a> {
         // nested callback/body diagnostics.
         let first_pass_diagnostics_checkpoint = self.ctx.diagnostics.len();
         self.ctx.node_types = Default::default();
+        for &arg_idx in &contextual_refresh_args {
+            self.clear_type_cache_recursive(arg_idx);
+        }
         let prev_callable_type = self.ctx.current_callable_type;
         self.ctx.current_callable_type = Some(union_contextual);
         let arg_types = self.collect_call_argument_types_with_context(
@@ -1062,10 +1070,13 @@ impl<'a> CheckerState<'a> {
 
             let diagnostics_checkpoint = self.ctx.diagnostics.len();
             self.ctx.node_types = Default::default();
+            for &arg_idx in &contextual_refresh_args {
+                self.clear_type_cache_recursive(arg_idx);
+            }
 
             let prev_callable_type = self.ctx.current_callable_type;
             self.ctx.current_callable_type = Some(func_type);
-            let sig_arg_types = self.collect_call_argument_types_with_context(
+            let mut sig_arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                 false,
@@ -1085,13 +1096,66 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (result, _instantiated_predicate, _) = self.resolve_call_with_checker_adapter(
+            let (mut result, _instantiated_predicate, instantiated_params) =
+                self.resolve_call_with_checker_adapter(
                 resolved_func_type,
                 &sig_arg_types,
                 force_bivariant_callbacks,
                 self.ctx.contextual_type,
                 actual_this_type,
             );
+
+            if !sig.type_params.is_empty() && !contextual_refresh_args.is_empty() {
+                if let Some(instantiated_params) = instantiated_params.as_ref() {
+                    self.ctx.node_types = Default::default();
+                    for &arg_idx in &contextual_refresh_args {
+                        self.clear_type_cache_recursive(arg_idx);
+                    }
+
+                    let prev_callable_type = self.ctx.current_callable_type;
+                    self.ctx.current_callable_type = Some(func_type);
+                    let refreshed_arg_types = self.collect_call_argument_types_with_context(
+                        args,
+                        |i, _arg_count| {
+                            let param = if i < instantiated_params.len() {
+                                instantiated_params.get(i)
+                            } else {
+                                instantiated_params.last().filter(|param| param.rest)
+                            }?;
+                            Some(if param.rest && i >= instantiated_params.len().saturating_sub(1) {
+                                tsz_solver::rest_argument_element_type(
+                                    self.ctx.types,
+                                    param.type_id,
+                                )
+                            } else {
+                                param.type_id
+                            })
+                        },
+                        false,
+                        None,
+                    );
+                    self.ctx.current_callable_type = prev_callable_type;
+
+                    let (retry_result, _retry_predicate, _retry_instantiated_params) =
+                        self.resolve_call_with_checker_adapter(
+                            resolved_func_type,
+                            &refreshed_arg_types,
+                            force_bivariant_callbacks,
+                            self.ctx.contextual_type,
+                            actual_this_type,
+                        );
+
+                    match retry_result {
+                        CallResult::Success(_)
+                        | CallResult::ArgumentTypeMismatch { .. }
+                        | CallResult::TypeParameterConstraintViolation { .. } => {
+                            sig_arg_types = refreshed_arg_types;
+                            result = retry_result;
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             match result {
                 CallResult::Success(return_type) => {
