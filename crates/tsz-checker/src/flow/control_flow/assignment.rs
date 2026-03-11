@@ -31,6 +31,23 @@ impl<'a> FlowAnalyzer<'a> {
         })
     }
 
+    fn is_this_access_reference(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.arena
+            .get(access.expression)
+            .is_some_and(|base| base.kind == SyntaxKind::ThisKeyword as u16)
+    }
+
     fn is_declared_in_for_in_header(&self, reference: NodeIndex) -> bool {
         let Some(sym_id) = self.reference_symbol(reference) else {
             return false;
@@ -73,6 +90,9 @@ impl<'a> FlowAnalyzer<'a> {
             let bin = self.arena.get_binary_expr(node)?;
             // Check if this is an assignment to our target reference
             if self.is_matching_reference(bin.left, target) {
+                if self.is_access_reference(target) && !self.is_this_access_reference(target) {
+                    return None;
+                }
                 if bin.operator_token == SyntaxKind::EqualsToken as u16
                     && self.is_declared_in_for_in_header(target)
                 {
@@ -332,7 +352,7 @@ impl<'a> FlowAnalyzer<'a> {
                 || unary.operator == SyntaxKind::MinusMinusToken as u16)
                 && self.is_matching_reference(unary.operand, target)
             {
-                if self.is_access_reference(target) {
+                if self.is_access_reference(target) && !self.is_this_access_reference(target) {
                     return None;
                 }
                 return Some(TypeId::NUMBER);

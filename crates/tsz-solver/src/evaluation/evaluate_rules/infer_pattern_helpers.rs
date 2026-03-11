@@ -59,6 +59,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         source_params: &[ParamInfo],
         pattern_params: &[ParamInfo],
+        strip_nullish_optionals: bool,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
@@ -79,8 +80,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .take(fixed_param_count)
             .zip(pattern_params.iter().take(fixed_param_count))
         {
-            let source_param_type = if source_param.optional {
+            if source_param.optional != pattern_param.optional
+                || source_param.rest != pattern_param.rest
+            {
+                return false;
+            }
+            let source_param_type = if source_param.optional && strip_nullish_optionals {
                 crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
+            } else if source_param.optional {
+                self.interner().union2(source_param.type_id, TypeId::UNDEFINED)
             } else {
                 source_param.type_id
             };
@@ -109,8 +117,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 let mut local_visited = FxHashSet::default();
                 for source_param in remaining_params {
-                    let source_param_type = if source_param.optional {
+                    let source_param_type = if source_param.optional && strip_nullish_optionals {
                         crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
+                    } else if source_param.optional {
+                        self.interner().union2(source_param.type_id, TypeId::UNDEFINED)
                     } else {
                         source_param.type_id
                     };
@@ -430,6 +440,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.match_signature_params_for_infer(
                     &source_fn.params,
                     &pattern_fn.params,
+                    false,
                     bindings,
                     checker,
                 )
@@ -457,6 +468,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.match_signature_params_for_infer(
                         &source_sig.params,
                         &pattern_fn.params,
+                        true,
                         bindings,
                         checker,
                     )
