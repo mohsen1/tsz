@@ -1765,14 +1765,28 @@ impl<'a> CheckerState<'a> {
             if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
                 if let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
                     && binary.operator_token == SyntaxKind::EqualsToken as u16
-                    && let Some((prop_name, rhs_type)) = self.extract_generic_this_assignment(
+                    && let Some((prop_name, rhs_type, report_idx)) = self.extract_generic_this_assignment(
                         binary.left,
                         binary.right,
                         param_type_map,
                         stmt_idx,
                     )
-                    && rhs_type != TypeId::UNDEFINED
                 {
+                    if rhs_type == TypeId::UNDEFINED {
+                        if let Some(parent_sym) = parent_sym
+                            && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                        {
+                            self.error_at_node(
+                                report_idx,
+                                &format!(
+                                    "Property '{prop_name}' does not exist on type '{}'.",
+                                    symbol.escaped_name
+                                ),
+                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            );
+                        }
+                        continue;
+                    }
                     let name_atom = self.ctx.types.intern_string(&prop_name);
                     properties.entry(name_atom).or_insert(PropertyInfo {
                         name: name_atom,
@@ -1834,7 +1848,7 @@ impl<'a> CheckerState<'a> {
         rhs_idx: NodeIndex,
         param_type_map: &rustc_hash::FxHashMap<String, TypeId>,
         stmt_idx: NodeIndex,
-    ) -> Option<(String, TypeId)> {
+    ) -> Option<(String, TypeId, NodeIndex)> {
         use tsz_scanner::SyntaxKind;
 
         let lhs_node = self.ctx.arena.get(lhs_idx)?;
@@ -1871,7 +1885,7 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        Some((prop_name, type_id))
+        Some((prop_name, type_id, access.name_or_argument))
     }
 
     /// Get type from a union type node (A | B).

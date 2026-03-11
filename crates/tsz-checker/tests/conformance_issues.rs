@@ -881,12 +881,11 @@ c.p + c.q;
         .into_iter()
         .filter(|(code, _)| *code == 2339 || *code == 18048)
         .collect();
-    let ts2339 = diagnostic_message(&relevant, 2339)
-        .expect("expected TS2339 when reading a void-zero constructor property");
-
-    assert_eq!(relevant.len(), 1, "unexpected diagnostics: {relevant:#?}");
+    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
     assert!(
-        ts2339.contains("Property 'q' does not exist on type 'C'."),
+        relevant
+            .iter()
+            .all(|(_, message)| message.contains("Property 'q' does not exist on type 'C'.")),
         "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
     );
     assert!(
