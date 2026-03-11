@@ -7867,6 +7867,39 @@ const z: TestSynthetic = '3';
 }
 
 #[test]
+fn test_type_assertion_no_overlap_widens_function_literal_return_type() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+var foo = <{ (): number; }> function() { return "err"; };
+var bar = <{():number; (i:number):number; }> (function(){return "err";});
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2352
+                && message.contains("Conversion of type '() => string' to type '() => number'")
+        }),
+        "Expected TS2352 to widen the function return literal to `string`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2352
+                && message.contains(
+                    "Conversion of type '() => string' to type '{ (): number; (i: number): number; }'"
+                )
+        }),
+        "Expected overload target TS2352 to widen the function return literal to `string`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2538_for_any_index() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

@@ -1,12 +1,78 @@
 //! Generic type and comparison error reporting (TS2314, TS2344, TS2367, TS2352).
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::assignability::{get_function_return_type, replace_function_return_type};
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn widen_function_like_assertion_source(&self, type_id: TypeId) -> TypeId {
+        if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
+            let widened_return = tsz_solver::widen_literal_type(self.ctx.types, return_type);
+            if widened_return != return_type {
+                let replaced = replace_function_return_type(self.ctx.types, type_id, widened_return);
+                if replaced != type_id {
+                    return replaced;
+                }
+            }
+        }
+
+        if let Some(shape_id) = tsz_solver::callable_shape_id(self.ctx.types, type_id) {
+            let shape = self.ctx.types.callable_shape(shape_id);
+            let mut changed = false;
+
+            let call_signatures = shape
+                .call_signatures
+                .iter()
+                .map(|sig| {
+                    let widened_return =
+                        tsz_solver::widen_literal_type(self.ctx.types, sig.return_type);
+                    if widened_return != sig.return_type {
+                        changed = true;
+                        let mut next = sig.clone();
+                        next.return_type = widened_return;
+                        next
+                    } else {
+                        sig.clone()
+                    }
+                })
+                .collect();
+
+            let construct_signatures = shape
+                .construct_signatures
+                .iter()
+                .map(|sig| {
+                    let widened_return =
+                        tsz_solver::widen_literal_type(self.ctx.types, sig.return_type);
+                    if widened_return != sig.return_type {
+                        changed = true;
+                        let mut next = sig.clone();
+                        next.return_type = widened_return;
+                        next
+                    } else {
+                        sig.clone()
+                    }
+                })
+                .collect();
+
+            if changed {
+                return self.ctx.types.callable(tsz_solver::CallableShape {
+                    call_signatures,
+                    construct_signatures,
+                    properties: shape.properties.clone(),
+                    string_index: shape.string_index.clone(),
+                    number_index: shape.number_index.clone(),
+                    symbol: shape.symbol,
+                    is_abstract: shape.is_abstract,
+                });
+            }
+        }
+
+        type_id
+    }
+
     // =========================================================================
     // Generic Type Errors
     // =========================================================================
@@ -123,8 +189,9 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         idx: NodeIndex,
     ) {
-        let source_str = self.format_type_diagnostic(source_type);
-        let target_str = self.format_type_diagnostic(target_type);
+        let source_type = self.widen_function_like_assertion_source(source_type);
+        let source_str = self.format_type_for_assignability_message(source_type);
+        let target_str = self.format_type_for_assignability_message(target_type);
         self.error_at_node_msg(
             idx,
             diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
