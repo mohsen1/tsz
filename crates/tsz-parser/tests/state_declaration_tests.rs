@@ -288,11 +288,15 @@ fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
         codes.contains(&1003),
         "expected TS1003 for invalid import specifier, got {codes:?}"
     );
-    // Recovery now properly consumes `}` and `from "..."` without cascading
-    // TS1128/TS1434, matching tsc's parseDelimitedList behavior.
+    // TypeScript recovers by ending the malformed import clause, then reports
+    // the stray `}` and `from` as follow-up syntax errors.
     assert!(
-        !codes.contains(&1128),
-        "should not emit cascading TS1128 after named imports recovery, got {codes:?}"
+        codes.contains(&1128),
+        "expected TS1128 after named imports recovery, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&1434),
+        "expected TS1434 after named imports recovery, got {codes:?}"
     );
 }
 
@@ -371,8 +375,9 @@ declare namespace M {
 
 #[test]
 fn invalid_bigint_import_specifiers_recover_cleanly() {
-    // After error recovery, named imports should consume `}` and `from "..."` properly
-    // without cascading TS1128/TS1434 errors. This matches tsc's parseDelimitedList.
+    // Invalid bigint import specifiers recover by ending the import at the
+    // malformed clause, then reporting the stray `}` and `from` as follow-up
+    // syntax errors. This matches the current TypeScript baseline.
     for source in [
         r#"import { 0n as foo } from "./foo";"#,
         r#"import { foo as 0n } from "./foo";"#,
@@ -380,12 +385,12 @@ fn invalid_bigint_import_specifiers_recover_cleanly() {
         let (parser, _root) = parse_source(source);
         let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
         assert!(
-            !codes.contains(&1128),
-            "should not emit cascading TS1128 for {source:?}, got {codes:?}"
+            codes.contains(&1128),
+            "expected TS1128 for {source:?}, got {codes:?}"
         );
         assert!(
-            !codes.contains(&1434),
-            "should not emit cascading TS1434 for {source:?}, got {codes:?}"
+            codes.contains(&1434),
+            "expected TS1434 for {source:?}, got {codes:?}"
         );
     }
 }

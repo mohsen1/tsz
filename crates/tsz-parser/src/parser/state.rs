@@ -130,6 +130,8 @@ pub struct ParserState {
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
     /// Whether a top-level import/export has been seen in the current file.
     pub(crate) seen_module_indicator: bool,
+    /// Whether the most recently parsed named import list consumed its closing brace.
+    pub(crate) last_named_imports_consumed_closing_brace: bool,
     /// When recovery consumes a malformed arrow-body `}` directly, keep a small
     /// number of following module-closing braces in the token stream so outer
     /// list recovery can report them as stray braces.
@@ -170,6 +172,7 @@ impl ParserState {
             last_error_pos: 0,
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
+            last_named_imports_consumed_closing_brace: false,
             deferred_module_close_braces: 0,
         }
     }
@@ -187,6 +190,7 @@ impl ParserState {
         self.label_scopes.clear();
         self.label_scopes.push(FxHashMap::default());
         self.seen_module_indicator = false;
+        self.last_named_imports_consumed_closing_brace = false;
         self.deferred_module_close_braces = 0;
     }
 
