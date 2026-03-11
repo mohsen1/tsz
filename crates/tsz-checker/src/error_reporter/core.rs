@@ -671,7 +671,58 @@ impl<'a> CheckerState<'a> {
             if open_count != close_count {
                 return None;
             }
-            (!text.is_empty()).then_some(text)
+            if text.is_empty() {
+                return None;
+            }
+            // TypeScript `&` binds tighter than `|`. Add precedence parentheses
+            // so annotation text like `A & B | C & D` becomes `(A & B) | (C & D)`.
+            if text.contains(" & ") && text.contains(" | ") {
+                text = parenthesize_intersection_in_union_text(&text);
+            }
+            Some(text)
+        }
+
+        /// Add parentheses around `&`-joined groups in a top-level `|` union.
+        fn parenthesize_intersection_in_union_text(text: &str) -> String {
+            let mut parts = Vec::new();
+            let mut current = String::new();
+            let mut depth = 0u32;
+
+            for (i, ch) in text.char_indices() {
+                match ch {
+                    '(' | '<' | '[' => {
+                        depth += 1;
+                        current.push(ch);
+                    }
+                    ')' | '>' | ']' => {
+                        depth = depth.saturating_sub(1);
+                        current.push(ch);
+                    }
+                    '|' if depth == 0
+                        && text.get(i.saturating_sub(1)..i) == Some(" ")
+                        && text.get(i + 1..i + 2) == Some(" ") =>
+                    {
+                        parts.push(current.trim().to_string());
+                        current = String::new();
+                    }
+                    _ => {
+                        current.push(ch);
+                    }
+                }
+            }
+            parts.push(current.trim().to_string());
+
+            let formatted: Vec<String> = parts
+                .into_iter()
+                .map(|part| {
+                    if part.contains(" & ") && !part.starts_with('(') {
+                        format!("({part})")
+                    } else {
+                        part
+                    }
+                })
+                .collect();
+            formatted.join(" | ")
         }
 
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
