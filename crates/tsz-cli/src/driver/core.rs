@@ -1016,16 +1016,17 @@ fn compile_inner(
     }
 
     let mut binary_file_diagnostics: Vec<Diagnostic> = Vec::new();
-    let mut binary_file_names: FxHashSet<String> = FxHashSet::default();
+    let mut binary_file_names_to_suppress: FxHashSet<String> = FxHashSet::default();
     let mut sources: Vec<SourceEntry> = Vec::with_capacity(all_sources.len());
     for source in all_sources {
         if source.is_binary {
             // Emit TS1490 "File appears to be binary." for binary files.
-            // Track the file name so we can suppress parser diagnostics
-            // (e.g. TS1127 "Invalid character") that cascade from parsing
-            // UTF-16/corrupted content as UTF-8.
             let file_name = source.path.to_string_lossy().into_owned();
-            binary_file_names.insert(file_name.clone());
+            if source.suppress_parser_diagnostics {
+                // Hard-binary cases like invalid UTF-8 or null-byte corruption should
+                // surface only TS1490, matching tsc's early binary bailout.
+                binary_file_names_to_suppress.insert(file_name.clone());
+            }
             binary_file_diagnostics.push(Diagnostic::error(
                 file_name,
                 0,
@@ -1136,8 +1137,8 @@ fn compile_inner(
     // Parsing UTF-16/corrupted content as UTF-8 produces cascading
     // TS1127 "Invalid character" false positives; tsc detects binary files
     // early and only emits TS1490.
-    if !binary_file_names.is_empty() {
-        diagnostics.retain(|d| !binary_file_names.contains(&d.file));
+    if !binary_file_names_to_suppress.is_empty() {
+        diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
     }
     // tsc 6.0 deprecation diagnostic handling:
     // TS5107/TS5101 are fatal in tsc 6.0: tsc stops compilation early and never emits
