@@ -96,7 +96,9 @@ tsz:  "Operator '+' cannot be applied to types 'I' and 'number'"
   Fix: Changed `infer_return_type_from_body_inner` in `return_type.rs` to push
   `TypeId::UNDEFINED` instead of `TypeId::VOID` when building return type unions
   for functions with mixed returning/fall-through paths.
-- Return type inference not preserving literal types from branches
+- ~~Return type inference not preserving literal types from branches~~ **FIXED** (commit `9edc5acf2` — 2026-03-11)
+  Fix: `infer_return_type_from_body_inner` in `return_type.rs` now preserves literal types
+  from return expressions instead of widening them, matching tsc's inference behavior.
 
 **Solver location:** Return type inference (`evaluate`), enum type display, literal preservation policy.
 
@@ -264,7 +266,13 @@ Example: deleteExpressionMustBeOptional.ts
 **Root cause:**
 - `any` propagation not silencing downstream errors properly
 - Incomplete narrowing leaving types too wide, triggering extra errors
-- False positive diagnostics in edge cases
+- ~~False positive diagnostics in edge cases (TS5088)~~ **PARTIALLY FIXED** (commit `305d5508` — 2026-03-11)
+  Fix: `declaration_type_references_cyclic_structure` in solver `traversal.rs` now only
+  reports cycles as TS5088 when the traversal path goes through a conditional type's
+  true/false branch, matching tsc's behavior where object/function type cycles are
+  silently elided via symbol depth limits. Fixes 6 conformance tests
+  (`declarationEmitInferredTypeAlias4/8`, `declarationEmitTypeAliasWithTypeParameters3/4/6`,
+  `importCallExpressionDeclarationEmit1`).
 
 ---
 
