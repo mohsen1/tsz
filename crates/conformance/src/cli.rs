@@ -85,7 +85,9 @@ pub struct Args {
     /// Max compilations per batch worker before recycling (0 = no limit).
     /// Recycling kills the worker process and spawns a fresh one, returning all
     /// accumulated memory (global caches, arena fragmentation) to the OS.
-    #[arg(long, default_value_t = 250)]
+    /// With 4 CI workers, 100 means first recycles happen at ~400 total tests,
+    /// keeping peak RSS well under the ~7GB CI runner limit.
+    #[arg(long, default_value_t = 100)]
     pub max_compilations_per_worker: usize,
 
     /// Write structured parity diff artifacts for failed tests.
