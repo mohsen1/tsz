@@ -922,7 +922,23 @@ impl<'a> CheckerState<'a> {
 
     /// Get the class name from an expression, if it's a class instance.
     pub(crate) fn get_class_name_from_expression(&mut self, expr_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
         let node = self.ctx.arena.get(expr_idx)?;
+
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            let call = self.ctx.arena.get_call_expr(node)?;
+            let decl_idx = self.function_like_decl_from_callee(call.expression)?;
+            let decl_node = self.ctx.arena.get(decl_idx)?;
+
+            if let Some(func) = self.ctx.arena.get_function(decl_node) {
+                return self.returned_class_name_from_body(func.body);
+            }
+
+            if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
+                return self.returned_class_name_from_body(method.body);
+            }
+        }
 
         // If it's a simple identifier, look up its type from the binder
         if self.ctx.arena.get_identifier(node).is_some()
@@ -1026,5 +1042,77 @@ impl<'a> CheckerState<'a> {
             return is_mapped_type_with_readonly_modifier(self.ctx.types, resolved);
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerOptions, ScriptTarget};
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::node::NodeArena;
+    use tsz_solver::TypeInterner;
+
+    fn find_node_by_text_and_kind(
+        arena: &NodeArena,
+        source: &str,
+        kind: u16,
+        text: &str,
+    ) -> Option<NodeIndex> {
+        (0..arena.len()).find_map(|i| {
+            let idx = NodeIndex(i as u32);
+            let node = arena.get(idx)?;
+            (node.kind == kind && &source[node.pos as usize..node.end as usize] == text)
+                .then_some(idx)
+        })
+    }
+
+    #[test]
+    fn get_class_name_from_expression_resolves_named_class_expression_return() {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let source = r#"
+const C = class D {
+    static #field = D.#method();
+    static #method() { return 42; }
+    static getClass() { return D; }
+};
+
+C.getClass().#method;
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+
+        checker.check_source_file(root);
+
+        let call_idx = find_node_by_text_and_kind(
+            parser.get_arena(),
+            source,
+            syntax_kind_ext::CALL_EXPRESSION,
+            "C.getClass()",
+        )
+        .expect("expected to find `C.getClass()` call expression");
+
+        assert_eq!(
+            checker.get_class_name_from_expression(call_idx),
+            Some("D".to_string())
+        );
     }
 }

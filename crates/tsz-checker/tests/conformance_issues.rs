@@ -7759,6 +7759,77 @@ class A {
     );
 }
 
+#[test]
+fn ts18013_named_class_expression_private_access_uses_inner_class_name() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const C = class D {
+    static #field = D.#method();
+    static #method() { return 42; }
+    static getClass() { return D; }
+};
+
+C.getClass().#method;
+C.getClass().#field;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts18013: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 18013)
+        .collect();
+    assert_eq!(
+        ts18013.len(),
+        2,
+        "Expected two TS18013 errors. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts18013
+            .iter()
+            .all(|(_, message)| message.contains("outside class 'D'")),
+        "Expected TS18013 to use the inner class-expression name 'D'. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts18014_shadowed_private_access_uses_constructor_type_name() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class A {
+    static #x = 5;
+    constructor() {
+        class B {
+            #x = 5;
+            constructor() {
+                class C {
+                    constructor() {
+                        A.#x;
+                    }
+                }
+            }
+        }
+    }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 18014 && message.contains("type 'typeof A'") }),
+        "Expected TS18014 to reference constructor-side type 'typeof A'. Got: {diagnostics:?}"
+    );
+}
+
 // TS1479: CJS file importing ESM module
 // Tests the current_is_commonjs detection logic with different file extensions.
 
