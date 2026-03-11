@@ -52,6 +52,15 @@ pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId)
 }
 
 impl<'a> ContextualTypeContext<'a> {
+    fn property_name_to_key_type(&self, name: &str) -> TypeId {
+        if let Some(symbol_ref) = name.strip_prefix("__unique_")
+            && let Ok(id) = symbol_ref.parse::<u32>()
+        {
+            return self.interner.unique_symbol(crate::types::SymbolRef(id));
+        }
+        self.interner.literal_string(name)
+    }
+
     /// Create a new contextual type context.
     /// Defaults to `no_implicit_any: false` for compatibility.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -937,7 +946,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Application(app_id)) => {
-                let prop_key = self.interner.literal_string(name);
+                let prop_key = self.property_name_to_key_type(name);
                 let indexed = self.interner.index_access(expected, prop_key);
                 let indexed_evaluated =
                     crate::evaluation::evaluate::evaluate_type(self.interner, indexed);
