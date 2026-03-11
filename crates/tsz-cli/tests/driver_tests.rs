@@ -6520,3 +6520,60 @@ fn ts2303_not_emitted_for_import_equals_in_js_file() {
         "TS8002 should still be emitted for `import = require()` in JS file"
     );
 }
+
+#[test]
+fn ts5107_not_suppressed_by_jsdoc_param_name_validation() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": false,
+            "alwaysStrict": false,
+            "allowJs": true,
+            "checkJs": true,
+            "noEmit": true
+          },
+          "files": ["index.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"/**
+ * @param {object} obj
+ * @param {string} obj.a
+ * @param {string} obj.b
+ * @param {string} x
+ */
+function bad1(x, {a, b}) {}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 5107),
+        "Expected TS5107 for alwaysStrict=false, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|d| {
+            d.code
+                != diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME
+        }),
+        "Did not expect TS8024 alongside TS5107, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Did not expect follow-on TS2339 alongside TS5107, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
