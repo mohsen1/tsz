@@ -642,6 +642,12 @@ impl<'a> CheckerState<'a> {
             if let Some(nl) = text.find('\n') {
                 text = text[..nl].trim_end().to_string();
             }
+            // Strip trailing `=` that leaks from variable initializers
+            // (e.g. `string | number = ""` → `string | number`).
+            if text.ends_with('=') {
+                text.pop();
+                text = text.trim_end().to_string();
+            }
             while matches!(text.chars().last(), Some(',') | Some(';')) {
                 text.pop();
                 text = text.trim_end().to_string();
@@ -820,11 +826,7 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
-                let widened_expr_type = if self.literal_expression_display(expr_idx).is_some() {
-                    self.widen_literal_type(expr_type)
-                } else {
-                    expr_type
-                };
+                let widened_expr_type = self.widen_literal_type(expr_type);
                 if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
                     self.widen_enum_member_type(widened_expr_type)
                 } else {
@@ -916,13 +918,12 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             if expr_type != TypeId::ERROR {
+                let widened_expr_type = self.widen_literal_type(expr_type);
                 let display_type =
-                    if self.should_widen_enum_member_assignment_source(expr_type, target) {
-                        self.widen_enum_member_type(expr_type)
-                    } else if self.literal_expression_display(expr_idx).is_some() {
-                        self.widen_literal_type(expr_type)
+                    if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
+                        self.widen_enum_member_type(widened_expr_type)
                     } else {
-                        expr_type
+                        widened_expr_type
                     };
                 return self.format_assignability_type_for_message(display_type, target);
             }
@@ -939,11 +940,7 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             let display_type = if expr_type != TypeId::ERROR {
-                let widened_expr_type = if self.literal_expression_display(expr_idx).is_some() {
-                    self.widen_literal_type(expr_type)
-                } else {
-                    expr_type
-                };
+                let widened_expr_type = self.widen_literal_type(expr_type);
                 if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
                     self.widen_enum_member_type(widened_expr_type)
                 } else {
