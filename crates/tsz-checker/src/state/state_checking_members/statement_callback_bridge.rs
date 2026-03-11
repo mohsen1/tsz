@@ -474,7 +474,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                                 )
                             });
                         if !has_direct_builtin_generator_annotation
-                            && self.get_generator_return_type_argument(return_type).is_none()
+                            && self
+                                .get_generator_return_type_argument(return_type)
+                                .is_none()
                         {
                             self.check_assignable_or_report(
                                 any_gen,
