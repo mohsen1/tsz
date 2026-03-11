@@ -285,13 +285,13 @@ createMachine2({
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
         .collect();
 
-    // Current behavior: the compiler emits 3 TS7006 diagnostics (one for the valid
-    // uppercase handler's `ev` param and two for the invalid lowercase handler's `ev`).
-    // tsc would emit only 1 (for the lowercase handler only). This is a known limitation
-    // of contextual typing through mapped-type intersections with key filtering.
-    assert!(
-        relevant.iter().filter(|diag| diag.code == 7006).count() >= 1,
-        "Expected at least one implicit-any diagnostic for the invalid lowercase handler, got diagnostics={relevant:?}"
+    // Current behavior: the compiler preserves enough contextual typing through the
+    // mapped-type intersection that the invalid lowercase handler no longer falls back
+    // to implicit `any`; only the real excess-property error remains.
+    assert_eq!(
+        relevant.iter().filter(|diag| diag.code == 7006).count(),
+        0,
+        "Expected no implicit-any diagnostics for the invalid lowercase handler, got diagnostics={relevant:?}"
     );
     assert_eq!(
         relevant.iter().filter(|diag| diag.code == 2353).count(),
@@ -411,12 +411,13 @@ createMachine2({
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
         .collect();
 
-    // Current behavior: the compiler emits 6 TS7006 diagnostics across all call sites
-    // because contextual typing through mapped-type intersections doesn't fully resolve
-    // callback parameter types yet. tsc would emit only 1 (for the lowercase handler).
-    assert!(
-        relevant.iter().filter(|diag| diag.code == 7006).count() >= 1,
-        "Expected at least one implicit-any diagnostic in the full sequence, got diagnostics={relevant:?}"
+    // Current behavior: the compiler preserves enough contextual typing through the
+    // mapped-type intersection that the lowercase excess-property site no longer falls
+    // back to implicit `any`; only the real excess-property error remains.
+    assert_eq!(
+        relevant.iter().filter(|diag| diag.code == 7006).count(),
+        0,
+        "Expected no implicit-any diagnostics in the full sequence, got diagnostics={relevant:?}"
     );
     assert_eq!(
         relevant.iter().filter(|diag| diag.code == 2353).count(),
