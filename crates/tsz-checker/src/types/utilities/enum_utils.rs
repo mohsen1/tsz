@@ -611,6 +611,36 @@ impl<'a> CheckerState<'a> {
     /// Check if two types have no overlap (for TS2367 validation).
     /// Returns true if the types can never be equal in a comparison.
     pub(crate) fn types_have_no_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
+        // Depth guard: `types_have_no_overlap` and `objects_with_independently_overlapping_props`
+        // are mutually recursive. For infinitely-expanding recursive types (e.g.,
+        // `interface List<T> { owner: List<List<T>> }`), the property-level overlap
+        // check re-enters this function with ever-deeper type arguments, causing
+        // unbounded stack growth. A depth limit of 20 is generous for real-world
+        // types while preventing stack overflow. When the limit is reached we
+        // conservatively report "types overlap" (return false) — matching tsc's
+        // behavior of assuming comparability for excessively deep recursive types.
+        thread_local! {
+            static OVERLAP_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        const MAX_OVERLAP_DEPTH: u32 = 20;
+
+        let depth = OVERLAP_DEPTH.with(|d| {
+            let v = d.get();
+            d.set(v + 1);
+            v
+        });
+        if depth >= MAX_OVERLAP_DEPTH {
+            OVERLAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            return false; // Conservatively assume overlap
+        }
+
+        let result = self.types_have_no_overlap_inner(left, right);
+        OVERLAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        result
+    }
+
+    /// Inner implementation of overlap checking (after depth guard).
+    fn types_have_no_overlap_inner(&mut self, left: TypeId, right: TypeId) -> bool {
         tracing::trace!(left = ?left, right = ?right, "types_have_no_overlap called");
 
         // any, unknown, error types can overlap with anything

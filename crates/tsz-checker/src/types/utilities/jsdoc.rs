@@ -1479,37 +1479,66 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
-        let mut best_def: Option<JsdocTypedefInfo> = None;
+        // Guard against circular @typedef resolution (e.g. `@typedef {string | JsonArray} Json`
+        // where `JsonArray = ReadonlyArray<Json>` references `Json` again).
+        // Use a thread-local set of typedef names currently being resolved.
+        thread_local! {
+            static RESOLVING_TYPEDEFS: std::cell::RefCell<Vec<String>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
 
-        for comment in comments {
-            if comment.end > anchor_pos {
-                continue;
-            }
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
+        let is_cycle =
+            RESOLVING_TYPEDEFS.with(|stack| stack.borrow().iter().any(|name| name == type_expr));
+        if is_cycle {
+            // Circular typedef — return `any` as a fallback (matches tsc behavior for
+            // unresolvable circular JSDoc type aliases).
+            return Some(TypeId::ANY);
+        }
 
-            let content = get_jsdoc_content(comment, source_text);
-            for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
-                if name != type_expr {
+        RESOLVING_TYPEDEFS.with(|stack| stack.borrow_mut().push(type_expr.to_string()));
+
+        let result = (|| {
+            let mut best_def: Option<JsdocTypedefInfo> = None;
+
+            for comment in comments {
+                if comment.end > anchor_pos {
                     continue;
                 }
-                best_def = Some(typedef_info);
+                if !is_jsdoc_comment(comment, source_text) {
+                    continue;
+                }
+
+                let content = get_jsdoc_content(comment, source_text);
+                for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
+                    if name != type_expr {
+                        continue;
+                    }
+                    best_def = Some(typedef_info);
+                }
             }
-        }
 
-        let typedef_info = best_def?;
+            let typedef_info = best_def?;
 
-        // If the typedef's base type couldn't be resolved, return `any` as fallback.
-        // TS2304 is emitted eagerly by `check_jsdoc_typedef_base_types()` during the
-        // post-checking phase, so we don't emit it here to avoid duplicates.
-        let result = self
-            .type_from_jsdoc_typedef(typedef_info)
-            .or(Some(TypeId::ANY));
+            // If the typedef's base type couldn't be resolved, return `any` as fallback.
+            // TS2304 is emitted eagerly by `check_jsdoc_typedef_base_types()` during the
+            // post-checking phase, so we don't emit it here to avoid duplicates.
+            let resolved = self
+                .type_from_jsdoc_typedef(typedef_info)
+                .or(Some(TypeId::ANY));
 
-        if let Some(ty) = result {
-            self.register_jsdoc_typedef_def(type_expr, ty);
-        }
+            if let Some(ty) = resolved {
+                self.register_jsdoc_typedef_def(type_expr, ty);
+            }
+            resolved
+        })();
+
+        RESOLVING_TYPEDEFS.with(|stack| {
+            let mut s = stack.borrow_mut();
+            if let Some(pos) = s.iter().rposition(|name| name == type_expr) {
+                s.remove(pos);
+            }
+        });
+
         result
     }
 
