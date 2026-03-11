@@ -1223,7 +1223,21 @@ impl<'a> CheckerState<'a> {
                         false
                     };
 
+                let local_decl_count = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|symbol| symbol.declarations.iter().filter(|&&decl| decl.is_some()).count())
+                    .unwrap_or(0);
+
                 if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
+                    if local_decl_count <= 1 {
+                        let refined = self.refine_var_decl_type(prev_type, final_type);
+                        if refined != prev_type {
+                            self.ctx.var_decl_types.insert(sym_id, refined);
+                        }
+                        return;
+                    }
                     // Check if this is a mergeable declaration by looking at the node kind.
                     // Mergeable declarations: namespace/module, enum, class, interface, function.
                     // When these are declared with the same name, they merge instead of conflicting.
@@ -1339,6 +1353,9 @@ impl<'a> CheckerState<'a> {
                                 break;
                             }
                             if other_decl.is_some() {
+                                if self.is_bare_var_declaration_node(other_decl) {
+                                    continue;
+                                }
                                 let other_type = self.get_type_of_node(other_decl);
 
                                 // Check if other declaration is mergeable (namespace, etc.)
@@ -1748,6 +1765,14 @@ impl<'a> CheckerState<'a> {
     // assign_binding_pattern_symbol_types, record_destructured_binding_group,
     // get_binding_element_type, rest_binding_array_type, is_only_undefined_or_null)
     // are in `destructuring.rs`.
+
+    fn is_bare_var_declaration_node(&self, decl_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(decl_idx)
+            .and_then(|node| self.ctx.arena.get_variable_declaration(node))
+            .is_some_and(|decl| decl.type_annotation.is_none() && decl.initializer.is_none())
+    }
 
     /// Check if a variable declaration is inside a namespace body and whether
     /// it has an `export` modifier. Returns `Some(is_exported)` if inside a
