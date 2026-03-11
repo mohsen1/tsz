@@ -1566,7 +1566,7 @@ impl BinderState {
                     }
                     // Detect expando property assignments (X.prop = value)
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                        self.detect_expando_assignment(arena, bin.left);
+                        self.detect_expando_assignment(arena, bin.left, bin.right);
                     }
                     return;
                 }
@@ -1794,7 +1794,36 @@ impl BinderState {
     /// Detect expando property assignments of the form `X.prop = value`.
     /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
     /// (`A.B.prop`) so function members on namespaces can collect expandos.
-    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex) {
+    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex, rhs: NodeIndex) {
+        fn is_undefined_like_rhs(arena: &NodeArena, idx: NodeIndex) -> bool {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena
+                    .get_identifier(node)
+                    .is_some_and(|ident| ident.escaped_text == "undefined");
+            }
+
+            if node.kind != syntax_kind_ext::VOID_EXPRESSION {
+                return false;
+            }
+
+            let Some(unary) = arena.get_unary_expr(node) else {
+                return false;
+            };
+            let Some(expr) = arena.get(unary.operand) else {
+                return false;
+            };
+            matches!(expr.kind, k if k == SyntaxKind::NumericLiteral as u16)
+                && arena.get_literal(expr).is_some_and(|lit| lit.text == "0")
+        }
+
+        if is_undefined_like_rhs(arena, rhs) {
+            return;
+        }
+
         fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
             let node = arena.get(idx)?;
             if node.kind == SyntaxKind::Identifier as u16 {

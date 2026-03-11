@@ -1530,6 +1530,10 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
+            if type_id == TypeId::UNDEFINED {
+                continue;
+            }
+
             properties.insert(
                 name_atom,
                 PropertyInfo {
