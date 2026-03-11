@@ -1704,7 +1704,7 @@ impl ParserState {
             } else {
                 false
             };
-            if !expr_had_error {
+            if !expr_had_error || self.is_token(SyntaxKind::ColonToken) {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
             return;
