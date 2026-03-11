@@ -6422,6 +6422,147 @@ fn ts2688_resolved_types_no_error() {
 }
 
 #[test]
+fn ts2688_types_entry_still_loads_node_modules_package_globals() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(&base.join("typings/dummy.d.ts"), "declare const dummy: number;\n");
+    write_file(
+        &base.join("node_modules/phaser/types/phaser.d.ts"),
+        "declare const phaserValue: number;\n",
+    );
+    write_file(
+        &base.join("node_modules/phaser/package.json"),
+        r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["typings"],
+            "types": ["phaser"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "phaserValue;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 when typeRoots does not contain the requested package, got: {:?}",
+        result.diagnostics
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Node-modules fallback should still make package globals visible, got: {ts2304_diags:?}"
+    );
+}
+
+#[test]
+fn scoped_types_entry_resolves_plain_mangled_package_name_from_custom_roots() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/mangled__nodemodulescache/index.d.ts"),
+        "declare const mangledNodeModules: number;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["types", "node_modules", "node_modules/@types"],
+            "types": ["@mangled/nodemodulescache"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "mangledNodeModules;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 for the unresolved scoped types entry, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected scoped mangled package name to resolve from custom roots, got: {result:?}"
+    );
+}
+
+#[test]
+fn scoped_types_entry_loads_at_types_scoped_package_globals_while_preserving_ts2688() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/@types/@scoped/attypescache/index.d.ts"),
+        "declare const atTypesCache: number;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["types", "node_modules", "node_modules/@types"],
+            "types": ["@scoped/attypescache"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "atTypesCache;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 for the unresolved scoped @types entry, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected scoped @types package globals to load despite TS2688, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2307_emitted_for_commonjs_module() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
