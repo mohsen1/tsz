@@ -6426,7 +6426,10 @@ fn ts2688_types_entry_still_loads_node_modules_package_globals() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
-    write_file(&base.join("typings/dummy.d.ts"), "declare const dummy: number;\n");
+    write_file(
+        &base.join("typings/dummy.d.ts"),
+        "declare const dummy: number;\n",
+    );
     write_file(
         &base.join("node_modules/phaser/types/phaser.d.ts"),
         "declare const phaserValue: number;\n",
