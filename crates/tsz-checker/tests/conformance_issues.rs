@@ -179,6 +179,28 @@ function fill<B extends Colors>(f: B) {
 }
 
 #[test]
+fn test_enum_value_property_access_reports_member_receiver() {
+    let source = r#"
+enum Colors {
+    Red,
+    Green
+}
+
+var x = Colors.Red;
+var p = x.Green;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2339)
+        .expect("expected TS2339 for property access on enum value");
+
+    assert!(
+        message.contains("Property 'Green' does not exist on type 'Colors.Red'."),
+        "Expected enum member receiver display for enum value property access. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_member_assignment_to_enum_object_target_displays_whole_enum() {
     let source = r#"
 namespace W {

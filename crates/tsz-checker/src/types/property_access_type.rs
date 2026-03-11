@@ -211,7 +211,8 @@ impl<'a> CheckerState<'a> {
             self.literal_type_from_initializer(access.expression)
                 .unwrap_or(original_object_type)
         } else {
-            original_object_type
+            self.enum_member_initializer_display_type(access.expression)
+                .unwrap_or(original_object_type)
         };
 
         // Evaluate Application types to resolve generic type aliases/interfaces.
@@ -516,8 +517,19 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if let Some(member_type) =
-                self.resolve_namespace_value_member(object_type, property_name)
+            let enum_instance_like_access = self
+                .is_enum_instance_property_access(object_type, access.expression)
+                || tsz_solver::type_queries::get_type_parameter_constraint(
+                    self.ctx.types,
+                    object_type,
+                )
+                .is_some_and(|constraint| {
+                    tsz_solver::type_queries::get_enum_def_id(self.ctx.types, constraint).is_some()
+                });
+
+            if !enum_instance_like_access
+                && let Some(member_type) =
+                    self.resolve_namespace_value_member(object_type, property_name)
             {
                 return self.apply_flow_narrowing(idx, member_type);
             }
@@ -575,16 +587,6 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeId::ERROR;
             }
-            let enum_instance_like_access = self
-                .is_enum_instance_property_access(object_type, access.expression)
-                || tsz_solver::type_queries::get_type_parameter_constraint(
-                    self.ctx.types,
-                    object_type,
-                )
-                .is_some_and(|constraint| {
-                    tsz_solver::type_queries::get_enum_def_id(self.ctx.types, constraint).is_some()
-                });
-
             if self.is_namespace_value_type(object_type) && !enum_instance_like_access {
                 if !access.question_dot_token
                     && !property_name.starts_with('#')
@@ -1023,6 +1025,31 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    fn enum_member_initializer_display_type(&mut self, expr_idx: NodeIndex) -> Option<TypeId> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied()?
+        };
+
+        let var_decl = self.ctx.arena.get_variable_declaration_at(decl_idx)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+
+        let init_type = self.get_type_of_node(var_decl.initializer);
+        self.is_enum_member_type_for_widening(init_type)
+            .then_some(init_type)
     }
 
     /// In `obj.prop === <literal>`/`!==` comparisons, the base object (`obj`) has
