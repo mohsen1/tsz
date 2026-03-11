@@ -1048,8 +1048,8 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let is_unique_symbol = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type)
-            .is_some();
+        let is_unique_symbol =
+            tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some();
         let is_concrete_numeric = literal_index.is_some();
         if !is_unique_symbol && !is_concrete_numeric {
             return false;
@@ -1057,7 +1057,10 @@ impl<'a> CheckerState<'a> {
 
         // Tuple/array unions have their own out-of-bounds diagnostics and should
         // not be collapsed into TS7053 here.
-        if members.iter().any(|&member| self.is_array_like_type(member)) {
+        if members
+            .iter()
+            .any(|&member| self.is_array_like_type(member))
+        {
             return false;
         }
 
@@ -1073,10 +1076,11 @@ impl<'a> CheckerState<'a> {
         };
 
         members.iter().any(|&member| {
-            let member_result =
-                self.ctx
-                    .types
-                    .resolve_element_access_type(member, solver_index_type, literal_index);
+            let member_result = self.ctx.types.resolve_element_access_type(
+                member,
+                solver_index_type,
+                literal_index,
+            );
             member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED
         })
     }

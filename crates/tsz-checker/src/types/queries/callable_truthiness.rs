@@ -114,7 +114,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn enum_member_condition_result(&mut self, node_idx: NodeIndex, ty: TypeId) -> Option<&'static str> {
+    fn enum_member_condition_result(
+        &mut self,
+        node_idx: NodeIndex,
+        ty: TypeId,
+    ) -> Option<&'static str> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return None;
         };
@@ -137,10 +141,7 @@ impl<'a> CheckerState<'a> {
         {
             let assertion = self.ctx.arena.get_type_assertion(node)?;
             let inner_ty = self.get_type_of_node(assertion.expression);
-            return self.enum_member_condition_result(
-                assertion.expression,
-                inner_ty,
-            );
+            return self.enum_member_condition_result(assertion.expression, inner_ty);
         }
 
         let ty = self.evaluate_type_with_env(ty);
@@ -153,11 +154,7 @@ impl<'a> CheckerState<'a> {
         let underlying = get_enum_member_type(self.ctx.types, ty)?;
         match classify_literal_type(self.ctx.types, underlying) {
             LiteralTypeKind::Number(value) => Some(if value == 0.0 { "false" } else { "true" }),
-            LiteralTypeKind::String(value) => Some(if value.is_none() {
-                "false"
-            } else {
-                "true"
-            }),
+            LiteralTypeKind::String(value) => Some(if value.is_none() { "false" } else { "true" }),
             LiteralTypeKind::Boolean(value) => Some(if value { "true" } else { "false" }),
             _ => None,
         }
