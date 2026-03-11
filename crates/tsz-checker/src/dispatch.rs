@@ -534,12 +534,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 current = parent_idx;
                 continue;
             }
-
             // Expression statement: result is unused
             if parent.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
                 return true;
             }
-
             // Void expression: result is unused.
             // Our parser models `void expr` as PREFIX_UNARY_EXPRESSION with VoidKeyword operator.
             if parent.kind == syntax_kind_ext::VOID_EXPRESSION {
@@ -551,7 +549,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             {
                 return true;
             }
-
             // For statement: initializer and incrementor results are unused
             if parent.kind == syntax_kind_ext::FOR_STATEMENT {
                 if let Some(loop_data) = self.checker.ctx.arena.get_loop(parent)
@@ -561,14 +558,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 return false;
             }
-
             // Decorator expression: the result of a decorator is applied to the
             // decorated declaration but is not "used" as an expression result.
             // This suppresses false TS7057 for `@(yield 0) class C {}`.
             if parent.kind == syntax_kind_ext::DECORATOR {
                 return true;
             }
-
             // Binary comma expression: left side is always unused;
             // right side is unused if the parent comma expression is unused
             if parent.kind == syntax_kind_ext::BINARY_EXPRESSION
@@ -671,7 +666,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
         false
     }
-
     fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
         let mut guard = 0u32;
         while descendant.is_some() {
@@ -692,7 +686,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
         false
     }
-
     /// Dispatch type computation based on node kind.
     pub fn dispatch_type_computation(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
@@ -1011,7 +1004,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // TSC checks arithmetic type BEFORE lvalue — if the type check
                     // fails (TS2356), the lvalue check (TS2357) is skipped.
                     let operand_type = self.checker.get_type_of_node(unary.operand);
-
                     // TS18046: postfix ++/-- on unknown is not allowed (strictNullChecks only).
                     // tsc emits TS18046 instead of TS2356 for unknown operands.
                     if operand_type == TypeId::UNKNOWN
@@ -1020,7 +1012,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         return TypeId::NUMBER;
                     }
                     let mut arithmetic_ok = true;
-
                     {
                         use tsz_solver::BinaryOpEvaluator;
                         let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
@@ -1040,7 +1031,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             );
                         }
                     }
-
                     // Only check lvalue and assignment restrictions when arithmetic
                     // type is valid (matches TSC: TS2357 is skipped when TS2356 fires).
                     if arithmetic_ok {
@@ -1050,10 +1040,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         if !emitted_lvalue {
                             // TS2588: Cannot assign to 'x' because it is a constant.
                             let is_const = self.checker.check_const_assignment(unary.operand);
-
                             // TS2630: Cannot assign to 'x' because it is a function.
                             self.checker.check_function_assignment(unary.operand);
-
                             // TS2540: Cannot assign to readonly property
                             if !is_const {
                                 self.checker.check_readonly_assignment(unary.operand, idx);
@@ -1225,7 +1213,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .check_type_for_parameter_properties(assertion.type_node);
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
-
                         // Set contextual type before checking expression for both
                         // type assertions and `satisfies`. This enables contextual typing
                         // for lambdas, object literals, etc. inside `<T>(expr)` / `expr as T` / `expr satisfies T`.
@@ -1233,7 +1220,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         if !is_const_assertion {
                             self.checker.ctx.contextual_type = Some(asserted_type);
                         }
-
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self.checker.get_type_of_node(assertion.expression);
                         // Restore contextual type
