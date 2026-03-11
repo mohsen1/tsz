@@ -74,10 +74,13 @@ pub(crate) fn resolve_type_package_from_roots(
         }
         for candidate in &candidates {
             let package_root = root.join(candidate);
-            if !package_root.is_dir() {
-                continue;
+            if package_root.is_dir()
+                && let Some(entry) = resolve_type_package_entry(&package_root, options)
+            {
+                return Some(entry);
             }
-            if let Some(entry) = resolve_type_package_entry(&package_root, options) {
+
+            if let Some(entry) = resolve_declaration_package_entry(root, candidate, options, None) {
                 return Some(entry);
             }
         }
