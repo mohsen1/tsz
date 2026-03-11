@@ -1777,6 +1777,46 @@ fn test_class_expression_default_parameter_does_not_emit_false_ts2322() {
 }
 
 #[test]
+fn test_destructuring_fallback_literals_do_not_emit_false_assignability_errors() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+function f1(options?: { color: string, width: number }) {
+    let { color, width } = options || {};
+    ({ color, width } = options || {});
+}
+
+function f2(options?: [string, number]) {
+    let [str, num] = options || [];
+    [str, num] = options || [];
+}
+
+declare const tupleFallback: [number, number] | undefined;
+const [a, b = a] = tupleFallback ?? [];
+
+declare const objectFallback: { a?: number, b?: number } | undefined;
+const { a: objA, b: objB = objA } = objectFallback ?? {};
+"#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 from destructuring fallback literals. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2739),
+        "Did not expect TS2739 from destructuring fallback literals. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_string_is_assignable_to_iterable_string_under_es2015() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r##"
