@@ -855,8 +855,7 @@ c.p + c.q;
 
     assert_eq!(relevant.len(), 1, "unexpected diagnostics: {relevant:#?}");
     assert!(
-        ts2339.contains("Property 'q' does not exist on type 'C'.")
-            || ts2339.contains("Property 'q' does not exist on type '{ p: number; }'."),
+        ts2339.contains("Property 'q' does not exist on type 'C'."),
         "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
     );
     assert!(

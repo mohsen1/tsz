@@ -832,7 +832,30 @@ impl<'a> CheckerState<'a> {
         formatter.format(ty).into_owned()
     }
 
+    fn synthesized_object_parent_display_name(&self, ty: TypeId) -> Option<String> {
+        use tsz_binder::symbol_flags;
+        use tsz_solver::type_queries::get_object_shape_id;
+
+        let shape_id = get_object_shape_id(self.ctx.types, ty)?;
+        let shape = self.ctx.types.object_shape(shape_id);
+        let mut parent_ids = shape.properties.iter().filter_map(|prop| prop.parent_id);
+        let parent_sym = parent_ids.next()?;
+        if parent_ids.any(|other| other != parent_sym) {
+            return None;
+        }
+
+        let symbol = self.ctx.binder.get_symbol(parent_sym)?;
+        if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0 {
+            return None;
+        }
+
+        Some(symbol.escaped_name.clone())
+    }
+
     pub(crate) fn format_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
+        if let Some(name) = self.synthesized_object_parent_display_name(ty) {
+            return name;
+        }
         if self.ctx.definition_store.find_def_for_type(ty).is_none()
             && self
                 .ctx
