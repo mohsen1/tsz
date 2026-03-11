@@ -234,6 +234,20 @@ impl<'a> CheckerState<'a> {
         self.ctx.arena.get_visibility_from_modifiers(modifiers)
     }
 
+    /// Get the effective member visibility, treating ECMAScript private identifiers
+    /// as non-public members even though they don't use `private` modifiers.
+    pub(crate) fn get_member_visibility(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        name_idx: NodeIndex,
+    ) -> tsz_solver::Visibility {
+        if self.is_private_identifier_name(name_idx) {
+            tsz_solver::Visibility::Private
+        } else {
+            self.get_visibility_from_modifiers(modifiers)
+        }
+    }
+
     /// Get the access level from modifiers (private/protected).
     pub(crate) fn member_access_level_from_modifiers(
         &self,
@@ -575,6 +589,54 @@ impl<'a> CheckerState<'a> {
         ident.escaped_text == "globalThis"
     }
 
+    /// Check if a node is an ambient global object alias that should resolve through
+    /// the global property table like `globalThis`.
+    ///
+    /// This intentionally accepts `self` and `window` only when they resolve to an
+    /// ambient/global symbol rather than a same-file local binding.
+    pub(crate) fn is_global_this_like_expression(&self, idx: NodeIndex) -> bool {
+        if self.is_global_this_expression(idx) {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        if !matches!(ident.escaped_text.as_str(), "self" | "window") {
+            return false;
+        }
+
+        let Some(global_sym_id) = self.resolve_global_value_symbol(&ident.escaped_text) else {
+            return false;
+        };
+
+        if let Some(sym_id) = self.resolve_identifier_symbol(idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let mut same_file_decl = symbol
+                .declarations
+                .iter()
+                .copied()
+                .any(|decl_idx| self.ctx.arena.get(decl_idx).is_some());
+
+            if !same_file_decl
+                && symbol.value_declaration != NodeIndex::NONE
+                && self.ctx.arena.get(symbol.value_declaration).is_some()
+            {
+                same_file_decl = true;
+            }
+
+            if same_file_decl {
+                return false;
+            }
+        }
+
+        self.ctx.binder.get_symbol(global_sym_id).is_some()
+    }
+
     /// Check if a name is a known global value (e.g., console, Math, JSON).
     /// These are globals that should be available in most JavaScript environments.
     pub(crate) fn is_known_global_value_name(&self, name: &str) -> bool {
@@ -830,6 +892,60 @@ impl<'a> CheckerState<'a> {
         "<anonymous>".to_string()
     }
 
+    pub(crate) fn get_class_decl_for_display_type(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(NodeIndex, bool)> {
+        if let Some(class_idx) = self.get_class_decl_from_type(type_id) {
+            return Some((class_idx, false));
+        }
+
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+        {
+            return Some((class_idx, true));
+        }
+
+        if let Some((&class_idx, _)) = self
+            .ctx
+            .class_constructor_type_cache
+            .iter()
+            .find(|entry| *entry.1 == type_id)
+        {
+            return Some((class_idx, true));
+        }
+
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            type_id,
+        )?;
+        for sig in &sigs {
+            if let Some(class_idx) = self.get_class_decl_from_type(sig.return_type) {
+                return Some((class_idx, true));
+            }
+            if let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, sig.return_type)
+                && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
+                && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+            {
+                return Some((class_idx, true));
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn get_class_display_name_from_type(&self, type_id: TypeId) -> Option<String> {
+        let (class_idx, is_constructor) = self.get_class_decl_for_display_type(type_id)?;
+        let class_name = self.get_class_name_from_decl(class_idx);
+        if is_constructor {
+            Some(format!("typeof {class_name}"))
+        } else {
+            Some(class_name)
+        }
+    }
+
     /// Get class name with type parameters from a class declaration node.
     /// E.g., for `class D<T>`, returns `"D<T>"` instead of just `"D"`.
     /// Returns "<anonymous>" for unnamed classes.
@@ -961,12 +1077,32 @@ impl<'a> CheckerState<'a> {
         node.kind == SyntaxKind::SuperKeyword as u16
     }
 
-    /// Check if a call expression is a dynamic import (`import('...')`).
+    fn is_import_defer_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(base_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if base_node.kind != SyntaxKind::ImportKeyword as u16 {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .is_some_and(|ident| ident.escaped_text == "defer")
+    }
+
+    /// Check if a call expression is a dynamic import (`import('...')` or `import.defer('...')`).
     pub(crate) fn is_dynamic_import(&self, call: &tsz_parser::parser::node::CallExprData) -> bool {
         let Some(node) = self.ctx.arena.get(call.expression) else {
             return false;
         };
         node.kind == SyntaxKind::ImportKeyword as u16
+            || self.is_import_defer_expression(call.expression)
     }
 
     // =========================================================================
@@ -1049,6 +1185,27 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> Option<NodeIndex> {
+        fn class_decl_from_decl_idx(
+            checker: &CheckerState<'_>,
+            decl_idx: NodeIndex,
+        ) -> Option<NodeIndex> {
+            let node = checker.ctx.arena.get(decl_idx)?;
+            if checker.ctx.arena.get_class(node).is_some() {
+                return Some(decl_idx);
+            }
+            if checker.ctx.arena.get_identifier(node).is_some() {
+                let parent_idx = checker.ctx.arena.get_extended(decl_idx)?.parent;
+                if parent_idx.is_none() {
+                    return None;
+                }
+                let parent_node = checker.ctx.arena.get(parent_idx)?;
+                if checker.ctx.arena.get_class(parent_node).is_some() {
+                    return Some(parent_idx);
+                }
+            }
+            None
+        }
+
         if let Some(cached) = self
             .ctx
             .class_symbol_to_decl_cache
@@ -1062,25 +1219,17 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let resolved = if symbol.value_declaration.is_some() {
             let decl_idx = symbol.value_declaration;
-            if let Some(node) = self.ctx.arena.get(decl_idx)
-                && self.ctx.arena.get_class(node).is_some()
-            {
-                Some(decl_idx)
-            } else {
-                symbol.declarations.iter().find_map(|&decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_class(node).map(|_| decl_idx))
-                })
-            }
-        } else {
-            symbol.declarations.iter().find_map(|&decl_idx| {
-                self.ctx
-                    .arena
-                    .get(decl_idx)
-                    .and_then(|node| self.ctx.arena.get_class(node).map(|_| decl_idx))
+            class_decl_from_decl_idx(self, decl_idx).or_else(|| {
+                symbol
+                    .declarations
+                    .iter()
+                    .find_map(|&decl_idx| class_decl_from_decl_idx(self, decl_idx))
             })
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .find_map(|&decl_idx| class_decl_from_decl_idx(self, decl_idx))
         };
 
         self.ctx
@@ -1310,58 +1459,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         member_name: &str,
     ) -> Option<String> {
-        // Try primary path: get class declaration from object type's brand/instance map
-        let class_idx =
-            self.get_class_decl_from_type(object_type)
-                .or_else(|| {
-                    // Fallback: resolve Lazy(DefId) -> SymbolId -> class declaration.
-                    // This handles cases where the class instance type hasn't been registered
-                    // in class_instance_type_to_decl (e.g., type annotation references).
-                    let def_id =
-                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)?;
-                    let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
-                    self.get_class_declaration_from_symbol(sym_id)
-                })
-                .or_else(|| {
-                    // Fallback for static/constructor-side types: reverse-lookup the
-                    // constructor type cache. When accessing `A2.#field` outside the
-                    // class, object_type is the constructor type (not the instance
-                    // type), so instance-based lookups above fail.
-                    self.ctx.class_constructor_type_cache.iter().find_map(
-                        |(&class_idx, &ctor_type)| {
-                            if ctor_type == object_type {
-                                Some(class_idx)
-                            } else {
-                                None
-                            }
-                        },
-                    )
-                })
-                .or_else(|| {
-                    // Fallback: for constructor types obtained via `typeof ClassName`
-                    // annotations, the TypeId may differ from the cached constructor
-                    // type. Look at the construct signatures' return type to find the
-                    // class instance type, then resolve the class declaration from that.
-                    let sigs = crate::query_boundaries::common::construct_signatures_for_type(
-                        self.ctx.types,
-                        object_type,
-                    )?;
-                    for sig in &sigs {
-                        if let Some(class_idx) = self.get_class_decl_from_type(sig.return_type) {
-                            return Some(class_idx);
-                        }
-                        // Also try Lazy(DefId) -> symbol path on the return type
-                        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
-                            self.ctx.types,
-                            sig.return_type,
-                        ) && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
-                            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-                        {
-                            return Some(class_idx);
-                        }
-                    }
-                    None
-                })?;
+        let class_idx = self.get_class_decl_for_display_type(object_type)?.0;
         let mut current = class_idx;
         let mut visited = rustc_hash::FxHashSet::default();
 
@@ -1377,6 +1475,32 @@ impl<'a> CheckerState<'a> {
 
         // Fallback: use the object type's own class name
         Some(self.get_class_name_from_decl(class_idx))
+    }
+
+    pub(crate) fn get_private_identifier_declaring_class_name(
+        &mut self,
+        object_type: TypeId,
+        object_expr: NodeIndex,
+        member_name: &str,
+    ) -> String {
+        self.get_declaring_class_name_for_private_member(object_type, member_name)
+            .or_else(|| self.get_class_name_from_expression(object_expr))
+            .or_else(|| {
+                let fallback = self.format_type_diagnostic(object_type);
+                fallback
+                    .strip_prefix("typeof ")
+                    .map(str::trim)
+                    .filter(|name| {
+                        !name.is_empty()
+                            && !name.contains('{')
+                            && !name.contains("=>")
+                            && *name != "any"
+                            && *name != "unknown"
+                            && *name != "object"
+                    })
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "the class".to_string())
     }
 
     /// Check if a class directly declares a member with the given name.

@@ -177,6 +177,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let evaluated = self.interner.evaluate_conditional(cond.as_ref());
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
+                } else {
+                    let mut visited = FxHashSet::default();
+                    if self.type_contains_placeholder(target, var_map, &mut visited) {
+                        self.constrain_types(ctx, var_map, source, cond.true_type, priority);
+                        self.constrain_types(ctx, var_map, source, cond.false_type, priority);
+                    }
                 }
             }
             (Some(TypeData::Mapped(mapped_id)), _) => {
@@ -1094,8 +1100,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_app = self.interner.type_application(t_app_id);
                 let evaluated_source = self.checker.evaluate_type(source);
                 let evaluated_target = self.checker.evaluate_type(target);
-                if s_app.base == t_app.base
-                    && s_app.args.len() == t_app.args.len()
+                let same_base_application =
+                    s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+                let promise_like_arg_pair = if !same_base_application {
+                    self.checker
+                        .promise_like_type_argument(source)
+                        .zip(self.checker.promise_like_type_argument(target))
+                } else {
+                    None
+                };
+                if same_base_application
                     && matches!(
                         self.interner.lookup(evaluated_target),
                         Some(TypeData::Mapped(_))
@@ -1123,18 +1137,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Objects may fail for interfaces like Promise<T> where methods (then)
                     // have their own generic signatures that block inference. Restricting
                     // to ReturnType priority preserves variance for parameter inference.
-                    if s_app.base == t_app.base
-                        && s_app.args.len() == t_app.args.len()
+                    if same_base_application
                         && priority == crate::types::InferencePriority::ReturnType
                     {
                         for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                             self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                         }
+                    } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
+                        self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
                     }
-                } else if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                } else if same_base_application {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                     }
+                } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
+                    self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
                 }
             }
             (Some(TypeData::Enum(_, s_mem)), Some(TypeData::Enum(_, t_mem))) => {
@@ -1336,18 +1353,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// This follows tsc's `inferToMappedType` which handles:
     /// - Direct `keyof T` → returns T if T is an inference placeholder
+    /// - Direct `keyof X` → returns X if X structurally contains placeholders
     /// - `keyof T & keyof Constraint` (Intersection) → recurses into members
     /// - `keyof A | keyof B` (Union) → recurses into members
     ///
-    /// Returns the first `T` found where `keyof T` appears and T is a placeholder.
+    /// Returns the first `T` found where `keyof T` appears and T contains inference placeholders.
     fn find_keyof_inference_target(
         &self,
         constraint: TypeId,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> Option<TypeId> {
         match self.interner.lookup(constraint) {
-            Some(TypeData::KeyOf(keyof_target)) if var_map.contains_key(&keyof_target) => {
-                Some(keyof_target)
+            Some(TypeData::KeyOf(keyof_target)) => {
+                if var_map.contains_key(&keyof_target) {
+                    return Some(keyof_target);
+                }
+                let mut visited = FxHashSet::default();
+                if self.type_contains_placeholder(keyof_target, var_map, &mut visited) {
+                    return Some(keyof_target);
+                }
+                None
             }
             Some(TypeData::Intersection(members) | TypeData::Union(members)) => {
                 let member_list = self.interner.type_list(members);

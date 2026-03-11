@@ -609,7 +609,8 @@ impl<'a> CheckerState<'a> {
     /// ## Validation:
     /// - Checks if `pattern_type` is iterable
     /// - Emits TS2488 if the type is not iterable
-    /// - Skips check for ANY, UNKNOWN, ERROR types (defer to other checks)
+    /// - Skips check for ANY and ERROR types (defer to other checks)
+    /// - Reports TS2488 for `unknown`, matching TypeScript's array destructuring behavior
     pub fn check_destructuring_iterability(
         &mut self,
         pattern_idx: NodeIndex,
@@ -617,16 +618,15 @@ impl<'a> CheckerState<'a> {
         init_expr: NodeIndex,
     ) -> bool {
         // Skip check for types that defer to other validation
-        if pattern_type == TypeId::ANY
-            || pattern_type == TypeId::UNKNOWN
-            || pattern_type == TypeId::ERROR
-        {
+        if pattern_type == TypeId::ANY || pattern_type == TypeId::ERROR {
             return true;
         }
 
-        // TypeScript allows empty array destructuring patterns on any type (including null/undefined)
-        // Example: let [] = null; // No error
-        // Skip iterability check if the pattern is empty.
+        // Resolve lazy types (type aliases) before checking iterability
+        let resolved_type = self.resolve_lazy_type(pattern_type);
+
+        // TypeScript allows empty array destructuring patterns on most types
+        // (including null/undefined), but still reports on `unknown`.
         //
         // Track whether this is an assignment target (`[a] = value`) vs a binding pattern
         // (`let [a] = value`) so ES5-specific TS2461 can stay scoped to declarations.
@@ -636,13 +636,16 @@ impl<'a> CheckerState<'a> {
                 pattern_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
             if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
                 && binding_pattern.elements.nodes.is_empty()
+                && resolved_type != TypeId::UNKNOWN
             {
                 return true;
             }
         }
 
-        // Resolve lazy types (type aliases) before checking iterability
-        let resolved_type = self.resolve_lazy_type(pattern_type);
+        if resolved_type == TypeId::UNKNOWN {
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
+            return false;
+        }
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {

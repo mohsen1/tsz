@@ -8,7 +8,7 @@
 
 use crate::TypeDatabase;
 use crate::contextual::ContextualTypeContext;
-use crate::types::{PropertyInfo, TypeData, TypeId};
+use crate::types::{PropertyInfo, TypeData, TypeId, Visibility};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -148,6 +148,14 @@ impl<'a> ObjectLiteralBuilder<'a> {
         // Also reset write_type to match type_id so the property is fully writable.
         props
             .into_iter()
+            .filter(|p| {
+                !p.is_class_prototype
+                    && p.visibility == Visibility::Public
+                    && !self
+                        .db
+                        .resolve_atom_ref(p.name)
+                        .starts_with("__private_brand_")
+            })
             .map(|mut p| {
                 p.readonly = false;
                 p.write_type = p.type_id;

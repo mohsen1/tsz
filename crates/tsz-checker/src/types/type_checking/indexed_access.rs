@@ -33,6 +33,48 @@ fn same_object_key_space(db: &dyn tsz_solver::TypeDatabase, left: TypeId, right:
 }
 
 impl<'a> CheckerState<'a> {
+    fn canonical_numeric_string_literal_valid_for_object(
+        &self,
+        index_type: TypeId,
+        object_type: TypeId,
+    ) -> bool {
+        let Some(prop_atom) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+        else {
+            return false;
+        };
+        let property_name = self.ctx.types.resolve_atom(prop_atom);
+        self.get_numeric_index_from_string(&property_name)
+            .is_some_and(|_| self.is_element_indexable(object_type, false, true))
+    }
+
+    fn union_index_members_valid_for_object(
+        &mut self,
+        index_type: TypeId,
+        object_type: TypeId,
+        keyof_object: TypeId,
+    ) -> bool {
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, index_type)
+        else {
+            return false;
+        };
+
+        members.iter().all(|&member| {
+            self.is_assignable_to(member, keyof_object)
+                || self
+                    .get_index_key_kind(member)
+                    .is_some_and(|(wants_string, wants_number)| {
+                        self.is_element_indexable(object_type, wants_string, wants_number)
+                    })
+                || tsz_solver::type_queries::numeric_literal_index_valid_for_object(
+                    self.ctx.types,
+                    member,
+                    object_type,
+                )
+                || self.canonical_numeric_string_literal_valid_for_object(member, object_type)
+        })
+    }
+
     fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
@@ -46,6 +88,25 @@ impl<'a> CheckerState<'a> {
             return Some(ident.escaped_text.clone());
         }
         None
+    }
+
+    fn type_node_refers_to_type_parameter(&self, node_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(name) = self.simple_type_reference_name(node_idx) else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .get_symbols()
+            .find_all_by_name(&name)
+            .into_iter()
+            .any(|sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0)
+            })
     }
 
     fn is_mapped_key_index_for_current_object(
@@ -526,12 +587,8 @@ impl<'a> CheckerState<'a> {
             index_constraint =
                 self.resolve_index_constraint_from_declaration(data.index_type, data.object_type);
         }
-        let error_anchor =
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type) {
-                node_idx
-            } else {
-                data.index_type
-            };
+        let error_anchor = node_idx;
+        let concrete_error_anchor = data.index_type;
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
             && index_constraint.is_some_and(|constraint| {
                 constraint == object_type
@@ -790,6 +847,19 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
+            if self.canonical_numeric_string_literal_valid_for_object(
+                index_type_for_check,
+                object_type_for_check,
+            ) {
+                return;
+            }
+            if self.union_index_members_valid_for_object(
+                index_type_for_check,
+                object_type_for_check,
+                keyof_object,
+            ) {
+                return;
+            }
             if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
                 && let Some(nested_indexed_access) =
                     self.ctx.arena.get_indexed_access_type(object_type_node)
@@ -956,9 +1026,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.try_emit_concrete_index_access_error(
-                error_anchor,
+                concrete_error_anchor,
                 object_type_for_check,
                 index_type_for_check,
+                self.type_node_refers_to_type_parameter(data.object_type),
             ) {
                 return;
             }
@@ -998,6 +1069,7 @@ impl<'a> CheckerState<'a> {
         error_anchor: NodeIndex,
         object_type: TypeId,
         index_type: TypeId,
+        object_is_type_parameter_ref: bool,
     ) -> bool {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
@@ -1088,6 +1160,7 @@ impl<'a> CheckerState<'a> {
                     error_anchor,
                     concrete_object_type,
                     member,
+                    object_is_type_parameter_ref,
                 );
             }
             return emitted_any;
@@ -1131,12 +1204,18 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
+            if self.get_numeric_index_from_string(&property_name).is_some()
+                && self.is_element_indexable(concrete_object_type, false, true)
+            {
+                return false;
+            }
             if !matches!(
                 self.resolve_property_access_with_env(concrete_object_type, &property_name),
                 tsz_solver::operations::property::PropertyAccessResult::Success { .. }
             ) && self.get_index_key_kind(index_type) == Some((true, false))
                 && !self.is_element_indexable(concrete_object_type, true, false)
-                && object_has_named_shape
+                && !object_is_type_parameter_ref
+                && (object_has_named_shape || object_is_array_like)
             {
                 let object_type_str = self.format_type(object_type);
                 let message = format_message(

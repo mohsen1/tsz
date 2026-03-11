@@ -143,6 +143,8 @@ impl<'a> CheckerState<'a> {
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
+        let closure_already_checked =
+            is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
         let mut has_jsdoc_type_function = false;
@@ -516,11 +518,6 @@ impl<'a> CheckerState<'a> {
                 // re-entrant closure resolution (first call handles diagnostics),
                 // and ambient declarations (declare class/module private members).
                 let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
-                // If this closure was already checked for implicit any (e.g., during
-                // call resolution with contextual type), skip the re-check to avoid
-                // false TS7006/TS7031 when the second call lacks contextual type.
-                let is_reentrant_closure =
-                    is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
                 // In ambient contexts (declare class, .d.ts), tsc suppresses
                 // TS7006/TS7031 for private members since they're excluded from
                 // .d.ts output. check_method_declaration in ambient_signature_checks.rs
@@ -535,7 +532,7 @@ impl<'a> CheckerState<'a> {
                 let skip_implicit_any = is_setter
                     || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
                     || (is_in_decorator && !has_contextual_type)
-                    || is_reentrant_closure
+                    || closure_already_checked
                     || is_ambient_private;
                 if !skip_implicit_any {
                     self.maybe_report_implicit_any_parameter(
@@ -543,12 +540,6 @@ impl<'a> CheckerState<'a> {
                         has_contextual_type || has_jsdoc_param,
                         contextual_index,
                     );
-                }
-                // Record that we've checked this closure for implicit any,
-                // so subsequent calls to get_type_of_function for the same
-                // node won't re-emit TS7006/TS7031.
-                if is_closure && !skip_implicit_any {
-                    self.ctx.implicit_any_checked_closures.insert(idx);
                 }
                 // In JS files, params without type annotations are implicitly optional
                 // unless a JSDoc @param tag or @type function annotation exists.
@@ -623,6 +614,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Record that we've checked this closure for implicit-any diagnostics so
+        // later re-entrant passes do not re-emit TS7006/TS7031. Do this after the
+        // full parameter walk so sibling parameters in the same closure are all checked.
+        if is_closure && !closure_already_checked {
+            self.ctx.implicit_any_checked_closures.insert(idx);
+        }
+
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors, not in regular functions
         self.check_parameter_properties(&parameters.nodes);
@@ -685,6 +683,7 @@ impl<'a> CheckerState<'a> {
         let mut has_contextual_return = false;
         let mut return_context_for_circularity = None;
         let mut early_yield_type: Option<TypeId> = None;
+        let mut final_generator_yield_type: Option<TypeId> = None;
         let mut early_gen_return_type: Option<TypeId> = None;
         let mut early_gen_next_type: Option<TypeId> = None;
 
@@ -792,6 +791,7 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 early_yield_type = gen_types.0;
+                final_generator_yield_type = gen_types.0;
                 early_gen_return_type = gen_types.1;
                 early_gen_next_type = gen_types.2;
             }
@@ -824,6 +824,23 @@ impl<'a> CheckerState<'a> {
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
                 let inferred = self.infer_return_type_from_body(idx, body, return_context);
                 return_type = jsdoc_return_context.unwrap_or(inferred);
+
+                if self.is_js_file()
+                    && is_function_declaration
+                    && let Some(instance_type) =
+                        self.synthesize_js_constructor_instance_type(idx, TypeId::ANY, &[])
+                    && let Some(union_members) =
+                        tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
+                    && union_members.len() == 2
+                    && union_members.contains(&TypeId::UNDEFINED)
+                    && union_members.iter().copied().any(|member| {
+                        member != TypeId::UNDEFINED
+                            && self.is_assignable_to(member, instance_type)
+                            && self.is_assignable_to(instance_type, member)
+                    })
+                {
+                    return_type = instance_type;
+                }
             }
 
             // TS7010/TS7011 (implicit any return) is emitted for functions without
@@ -1194,7 +1211,18 @@ impl<'a> CheckerState<'a> {
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
             {
-                let expected_return_type = expected_expression_return_type.unwrap();
+                let raw_expected_return_type = expected_expression_return_type.unwrap();
+                let expected_return_type =
+                    if tsz_solver::is_index_access_type(self.ctx.types, raw_expected_return_type) {
+                        let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
+                        if evaluated != TypeId::ERROR {
+                            evaluated
+                        } else {
+                            raw_expected_return_type
+                        }
+                    } else {
+                        raw_expected_return_type
+                    };
                 if expected_return_type != TypeId::ANY
                     && !self.type_contains_error(expected_return_type)
                 {
@@ -1248,7 +1276,21 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types,
                                         expected_return_type,
                                     ) && expected_return_type != TypeId::SYMBOL)
-                                    || expected_return_type == TypeId::NEVER;
+                                    || expected_return_type == TypeId::NEVER
+                                    || tsz_solver::union_list_id(
+                                        self.ctx.types,
+                                        expected_return_type,
+                                    )
+                                    .is_some_and(|list_id| {
+                                        self.ctx.types.type_list(list_id).iter().any(|&member| {
+                                            tsz_solver::is_literal_type(self.ctx.types, member)
+                                                || tsz_solver::type_queries::get_enum_def_id(
+                                                    self.ctx.types,
+                                                    member,
+                                                )
+                                                .is_some()
+                                        })
+                                    });
                             let concrete_return_context = expected_return_type != TypeId::ANY
                                 && expected_return_type != TypeId::UNKNOWN
                                 && !tsz_solver::type_queries::contains_type_parameters_db(
@@ -1478,6 +1520,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         widened
                     };
+                    final_generator_yield_type = Some(final_yield);
                     if final_yield == TypeId::ANY
                         && self.ctx.no_implicit_any()
                         && !self.is_js_file()
@@ -1579,7 +1622,7 @@ impl<'a> CheckerState<'a> {
             if let Some(base) = lazy_base {
                 // Use contextual generator type params when available, otherwise
                 // fall back to defaults (any/void/unknown).
-                let yield_t = early_yield_type.unwrap_or(TypeId::ANY);
+                let yield_t = final_generator_yield_type.unwrap_or(TypeId::ANY);
                 let return_t = early_gen_return_type.unwrap_or(TypeId::VOID);
                 let next_t = early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
                 self.ctx
@@ -1914,12 +1957,11 @@ impl<'a> CheckerState<'a> {
                 };
                 let type_id = factory.type_param(info);
 
-                // Only add if not already in scope (inner scope should shadow outer)
-                if !self.ctx.type_parameter_scope.contains_key(&name) {
-                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                    updates.push((name, previous, false));
-                    added_params.push(param_idx);
-                }
+                // Function type parameters must shadow outer aliases/type parameters
+                // with the same name for the duration of this function signature.
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+                updates.push((name, previous, false));
+                added_params.push(param_idx);
             }
         }
 

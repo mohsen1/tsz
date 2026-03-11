@@ -367,6 +367,10 @@ impl<'a> CheckerState<'a> {
             return; // Declared module exists
         }
 
+        if self.ctx.resolve_import_target(module_name).is_some() {
+            return; // Module exists via driver/module resolution candidate matching
+        }
+
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
@@ -866,6 +870,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_global_type_with_libs("Promise", &lib_binders)
         {
+            let _ = self.get_type_of_symbol(sym_id);
             let promise_base = self.ctx.create_lazy_type_ref(sym_id);
             return factory.application(promise_base, vec![inner_type]);
         }
@@ -1036,11 +1041,7 @@ impl<'a> CheckerState<'a> {
                         &[&name_str],
                     );
                 } else {
-                    self.error_at_node_msg(
-                        name_idx,
-                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
-                        &[&name_str],
-                    );
+                    self.error_cannot_find_name_at(&name_str, name_idx);
                 }
             }
         }
@@ -1278,20 +1279,43 @@ impl<'a> CheckerState<'a> {
                         .resolve_import_target_from_file(current_file_idx, module_name)
                         && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
                     {
-                        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-                        if let Some(sf) = target_arena.source_files.first()
-                            && let Some(exports) = target_binder.module_exports.get(&sf.file_name)
+                        if let Some(target_sym_id) = target_binder
+                            .resolve_import_with_reexports_type_only(module_name, export_name)
+                            .map(|(sym_id, _)| sym_id)
+                            .or_else(|| {
+                                (curr_sym.import_name.is_none())
+                                    .then(|| {
+                                        target_binder
+                                            .resolve_import_with_reexports_type_only(
+                                                module_name,
+                                                "export=",
+                                            )
+                                            .map(|(sym_id, _)| sym_id)
+                                    })
+                                    .flatten()
+                            })
                         {
-                            if let Some(target_sym_id) = exports.get(export_name) {
-                                current_binder = target_binder;
-                                current_file_idx = target_idx;
-                                current_sym_id = target_sym_id;
-                                found = true;
-                            } else if let Some(target_sym_id) = exports.get("export=") {
-                                current_binder = target_binder;
-                                current_file_idx = target_idx;
-                                current_sym_id = target_sym_id;
-                                found = true;
+                            current_binder = target_binder;
+                            current_file_idx = target_idx;
+                            current_sym_id = target_sym_id;
+                            found = true;
+                        } else {
+                            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                            if let Some(sf) = target_arena.source_files.first()
+                                && let Some(exports) =
+                                    target_binder.module_exports.get(&sf.file_name)
+                            {
+                                if let Some(target_sym_id) = exports.get(export_name) {
+                                    current_binder = target_binder;
+                                    current_file_idx = target_idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                } else if let Some(target_sym_id) = exports.get("export=") {
+                                    current_binder = target_binder;
+                                    current_file_idx = target_idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                }
                             }
                         }
                     }

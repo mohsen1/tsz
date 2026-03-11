@@ -61,9 +61,36 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+
+            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
+                return true;
+            }
         }
 
         applicable_shapes.len() > 1
+    }
+
+    fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        else {
+            return false;
+        };
+
+        let mut saw_tuple = false;
+        for member in members {
+            let Some(applicable) =
+                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
+            else {
+                return false;
+            };
+
+            if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
+                return false;
+            }
+            saw_tuple = true;
+        }
+
+        saw_tuple
     }
 
     // =========================================================================
@@ -474,6 +501,12 @@ impl<'a> CheckerState<'a> {
                 )
             });
 
+        let force_tuple_for_union_context = tuple_context.is_none()
+            && !force_tuple_for_mapped
+            && resolved_contextual_type.is_some_and(|resolved| {
+                self.union_context_for_array_literal_prefers_tuple(resolved)
+            });
+
         // When a type parameter constraint is a union containing a tuple member
         // (the `T extends readonly unknown[] | []` pattern), force tuple inference.
         // The `| []` is a deliberate hint in TypeScript to infer tuple types from
@@ -578,7 +611,11 @@ impl<'a> CheckerState<'a> {
 
             // Handle spread elements - expand tuple types
             if elem_is_spread && let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
-                let spread_expr_type = self.get_type_of_node(spread_data.expression);
+                let spread_expr_type = if self.ctx.in_destructuring_target {
+                    self.get_type_of_assignment_target(spread_data.expression)
+                } else {
+                    self.get_type_of_node(spread_data.expression)
+                };
                 let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
                 // Check if spread argument is iterable, emit TS2488 if not.
                 // Skip this check when the array is a destructuring target
@@ -660,7 +697,11 @@ impl<'a> CheckerState<'a> {
             }
 
             // Regular (non-spread) element
-            let elem_type = self.get_type_of_node(elem_idx);
+            let elem_type = if self.ctx.in_destructuring_target {
+                self.destructuring_target_type_from_initializer(elem_idx)
+            } else {
+                self.get_type_of_node(elem_idx)
+            };
 
             self.ctx.contextual_type = prev_context;
 
@@ -675,13 +716,20 @@ impl<'a> CheckerState<'a> {
                     optional,
                     rest: false,
                 });
+            } else if force_tuple_for_union_context {
+                tuple_elements.push(TupleElement {
+                    type_id: elem_type,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                });
             } else {
                 element_types.push(elem_type);
                 element_nodes.push(elem_idx);
             }
         }
 
-        if tuple_context.is_some() {
+        if tuple_context.is_some() || force_tuple_for_union_context {
             return factory.tuple(tuple_elements);
         }
 
@@ -785,14 +833,16 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::ExclamationToken as u16 => {
                 // Type-check operand fully so inner expression diagnostics fire
                 // (e.g. TS18050 for `!(null + undefined)`).
-                let operand_type = self.get_type_of_node(unary.operand);
+                let operand_raw = self.get_type_of_node(unary.operand);
+                let operand_type = self.resolve_type_query_type(operand_raw);
                 // Suppress TS2872/TS2873 when:
                 // 1. Operand is an error type (inner error already reported).
                 // 2. This `!` is the direct LHS of `**`: `!X ** Y` parses as `(!X) ** Y`,
                 //    which is a grammar error (TS17006). Reporting "always truthy" on top
                 //    would be a false positive.
                 if operand_type != TypeId::ERROR && !self.is_lhs_of_exponentiation(idx) {
-                    self.check_truthy_or_falsy_with_type(unary.operand, operand_type);
+                    // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
+                    self.check_truthy_or_falsy_with_type_no_enum(unary.operand, operand_type);
                 }
                 TypeId::BOOLEAN
             }
@@ -951,6 +1001,19 @@ impl<'a> CheckerState<'a> {
                 {
                     use tsz_solver::BinaryOpEvaluator;
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
+                    let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
+                        let evaluated = self.evaluate_type_with_env(ty);
+                        evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
+                    });
+                    if self.ctx.strict_null_checks()
+                        && let Some(cause) = nullish_cause
+                        && nullish_can_flow_to_number
+                    {
+                        arithmetic_ok = false;
+                        self.emit_nullish_operand_error(unary.operand, cause);
+                    }
+
                     // Evaluate the type to resolve Lazy(DefId) aliases before checking.
                     // Type aliases like `YesNo = Choice.Yes | Choice.No` may stay as
                     // Lazy(DefId) which the visitor can't recurse into.
@@ -962,7 +1025,7 @@ impl<'a> CheckerState<'a> {
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 
-                    if !is_valid {
+                    if arithmetic_ok && !is_valid {
                         arithmetic_ok = false;
                         // Emit TS2356 for invalid increment/decrement operand type
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

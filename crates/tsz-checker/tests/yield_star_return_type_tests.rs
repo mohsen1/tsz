@@ -22,6 +22,14 @@ interface Generator<T = unknown, TReturn = any, TNext = unknown> {
     return(value: TReturn): IteratorResult<T, TReturn>;
     throw(e: any): IteratorResult<T, TReturn>;
 }
+interface Iterator<T = unknown, TReturn = any, TNext = unknown> {
+    next(value: TNext): IteratorResult<T, TReturn>;
+    return?(value: TReturn): IteratorResult<T, TReturn>;
+    throw?(e: any): IteratorResult<T, TReturn>;
+}
+interface Iterable<T> {
+    [Symbol.iterator](): Iterator<T>;
+}
 interface IteratorResult<T, TReturn = any> {
     done?: boolean;
     value: T;
@@ -170,5 +178,39 @@ function* f(): Generator<number, boolean, string> {
     assert!(
         problem_codes.is_empty(),
         "discarded yield* should not produce TS7057 or TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn yield_star_generator_iife_contextually_types_nested_callback() {
+    let source = r#"
+function* g(): IterableIterator<(x: string) => number> {
+    yield * function* () {
+        yield x => x.length;
+    }();
+}
+"#;
+    let diags = codes_with_strict(source);
+    let ts7006_count = diags.iter().filter(|&&c| c == 7006).count();
+    assert_eq!(
+        ts7006_count, 0,
+        "yield* generator IIFE should contextually type nested callback params, got: {diags:?}"
+    );
+}
+
+#[test]
+fn yield_operand_generator_iife_contextually_types_nested_callback() {
+    let source = r#"
+function* g(): Iterator<Iterable<(x: string) => number>> {
+    yield (function* () {
+        yield (x) => x.length;
+    })();
+}
+"#;
+    let diags = codes_with_strict(source);
+    let ts7006_count = diags.iter().filter(|&&c| c == 7006).count();
+    assert_eq!(
+        ts7006_count, 0,
+        "yield operand generator IIFE should contextually type nested callback params, got: {diags:?}"
     );
 }

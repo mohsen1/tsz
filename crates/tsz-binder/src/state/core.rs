@@ -59,6 +59,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols: FxHashMap::default(),
+            module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
@@ -120,6 +121,7 @@ impl BinderState {
         self.scope_chain.clear();
         self.current_scope_idx = 0;
         self.node_symbols.clear();
+        self.module_declaration_exports_publicly.clear();
         self.symbol_arenas.clear();
         self.declaration_arenas.clear();
         self.cross_file_node_symbols.clear();
@@ -247,6 +249,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
+            module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
@@ -326,6 +329,7 @@ impl BinderState {
             global_augmentations,
             module_augmentations,
             module_exports,
+            module_declaration_exports_publicly,
             reexports,
             wildcard_reexports,
             wildcard_reexports_type_only,
@@ -363,6 +367,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
+            module_declaration_exports_publicly,
             symbol_arenas,
             declaration_arenas,
             cross_file_node_symbols,
@@ -636,6 +641,12 @@ impl BinderState {
     ///
     /// Panics if the resolved identifier cache lock is poisoned.
     pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
+        if let Some(node) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(node)
+        {
+            self.set_debug_file(&sf.file_name);
+        }
+
         // Binding mutates scope/symbol tables, so stale identifier resolution entries
         // from prior passes must be dropped.
         self.resolved_identifier_cache.write().unwrap().clear();
@@ -789,7 +800,9 @@ impl BinderState {
         use crate::symbol_flags;
 
         // Collect all exports from all module-level symbols in this file
-        let mut file_exports = SymbolTable::new();
+        // Start from any exports recorded during binding that intentionally do not create
+        // file-local bindings (for example `export * as ns from "./mod"`).
+        let mut file_exports = self.module_exports.remove(file_name).unwrap_or_default();
         let mut export_equals_target: Option<SymbolId> = None;
 
         // Iterate through file_locals to find modules and their exports
@@ -815,7 +828,7 @@ impl BinderState {
                 // Also collect symbols that are explicitly exported via `export { X }`
                 // or `export` modifier. These may not be module/namespace symbols but
                 // need to be in module_exports for cross-file import resolution.
-                if (symbol.is_exported || name == "export=") && !file_exports.has(name) {
+                if symbol.is_exported || name == "export=" {
                     file_exports.set(name.clone(), sym_id);
                 }
             }
@@ -827,14 +840,14 @@ impl BinderState {
         {
             if let Some(target_exports) = target_symbol.exports.as_ref() {
                 for (export_name, &export_sym_id) in target_exports.iter() {
-                    if !file_exports.has(export_name) {
+                    if export_name != "default" && !file_exports.has(export_name) {
                         file_exports.set(export_name.clone(), export_sym_id);
                     }
                 }
             }
             if let Some(target_members) = target_symbol.members.as_ref() {
                 for (member_name, &member_sym_id) in target_members.iter() {
-                    if !file_exports.has(member_name) {
+                    if member_name != "default" && !file_exports.has(member_name) {
                         file_exports.set(member_name.clone(), member_sym_id);
                     }
                 }

@@ -1041,15 +1041,20 @@ impl<'a> FlowAnalyzer<'a> {
                         current_type
                     } else {
                         // Property mutation — preserve narrowing from antecedent.
-                        // Must defer when antecedent carries narrowing (CONDITION/CALL)
-                        // and hasn't been computed yet, otherwise we lose typeof narrowing.
+                        // Must defer when antecedent carries narrowing (CONDITION/CALL/LOOP_LABEL)
+                        // and hasn't been computed yet, otherwise we lose facts flowing through
+                        // loop headers before entering the mutation site.
                         if let Some(&ant) = flow.antecedent.first() {
                             if let Some(&ant_type) = results.get(&ant) {
                                 ant_type
                             } else if !visited.contains(&ant) {
                                 let ant_needs_defer =
                                     self.binder.flow_nodes.get(ant).is_some_and(|f| {
-                                        f.has_any_flags(flow_flags::CONDITION | flow_flags::CALL)
+                                        f.has_any_flags(
+                                            flow_flags::CONDITION
+                                                | flow_flags::CALL
+                                                | flow_flags::LOOP_LABEL,
+                                        )
                                     });
                                 if ant_needs_defer {
                                     if !in_worklist.contains(&ant) {
@@ -1094,6 +1099,7 @@ impl<'a> FlowAnalyzer<'a> {
                                         flow_flags::CONDITION
                                             | flow_flags::CALL
                                             | flow_flags::BRANCH_LABEL
+                                            | flow_flags::LOOP_LABEL
                                             | flow_flags::ASSIGNMENT
                                             | flow_flags::SWITCH_CLAUSE,
                                     )
@@ -1438,9 +1444,11 @@ impl<'a> FlowAnalyzer<'a> {
                 reference,
             )
         } else {
-            self.narrow_by_switch_clause(
+            self.narrow_by_switch_case_clause(
                 pre_switch_type,
                 switch_data.expression,
+                switch_data.case_block,
+                clause_idx,
                 clause.expression,
                 reference,
                 &narrowing,

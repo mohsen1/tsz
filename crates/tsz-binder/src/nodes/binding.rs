@@ -10,6 +10,61 @@ use tsz_scanner::SyntaxKind;
 use crate::state::{BinderState, FileFeatures};
 
 impl BinderState {
+    pub(crate) fn is_inside_class_member_computed_property_name(
+        arena: &NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let mut current = idx;
+        while current.is_some() {
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent) = arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                let computed_idx = parent_idx;
+                let Some(computed_ext) = arena.get_extended(computed_idx) else {
+                    return false;
+                };
+                let member_idx = computed_ext.parent;
+                let Some(member_ext) = arena.get_extended(member_idx) else {
+                    return false;
+                };
+                let class_idx = member_ext.parent;
+                let Some(owner) = arena.get(class_idx) else {
+                    return false;
+                };
+                if owner.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || owner.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return true;
+                }
+                current = parent_idx;
+                continue;
+            }
+
+            if parent.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent.kind == syntax_kind_ext::CONSTRUCTOR
+                || parent.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+        false
+    }
+
     /// Collect hoisted declarations from statements.
     pub(crate) fn collect_hoisted_declarations(
         &mut self,
@@ -829,8 +884,9 @@ impl BinderState {
             {
                 if let Some(unary) = arena.get_unary_expr(node) {
                     self.bind_node(arena, unary.operand);
-                    if unary.operator == SyntaxKind::PlusPlusToken as u16
-                        || unary.operator == SyntaxKind::MinusMinusToken as u16
+                    if (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                        && !Self::is_inside_class_member_computed_property_name(arena, idx)
                     {
                         let flow = self.create_flow_assignment(idx);
                         self.current_flow = flow;

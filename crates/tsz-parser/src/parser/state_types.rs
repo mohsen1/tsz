@@ -275,6 +275,15 @@ impl ParserState {
         // Parse first constituent
         let first = self.parse_primary_type();
 
+        let mut fallback_next_import_type_options = false;
+        if self.abort_intersection_continuation {
+            self.abort_intersection_continuation = false;
+            if !self.is_token(SyntaxKind::AmpersandToken) {
+                return first;
+            }
+            fallback_next_import_type_options = true;
+        }
+
         // Check for & to form intersection
         if !has_leading_amp && !self.is_token(SyntaxKind::AmpersandToken) {
             return first;
@@ -283,7 +292,10 @@ impl ParserState {
         let mut types = vec![first];
 
         while self.parse_optional(SyntaxKind::AmpersandToken) {
+            self.fallback_import_type_options_once = fallback_next_import_type_options;
             types.push(self.parse_primary_type());
+            self.fallback_import_type_options_once = false;
+            fallback_next_import_type_options = false;
         }
 
         let end_pos = self.token_end();
@@ -592,7 +604,7 @@ impl ParserState {
 
         // Parse : and type
         self.parse_expected(SyntaxKind::ColonToken);
-        let type_node = self.parse_type();
+        let type_node = self.parse_named_tuple_member_type();
 
         let end_pos = self.token_end();
 
@@ -608,6 +620,38 @@ impl ParserState {
                 type_node,
             },
         )
+    }
+
+    fn parse_named_tuple_member_type(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        let type_node = if self.is_token(SyntaxKind::DotDotDotToken) {
+            self.next_token();
+            let element_type = self.parse_type();
+            let rest_end = self.token_end();
+            self.arena.add_wrapped_type(
+                syntax_kind_ext::REST_TYPE,
+                start_pos,
+                rest_end,
+                crate::parser::node::WrappedTypeData {
+                    type_node: element_type,
+                },
+            )
+        } else {
+            self.parse_type()
+        };
+
+        if self.parse_optional(SyntaxKind::QuestionToken) {
+            let end_pos = self.token_end();
+            return self.arena.add_wrapped_type(
+                syntax_kind_ext::OPTIONAL_TYPE,
+                start_pos,
+                end_pos,
+                crate::parser::node::WrappedTypeData { type_node },
+            );
+        }
+
+        type_node
     }
 
     /// Parse tuple type: [T, U, V], [name: T], [...T[]], [T?]
@@ -781,7 +825,10 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Parse the import call: import("./module")
+        let saved_import_type_options_context = self.in_import_type_options_context;
+        self.in_import_type_options_context = true;
         let argument = self.parse_import_expression();
+        self.in_import_type_options_context = saved_import_type_options_context;
 
         // Check that the argument is a string literal (TS1141)
         if let Some(call_node) = self.arena.get(argument)

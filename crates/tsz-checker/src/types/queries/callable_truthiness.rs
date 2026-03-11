@@ -60,10 +60,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS2872/TS2873: Check if condition is syntactically always truthy or falsy.
-    /// Used for if-conditions and `!` operands.
+    /// Used for if/while/for conditions. Includes TS2845 enum member checks.
     pub(crate) fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
         let ty = self.get_type_of_node(node_idx);
-        self.check_truthy_or_falsy_with_type(node_idx, ty);
+        self.check_truthy_or_falsy_with_type_inner(node_idx, ty, true);
     }
 
     /// Same as `check_truthy_or_falsy`, but reuses a caller-provided type.
@@ -72,7 +72,30 @@ impl<'a> CheckerState<'a> {
     /// gated on `strictNullChecks`. Without strict null checks, `void` is
     /// effectively `undefined` (which is a valid falsy value), and all types
     /// implicitly include `null | undefined`, so truthiness checks are not meaningful.
+    ///
+    /// `check_enum_members` controls TS2845 enum member truthiness diagnostics.
+    /// tsc only emits TS2845 for enum members in condition contexts (if/while/for/
+    /// ternary), NOT for `||`/`&&` left sides or `!` operands.
     pub(crate) fn check_truthy_or_falsy_with_type(&mut self, node_idx: NodeIndex, ty: TypeId) {
+        self.check_truthy_or_falsy_with_type_inner(node_idx, ty, true);
+    }
+
+    /// Variant that skips TS2845 enum member checks. Used for `||`/`&&` left
+    /// sides and `!` operands where tsc does not emit TS2845.
+    pub(crate) fn check_truthy_or_falsy_with_type_no_enum(
+        &mut self,
+        node_idx: NodeIndex,
+        ty: TypeId,
+    ) {
+        self.check_truthy_or_falsy_with_type_inner(node_idx, ty, false);
+    }
+
+    fn check_truthy_or_falsy_with_type_inner(
+        &mut self,
+        node_idx: NodeIndex,
+        ty: TypeId,
+        check_enum_members: bool,
+    ) {
         if !self.ctx.compiler_options.strict_null_checks {
             return;
         }
@@ -87,7 +110,9 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(condition_result) = self.enum_member_condition_result(node_idx, ty) {
+        if check_enum_members
+            && let Some(condition_result) = self.enum_member_condition_result(node_idx, ty)
+        {
             self.error_at_node_msg(
                 node_idx,
                 diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,

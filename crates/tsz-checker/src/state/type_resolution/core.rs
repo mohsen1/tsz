@@ -159,7 +159,16 @@ impl<'a> CheckerState<'a> {
                             .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
                     });
                     if !args_have_type_params {
-                        let _ = self.evaluate_application_type(type_id);
+                        *self.ctx.depth_exceeded.borrow_mut() = false;
+                        let _ = self.evaluate_type_with_env_uncached(type_id);
+                        if *self.ctx.depth_exceeded.borrow() {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                idx,
+                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            );
+                        }
                     }
                 }
 
@@ -234,15 +243,24 @@ impl<'a> CheckerState<'a> {
                 // apply module augmentations using the import symbol's module specifier.
                 if result != TypeId::ERROR {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && let Some(module_specifier) = symbol.import_module.as_ref()
-                    {
-                        let aug_name = symbol
-                            .import_name
-                            .as_deref()
-                            .unwrap_or(&symbol.escaped_name);
+                    let imported_module = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().map(|module_specifier| {
+                                (
+                                    module_specifier.clone(),
+                                    symbol
+                                        .import_name
+                                        .clone()
+                                        .unwrap_or_else(|| symbol.escaped_name.clone()),
+                                )
+                            })
+                        });
+                    if let Some((module_specifier, aug_name)) = imported_module {
                         result =
-                            self.apply_module_augmentations(module_specifier, aug_name, result);
+                            self.apply_module_augmentations(&module_specifier, &aug_name, result);
                     }
                 }
 
@@ -536,7 +554,7 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                let result = lowering.lower_type(idx);
+                let mut result = lowering.lower_type(idx);
 
                 // Ensure Application types from lib types have their base DefId
                 // fully registered (body + params) in BOTH type environments.
@@ -629,7 +647,7 @@ impl<'a> CheckerState<'a> {
                         if !args_have_type_params {
                             // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
                             *self.ctx.depth_exceeded.borrow_mut() = false;
-                            let _ = self.evaluate_application_type(result);
+                            let _ = self.evaluate_type_with_env_uncached(result);
 
                             // TS2589: emit at the type reference node if depth was exceeded
                             if *self.ctx.depth_exceeded.borrow() {
@@ -651,37 +669,100 @@ impl<'a> CheckerState<'a> {
                 // (e.g., map() from `declare module "./observable"`) are included.
                 if let Some(sym_id) = sym_id {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && let Some(module_specifier) = symbol.import_module.as_ref()
-                    {
-                        let aug_name = symbol
-                            .import_name
-                            .as_deref()
-                            .unwrap_or(&symbol.escaped_name);
+                    let imported_module = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().map(|module_specifier| {
+                                (
+                                    module_specifier.clone(),
+                                    symbol
+                                        .import_name
+                                        .clone()
+                                        .unwrap_or_else(|| symbol.escaped_name.clone()),
+                                )
+                            })
+                        })
+                        .or_else(|| {
+                            self.resolve_named_import_module_for_local_name(name)
+                                .map(|module_specifier| (module_specifier, name.to_string()))
+                        });
+                    if let Some((module_specifier, aug_name)) = imported_module {
                         // Get the Application's base DefId and augment its body
                         if let Some((app_base, _)) =
                             query::get_application_info(self.ctx.types, result)
                             && let Some(base_def_id) =
                                 query::get_lazy_def_id(self.ctx.types, app_base)
                         {
+                            let base_sym_id = self.ctx.def_to_symbol_id_with_fallback(base_def_id);
+                            let target_class_sym_id = base_sym_id
+                                .filter(|&candidate_sym_id| {
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(candidate_sym_id, &lib_binders)
+                                        .is_some_and(|base_symbol| {
+                                            base_symbol.flags & symbol_flags::CLASS != 0
+                                        })
+                                })
+                                .or_else(|| {
+                                    self.resolve_cross_file_export(&module_specifier, &aug_name)
+                                        .or_else(|| {
+                                            self.ctx
+                                                .binder
+                                                .module_exports
+                                                .get(&module_specifier)
+                                                .and_then(|exports| exports.get(&aug_name))
+                                        })
+                                        .filter(|&candidate_sym_id| {
+                                            self.ctx
+                                                .binder
+                                                .get_symbol_with_libs(
+                                                    candidate_sym_id,
+                                                    &lib_binders,
+                                                )
+                                                .is_some_and(|base_symbol| {
+                                                    base_symbol.flags & symbol_flags::CLASS != 0
+                                                })
+                                        })
+                                });
+                            let base_is_class = target_class_sym_id.is_some();
                             // Try to get the body from type_env (interface) or
-                            // class_instance_types (class).
-                            let body = self.ctx.type_env.try_borrow().ok().and_then(|env| {
-                                let def = env.get_def(base_def_id);
-                                let inst = env.get_class_instance_type(base_def_id);
-                                def.or(inst)
-                            });
+                            // class_instance_types (class). If the environment has
+                            // not been primed for an imported class yet, recover the
+                            // class instance type directly from the target symbol.
+                            let body = self
+                                .ctx
+                                .type_env
+                                .try_borrow()
+                                .ok()
+                                .and_then(|env| {
+                                    let def = env.get_def(base_def_id);
+                                    let inst = env.get_class_instance_type(base_def_id);
+                                    def.or(inst)
+                                })
+                                .or_else(|| {
+                                    if base_is_class {
+                                        target_class_sym_id.and_then(|candidate_sym_id| {
+                                            self.class_instance_type_from_symbol(candidate_sym_id)
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                });
                             if let Some(body) = body {
                                 let augmented = self.apply_module_augmentations(
-                                    module_specifier,
-                                    aug_name,
+                                    &module_specifier,
+                                    &aug_name,
                                     body,
                                 );
                                 if augmented != body {
                                     // Update the body in type_env so that all future
                                     // evaluations of this Application use the augmented type.
                                     if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                                        if env.get_class_instance_type(base_def_id).is_some() {
+                                        if base_is_class
+                                            || env.get_class_instance_type(base_def_id).is_some()
+                                        {
                                             env.insert_class_instance_type(base_def_id, augmented);
                                         } else {
                                             let params =
@@ -700,7 +781,9 @@ impl<'a> CheckerState<'a> {
                                     // Also update type_environment (flow analyzer snapshot)
                                     if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
                                     {
-                                        if env.get_class_instance_type(base_def_id).is_some() {
+                                        if base_is_class
+                                            || env.get_class_instance_type(base_def_id).is_some()
+                                        {
                                             env.insert_class_instance_type(base_def_id, augmented);
                                         } else {
                                             let params =
@@ -717,6 +800,41 @@ impl<'a> CheckerState<'a> {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        let has_same_arena_augmentation = self
+                            .get_module_augmentation_declarations(&module_specifier, &aug_name)
+                            .iter()
+                            .any(|augmentation| {
+                                augmentation.arena.as_ref().is_none_or(|arena| {
+                                    std::ptr::eq(arena.as_ref(), self.ctx.arena)
+                                })
+                            });
+                        if !has_same_arena_augmentation {
+                            if let Some((_, app_args)) =
+                                query::get_application_info(self.ctx.types, result)
+                            {
+                                let augmentation_members = self
+                                    .get_module_augmentation_members_instantiated(
+                                        &module_specifier,
+                                        &aug_name,
+                                        &app_args,
+                                    );
+                                if !augmentation_members.is_empty() {
+                                    let aug_object =
+                                        self.ctx.types.factory().object(augmentation_members);
+                                    result = self
+                                        .ctx
+                                        .types
+                                        .factory()
+                                        .intersection(vec![result, aug_object]);
+                                }
+                            } else {
+                                result = self.apply_module_augmentations(
+                                    &module_specifier,
+                                    &aug_name,
+                                    result,
+                                );
                             }
                         }
                     }
@@ -912,6 +1030,9 @@ impl<'a> CheckerState<'a> {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
                     self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
+                    if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+                        self.prime_lib_type_params(name);
+                    }
                     if self.symbol_is_namespace_only(sym_id) {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
@@ -997,6 +1118,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
+            return type_id;
+        }
+        if let Some(type_id) = self.resolve_global_jsdoc_typedef_type(name) {
             return type_id;
         }
         if name == "await" {
@@ -1409,23 +1533,14 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Step 1.5: Cache type parameters for generic interfaces (Promise<T>, Map<K,V>, etc.)
-                    // This enables the Solver to expand Application(Lazy(DefId), Args) by providing
-                    // the type parameters needed for generic substitution.
+                    // This must use canonical symbol-based extraction, not raw NodeIndex lookups
+                    // against the local arena. Lib and cross-file symbols can share NodeIndex values
+                    // with unrelated local declarations, which corrupts cached generic metadata.
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if self.ctx.get_def_type_params(def_id).is_none() {
-                        // Extract type params from first declaration
-                        let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                        if first_decl.is_some()
-                            && let Some(node) = self.ctx.arena.get(first_decl)
-                            && let Some(iface) = self.ctx.arena.get_interface(node)
-                            && let Some(ref type_params_list) = iface.type_parameters
-                        {
-                            let (params, updates) =
-                                self.push_type_parameters(&Some(type_params_list.clone()));
-                            self.pop_type_parameters(updates);
-                            if !params.is_empty() {
-                                self.ctx.insert_def_type_params(def_id, params);
-                            }
+                        let params = self.get_type_params_for_symbol(sym_id);
+                        if !params.is_empty() {
+                            self.ctx.insert_def_type_params(def_id, params);
                         }
                     }
 
@@ -1909,8 +2024,11 @@ impl<'a> CheckerState<'a> {
                 // Use merged interface lowering for multi-arena declarations
                 let has_multi_arenas = has_declaration_arenas;
                 let interface_type = if has_multi_arenas {
-                    let (ty, _merged_params) =
-                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                    let (ty, _merged_params) = lowering
+                        .lower_merged_interface_declarations_with_symbol(
+                            &decls_with_arenas,
+                            Some(sym_id),
+                        );
                     ty
                 } else {
                     lowering.lower_interface_declarations_with_symbol(&symbol.declarations, sym_id)
@@ -1928,7 +2046,12 @@ impl<'a> CheckerState<'a> {
 
                 self.pop_type_parameters(updates);
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                    self.ctx.insert_def_type_params(def_id, params.clone());
+                    let canonical_params = self.get_type_params_for_symbol(sym_id);
+                    if !canonical_params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, canonical_params);
+                    } else {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
                 }
                 return (merged, params);
             }

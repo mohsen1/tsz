@@ -163,6 +163,16 @@ pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
         if trimmed.contains('\\') {
             push_unique(trimmed.replace('\\', "/"));
         }
+
+        let without_ext = strip_ts_extension(trimmed);
+        if without_ext != trimmed {
+            push_unique(without_ext.to_string());
+            push_unique(format!("\"{without_ext}\""));
+            push_unique(format!("'{without_ext}'"));
+            if without_ext.contains('\\') {
+                push_unique(without_ext.replace('\\', "/"));
+            }
+        }
     }
 
     candidates

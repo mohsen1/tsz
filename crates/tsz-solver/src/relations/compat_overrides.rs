@@ -61,8 +61,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Private brand assignability override.
-    /// If both source and target types have private brands, they must match exactly.
-    /// This implements nominal typing for classes with private fields.
+    /// Returns `Some(false)` when nominal private/protected compatibility fails,
+    /// otherwise falls through to the structural checker.
+    ///
+    /// This implements TypeScript's nominal guard for classes with private fields
+    /// without bypassing ordinary member-type comparisons after the brands match.
     ///
     /// Uses recursive structure to preserve Union/Intersection semantics:
     /// - Union (A | B): OR logic - must satisfy at least one branch
@@ -169,15 +172,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             .interner
             .object_shape(crate::types::ObjectShapeId(target_shape_id));
 
-        let mut has_private_brands = false;
-
         // Check Target requirements (Nominality)
         // If Target has a private/protected property, Source MUST match its origin exactly.
         for target_prop in &target_shape.properties {
             if target_prop.visibility == Visibility::Private
                 || target_prop.visibility == Visibility::Protected
             {
-                has_private_brands = true;
                 let source_prop = crate::utils::lookup_property(
                     self.interner,
                     &source_shape.properties,
@@ -203,23 +203,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // If Source has a private/protected property, it cannot be assigned to a Target
         // that expects it to be Public.
         for source_prop in &source_shape.properties {
-            if source_prop.visibility == Visibility::Private
-                || source_prop.visibility == Visibility::Protected
-            {
-                has_private_brands = true;
-                if let Some(target_prop) = crate::utils::lookup_property(
+            if (source_prop.visibility == Visibility::Private
+                || source_prop.visibility == Visibility::Protected)
+                && let Some(target_prop) = crate::utils::lookup_property(
                     self.interner,
                     &target_shape.properties,
                     Some(crate::types::ObjectShapeId(target_shape_id)),
                     source_prop.name,
-                ) && target_prop.visibility == Visibility::Public
-                {
-                    return Some(false);
-                }
+                )
+                && target_prop.visibility == Visibility::Public
+            {
+                return Some(false);
             }
         }
 
-        has_private_brands.then_some(true)
+        None
     }
 
     /// Enum member assignability override.

@@ -24,6 +24,73 @@ pub(crate) struct JsdocCallbackInfo {
     pub(crate) predicate: Option<(bool, String, Option<String>)>, // (is_asserts, param_name, type_str)
 }
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_global_jsdoc_typedef_type(&mut self, name: &str) -> Option<TypeId> {
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+
+        if let Some(source_file) = self.ctx.arena.source_files.first() {
+            let comments = source_file.comments.clone();
+            let source_text = source_file.text.to_string();
+            if let Some(ty) =
+                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+            {
+                self.register_jsdoc_typedef_def(name, ty);
+                return Some(ty);
+            }
+        }
+
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+
+        for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+
+            let comments = source_file.comments.clone();
+            let source_text = source_file.text.to_string();
+            let mut checker = Box::new(CheckerState::with_parent_cache(
+                arena.as_ref(),
+                binder.as_ref(),
+                self.ctx.types,
+                source_file.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+                self,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.all_arenas = Some(all_arenas.clone());
+            checker.ctx.all_binders = Some(all_binders.clone());
+            checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+            checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+            checker.ctx.current_file_idx = file_idx;
+            if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
+                *checker.ctx.cross_file_symbol_targets.borrow_mut() =
+                    self.ctx.cross_file_symbol_targets.borrow().clone();
+            }
+
+            if let Some(ty) =
+                checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+            {
+                for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter()
+                {
+                    self.ctx
+                        .cross_file_symbol_targets
+                        .borrow_mut()
+                        .insert(sym_id, target_idx);
+                }
+                self.register_jsdoc_typedef_def(name, ty);
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
     fn source_file_data_for_node(
         &self,
         idx: NodeIndex,
@@ -865,6 +932,12 @@ impl<'a> CheckerState<'a> {
     }
     /// Resolve a simple type name from the symbol table or @typedef declarations.
     fn resolve_jsdoc_type_name(&mut self, name: &str) -> Option<TypeId> {
+        if name.contains('.')
+            && let Some(resolved) = self.resolve_jsdoc_qualified_type_name(name)
+        {
+            return Some(resolved);
+        }
+
         // Check file_locals for type aliases, classes, interfaces, enums
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -892,6 +965,249 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    fn resolve_jsdoc_qualified_type_name(&mut self, name: &str) -> Option<TypeId> {
+        if let Some(sym_id) = self.resolve_jsdoc_entity_name_symbol(name) {
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                return Some(resolved);
+            }
+        }
+
+        self.resolve_jsdoc_assigned_value_type(name)
+    }
+
+    fn resolve_jsdoc_entity_name_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        let mut current_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
+            self.ctx
+                .lib_contexts
+                .iter()
+                .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+        })?;
+        let lib_binders = self.get_lib_binders();
+
+        for segment in segments {
+            let mut visited_aliases = Vec::new();
+            current_sym = self
+                .resolve_alias_symbol(current_sym, &mut visited_aliases)
+                .unwrap_or(current_sym);
+
+            let symbol = self.get_cross_file_symbol(current_sym).or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(current_sym, &lib_binders)
+            })?;
+
+            if let Some(member_sym) = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })
+            {
+                current_sym = member_sym;
+                continue;
+            }
+
+            if let Some(ref module_specifier) = symbol.import_module {
+                let mut visited_aliases = Vec::new();
+                if let Some(member_sym) = self.resolve_reexported_member_symbol(
+                    module_specifier,
+                    segment,
+                    &mut visited_aliases,
+                ) {
+                    current_sym = member_sym;
+                    continue;
+                }
+            }
+
+            if symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+                && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
+                    symbol.escaped_name.as_str(),
+                    segment,
+                )
+            {
+                current_sym = member_sym;
+                continue;
+            }
+
+            return None;
+        }
+
+        let mut visited_aliases = Vec::new();
+        Some(
+            self.resolve_alias_symbol(current_sym, &mut visited_aliases)
+                .unwrap_or(current_sym),
+        )
+    }
+
+    fn resolve_jsdoc_symbol_type(&mut self, sym_id: tsz_binder::SymbolId) -> TypeId {
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .cloned()
+        else {
+            return TypeId::ERROR;
+        };
+
+        if (symbol.flags
+            & (symbol_flags::TYPE_ALIAS
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::ENUM))
+            != 0
+        {
+            return self.type_reference_symbol_type(sym_id);
+        }
+
+        if (symbol.flags & symbol_flags::FUNCTION) != 0 && symbol.value_declaration.is_some() {
+            let constructor_type = self.get_type_of_symbol(sym_id);
+            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+                symbol.value_declaration,
+                constructor_type,
+                &[],
+            ) {
+                return instance_type;
+            }
+        }
+
+        TypeId::ERROR
+    }
+
+    fn resolve_jsdoc_assigned_value_type(&mut self, name: &str) -> Option<TypeId> {
+        let prototype_type = self.resolve_jsdoc_prototype_assignment_type(name);
+
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                continue;
+            };
+            if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if self.expression_text(binary.left).as_deref() != Some(name) {
+                continue;
+            }
+            if let Some(resolved) = self.resolve_jsdoc_type_from_value_expression(binary.right) {
+                return Some(
+                    self.combine_jsdoc_instance_and_prototype_type(resolved, prototype_type),
+                );
+            }
+        }
+
+        prototype_type
+    }
+
+    fn resolve_jsdoc_type_from_value_expression(&mut self, expr_idx: NodeIndex) -> Option<TypeId> {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| self.resolve_identifier_symbol(expr_idx))
+            .or_else(|| self.resolve_qualified_symbol(expr_idx))
+        {
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                return Some(resolved);
+            }
+        }
+
+        let node = self.ctx.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION =>
+            {
+                let constructor_type = self.get_type_of_node(expr_idx);
+                self.synthesize_js_constructor_instance_type(expr_idx, constructor_type, &[])
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION
+                || k == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION =>
+            {
+                let sym_id = self.ctx.binder.get_node_symbol(expr_idx)?;
+                let resolved = self.type_reference_symbol_type(sym_id);
+                (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved)
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_jsdoc_prototype_assignment_type(&mut self, name: &str) -> Option<TypeId> {
+        let prototype_name = format!("{name}.prototype");
+
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                continue;
+            };
+            if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if self.expression_text(binary.left).as_deref() != Some(prototype_name.as_str()) {
+                continue;
+            }
+
+            let rhs = self.ctx.arena.skip_parenthesized(binary.right);
+            let Some(rhs_node) = self.ctx.arena.get(rhs) else {
+                continue;
+            };
+            if rhs_node.kind != tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+
+            let resolved = self.get_type_of_node(rhs);
+            if resolved != TypeId::ANY && resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                return Some(resolved);
+            }
+        }
+
+        None
+    }
+
+    fn combine_jsdoc_instance_and_prototype_type(
+        &mut self,
+        instance_type: TypeId,
+        prototype_type: Option<TypeId>,
+    ) -> TypeId {
+        let Some(prototype_type) = prototype_type else {
+            return instance_type;
+        };
+
+        if matches!(instance_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return prototype_type;
+        }
+        if matches!(
+            prototype_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+        ) || instance_type == prototype_type
+        {
+            return instance_type;
+        }
+
+        self.ctx
+            .types
+            .factory()
+            .intersection(vec![instance_type, prototype_type])
     }
     /// Register a DefId for a JSDoc `@typedef` so the type formatter can find the alias name.
     fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {

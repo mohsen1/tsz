@@ -22,6 +22,76 @@ use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
+    fn look_ahead_is_invalid_shebang(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::HashToken) || self.token_pos() == 0 {
+            return false;
+        }
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = self.is_token(SyntaxKind::ExclamationToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    fn recover_invalid_shebang_line(&mut self) {
+        let start = self.u32_from_usize(self.token_pos() as usize);
+        self.parse_error_at(
+            start,
+            2,
+            "'#!' can only be used at the start of a file.",
+            diagnostic_codes::CAN_ONLY_BE_USED_AT_THE_START_OF_A_FILE,
+        );
+
+        let source = self.scanner.source_text().as_bytes();
+        let mut pos = self.token_pos() as usize + 2;
+        let line_end = source[pos..]
+            .iter()
+            .position(|b| *b == b'\n' || *b == b'\r')
+            .map_or(source.len(), |offset| pos + offset);
+
+        while pos < line_end && source[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        while pos < line_end && !source[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+
+        let mut arg_ranges = Vec::new();
+        while pos < line_end {
+            while pos < line_end && source[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if pos >= line_end {
+                break;
+            }
+            let arg_start = pos;
+            while pos < line_end && !source[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            arg_ranges.push((arg_start, pos - arg_start));
+        }
+
+        for (arg_start, arg_len) in arg_ranges {
+            self.parse_error_at(
+                self.u32_from_usize(arg_start),
+                self.u32_from_usize(arg_len),
+                "';' expected.",
+                diagnostic_codes::EXPECTED,
+            );
+        }
+
+        self.next_token(); // consume '#'
+        if self.is_token(SyntaxKind::ExclamationToken) {
+            self.next_token();
+        }
+        while !self.is_token(SyntaxKind::EndOfFileToken) && !self.scanner.has_preceding_line_break()
+        {
+            self.next_token();
+        }
+    }
+
     // =========================================================================
     // Parse Methods - Core Expressions
     // =========================================================================
@@ -127,11 +197,28 @@ impl ParserState {
     pub(crate) fn parse_source_file_statements(&mut self) -> NodeList {
         let mut statements = Vec::new();
         let mut skip_after_binary_payload = false;
+        let mut previous_statement_was_block = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             let pos_before = self.token_pos();
             if skip_after_binary_payload {
                 break;
+            }
+
+            if self.look_ahead_is_invalid_shebang() {
+                self.recover_invalid_shebang_line();
+                previous_statement_was_block = false;
+                continue;
+            }
+
+            if previous_statement_was_block && self.is_token(SyntaxKind::EqualsToken) {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+                );
+                self.next_token();
+                previous_statement_was_block = false;
+                continue;
             }
 
             // Handle Unknown tokens (invalid characters) - must be checked FIRST
@@ -145,6 +232,7 @@ impl ParserState {
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.next_token();
+                previous_statement_was_block = false;
                 continue;
             }
 
@@ -159,11 +247,12 @@ impl ParserState {
                     );
                 }
                 self.next_token();
+                previous_statement_was_block = false;
                 // If the token after a stray top-level `}` already starts an expression,
                 // keep parsing there instead of resyncing past it. This preserves
                 // follow-up recovery like `from "./foo"` -> TS1434 in malformed
                 // import/export specifiers.
-                if !self.is_expression_start() {
+                if !self.is_expression_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
                     self.resync_after_error();
                 }
                 continue;
@@ -190,6 +279,7 @@ impl ParserState {
                     }
 
                     skip_after_binary_payload = true;
+                    previous_statement_was_block = false;
                     continue;
                 }
                 self.scanner.restore_state(snapshot);
@@ -256,7 +346,12 @@ impl ParserState {
                     !self.is_statement_start()
                 };
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
+                previous_statement_was_block = false;
             } else {
+                previous_statement_was_block = self
+                    .arena
+                    .get(stmt)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK);
                 statements.push(stmt);
             }
 
@@ -276,11 +371,28 @@ impl ParserState {
     /// Uses resynchronization to recover from errors and continue parsing.
     pub(crate) fn parse_statements(&mut self) -> NodeList {
         let mut statements = Vec::new();
+        let mut previous_statement_was_block = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken)
             && !self.is_token(SyntaxKind::CloseBraceToken)
         {
             let pos_before = self.token_pos();
+
+            if self.look_ahead_is_invalid_shebang() {
+                self.recover_invalid_shebang_line();
+                previous_statement_was_block = false;
+                continue;
+            }
+
+            if previous_statement_was_block && self.is_token(SyntaxKind::EqualsToken) {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+                );
+                self.next_token();
+                previous_statement_was_block = false;
+                continue;
+            }
 
             // Error recovery: when inside a nested block within a class body (e.g.,
             // a method body with an unclosed `{`), terminate the block if we encounter
@@ -319,6 +431,7 @@ impl ParserState {
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.resync_after_error_with_statement_starts(false);
+                previous_statement_was_block = false;
                 continue;
             }
 
@@ -345,7 +458,12 @@ impl ParserState {
                     !self.is_statement_start()
                 };
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
+                previous_statement_was_block = false;
             } else {
+                previous_statement_was_block = self
+                    .arena
+                    .get(stmt)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK);
                 statements.push(stmt);
             }
 
@@ -657,8 +775,10 @@ impl ParserState {
             self.parse_expression_statement()
         } else if self.look_ahead_is_import_equals() {
             self.parse_import_equals_declaration()
-        } else {
+        } else if self.look_ahead_is_import_declaration() {
             self.parse_import_declaration()
+        } else {
+            NodeIndex::NONE
         }
     }
 
@@ -699,8 +819,12 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token(); // skip `declare`
-        let is_decl = !self.scanner.has_preceding_line_break()
-            && matches!(
+        let is_decl = if self.scanner.has_preceding_line_break() {
+            false
+        } else if self.is_token(SyntaxKind::ImportKeyword) {
+            self.look_ahead_is_import_equals() || self.look_ahead_is_import_declaration()
+        } else {
+            matches!(
                 self.token(),
                 SyntaxKind::ClassKeyword
                     | SyntaxKind::InterfaceKeyword
@@ -718,7 +842,8 @@ impl ParserState {
                     | SyntaxKind::UsingKeyword
                     | SyntaxKind::AwaitKeyword
                     | SyntaxKind::ExportKeyword
-            );
+            )
+        };
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
@@ -877,6 +1002,28 @@ impl ParserState {
         look_ahead_is_import_call(&mut self.scanner, self.current_token)
     }
 
+    /// Look ahead to see if `import` is starting a declaration rather than an expression.
+    /// Valid starts are:
+    /// - string literal: `import "mod";`
+    /// - identifier/keyword: default import or contextual modifier/name
+    /// - `{` / `*`: named or namespace imports
+    fn look_ahead_is_import_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `import`
+        let result = matches!(
+            self.token(),
+            SyntaxKind::StringLiteral
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::DeferKeyword
+        ) || self.is_identifier_or_keyword();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
     /// Look ahead to see if we have `export =`.
     fn look_ahead_is_export_assignment(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
@@ -985,6 +1132,14 @@ impl ParserState {
     /// Parse import equals declaration: import X = require("...") or import X = Y.Z
     pub(crate) fn parse_import_equals_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.parse_import_equals_declaration_with_modifiers(start_pos, None)
+    }
+
+    pub(crate) fn parse_import_equals_declaration_with_modifiers(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
         self.parse_expected(SyntaxKind::ImportKeyword);
 
         // Check for type modifier: `import type X = require(...)`
@@ -1018,7 +1173,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ImportDeclData {
-                modifiers: None,
+                modifiers,
                 is_type_only,
                 import_clause: name,
                 module_specifier: module_reference,
@@ -1239,6 +1394,35 @@ impl ParserState {
                 // If ASI applies (line break, closing brace, EOF, or semicolon),
                 // just break - parse_semicolon() in the caller will handle it
                 if self.can_parse_semicolon() {
+                    break;
+                }
+
+                if self.is_token(SyntaxKind::ColonToken) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+
+                    self.error_comma_expected();
+                    self.next_token();
+
+                    let recover_start = self.token_pos();
+                    let _ = self.parse_type();
+                    if self.token_pos() == recover_start
+                        && !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::SemicolonToken
+                                | SyntaxKind::CloseBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        )
+                    {
+                        self.next_token();
+                    }
+
+                    if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                        self.parse_error_at_current_token(
+                            "';' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                    }
                     break;
                 }
 
@@ -1606,7 +1790,32 @@ impl ParserState {
             }
         }
 
-        let name = if self.is_identifier_or_keyword() {
+        let name = if self.is_reserved_word() {
+            use tsz_common::diagnostics::diagnostic_codes;
+
+            let name_start = self.token_pos();
+            let name_end = self.token_end();
+            let atom = self.scanner.get_token_atom();
+            let text = self.scanner.get_token_value_ref().to_string();
+            self.error_reserved_word_identifier();
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::IDENTIFIER_EXPECTED,
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                name_start,
+                name_end,
+                IdentifierData {
+                    atom,
+                    escaped_text: text,
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
+        } else if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
         } else {
             self.parse_identifier()

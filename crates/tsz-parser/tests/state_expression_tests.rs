@@ -87,6 +87,23 @@ fn expression_parsing_supports_compound_shift_assignment() {
 }
 
 #[test]
+fn expression_parsing_does_not_misclassify_parenthesized_destructuring_assignment_as_arrow() {
+    let diag_count = parse_diagnostics(
+        r#"
+abstract class C1 {
+    abstract x: string;
+    abstract y: string;
+
+    constructor() {
+        ({ x, y: y1, "y": y1 } = this);
+    }
+}
+"#,
+    );
+    assert_eq!(diag_count, 0, "unexpected parser diagnostics: {diag_count}");
+}
+
+#[test]
 fn type_predicate_assertions_report_syntax_errors_instead_of_parsing_as_types() {
     let (parser, _root) = parse_source(
         r#"

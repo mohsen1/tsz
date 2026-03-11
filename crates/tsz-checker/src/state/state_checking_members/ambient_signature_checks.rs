@@ -321,7 +321,8 @@ impl<'a> CheckerState<'a> {
             .enclosing_class
             .as_ref()
             .is_some_and(|c| c.is_declared)
-            && self.has_private_modifier(&prop.modifiers);
+            && (self.has_private_modifier(&prop.modifiers)
+                || self.is_private_identifier_name(prop.name));
         let is_static = self.has_static_modifier(&prop.modifiers);
         if self.ctx.no_implicit_any()
             && effective_declared_type.is_none()

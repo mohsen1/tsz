@@ -18,6 +18,46 @@ use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
+    fn count_following_close_braces(&mut self) -> u32 {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let mut count = 0;
+        while self.is_token(SyntaxKind::CloseBraceToken) {
+            count += 1;
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        count
+    }
+
+    fn look_ahead_question_is_optional_parameter_marker(
+        &mut self,
+        previous_top_level_can_end_parameter_name: bool,
+    ) -> bool {
+        if !previous_top_level_can_end_parameter_name {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+
+        let is_optional_parameter = matches!(
+            self.token(),
+            SyntaxKind::ColonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::EqualsToken
+        );
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_optional_parameter
+    }
+
     // =========================================================================
     // Parse Methods - Expressions
     // =========================================================================
@@ -249,9 +289,54 @@ impl ParserState {
         // a valid arrow function parameter list — e.g., `(a, (b, c)) =>` or `((a)) =>`.
         // This matches tsc's behavior of rejecting nested-paren parameter patterns.
         let mut depth = 1;
+        let mut brace_depth: u32 = 0;
+        let mut bracket_depth: u32 = 0;
+        let mut saw_parameter_syntax = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
+        let mut previous_top_level_can_end_parameter_name = false;
+        let mut previous_top_level_was_optional_parameter = false;
+        let mut saw_top_level_conditional_operator = false;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            if self.is_token(SyntaxKind::OpenParenToken) {
+            let token = self.token();
+            let at_top_level = depth == 1 && brace_depth == 0 && bracket_depth == 0;
+            if at_top_level
+                && at_param_start
+                && !matches!(
+                    token,
+                    SyntaxKind::CloseParenToken
+                        | SyntaxKind::AtToken
+                        | SyntaxKind::DotDotDotToken
+                        | SyntaxKind::OpenBracketToken
+                        | SyntaxKind::OpenBraceToken
+                )
+                && !self.is_identifier_or_keyword()
+            {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
+            let saw_optional_parameter_marker = at_top_level
+                && token == SyntaxKind::QuestionToken
+                && self.look_ahead_question_is_optional_parameter_marker(
+                    previous_top_level_can_end_parameter_name,
+                );
+
+            if at_top_level && token == SyntaxKind::QuestionToken && !saw_optional_parameter_marker
+            {
+                saw_top_level_conditional_operator = true;
+            }
+
+            if at_top_level
+                && (saw_optional_parameter_marker
+                    || (token == SyntaxKind::ColonToken
+                        && !saw_top_level_conditional_operator
+                        && (previous_top_level_can_end_parameter_name
+                            || previous_top_level_was_optional_parameter)))
+            {
+                saw_parameter_syntax = true;
+            }
+
+            if token == SyntaxKind::OpenParenToken {
                 // `(` at the start of a top-level parameter slot is not a valid
                 // parameter pattern. Reject early so the expression is NOT parsed
                 // as an arrow function (avoiding false TS1003 in parse_parameter).
@@ -262,10 +347,26 @@ impl ParserState {
                 }
                 depth += 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CloseParenToken) {
+            } else if token == SyntaxKind::OpenBraceToken {
+                brace_depth += 1;
+                at_param_start = false;
+            } else if token == SyntaxKind::CloseBraceToken {
+                brace_depth = brace_depth.saturating_sub(1);
+                at_param_start = false;
+            } else if token == SyntaxKind::OpenBracketToken {
+                bracket_depth += 1;
+                at_param_start = false;
+            } else if token == SyntaxKind::CloseBracketToken {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                at_param_start = false;
+            } else if token == SyntaxKind::CloseParenToken {
                 depth -= 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CommaToken) && depth == 1 {
+            } else if token == SyntaxKind::CommaToken
+                && depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
+            {
                 // A comma at the top level separates parameters; the next token
                 // starts a new parameter slot.
                 at_param_start = true;
@@ -274,6 +375,17 @@ impl ParserState {
                 // means we've moved past the start of this parameter slot.
                 at_param_start = false;
             }
+
+            previous_top_level_can_end_parameter_name = depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
+                && ((self.is_identifier_or_keyword() && token != SyntaxKind::QuestionToken)
+                    || token == SyntaxKind::CloseBraceToken
+                    || token == SyntaxKind::CloseBracketToken);
+            previous_top_level_was_optional_parameter = depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
+                && saw_optional_parameter_marker;
             self.next_token();
         }
 
@@ -298,7 +410,14 @@ impl ParserState {
             // emitted during actual parsing. The `(params): type` prefix is
             // unambiguous, so we don't need the line break check.
             let mut result = self.is_token(SyntaxKind::EqualsGreaterThanToken)
-                || self.is_token(SyntaxKind::OpenBraceToken);
+                || self.is_token(SyntaxKind::OpenBraceToken)
+                || matches!(
+                    self.token(),
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CommaToken
+                        | SyntaxKind::CloseBraceToken
+                        | SyntaxKind::EndOfFileToken
+                );
 
             // In the true branch of a conditional expression, only accept
             // `(x): T => ...` as an arrow function when the simulated body
@@ -338,6 +457,14 @@ impl ParserState {
             // Check for => or { (error recovery: user forgot =>)
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
+                || (saw_parameter_syntax
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::SemicolonToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::CloseBraceToken
+                            | SyntaxKind::EndOfFileToken
+                    ))
         };
         self.scanner.restore_state(snapshot);
         self.current_token = current;
@@ -358,26 +485,7 @@ impl ParserState {
 
         // Check if => follows the identifier. Line breaks before => are
         // allowed here — TS1200 will be emitted during actual parsing.
-        let is_arrow = if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-            true
-        } else if self.is_token(SyntaxKind::ColonToken)
-            && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
-        {
-            // Support single-parameter typed arrows in lookahead: `x: T => expr`.
-            let saved_arena_len = self.arena.nodes.len();
-            let saved_diagnostics_len = self.parse_diagnostics.len();
-
-            self.next_token();
-            let _ = self.parse_type();
-            let result = !self.scanner.has_preceding_line_break()
-                && self.is_token(SyntaxKind::EqualsGreaterThanToken);
-
-            self.arena.nodes.truncate(saved_arena_len);
-            self.parse_diagnostics.truncate(saved_diagnostics_len);
-            result
-        } else {
-            false
-        };
+        let is_arrow = self.is_token(SyntaxKind::EqualsGreaterThanToken);
 
         self.scanner.restore_state(snapshot);
         self.current_token = current;
@@ -503,7 +611,13 @@ impl ParserState {
             self.error_token_expected("{");
             let block_start = self.token_pos();
             let stmts = self.parse_statements();
-            let block_end = self.token_end();
+            let block_end = if self.is_token(SyntaxKind::CloseBraceToken) {
+                let end = self.token_end();
+                self.next_token();
+                end
+            } else {
+                self.token_end()
+            };
             self.arena.add_block(
                 syntax_kind_ext::BLOCK,
                 block_start,
@@ -518,6 +632,13 @@ impl ParserState {
             // If no expression was parsed (e.g. `() => ;`), emit TS1109
             if expr.is_none() {
                 self.error_expression_expected();
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    let deferred_close_braces =
+                        self.count_following_close_braces().saturating_sub(1);
+                    self.deferred_module_close_braces =
+                        self.deferred_module_close_braces.max(deferred_close_braces);
+                    self.next_token();
+                }
             }
             expr
         };
@@ -1401,11 +1522,15 @@ impl ParserState {
                     if (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_DECORATOR) != 0 {
                         break;
                     }
+                    let missing_argument_start = self.u32_from_usize(self.scanner.get_token_end());
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
                         // TS1011: An element access expression should take an argument
-                        self.parse_error_at_current_token(
+                        let current_start = self.u32_from_usize(self.scanner.get_token_start());
+                        self.parse_error_at(
+                            missing_argument_start,
+                            (current_start.saturating_sub(missing_argument_start)).max(1),
                             tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
                             tsz_common::diagnostics::diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
                         );
@@ -1730,6 +1855,41 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    self.error_comma_expected();
+                    self.next_token();
+                    continue;
+                }
+
+                if self.is_token(SyntaxKind::ColonToken) {
+                    self.error_comma_expected();
+                    self.next_token();
+
+                    let recover_start = self.token_pos();
+                    let _ = self.parse_type();
+                    if self.token_pos() == recover_start
+                        && !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::SemicolonToken
+                                | SyntaxKind::EndOfFileToken
+                        )
+                    {
+                        self.next_token();
+                    }
+
+                    if self.parse_optional(SyntaxKind::CommaToken) {
+                        continue;
+                    }
+                    if self.is_token(SyntaxKind::CloseParenToken)
+                        || self.is_token(SyntaxKind::SemicolonToken)
+                        || self.is_token(SyntaxKind::EndOfFileToken)
+                    {
+                        break;
+                    }
+                }
+
                 // Missing comma - check if next token looks like another argument
                 // If so, emit comma error for better diagnostics
                 if self.is_expression_start()

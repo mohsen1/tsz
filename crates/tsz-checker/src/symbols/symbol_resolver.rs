@@ -177,6 +177,14 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Resolve an identifier without mutating unused-reference tracking.
+    pub(crate) fn resolve_identifier_symbol_without_tracking(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        self.resolve_identifier_symbol_inner(idx)
+    }
+
     /// Resolve identifier for write context (assignment target).
     pub(crate) fn resolve_identifier_symbol_for_write(&self, idx: NodeIndex) -> Option<SymbolId> {
         let result = self.resolve_identifier_symbol_inner(idx);
@@ -375,6 +383,14 @@ impl<'a> CheckerState<'a> {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
         result
+    }
+
+    /// Resolve a type-position identifier without mutating unused-reference tracking.
+    pub(crate) fn resolve_identifier_symbol_in_type_position_without_tracking(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
+        self.resolve_identifier_symbol_in_type_position_inner(idx)
     }
 
     /// Resolve an identifier when it appears as the left-hand side of a
@@ -1801,20 +1817,45 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(idx)
             {
                 let lib_binders = self.get_lib_binders();
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                    && (symbol.flags & symbol_flags::TYPE) != 0
-                {
-                    return Some(sym_id.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    if (symbol.flags & symbol_flags::ALIAS) != 0 {
+                        let mut visited_aliases = Vec::new();
+                        if let Some(target_sym_id) =
+                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                            && target_sym_id != sym_id
+                            && self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                .is_some_and(|target_symbol| {
+                                    (target_symbol.flags & symbol_flags::TYPE) != 0
+                                })
+                        {
+                            return Some(target_sym_id.0);
+                        }
+                    }
+                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                        return Some(sym_id.0);
+                    }
                 }
             }
         }
 
-        let sym_id = match self.resolve_qualified_symbol_in_type_position(idx) {
+        let mut sym_id = match self.resolve_qualified_symbol_in_type_position(idx) {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             _ => return None,
         };
         let lib_binders = self.get_lib_binders();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        let mut symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+            let mut visited_aliases = Vec::new();
+            if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                && target_sym_id != sym_id
+            {
+                sym_id = target_sym_id;
+                symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+            }
+        }
         ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)
     }
 

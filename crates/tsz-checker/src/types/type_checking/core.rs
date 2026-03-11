@@ -590,6 +590,14 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(type_idx);
                 }
             }
+        } else if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                && let Some(type_arguments) = &type_ref.type_arguments
+            {
+                for &arg_idx in &type_arguments.nodes {
+                    self.check_type_for_parameter_properties(arg_idx);
+                }
+            }
         } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
@@ -1530,6 +1538,44 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(updates);
     }
 
+    /// Check an index signature parameter type for TS1337 (literal/generic) vs TS1268.
+    /// Called from `check_type_node` for index signatures inside type literals.
+    fn check_index_sig_param_type_in_type_literal(
+        &mut self,
+        parameters: &tsz_parser::parser::base::NodeList,
+    ) {
+        let param_idx = parameters.nodes.first().copied().unwrap_or(NodeIndex::NONE);
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return;
+        };
+        let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
+            return;
+        };
+        if param_data.dot_dot_dot_token || param_data.question_token {
+            return; // suppress when parameter already has grammar errors
+        }
+        if param_data.type_annotation.is_none() {
+            return;
+        }
+        let Some(type_node) = self.ctx.arena.get(param_data.type_annotation) else {
+            return;
+        };
+
+        // Check AST to detect type parameters and literal types (TS1337).
+        let is_generic_or_literal =
+            self.is_type_param_or_literal_in_index_sig(type_node.kind, param_data.type_annotation);
+        if is_generic_or_literal {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                param_idx,
+                diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+            );
+        }
+        // Note: TS1268 for non-generic/non-literal invalid types is handled
+        // separately in the type literal type resolution paths.
+    }
+
     /// Check a type node for validity (recursive).
     ///
     /// Visits nested type nodes to validate constraints. Handles:
@@ -1566,6 +1612,16 @@ impl<'a> CheckerState<'a> {
                     self.check_type_node(arr.element_type);
                 }
             }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(type_arguments) = &type_ref.type_arguments
+                {
+                    for &arg_idx in &type_arguments.nodes {
+                        self.check_type_node(arg_idx);
+                    }
+                }
+                let _ = self.get_type_from_type_node(node_idx);
+            }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
                     for &member_idx in &type_lit.members.nodes {
@@ -1577,15 +1633,32 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            let (_type_params, type_param_updates) =
+                                self.push_type_parameters(&sig.type_parameters);
+                            if let Some(params) = &sig.parameters {
+                                for &param_idx in &params.nodes {
+                                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                        && let Some(param) =
+                                            self.ctx.arena.get_parameter(param_node)
+                                        && param.type_annotation != NodeIndex::NONE
+                                    {
+                                        self.check_type_node(param.type_annotation);
+                                    }
+                                }
+                            }
                             if sig.type_annotation != NodeIndex::NONE {
                                 self.check_type_node(sig.type_annotation);
                             }
+                            self.pop_type_parameters(type_param_updates);
                             continue;
                         }
                         if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
                             if index_sig.type_annotation != NodeIndex::NONE {
                                 self.check_type_node(index_sig.type_annotation);
                             }
+                            // TS1337: Check index signature parameter type for
+                            // generic type parameters or literal types.
+                            self.check_index_sig_param_type_in_type_literal(&index_sig.parameters);
                             continue;
                         }
                         if let Some(accessor) = self.ctx.arena.get_accessor(member_node)

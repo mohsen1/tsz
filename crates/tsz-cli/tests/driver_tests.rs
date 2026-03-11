@@ -6323,6 +6323,37 @@ fn compile_control_byte_binary_file_preserves_parser_diagnostics() {
 }
 
 #[test]
+fn compile_short_garbage_payload_binary_suppresses_parser_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    let binary_path = base.join("binary.ts");
+    let content = b"// @target: es2015\n\xEF\xBF\xBD\x1F\xEF\xBF\xBD\x03\xEF\xBF\xBD\x03\x19\x1F";
+    std::fs::write(&binary_path, content).expect("failed to write corrupted file");
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015"
+          },
+          "files": ["binary.ts"]
+        }"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1490],
+        "Expected only TS1490 for short garbage binary payloads. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn ts2688_unresolved_types_in_tsconfig() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -6391,6 +6422,323 @@ fn ts2688_resolved_types_no_error() {
 }
 
 #[test]
+fn ts2688_types_entry_still_loads_node_modules_package_globals() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("typings/dummy.d.ts"),
+        "declare const dummy: number;\n",
+    );
+    write_file(
+        &base.join("node_modules/phaser/types/phaser.d.ts"),
+        "declare const phaserValue: number;\n",
+    );
+    write_file(
+        &base.join("node_modules/phaser/package.json"),
+        r#"{ "name": "phaser", "version": "1.2.3", "types": "types/phaser.d.ts" }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["typings"],
+            "types": ["phaser"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "phaserValue;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 when typeRoots does not contain the requested package, got: {:?}",
+        result.diagnostics
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Node-modules fallback should still make package globals visible, got: {ts2304_diags:?}"
+    );
+}
+
+#[test]
+fn scoped_types_entry_resolves_plain_mangled_package_name_from_custom_roots() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/mangled__nodemodulescache/index.d.ts"),
+        "declare const mangledNodeModules: number;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["types", "node_modules", "node_modules/@types"],
+            "types": ["@mangled/nodemodulescache"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "mangledNodeModules;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 for the unresolved scoped types entry, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected scoped mangled package name to resolve from custom roots, got: {result:?}"
+    );
+}
+
+#[test]
+fn scoped_types_entry_loads_at_types_scoped_package_globals_while_preserving_ts2688() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/@types/@scoped/attypescache/index.d.ts"),
+        "declare const atTypesCache: number;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "typeRoots": ["types", "node_modules", "node_modules/@types"],
+            "types": ["@scoped/attypescache"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(&base.join("index.ts"), "atTypesCache;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 for the unresolved scoped @types entry, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected scoped @types package globals to load despite TS2688, got: {result:?}"
+    );
+}
+
+#[test]
+fn type_query_on_import_type_value_binding_does_not_emit_ts2552() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/@types/foo/package.json"),
+        r#"{
+          "name": "@types/foo",
+          "version": "1.0.0",
+          "exports": {
+            ".": {
+              "import": "./index.d.mts",
+              "require": "./index.d.cts"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/@types/foo/index.d.mts"),
+        "export declare const x: \"module\";\n",
+    );
+    write_file(
+        &base.join("node_modules/@types/foo/index.d.cts"),
+        "export declare const x: \"script\";\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "declaration": true,
+            "emitDeclarationOnly": true
+          },
+          "files": ["app.ts", "other.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("app.ts"),
+        r#"import type { x as Default } from "foo";
+import type { x as ImportRelative } from "./other" with { "resolution-mode": "import" };
+
+type _Default = typeof Default;
+type _ImportRelative = typeof ImportRelative;
+
+export { _Default, _ImportRelative };
+"#,
+    );
+    write_file(&base.join("other.ts"), r#"export const x = "other";"#);
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2552_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+        .collect();
+    assert!(
+        ts2552_diags.is_empty(),
+        "Expected typeof on import type bindings to avoid TS2552, got: {result:?}"
+    );
+}
+
+#[test]
+fn lib_replacement_honors_source_reference_subfiles() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/@typescript/lib-dom/index.d.ts"),
+        "// NOOP\n",
+    );
+    write_file(
+        &base.join("node_modules/@typescript/lib-dom/iterable.d.ts"),
+        "interface DOMIterable { abc: string }\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "libReplacement": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"/// <reference lib="dom.iterable" />
+const a: DOMIterable = { abc: "Hello" };
+
+window.localStorage;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2552_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+        .collect();
+    assert!(
+        ts2552_diags.is_empty(),
+        "Expected replacement dom.iterable lib to provide DOMIterable, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert_eq!(
+        ts2304_diags.len(),
+        1,
+        "Expected only the replaced-out window global to fail, got: {result:?}"
+    );
+    assert!(
+        ts2304_diags[0].message_text.contains("window"),
+        "Expected TS2304 to target window, got: {result:?}"
+    );
+}
+
+#[test]
+fn types_entry_resolves_direct_declaration_file_from_type_root() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/phaser/types/phaser.d.ts"),
+        "declare const a: number;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "typeRoots": ["node_modules/phaser/types"],
+            "types": ["phaser"]
+          },
+          "files": ["a.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "a;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        ts2688_diags.is_empty(),
+        "Expected direct declaration file under typeRoots to satisfy the types entry, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected declarations from direct typeRoots file to be visible, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2307_emitted_for_commonjs_module() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
@@ -6419,6 +6767,138 @@ fn ts2307_emitted_for_commonjs_module() {
             .iter()
             .map(|d| d.code)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2015" }, "files": ["test.ts"] }"#,
+    );
+    write_file(&base.join("test.ts"), "declare import a = b;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1079_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION
+        })
+        .collect();
+    assert!(
+        !ts1079_diags.is_empty(),
+        "Expected TS1079 for `declare import`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts1079_diags
+            .iter()
+            .any(|diag| diag.message_text.contains("'declare'")),
+        "Expected TS1079 message to mention the declare modifier, got: {ts1079_diags:?}"
+    );
+
+    let declare_ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("declare")
+        })
+        .collect();
+    assert!(
+        declare_ts2304_diags.is_empty(),
+        "Unexpected TS2304 on `declare`: {declare_ts2304_diags:?}"
+    );
+}
+
+#[test]
+fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2015", "lib": ["es5"] }, "files": ["test.ts"] }"#,
+    );
+    write_file(&base.join("test.ts"), "const value = $(\".thing\");\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2592_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
+        })
+        .collect();
+    assert!(
+        !ts2592_diags.is_empty(),
+        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let jquery_ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("'$'"))
+        .collect();
+    assert!(
+        jquery_ts2304_diags.is_empty(),
+        "Unexpected TS2304 on `$`: {jquery_ts2304_diags:?}"
+    );
+}
+
+#[test]
+fn ts2552_emitted_for_type_only_export_typo() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2015", "strict": true, "module": "commonjs" }, "files": ["test.ts"] }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        "type RoomInterfae = {};\n\nexport type {\n    RoomInterface\n}\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2552_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+        .collect();
+    assert!(
+        !ts2552_diags.is_empty(),
+        "Expected TS2552 for the typo in `export type {{ RoomInterface }}`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2552_diags
+            .iter()
+            .any(|diag| diag.message_text.contains("RoomInterfae")),
+        "Expected TS2552 to suggest `RoomInterfae`, got: {ts2552_diags:?}"
+    );
+
+    let room_ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("RoomInterface")
+        })
+        .collect();
+    assert!(
+        room_ts2304_diags.is_empty(),
+        "Unexpected TS2304 on `RoomInterface`: {room_ts2304_diags:?}"
     );
 }
 
@@ -6574,6 +7054,94 @@ function bad1(x, {a, b}) {}
             .iter()
             .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Did not expect follow-on TS2339 alongside TS5107, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn module_augmentation_method_type_params_and_members_resolve_across_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "module": "commonjs",
+            "noEmit": true
+          },
+          "files": ["observable.ts", "map.ts", "main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("observable.ts"),
+        r#"export declare class Observable<T> {
+    filter(pred: (e: T) => boolean): Observable<T>;
+}
+"#,
+    );
+    write_file(
+        &base.join("map.ts"),
+        r#"import { Observable } from "./observable";
+
+Observable.prototype.map = function (proj) {
+    return this;
+}
+
+declare module "./observable" {
+    interface Observable<T> {
+        map<U>(proj: (e: T) => U): Observable<U>;
+    }
+
+    class Bar {}
+    const y = 10;
+    function z() { }
+}
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import { Observable } from "./observable";
+import "./map";
+
+const x = {} as Observable<number>;
+x.map(e => e.toFixed());
+let before: number;
+before.toFixed();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED),
+        "Expected the real TS2454 to remain, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|d| {
+            d.code != diagnostic_codes::CANNOT_FIND_NAME || !d.message_text.contains("'U'")
+        }),
+        "Unexpected TS2304 on augmentation method type parameter `U`: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Unexpected TS2339 for augmented `Observable.map`: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|d| d.code != 7006),
+        "Unexpected TS7006 while contextual typing augmented `Observable.map`: {:?}",
         result.diagnostics
     );
 }

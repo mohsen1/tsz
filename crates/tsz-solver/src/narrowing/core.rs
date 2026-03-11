@@ -1190,6 +1190,28 @@ impl<'a> NarrowingContext<'a> {
         Some(self.db.intersection2(source, narrowed_constraint))
     }
 
+    pub(crate) fn narrow_type_param_excluding_typeof_object(
+        &self,
+        source: TypeId,
+    ) -> Option<TypeId> {
+        let info = type_param_info(self.db, source)?;
+
+        let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
+        if constraint == source || constraint == TypeId::UNKNOWN {
+            return Some(source);
+        }
+
+        let narrowed_constraint = self.narrow_excluding_typeof_object(constraint);
+        if narrowed_constraint == constraint {
+            return Some(source);
+        }
+        if narrowed_constraint == TypeId::NEVER {
+            return Some(TypeId::NEVER);
+        }
+
+        Some(self.db.intersection2(source, narrowed_constraint))
+    }
+
     pub(crate) fn function_type(&self) -> TypeId {
         let rest_array = self.db.array(TypeId::ANY);
         let rest_param = ParamInfo {

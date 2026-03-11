@@ -95,6 +95,9 @@ mod control_flow_type_guard_tests;
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
+#[path = "../tests/dynamic_import_defer_tests.rs"]
+mod dynamic_import_defer_tests;
+#[cfg(test)]
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]
@@ -154,6 +157,9 @@ mod ts1501_tests;
 #[cfg(test)]
 #[path = "../tests/ts2300_tests.rs"]
 mod ts2300_tests;
+#[cfg(test)]
+#[path = "../tests/ts2303_tests.rs"]
+mod ts2303_tests;
 #[cfg(test)]
 #[path = "../tests/ts2304_tests.rs"]
 mod ts2304_tests;
@@ -258,6 +264,9 @@ mod class_index_signature_compat_tests;
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
+#[path = "tests/contextual_return_wrapper_tests.rs"]
+mod contextual_return_wrapper_tests;
+#[cfg(test)]
 #[path = "../tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
@@ -269,6 +278,9 @@ mod enum_nominality_tests;
 #[cfg(test)]
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
+#[cfg(test)]
+#[path = "../tests/for_in_narrowing_tests.rs"]
+mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
@@ -287,6 +299,9 @@ mod jsdoc_accessibility_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_callback_rest_tests.rs"]
 mod jsdoc_callback_rest_tests;
+#[cfg(test)]
+#[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
+mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;

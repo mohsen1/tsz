@@ -622,6 +622,44 @@ function f(obj: Obj) {
     );
 }
 
+#[test]
+fn test_object_rest_excludes_private_class_members() {
+    let source = r#"
+class C {
+    #prop = 1;
+    static #propStatic = 1;
+
+    method(other: C) {
+        const { ...rest } = other;
+        rest.#prop;
+
+        const { ...sRest } = C;
+        sRest.#propStatic;
+    }
+}
+"#;
+
+    let diagnostics = check_source(source);
+    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Expected private members to be absent from object rest results, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2339.iter().any(|d| d
+            .message_text
+            .contains("Property '#prop' does not exist on type '{}'.")),
+        "Expected instance rest object to erase private members, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2339.iter().any(|d| d
+            .message_text
+            .contains("Property '#propStatic' does not exist on type '{ prototype: C; }'.")),
+        "Expected static rest object to erase private members, got diagnostics: {diagnostics:?}"
+    );
+}
+
 // TS2556: rest parameter position-aware spread checking
 
 #[test]

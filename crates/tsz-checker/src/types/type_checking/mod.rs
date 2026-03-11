@@ -10,6 +10,7 @@
 //! - `unused` — unused variable/parameter detection
 
 mod core;
+mod cross_file_conflicts;
 mod declarations;
 mod declarations_utils;
 mod duplicate_identifiers;

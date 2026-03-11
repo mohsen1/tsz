@@ -856,6 +856,15 @@ impl ParserState {
             return self.parse_static_block();
         }
 
+        if matches!(
+            self.token(),
+            SyntaxKind::GlobalKeyword | SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword
+        ) && self.look_ahead_is_module_declaration()
+        {
+            self.recover_invalid_module_like_class_member();
+            return NodeIndex::NONE;
+        }
+
         // Parse modifiers (static, public, private, protected, readonly, abstract, override)
         let diag_len_before_modifiers = self.parse_diagnostics.len();
         let parsed_modifiers = self.parse_class_member_modifiers();
@@ -1227,6 +1236,31 @@ impl ParserState {
         let has_modifiers = modifiers.is_some();
         let name = if self.is_property_name() {
             self.parse_property_name()
+        } else if has_modifiers
+            && self.is_token(SyntaxKind::OpenBraceToken)
+            && self.next_token_is_open_bracket()
+        {
+            let token_start = self.token_pos();
+            let decl_pos = if token_start > 0 { token_start - 1 } else { 0 };
+            self.parse_error_at(
+                decl_pos,
+                1,
+                "Declaration expected.",
+                diagnostic_codes::DECLARATION_EXPECTED,
+            );
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+            while !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                let before = self.token_pos();
+                let _ = self.parse_statement();
+                if self.token_pos() == before {
+                    self.next_token();
+                }
+            }
+            self.context_flags = name_saved_flags;
+            return NodeIndex::NONE;
         } else if asterisk_token {
             // After asterisk (*), we expect an identifier (method name).
             // Create a missing identifier and continue parsing the method
@@ -1480,6 +1514,7 @@ impl ParserState {
                 && self.class_member_initializer_continues_on_next_line()
             {
                 self.report_missing_semicolon_after_class_field_initializer();
+                self.recover_invalid_class_member_initializer_continuation();
             }
 
             // Match tsc's parseSemicolonAfterPropertyName: when a property has
@@ -1510,6 +1545,35 @@ impl ParserState {
                     initializer,
                 },
             )
+        }
+    }
+
+    fn recover_invalid_module_like_class_member(&mut self) {
+        self.parse_error_at_current_token(
+            "Unexpected token. A constructor, method, accessor, or property was expected.",
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+        );
+        self.next_token();
+
+        if !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+            && !self.scanner.has_preceding_line_break()
+        {
+            self.error_token_expected(";");
+
+            while !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+            {
+                self.next_token();
+            }
+        }
+
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
         }
     }
 
@@ -1555,6 +1619,28 @@ impl ParserState {
                 if depth == 0 {
                     let pos = self.token_end();
                     anchor = Some((pos, 1));
+
+                    if open == SyntaxKind::OpenBracketToken {
+                        self.next_token();
+                        if self.is_token(SyntaxKind::OpenParenToken) {
+                            let mut paren_depth = 0u32;
+                            while !self.is_token(SyntaxKind::EndOfFileToken) {
+                                if self.is_token(SyntaxKind::OpenParenToken) {
+                                    paren_depth += 1;
+                                } else if self.is_token(SyntaxKind::CloseParenToken) {
+                                    paren_depth = paren_depth.saturating_sub(1);
+                                    if paren_depth == 0 {
+                                        self.next_token();
+                                        if self.is_token(SyntaxKind::OpenBraceToken) {
+                                            anchor = Some((self.token_pos(), 1));
+                                        }
+                                        break;
+                                    }
+                                }
+                                self.next_token();
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -1564,6 +1650,122 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         anchor
+    }
+
+    fn recover_invalid_class_member_initializer_continuation(&mut self) {
+        if !self.look_ahead_is_invalid_class_member_method_like_continuation() {
+            return;
+        }
+
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            let mut bracket_depth = 0u32;
+            while !self.is_token(SyntaxKind::EndOfFileToken) {
+                if self.is_token(SyntaxKind::OpenBracketToken) {
+                    bracket_depth += 1;
+                } else if self.is_token(SyntaxKind::CloseBracketToken) {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                    if bracket_depth == 0 {
+                        self.next_token();
+                        break;
+                    }
+                }
+                self.next_token();
+            }
+        }
+
+        if !self.is_token(SyntaxKind::OpenParenToken) {
+            return;
+        }
+
+        let mut paren_depth = 0u32;
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                paren_depth += 1;
+            } else if self.is_token(SyntaxKind::CloseParenToken) {
+                paren_depth = paren_depth.saturating_sub(1);
+                if paren_depth == 0 {
+                    self.next_token();
+                    break;
+                }
+            }
+            self.next_token();
+        }
+
+        if !self.is_token(SyntaxKind::OpenBraceToken) {
+            return;
+        }
+
+        let mut brace_depth = 0u32;
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                brace_depth += 1;
+            } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                brace_depth = brace_depth.saturating_sub(1);
+                self.next_token();
+                if brace_depth == 0 {
+                    break;
+                }
+                continue;
+            }
+            self.next_token();
+        }
+
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+        }
+    }
+
+    fn look_ahead_is_invalid_class_member_method_like_continuation(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::OpenBracketToken)
+            && !self.is_token(SyntaxKind::OpenParenToken)
+        {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let mut is_match = false;
+
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            let mut bracket_depth = 0u32;
+            while !self.is_token(SyntaxKind::EndOfFileToken) {
+                if self.is_token(SyntaxKind::OpenBracketToken) {
+                    bracket_depth += 1;
+                } else if self.is_token(SyntaxKind::CloseBracketToken) {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                    if bracket_depth == 0 {
+                        self.next_token();
+                        break;
+                    }
+                }
+                self.next_token();
+            }
+        }
+
+        if self.is_token(SyntaxKind::OpenParenToken) {
+            let mut paren_depth = 0u32;
+            while !self.is_token(SyntaxKind::EndOfFileToken) {
+                if self.is_token(SyntaxKind::OpenParenToken) {
+                    paren_depth += 1;
+                } else if self.is_token(SyntaxKind::CloseParenToken) {
+                    paren_depth = paren_depth.saturating_sub(1);
+                    if paren_depth == 0 {
+                        self.next_token();
+                        is_match = self.is_token(SyntaxKind::OpenBraceToken);
+                        break;
+                    }
+                }
+                self.next_token();
+            }
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_match
     }
 
     /// Look ahead to check if the current string/numeric literal token is actually

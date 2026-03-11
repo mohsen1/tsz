@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
             base_diag.length = 9;
         }
 
-        self.ctx.diagnostics.push(base_diag);
+        self.ctx.push_diagnostic(base_diag);
     }
 
     /// Diagnose why an assignment failed and report a detailed error.
@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
             )
             .with_related(self.ctx.file_name.clone(), loc.0, loc.1 - loc.0, detail);
 
-            self.ctx.diagnostics.push(diag);
+            self.ctx.push_diagnostic(diag);
             return;
         }
 
@@ -239,7 +239,7 @@ impl<'a> CheckerState<'a> {
                 }
                 let diag =
                     self.render_failure_reason(&failure_reason, source, target, anchor_idx, 0);
-                self.ctx.diagnostics.push(diag);
+                self.ctx.push_diagnostic(diag);
             }
             None => {
                 // Fallback to generic message
@@ -340,7 +340,7 @@ impl<'a> CheckerState<'a> {
                         )
                     }
                 };
-                self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.push_diagnostic(Diagnostic::error(
                     self.ctx.file_name.clone(),
                     loc.start,
                     loc.length(),
@@ -357,7 +357,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
             );
-            self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.push_diagnostic(Diagnostic::error(
                 self.ctx.file_name.clone(),
                 loc.start,
                 loc.length(),
@@ -1461,7 +1461,7 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         )
         .with_related(self.ctx.file_name.clone(), loc.start, loc.length(), detail);
-        self.ctx.diagnostics.push(diag);
+        self.ctx.push_diagnostic(diag);
     }
 
     /// Check if the diagnostic anchor node traces back to an assignment target

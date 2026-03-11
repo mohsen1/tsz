@@ -159,13 +159,20 @@ impl BinderState {
                 if !is_exported && let Some(ext) = arena.get_extended(idx) {
                     let parent_idx = ext.parent;
                     if let Some(parent_node) = arena.get(parent_idx)
-                        && parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                        && let Some(parent_module) = arena.get_module(parent_node)
-                        && parent_module.body == idx
+                        && ((parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            && arena
+                                .get_export_decl(parent_node)
+                                .is_some_and(|export_decl| export_decl.export_clause == idx))
+                            || (parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                && arena
+                                    .get_module(parent_node)
+                                    .is_some_and(|parent_module| parent_module.body == idx)))
                     {
                         is_exported = true;
                     }
                 }
+                self.module_declaration_exports_publicly
+                    .insert(idx.0, is_exported);
 
                 if self.in_global_augmentation {
                     self.global_augmentations
@@ -534,7 +541,9 @@ impl BinderState {
                                              exported_symbols: &mut Vec<(String, SymbolId)>| {
                                                 if let Some(exports) = symbol.exports.as_ref() {
                                                     for (export_name, &export_sym_id) in exports.iter() {
-                                                        if export_name != "export=" {
+                                                        if export_name != "export="
+                                                            && export_name != "default"
+                                                        {
                                                             exported_symbols.push((
                                                                 export_name.clone(),
                                                                 export_sym_id,
@@ -544,8 +553,12 @@ impl BinderState {
                                                 }
                                                 if let Some(members) = symbol.members.as_ref() {
                                                     for (member_name, &member_sym_id) in members.iter() {
-                                                        exported_symbols
-                                                            .push((member_name.clone(), member_sym_id));
+                                                        if member_name != "default" {
+                                                            exported_symbols.push((
+                                                                member_name.clone(),
+                                                                member_sym_id,
+                                                            ));
+                                                        }
                                                     }
                                                 }
                                             };

@@ -618,11 +618,20 @@ impl ParserState {
             let diag_len = self.parse_diagnostics.len();
             let parsed_type = self.parse_type();
             // Keep TS1110 "Type expected" (emitted by parse_type for missing type
-            // after `=`), but suppress other cascade diagnostics.
+            // after `=`), but preserve targeted import-attribute recovery diagnostics.
             if self.parse_diagnostics.len() > diag_len {
                 let kept: Vec<_> = self.parse_diagnostics[diag_len..]
                     .iter()
-                    .filter(|d| d.code == diagnostic_codes::TYPE_EXPECTED)
+                    .filter(|d| {
+                        matches!(
+                            d.code,
+                            diagnostic_codes::TYPE_EXPECTED
+                                | diagnostic_codes::IDENTIFIER_OR_STRING_LITERAL_EXPECTED
+                                | diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                                | diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER
+                                | diagnostic_codes::EXPECTED
+                        )
+                    })
                     .cloned()
                     .collect();
                 self.parse_diagnostics.truncate(diag_len);

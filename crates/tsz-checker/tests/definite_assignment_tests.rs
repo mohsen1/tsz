@@ -668,6 +668,35 @@ fn test_ts2454_not_emitted_in_class_computed_property_name() {
 }
 
 #[test]
+fn test_ts2454_assignment_in_class_computed_property_name_is_not_definite() {
+    let source = r#"
+        let getX: (a: A) => number;
+
+        class A {
+            #x = 100;
+            [(getX = (a: A) => a.#x, "_")]() {}
+        }
+
+        console.log(getX(new A));
+    "#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            target: tsz_common::common::ScriptTarget::ESNext,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Assignments that run while evaluating class computed property names should not count as definite assignment, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_tdz_in_binding_default_initializer_has_no_ts2454_companion() {
     let source = r"
         const {

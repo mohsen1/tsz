@@ -11,7 +11,7 @@ use crate::args::{CliArgs, Module, ModuleDetection};
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
-    resolve_lib_files,
+    resolve_lib_files, resolve_lib_files_with_options,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -1067,12 +1067,9 @@ fn compile_inner(
     let _no_types_and_symbols =
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
     resolved.checker.no_types_and_symbols = _no_types_and_symbols;
-    let lib_paths: Vec<PathBuf> =
-        if (resolved.checker.no_lib && resolved.lib_is_default) || disable_default_libs {
-            Vec::new()
-        } else {
-            resolved.lib_files.clone()
-        };
+    let lib_paths =
+        resolve_effective_lib_paths(&resolved, &sources, &base_dir, disable_default_libs)?;
+    let typescript_dom_replacement_globals = scan_typescript_dom_replacement_globals(&lib_paths);
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
 
     // Build files_read: lib files first (matching tsc --listFiles order), then user files
@@ -1129,6 +1126,7 @@ fn compile_inner(
         &base_dir,
         effective_cache,
         &lib_contexts,
+        typescript_dom_replacement_globals,
         &parallel_type_caches,
         has_deprecation_diagnostics,
     );
@@ -1473,7 +1471,184 @@ fn build_file_infos(
 fn is_lib_file(path: &Path) -> bool {
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-    file_name.starts_with("lib.") && file_name.ends_with(".d.ts")
+    (file_name.starts_with("lib.") && file_name.ends_with(".d.ts"))
+        || path
+            .to_string_lossy()
+            .contains("/node_modules/@typescript/lib-")
+}
+
+fn resolve_effective_lib_paths(
+    resolved: &ResolvedCompilerOptions,
+    sources: &[SourceEntry],
+    base_dir: &Path,
+    disable_default_libs: bool,
+) -> Result<Vec<PathBuf>> {
+    let include_config_libs =
+        !((resolved.checker.no_lib && resolved.lib_is_default) || disable_default_libs);
+    let mut lib_names = if include_config_libs {
+        lib_names_from_paths(&resolved.lib_files)
+    } else {
+        Vec::new()
+    };
+
+    let source_reference_libs = collect_source_reference_libs(sources);
+    if !source_reference_libs.is_empty() {
+        let expanded_source_paths = resolve_lib_files_with_options(&source_reference_libs, true)?;
+        append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
+    }
+
+    let mut lib_paths = Vec::with_capacity(lib_names.len());
+    let mut seen = FxHashSet::default();
+    for lib_name in lib_names {
+        let Some(path) = resolve_compiler_lib_path(&lib_name, resolved, base_dir)? else {
+            continue;
+        };
+        let canonical = canonicalize_or_owned(&path);
+        if seen.insert(canonical.clone()) {
+            lib_paths.push(canonical);
+        }
+    }
+    Ok(lib_paths)
+}
+
+fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
+    let mut lib_names = Vec::new();
+    for source in sources {
+        let refs = if let Some(text) = source.text.as_deref() {
+            tsz::config::extract_lib_references(text)
+        } else {
+            std::fs::read_to_string(&source.path)
+                .map(|text| tsz::config::extract_lib_references(&text))
+                .unwrap_or_default()
+        };
+        append_unique_lib_names(&mut lib_names, refs);
+    }
+    lib_names
+}
+
+fn append_unique_lib_names(target: &mut Vec<String>, additional: Vec<String>) {
+    let mut seen: FxHashSet<String> = target.iter().cloned().collect();
+    for lib_name in additional {
+        if seen.insert(lib_name.clone()) {
+            target.push(lib_name);
+        }
+    }
+}
+
+fn lib_names_from_paths(paths: &[PathBuf]) -> Vec<String> {
+    let mut lib_names = Vec::new();
+    for path in paths {
+        if let Some(lib_name) = lib_name_from_path(path) {
+            append_unique_lib_names(&mut lib_names, vec![lib_name]);
+        }
+    }
+    lib_names
+}
+
+fn lib_name_from_path(path: &Path) -> Option<String> {
+    let file_name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    if let Some(package_name) = path.parent().and_then(|parent| parent.file_name())
+        && let Some(package_name) = package_name.to_str()
+        && let Some(root) = package_name.strip_prefix("lib-")
+        && path
+            .to_string_lossy()
+            .contains("/node_modules/@typescript/")
+    {
+        return match file_name.as_str() {
+            "index.d.ts" => Some(root.to_string()),
+            other => other
+                .strip_suffix(".d.ts")
+                .map(|stem| format!("{root}.{stem}")),
+        };
+    }
+
+    if file_name == "lib.d.ts" {
+        return Some("lib".to_string());
+    }
+
+    let stem = file_name.strip_suffix(".d.ts")?;
+    let stem = stem.strip_prefix("lib.").unwrap_or(stem);
+    Some(match stem {
+        "dom.generated" => "dom".to_string(),
+        "dom.iterable.generated" => "dom.iterable".to_string(),
+        "dom.asynciterable.generated" => "dom.asynciterable".to_string(),
+        other => other.to_string(),
+    })
+}
+
+fn resolve_compiler_lib_path(
+    lib_name: &str,
+    resolved: &ResolvedCompilerOptions,
+    base_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    if resolved.lib_replacement
+        && let Some(replacement) = resolve_typescript_lib_replacement_path(base_dir, lib_name)
+    {
+        return Ok(Some(replacement));
+    }
+
+    Ok(
+        resolve_lib_files_with_options(&[lib_name.to_string()], false)?
+            .into_iter()
+            .next(),
+    )
+}
+
+fn resolve_typescript_lib_replacement_path(base_dir: &Path, lib_name: &str) -> Option<PathBuf> {
+    let normalized = match lib_name.trim().to_ascii_lowercase().as_str() {
+        "lib" => "es5".to_string(),
+        "es6" => "es2015".to_string(),
+        "es7" => "es2016".to_string(),
+        other => other.to_string(),
+    };
+    let mut parts = normalized.split('.');
+    let root = parts.next()?;
+    let suffix = parts.collect::<Vec<_>>().join(".");
+    let relative = if suffix.is_empty() {
+        PathBuf::from("index.d.ts")
+    } else {
+        PathBuf::from(format!("{suffix}.d.ts"))
+    };
+    let candidate = base_dir
+        .join("node_modules")
+        .join("@typescript")
+        .join(format!("lib-{root}"))
+        .join(relative);
+    candidate.is_file().then_some(candidate)
+}
+
+fn scan_typescript_dom_replacement_globals(lib_paths: &[PathBuf]) -> (bool, bool, bool) {
+    let dom_paths: Vec<&PathBuf> = lib_paths
+        .iter()
+        .filter(|path| {
+            path.to_string_lossy()
+                .contains("/node_modules/@typescript/lib-dom/")
+        })
+        .collect();
+    if dom_paths.is_empty() {
+        return (false, false, false);
+    }
+
+    let has_window = dom_paths
+        .iter()
+        .any(|path| replacement_file_declares_global(path, "window"));
+    let has_self = dom_paths
+        .iter()
+        .any(|path| replacement_file_declares_global(path, "self"));
+    (true, has_window, has_self)
+}
+
+fn replacement_file_declares_global(path: &Path, name: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+
+    let declarations = [
+        format!("declare var {name}"),
+        format!("declare const {name}"),
+        format!("declare let {name}"),
+    ];
+    declarations.iter().any(|needle| text.contains(needle))
 }
 
 struct SourceMeta {
@@ -1563,6 +1738,7 @@ fn build_program_with_cache(
                     declared_modules: Default::default(),
                     module_exports: Default::default(),
                     node_symbols: Default::default(),
+                    module_declaration_exports_publicly: Default::default(),
                     symbol_arenas: Default::default(),
                     declaration_arenas: Default::default(),
                     scopes: Vec::new(),
@@ -1937,6 +2113,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(lib_list) = args.lib.as_ref() {
         options.lib_files = resolve_lib_files(lib_list)?;
         options.lib_is_default = false;
+    }
+    if args.lib_replacement {
+        options.lib_replacement = true;
     }
     if args.no_lib {
         options.checker.no_lib = true;
