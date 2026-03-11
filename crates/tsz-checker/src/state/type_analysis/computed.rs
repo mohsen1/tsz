@@ -34,11 +34,7 @@ impl<'a> CheckerState<'a> {
                     .resolve_import_target_from_file(file_idx, module_name)
             })
             .or_else(|| self.ctx.resolve_import_target(module_name))?;
-        let namespace_type = self.commonjs_namespace_type_for_file(target_file_idx)?;
-        self.ctx
-            .namespace_module_names
-            .insert(namespace_type, module_name.to_string());
-        Some(namespace_type)
+        self.commonjs_namespace_type_for_file(target_file_idx)
     }
 
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
