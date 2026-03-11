@@ -39,6 +39,27 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn should_use_contextual_return_substitution(
+        &self,
+        inferred: TypeId,
+        _contextual: TypeId,
+    ) -> bool {
+        if matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return true;
+        }
+
+        if crate::visitor::contains_type_parameters(self.interner.as_type_database(), inferred)
+            || crate::type_queries::contains_infer_types_db(
+                self.interner.as_type_database(),
+                inferred,
+            )
+        {
+            return true;
+        }
+
+        false
+    }
+
     fn collect_return_context_substitution(
         &self,
         source: TypeId,
@@ -526,6 +547,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Track bare return type placeholder for conditional seeding after Round 1
         let mut return_type_bare_var: Option<(crate::inference::infer::InferenceVar, TypeId)> =
             None;
+        let mut round1_direct_seed_vars = FxHashSet::default();
+
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            let Some(target_type) =
+                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+            else {
+                break;
+            };
+            if self
+                .contextual_round1_arg_types(arg_type, target_type)
+                .is_some()
+            {
+                round1_direct_seed_vars.extend(self.collect_placeholder_vars_in_type(
+                    target_type,
+                    &var_map,
+                    &mut placeholder_probe_map,
+                    &mut placeholder_visited,
+                ));
+            }
+        }
 
         // 2.5. Seed contextual constraints from return type BEFORE argument processing
         // This enables downward inference: `let x: string = id(...)` should infer T = string
@@ -543,31 +584,42 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &substitution,
                 actual_this_type,
             );
+            let return_seed_vars = self.collect_placeholder_vars_in_type(
+                return_type_with_placeholders,
+                &var_map,
+                &mut placeholder_probe_map,
+                &mut placeholder_visited,
+            );
+            let return_seed_overlaps_round1 = return_seed_vars
+                .iter()
+                .any(|var| round1_direct_seed_vars.contains(var));
             // CORRECT: return_type <: ctx_type
             // In assignment `let x: Target = Source`, the relation is `Source <: Target`
             // Therefore, the return value must be assignable to the expected type
-            self.constrain_types(
-                &mut infer_ctx,
-                &var_map,
-                return_type_with_placeholders, // source
-                ctx_type,                      // target
-                crate::types::InferencePriority::ReturnType,
-            );
+            if !return_seed_overlaps_round1 {
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    return_type_with_placeholders, // source
+                    ctx_type,                      // target
+                    crate::types::InferencePriority::ReturnType,
+                );
 
-            // Track whether the return type is a bare type parameter placeholder.
-            // If so, we may need to add a ReturnType candidate AFTER Round 1
-            // (see below, before fix_current_variables).
-            if let Some(&var) = var_map.get(&return_type_with_placeholders) {
-                return_type_bare_var = Some((var, ctx_type));
+                // Track whether the return type is a bare type parameter placeholder.
+                // If so, we may need to add a ReturnType candidate AFTER Round 1
+                // (see below, before fix_current_variables).
+                if let Some(&var) = var_map.get(&return_type_with_placeholders) {
+                    return_type_bare_var = Some((var, ctx_type));
+                }
+
+                self.constrain_return_context_structure(
+                    &mut infer_ctx,
+                    &var_map,
+                    return_type_with_placeholders,
+                    ctx_type,
+                    crate::types::InferencePriority::ReturnType,
+                );
             }
-
-            self.constrain_return_context_structure(
-                &mut infer_ctx,
-                &var_map,
-                return_type_with_placeholders,
-                ctx_type,
-                crate::types::InferencePriority::ReturnType,
-            );
         }
 
         let structural_return_subst =
@@ -1282,8 +1334,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let ty = if !saw_deferred_arg
                 && let Some(contextual_ty) = structural_return_subst.get(tp.name)
             {
-                if ty == TypeId::UNKNOWN || !self.checker.is_assignable_to_strict(ty, contextual_ty)
-                {
+                if self.should_use_contextual_return_substitution(ty, contextual_ty) {
                     contextual_ty
                 } else {
                     ty
@@ -2332,6 +2383,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         *self.constraint_recursion_depth.borrow_mut() = 0;
         *self.constraint_step_count.borrow_mut() = 0;
 
+        let mut placeholder_probe_map: FxHashMap<TypeId, InferenceVar> = FxHashMap::default();
+        let mut placeholder_visited = FxHashSet::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
 
@@ -2384,6 +2437,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 rest: p.rest,
             })
             .collect();
+        let mut round1_direct_seed_vars = FxHashSet::default();
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            let Some(target_type) =
+                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+            else {
+                break;
+            };
+            if self
+                .contextual_round1_arg_types(arg_type, target_type)
+                .is_some()
+            {
+                round1_direct_seed_vars.extend(self.collect_placeholder_vars_in_type(
+                    target_type,
+                    &var_map,
+                    &mut placeholder_probe_map,
+                    &mut placeholder_visited,
+                ));
+            }
+        }
 
         // 2.5. Seed contextual constraints from return type
         // Skip `any` and `unknown` — they don't contribute useful inference constraints
@@ -2394,21 +2466,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             let return_type_with_placeholders =
                 instantiate_type(self.interner, func.return_type, &substitution);
-            self.constrain_types(
-                &mut infer_ctx,
-                &var_map,
+            let return_seed_vars = self.collect_placeholder_vars_in_type(
                 return_type_with_placeholders,
-                ctx_type,
-                InferencePriority::ReturnType,
+                &var_map,
+                &mut placeholder_probe_map,
+                &mut placeholder_visited,
             );
+            let return_seed_overlaps_round1 = return_seed_vars
+                .iter()
+                .any(|var| round1_direct_seed_vars.contains(var));
+            if !return_seed_overlaps_round1 {
+                self.constrain_types(
+                    &mut infer_ctx,
+                    &var_map,
+                    return_type_with_placeholders,
+                    ctx_type,
+                    InferencePriority::ReturnType,
+                );
 
-            self.constrain_return_context_structure(
-                &mut infer_ctx,
-                &var_map,
-                return_type_with_placeholders,
-                ctx_type,
-                InferencePriority::ReturnType,
-            );
+                self.constrain_return_context_structure(
+                    &mut infer_ctx,
+                    &var_map,
+                    return_type_with_placeholders,
+                    ctx_type,
+                    InferencePriority::ReturnType,
+                );
+            }
         }
 
         let structural_return_subst = if has_context_sensitive_args {
@@ -2561,11 +2644,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let resolved = if !has_context_sensitive_args
                     && let Some(contextual_ty) = structural_return_subst.get(tp.name)
                 {
-                    if resolved == TypeId::UNKNOWN
-                        || !self
-                            .checker
-                            .is_assignable_to_strict(resolved, contextual_ty)
-                    {
+                    if self.should_use_contextual_return_substitution(resolved, contextual_ty) {
                         contextual_ty
                     } else {
                         resolved

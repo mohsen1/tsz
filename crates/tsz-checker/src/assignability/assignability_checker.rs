@@ -1593,6 +1593,7 @@ impl<'a> CheckerState<'a> {
 
         if target_shape.number_index.is_none()
             || target_shape.string_index.is_some()
+            || !target_shape.properties.is_empty()
             || source_shape.number_index.is_some()
             || source_shape.string_index.is_some()
             || source_shape.properties.is_empty()

@@ -264,7 +264,7 @@ new cls2();
 new cls3();
 "#;
 
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         source,
         CheckerOptions {
             target: ScriptTarget::ES2015,
@@ -7193,6 +7193,52 @@ const result: A[] = from(inputB, ({ b }): A => ({ a: b }));
     assert!(
         ts2339.is_empty(),
         "Contextual destructuring in Array.from callback should not emit TS2339. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_like_length_only_assignment_does_not_emit_ts2322() {
+    let source = r#"
+interface A { a: string; }
+const inputALike: ArrayLike<A> = { length: 0 };
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "ArrayLike<T> assignment from a length-only object should be accepted. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_from_assignment_context_does_not_overwrite_direct_type_arg_inference() {
+    let source = r#"
+interface A { a: string; }
+interface B { b: string; }
+interface Iterable<T> {}
+interface ArrayIterator<T> extends Iterable<T> {}
+interface ArrayLikeish<T> { length: number; }
+declare const Array: {
+    from<T>(items: Iterable<T> | ArrayLikeish<T>): T[];
+};
+declare const inputA: { values(): ArrayIterator<A> };
+declare const inputALike: ArrayLikeish<A>;
+
+const result1: B[] = Array.from(inputA.values());
+const result2: B[] = Array.from(inputALike);
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected only the outer B[] assignment failures. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2769),
+        "Array.from direct arg inference should not be overwritten by assignment context. Got: {diagnostics:?}"
     );
 }
 

@@ -361,10 +361,16 @@ impl<'a> CheckerState<'a> {
 
         let current_eval = tsz_solver::evaluate_type(self.ctx.types, current);
         let candidate_eval = tsz_solver::evaluate_type(self.ctx.types, candidate);
-        let candidate_narrower =
-            tsz_solver::is_subtype_of(self.ctx.types, candidate_eval, current_eval);
-        let current_narrower =
-            tsz_solver::is_subtype_of(self.ctx.types, current_eval, candidate_eval);
+        let candidate_narrower = crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            candidate_eval,
+            current_eval,
+        );
+        let current_narrower = crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            current_eval,
+            candidate_eval,
+        );
 
         if candidate_narrower && !current_narrower {
             Some(candidate)
@@ -379,9 +385,8 @@ impl<'a> CheckerState<'a> {
         {
             return TypeId::UNKNOWN;
         }
-        if let Some(tsz_solver::TypeData::TypeParameter(info) | tsz_solver::TypeData::Infer(info)) =
-            self.ctx.types.lookup(property_type)
-            && let Some(default) = info.default
+        if let Some(default) =
+            crate::query_boundaries::common::type_parameter_default(self.ctx.types, property_type)
         {
             return default;
         }

@@ -631,7 +631,14 @@ impl<'a> CheckerState<'a> {
                                         evaluated_type,
                                     )
                             });
-                    if evaluated_type != TypeId::ANY && !jsdoc_blocks_callable_context {
+                    let suppress_initializer_context = evaluated_type != TypeId::ANY
+                        && checker.suppress_initializer_contextual_type_for_generic_call(
+                            var_decl.initializer,
+                        );
+                    if evaluated_type != TypeId::ANY
+                        && !jsdoc_blocks_callable_context
+                        && !suppress_initializer_context
+                    {
                         checker.ctx.contextual_type = Some(evaluated_type);
                         // Clear cached type to force recomputation with contextual type
                         // This is necessary because the expression (especially arrow functions)
