@@ -991,6 +991,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
                         checker.is_subtype_of(members[i], members[j])
+                            && !self.has_unique_properties(members[i], members[j])
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
                         // For intersections: member[j] <: member[i] means member[i] is

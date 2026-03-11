@@ -913,6 +913,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if !report_no_index
+            && self.union_has_missing_concrete_element_access(
+                object_type_for_access,
+                index_type,
+                literal_index,
+            )
+        {
+            report_no_index = true;
+        }
+
         // When we have specific missing literal keys from a union, emit TS2339
         // per-key instead of TS7053 for the whole union. tsc identifies the
         // specific non-existent key(s) from the union and reports TS2339.
@@ -1024,6 +1034,51 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    fn union_has_missing_concrete_element_access(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> bool {
+        let Some(members) =
+            tsz_solver::type_queries::data::get_union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        let is_unique_symbol = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type)
+            .is_some();
+        let is_concrete_numeric = literal_index.is_some();
+        if !is_unique_symbol && !is_concrete_numeric {
+            return false;
+        }
+
+        // Tuple/array unions have their own out-of-bounds diagnostics and should
+        // not be collapsed into TS7053 here.
+        if members.iter().any(|&member| self.is_array_like_type(member)) {
+            return false;
+        }
+
+        let solver_index_type = if let Some(index) = literal_index {
+            self.ctx.types.literal_number(index as f64)
+        } else if self
+            .enum_symbol_from_type(index_type)
+            .is_some_and(|sym_id| self.enum_kind(sym_id) == Some(EnumKind::Numeric))
+        {
+            TypeId::NUMBER
+        } else {
+            index_type
+        };
+
+        members.iter().any(|&member| {
+            let member_result =
+                self.ctx
+                    .types
+                    .resolve_element_access_type(member, solver_index_type, literal_index);
+            member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED
+        })
     }
 
     /// Check if a type is a union of tuples where ALL members are out of bounds
