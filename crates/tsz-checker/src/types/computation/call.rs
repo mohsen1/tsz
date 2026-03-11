@@ -88,10 +88,12 @@ impl<'a> CheckerState<'a> {
             && let Some(args) = &call.arguments
             && let Some(first_arg) = args.nodes.first().copied()
             && let Some(module_specifier) = self.get_require_module_specifier(first_arg)
-            && let Some(namespace_type) =
-                self.commonjs_define_property_namespace_type(&module_specifier, None)
         {
-            return namespace_type;
+            if let Some(module_type) =
+                self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
+            {
+                return module_type;
+            }
         }
 
         // For IIFEs (immediately invoked function expressions), wrap the call expression's

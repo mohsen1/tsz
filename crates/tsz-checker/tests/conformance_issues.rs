@@ -2365,6 +2365,78 @@ const obj = {
 }
 
 #[test]
+fn test_jsdoc_type_reference_to_merged_class_preserves_ts2454() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "jsdocTypeReferenceToMergedClass.js",
+        r#"
+var Workspace = {}
+/** @type {Workspace.Project} */
+var p;
+p.isServiceProject()
+
+Workspace.Project = function wp() { }
+Workspace.Project.prototype = {
+  isServiceProject() {}
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2454),
+        "Expected TS2454 for JSDoc-typed merged class value before assignment. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Did not expect TS2339 once the JSDoc merged class type resolves. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_local_constructor_alias_preserves_ts2454() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+class Chunk {
+    constructor() {
+        this.chunk = 1;
+    }
+}
+
+const D = Chunk;
+/** @type {D} */
+var d;
+d.chunk;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_lib: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2454),
+        "Expected TS2454 for JSDoc type aliasing a local constructor value. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Did not expect TS2339 once the JSDoc constructor alias resolves to the instance type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_contextual_default_parameters_in_ts_do_not_emit_false_ts2322() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
