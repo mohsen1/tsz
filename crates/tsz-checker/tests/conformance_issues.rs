@@ -9829,6 +9829,42 @@ async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookW
 }
 
 #[test]
+fn test_unannotated_async_generator_method_infers_yield_type_in_return() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+declare const Symbol: { readonly asyncIterator: unique symbol };
+interface AsyncGenerator<T, TReturn, TNext> {}
+
+const iter = {
+    async *[Symbol.asyncIterator](_: number) {
+        yield 0;
+    }
+};
+
+declare let expected: () => AsyncGenerator<number, void, unknown>;
+expected = iter[Symbol.asyncIterator];
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str());
+
+    assert!(
+        ts2322.is_some_and(|message| {
+            message.contains("AsyncGenerator<number, void, unknown>")
+                && !message.contains("AsyncGenerator<any, void, unknown>")
+        }),
+        "Expected the inferred async generator method return type to preserve the yielded number.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

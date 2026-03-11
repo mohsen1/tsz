@@ -685,6 +685,7 @@ impl<'a> CheckerState<'a> {
         let mut has_contextual_return = false;
         let mut return_context_for_circularity = None;
         let mut early_yield_type: Option<TypeId> = None;
+        let mut final_generator_yield_type: Option<TypeId> = None;
         let mut early_gen_return_type: Option<TypeId> = None;
         let mut early_gen_next_type: Option<TypeId> = None;
 
@@ -792,6 +793,7 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 early_yield_type = gen_types.0;
+                final_generator_yield_type = gen_types.0;
                 early_gen_return_type = gen_types.1;
                 early_gen_next_type = gen_types.2;
             }
@@ -1508,6 +1510,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         widened
                     };
+                    final_generator_yield_type = Some(final_yield);
                     if final_yield == TypeId::ANY
                         && self.ctx.no_implicit_any()
                         && !self.is_js_file()
@@ -1609,7 +1612,7 @@ impl<'a> CheckerState<'a> {
             if let Some(base) = lazy_base {
                 // Use contextual generator type params when available, otherwise
                 // fall back to defaults (any/void/unknown).
-                let yield_t = early_yield_type.unwrap_or(TypeId::ANY);
+                let yield_t = final_generator_yield_type.unwrap_or(TypeId::ANY);
                 let return_t = early_gen_return_type.unwrap_or(TypeId::VOID);
                 let next_t = early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
                 self.ctx
