@@ -326,6 +326,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.no_implicit_any()
             && effective_declared_type.is_none()
             && prop.initializer.is_none()
+            && prop.type_annotation.is_none()
             && !is_private_in_ambient
             && !self.property_assigned_in_enclosing_class_constructor(prop.name)
             // TSC also suppresses TS7008 for static properties assigned in class

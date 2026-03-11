@@ -669,16 +669,40 @@ impl<'a> CheckerState<'a> {
         // TS8005: 'implements' clause
         if let Some(ref heritage_clauses) = class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
-                if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                    && clause_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
-                    && let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
-                    && heritage.token == SyntaxKind::ImplementsKeyword as u16
-                {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                if clause_node.kind != syntax_kind_ext::HERITAGE_CLAUSE {
+                    continue;
+                }
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+
+                if heritage.token == SyntaxKind::ImplementsKeyword as u16 {
                     self.error_at_node(
                         clause_idx,
                         diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                         diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     );
+                }
+
+                {
+                    for &type_idx in &heritage.types.nodes {
+                        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                            continue;
+                        };
+                        if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                            && let Some(type_args) = &expr_type_args.type_arguments
+                            && let Some(&first_type_arg) = type_args.nodes.first()
+                        {
+                            self.error_at_node(
+                                first_type_arg,
+                                diagnostic_messages::TYPE_ARGUMENTS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                diagnostic_codes::TYPE_ARGUMENTS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -864,6 +888,7 @@ impl<'a> CheckerState<'a> {
                         SyntaxKind::AbstractKeyword,
                         "abstract",
                     );
+                    self.error_if_ts_only_type_annotation(prop.type_annotation);
                     self.check_js_grammar_accessibility_modifier(&prop.modifiers, member_idx);
                 }
             }
@@ -879,7 +904,13 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::INDEX_SIGNATURE
             | syntax_kind_ext::CALL_SIGNATURE
             | syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                self.error_if_ts_only_signature_without_body(true, member_idx);
+                if node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                    if let Some(index_sig) = self.ctx.arena.get_index_signature(node) {
+                        self.check_js_grammar_parameters(&index_sig.parameters.nodes);
+                    }
+                } else {
+                    self.error_if_ts_only_signature_without_body(true, member_idx);
+                }
             }
 
             _ => {}
