@@ -695,47 +695,49 @@ impl<'a> CheckerState<'a> {
 
     /// Get type from a type query node (typeof X).
     ///
-    /// Creates a `TypeQuery` type that captures the type of a value, enabling type-level
-    /// queries and conditional type logic.
+    /// Resolves value symbols, emits TS2504 for type-only symbols, handles
+    /// unknown identifiers and missing members. Supports type arguments.
     ///
-    /// ## Resolution Strategy:
-    /// 1. **Value symbol resolved** (typeof value):
-    ///    - Without type args: Return the actual type directly
-    ///    - With type args: Create `TypeQuery` type for deferred resolution
-    ///    - Exception: ANY/ERROR types still create `TypeQuery` for proper error handling
-    ///
-    /// 2. **Type symbol only**: Emit TS2504 error (type cannot be used as value)
-    ///
-    /// 3. **Unknown identifier**:
-    ///    - Known global value → return ANY (allows property access)
-    ///    - Unresolved import → return ANY (TS2307 already emitted)
-    ///    - Otherwise → emit TS2304 error and return ERROR
-    ///
-    /// 4. **Missing member** (typeof obj.prop): Emit appropriate error
-    ///
-    /// 5. **Fallback**: Hash the name for forward compatibility
-    ///
-    /// ## Type Arguments:
-    /// - If present, creates TypeApplication(base, args)
-    /// - Used in generic type queries: `typeof Array<string>`
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// let x = 42;
-    /// type T1 = typeof x;  // number
-    ///
-    /// function foo(): string { return "hello"; }
-    /// type T2 = typeof foo;  // () => string
-    ///
-    /// class MyClass {
-    ///   prop = 123;
-    /// }
-    /// type T3 = typeof MyClass;  // typeof MyClass (constructor type)
-    /// type T4 = MyClass;  // MyClass (instance type)
-    ///
-    /// // Type query with type arguments (advanced)
-    /// type T5 = typeof Array<string>;  // typeof Array with type args
-    /// ```
+    /// Resolve a qualified name chain as a value property access chain
+    /// for `typeof` context. Recurses through nested `QualifiedName` nodes
+    /// so that `typeof a.b.c` resolves `a` as a value, then `.b`, then `.c`.
+    fn resolve_typeof_qualified_value_chain(&mut self, idx: NodeIndex, use_flow: bool) -> TypeId {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                return TypeId::ERROR;
+            };
+            let left_type = self.resolve_typeof_qualified_value_chain(qn.left, use_flow);
+            if left_type == TypeId::ANY || left_type == TypeId::ERROR {
+                return left_type;
+            }
+            if let Some(rn) = self.ctx.arena.get(qn.right)
+                && let Some(ident) = self.ctx.arena.get_identifier(rn)
+            {
+                let obj = self.resolve_type_for_property_access(left_type);
+                use tsz_solver::operations::property::PropertyAccessResult;
+                match self.resolve_property_access_with_env(obj, &ident.escaped_text) {
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        self.resolve_type_query_type(type_id)
+                    }
+                    _ => TypeId::ERROR,
+                }
+            } else {
+                TypeId::ERROR
+            }
+        } else {
+            // Base case: identifier or other expression — resolve as value
+            let prev = self.ctx.skip_flow_narrowing;
+            self.ctx.skip_flow_narrowing = !use_flow;
+            let ty = self.get_type_of_node(idx);
+            self.ctx.skip_flow_narrowing = prev;
+            ty
+        }
+    }
+
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::SymbolRef;
         trace!(idx = idx.0, "ENTER get_type_from_type_query");
@@ -818,11 +820,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
                     let left_idx = qn.left;
                     let right_idx = qn.right;
-                    // Resolve the left side as a value expression at the query site.
-                    let prev_skip = self.ctx.skip_flow_narrowing;
-                    self.ctx.skip_flow_narrowing = !use_flow_sensitive_query;
-                    let left_type = self.get_type_of_node(left_idx);
-                    self.ctx.skip_flow_narrowing = prev_skip;
+                    // Resolve the left side as a value expression.
+                    // For nested qualified names (e.g. `typeof a.b.c`), recurse
+                    // through the value property chain instead of dispatching to
+                    // resolve_qualified_name which treats it as a namespace.
+                    let left_type = self
+                        .resolve_typeof_qualified_value_chain(left_idx, use_flow_sensitive_query);
                     trace!(left_type = ?left_type, "type_query qualified: left_type");
                     if left_type == TypeId::ANY {
                         // globalThis resolves to ANY since it's a synthetic global.
