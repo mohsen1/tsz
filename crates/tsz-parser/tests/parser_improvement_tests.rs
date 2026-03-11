@@ -168,6 +168,33 @@ class C {
 }
 
 #[test]
+fn test_empty_element_access_reports_after_open_bracket() {
+    let source = r#"
+class Z {
+ public x = "";
+}
+
+var a6: Z[][] = new   Z     [      ]   [  ];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts1011_starts: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1011)
+        .map(|d| d.start)
+        .collect();
+
+    assert_eq!(
+        ts1011_starts,
+        vec![59, 70],
+        "Empty element-access diagnostics should anchor immediately after '[' even with inner whitespace: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_parameters_with_line_break_no_comma() {
     // Function parameters without comma but with line break
     // Should be more permissive to avoid false positives
