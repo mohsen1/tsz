@@ -2270,11 +2270,15 @@ impl ParserState {
                     );
                 }
                 SyntaxKind::OpenBracketToken => {
+                    let missing_argument_start = self.u32_from_usize(self.scanner.get_token_end());
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
                         // TS1011: An element access expression should take an argument
-                        self.parse_error_at_current_token(
+                        let current_start = self.u32_from_usize(self.scanner.get_token_start());
+                        self.parse_error_at(
+                            missing_argument_start,
+                            (current_start.saturating_sub(missing_argument_start)).max(1),
                             tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
                             tsz_common::diagnostics::diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
                         );
