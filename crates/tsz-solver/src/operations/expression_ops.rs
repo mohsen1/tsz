@@ -313,6 +313,18 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // Example: [1, 2] -> number[], ["a", "b"] -> string[]
     let widened = widen_literals(interner, types);
 
+    // Constructor-valued arrays should preserve member unions. Collapsing
+    // `[Concrete, Abstract]` to a single structurally-compatible constructor
+    // loses abstractness and changes downstream `new` diagnostics inside
+    // callbacks like `.map(cls => new cls())`.
+    if widened.len() > 1
+        && widened
+            .iter()
+            .all(|&ty| has_construct_signatures(interner, ty))
+    {
+        return interner.union(widened.to_vec());
+    }
+
     // Step 1.5: Enum member widening
     // If all candidates are enum members from the same parent enum,
     // infer the parent enum type directly instead of a large union of members.
@@ -391,6 +403,27 @@ pub fn compute_best_common_type<R: TypeResolver>(
 
     // Step 4: Default to union of all types
     interner.union(widened.to_vec())
+}
+
+fn has_construct_signatures(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match interner.lookup(type_id) {
+        Some(TypeData::Callable(shape_id)) => !interner
+            .callable_shape(shape_id)
+            .construct_signatures
+            .is_empty(),
+        Some(TypeData::Intersection(list_id)) => interner
+            .type_list(list_id)
+            .iter()
+            .any(|&member| has_construct_signatures(interner, member)),
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| has_construct_signatures(interner, member))
+        }
+        _ => false,
+    }
 }
 
 /// Widen literal types to their primitive base types when appropriate.
