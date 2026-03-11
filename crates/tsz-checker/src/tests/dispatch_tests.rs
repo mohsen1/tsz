@@ -1,6 +1,31 @@
 use crate::test_utils::check_source_diagnostics;
 
 #[test]
+fn ts7006_false_positive_arrow_in_generic_call() {
+    // Arrow functions in object literal properties within generic indexed-access
+    // calls should receive contextual typing from the inferred type parameter.
+    // This tests that TS7006 is NOT falsely emitted for `r` in `callback: (r) => {}`.
+    let diags = check_source_diagnostics(
+        r#"
+type Events = {
+    a: { callback: (r: string) => void }
+};
+declare function emit<T extends keyof Events>(type: T, data: Events[T]): void;
+emit('a', {
+    callback: (r) => {},
+});
+"#,
+    );
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 for contextually-typed arrow param, got: {:?}",
+        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts2352_this_type_assertion_in_class() {
     let diags = check_source_diagnostics(
         r#"

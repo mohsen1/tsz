@@ -37,7 +37,12 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::ARROW_FUNCTION =>
             {
-                self.clear_type_cache_recursive(arg_idx);
+                // Use the already-cached type from Round 2 inference.
+                // Previously this cleared the entire subtree cache and recomputed,
+                // but that destroys contextual typing for nested closures
+                // (arrow functions/function expressions inside object literal properties),
+                // causing false TS7006 when the recomputation happens without
+                // contextual type information.
                 self.get_type_of_node(arg_idx)
             }
             _ => cached_arg_type,
