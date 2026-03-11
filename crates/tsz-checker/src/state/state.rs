@@ -1217,6 +1217,48 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(func.body);
                 }
             }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    for &param_idx in &method.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            for sym_id in self
+                                .parameter_symbol_ids(param_idx, param.name)
+                                .into_iter()
+                                .flatten()
+                            {
+                                self.ctx.symbol_types.remove(&sym_id);
+                            }
+                            if param.initializer.is_some() {
+                                self.clear_type_cache_recursive(param.initializer);
+                            }
+                        }
+                    }
+                    self.clear_type_cache_recursive(method.body);
+                }
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    for &param_idx in &accessor.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            for sym_id in self
+                                .parameter_symbol_ids(param_idx, param.name)
+                                .into_iter()
+                                .flatten()
+                            {
+                                self.ctx.symbol_types.remove(&sym_id);
+                            }
+                            if param.initializer.is_some() {
+                                self.clear_type_cache_recursive(param.initializer);
+                            }
+                        }
+                    }
+                    self.clear_type_cache_recursive(accessor.body);
+                }
+            }
             k if k == syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.ctx.arena.get_block(node) {
                     for &stmt_idx in &block.statements.nodes {
@@ -1270,6 +1312,14 @@ impl<'a> CheckerState<'a> {
             }
             _ => {}
         }
+    }
+
+    pub(crate) fn clear_contextual_resolution_cache(&mut self) {
+        self.ctx
+            .narrowing_cache
+            .contextual_resolve_cache
+            .borrow_mut()
+            .clear();
     }
 
     pub(crate) fn is_keyword_type_used_as_value_position(&self, idx: NodeIndex) -> bool {

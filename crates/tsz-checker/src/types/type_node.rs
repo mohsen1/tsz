@@ -26,6 +26,8 @@ pub struct TypeNodeChecker<'a, 'ctx> {
     depth: DepthCounter,
 }
 
+type TypeLiteralSignatureScopeUpdates = Vec<(String, Option<TypeId>)>;
+
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
     pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
@@ -985,30 +987,36 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(sig) = self.ctx.arena.get_signature(member) {
                 match member.kind {
                     CALL_SIGNATURE => {
+                        let (type_params, type_param_updates) = self
+                            .push_type_parameters_for_type_literal_signature(&sig.type_parameters);
                         let (params, this_type) = self.extract_params_from_signature(sig);
                         let return_type = self
                             .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
                         call_signatures.push(CallSignature {
-                            type_params: Vec::new(),
+                            type_params,
                             params,
                             this_type,
                             return_type,
                             type_predicate: None,
                             is_method: false,
                         });
+                        self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                     }
                     CONSTRUCT_SIGNATURE => {
+                        let (type_params, type_param_updates) = self
+                            .push_type_parameters_for_type_literal_signature(&sig.type_parameters);
                         let (params, this_type) = self.extract_params_from_signature(sig);
                         let return_type = self
                             .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
                         construct_signatures.push(CallSignature {
-                            type_params: Vec::new(),
+                            type_params,
                             params,
                             this_type,
                             return_type,
                             type_predicate: None,
                             is_method: false,
                         });
+                        self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
                         let Some(name) = self.get_property_name(sig.name) else {
@@ -1017,6 +1025,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let name_atom = self.ctx.types.intern_string(&name);
 
                         if member.kind == METHOD_SIGNATURE {
+                            let (_type_params, type_param_updates) = self
+                                .push_type_parameters_for_type_literal_signature(
+                                    &sig.type_parameters,
+                                );
                             let (params, this_type) = self.extract_params_from_signature(sig);
                             let return_type = self.resolve_return_type_with_params_in_scope(
                                 sig.type_annotation,
@@ -1033,6 +1045,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             };
                             let factory = self.ctx.types.factory();
                             let method_type = factory.function(shape);
+                            self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id: method_type,
@@ -1876,6 +1889,102 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    fn push_type_parameters_for_type_literal_signature(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> (
+        Vec<tsz_solver::TypeParamInfo>,
+        TypeLiteralSignatureScopeUpdates,
+    ) {
+        let Some(list) = type_parameters else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let factory = self.ctx.types.factory();
+        let mut params = Vec::with_capacity(list.nodes.len());
+        let mut updates = Vec::with_capacity(list.nodes.len());
+
+        // First pass: seed names so later constraints can reference earlier
+        // or self-recursive type parameters.
+        for &param_idx in &list.nodes {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .ctx
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+            let atom = self.ctx.types.intern_string(&name);
+            let type_id = factory.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name, previous));
+        }
+
+        // Second pass: refine the visible type-parameter entries with their
+        // constraints/defaults and return the final metadata for the signature.
+        for &param_idx in &list.nodes {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .ctx
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+            let atom = self.ctx.types.intern_string(&name);
+            let constraint =
+                (data.constraint != NodeIndex::NONE).then(|| self.check(data.constraint));
+            let default = if data.default != NodeIndex::NONE {
+                let default_type = self.check(data.default);
+                (default_type != TypeId::ERROR).then_some(default_type)
+            } else {
+                None
+            };
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+            let info = tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default,
+                is_const,
+            };
+            let type_id = factory.type_param(info.clone());
+            self.ctx.type_parameter_scope.insert(name, type_id);
+            params.push(info);
+        }
+
+        (params, updates)
+    }
+
+    fn pop_type_parameters_for_type_literal_signature(
+        &mut self,
+        updates: Vec<(String, Option<TypeId>)>,
+    ) {
+        for (name, previous) in updates.into_iter().rev() {
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+    }
+
     /// Check if an index signature parameter type annotation refers to a type parameter
     /// or literal type (TS1337) rather than a plain invalid type (TS1268).
     fn is_type_param_or_literal_in_index_sig(&self, type_annotation_idx: NodeIndex) -> bool {

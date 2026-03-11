@@ -608,6 +608,62 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn contextual_rest_argument_element_type(&mut self, type_id: TypeId) -> TypeId {
+        let direct = tsz_solver::rest_argument_element_type(self.ctx.types, type_id);
+        if direct != type_id {
+            trace!(
+                type_id = type_id.0,
+                direct = direct.0,
+                type_display = %self.format_type(type_id),
+                direct_display = %self.format_type(direct),
+                "contextual_rest_argument_element_type: direct"
+            );
+            return direct;
+        }
+
+        let resolved = self.evaluate_type_with_resolution(type_id);
+        let resolved_direct = tsz_solver::rest_argument_element_type(self.ctx.types, resolved);
+        if resolved_direct != resolved {
+            trace!(
+                type_id = type_id.0,
+                resolved = resolved.0,
+                resolved_direct = resolved_direct.0,
+                type_display = %self.format_type(type_id),
+                resolved_display = %self.format_type(resolved),
+                resolved_direct_display = %self.format_type(resolved_direct),
+                "contextual_rest_argument_element_type: resolved"
+            );
+            return resolved_direct;
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        let evaluated_direct = tsz_solver::rest_argument_element_type(self.ctx.types, evaluated);
+        if evaluated_direct != evaluated {
+            trace!(
+                type_id = type_id.0,
+                evaluated = evaluated.0,
+                evaluated_direct = evaluated_direct.0,
+                type_display = %self.format_type(type_id),
+                evaluated_display = %self.format_type(evaluated),
+                evaluated_direct_display = %self.format_type(evaluated_direct),
+                "contextual_rest_argument_element_type: env"
+            );
+            return evaluated_direct;
+        }
+
+        trace!(
+            type_id = type_id.0,
+            resolved = resolved.0,
+            evaluated = evaluated.0,
+            type_display = %self.format_type(type_id),
+            resolved_display = %self.format_type(resolved),
+            evaluated_display = %self.format_type(evaluated),
+            "contextual_rest_argument_element_type: unchanged"
+        );
+
+        direct
+    }
+
     pub(crate) fn sanitize_generic_inference_arg_types(
         &mut self,
         args: &[NodeIndex],
@@ -645,7 +701,7 @@ impl<'a> CheckerState<'a> {
                 .map(|param| {
                     let evaluated = self.evaluate_type_with_env(param.type_id);
                     if param.rest {
-                        tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+                        self.contextual_rest_argument_element_type(evaluated)
                     } else {
                         evaluated
                     }
@@ -656,10 +712,7 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
                     let evaluated = self.evaluate_type_with_env(last.type_id);
-                    Some(tsz_solver::rest_argument_element_type(
-                        self.ctx.types,
-                        evaluated,
-                    ))
+                    Some(self.contextual_rest_argument_element_type(evaluated))
                 });
 
             let Some(expected) = expected else {
@@ -902,7 +955,7 @@ impl<'a> CheckerState<'a> {
                     "Round 2: instantiated parameter type"
                 );
                 Some(if is_rest_param {
-                    tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+                    self.contextual_rest_argument_element_type(evaluated)
                 } else {
                     evaluated
                 })
@@ -971,6 +1024,18 @@ impl<'a> CheckerState<'a> {
         };
 
         let prev_context = self.ctx.contextual_type;
+        if let Some(node) = self.ctx.arena.get(arg_idx)
+            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            trace!(
+                arg_idx = arg_idx.0,
+                expected_type = ?expected_type.map(|t| t.0),
+                expected_context_type = ?expected_context_type.map(|t| t.0),
+                expected_type_display = ?expected_type.map(|t| self.format_type(t)),
+                expected_context_type_display = ?expected_context_type.map(|t| self.format_type(t)),
+                "compute_single_call_argument_type: object literal context"
+            );
+        }
         if apply_contextual {
             self.ctx.contextual_type = expected_context_type;
         } else {

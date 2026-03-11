@@ -4,6 +4,7 @@
 //! These functions abstract away the internal `TypeData` representation and provide
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
+use super::traversal::collect_property_name_atoms_for_diagnostics;
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
@@ -241,6 +242,15 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         Some(TypeData::Array(element_type)) => Some(element_type),
         // `readonly T[]` wraps the array in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_element_type(db, inner),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .and_then(|constraint| get_array_element_type(db, constraint)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            (evaluated != type_id)
+                .then(|| get_array_element_type(db, evaluated))
+                .flatten()
+        }
         _ => None,
     }
 }
@@ -260,6 +270,15 @@ pub fn get_tuple_elements(
         }
         // `readonly [A, B]` is wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_tuple_elements(db, inner),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .and_then(|constraint| get_tuple_elements(db, constraint)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            (evaluated != type_id)
+                .then(|| get_tuple_elements(db, evaluated))
+                .flatten()
+        }
         // Intersection of tuples: pick the tuple member with the most specific elements.
         // e.g., `[any] & [1]` should provide tuple context from `[1]` (more specific).
         // If multiple tuple members exist, prefer the one whose elements are not `any`.
@@ -1630,6 +1649,9 @@ fn collect_exact_literal_property_keys_inner(
             let branch = resolve_concrete_conditional_branch(db, &cond)?;
             collect_exact_literal_property_keys_inner(db, branch, keys, visited)
         }
+        Some(TypeData::KeyOf(operand)) => {
+            collect_exact_literal_property_keys_from_keyof_operand(db, operand, keys, visited)
+        }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.and_then(|constraint| {
                 collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
@@ -1651,6 +1673,84 @@ fn collect_exact_literal_property_keys(
     let mut visited = FxHashSet::default();
     collect_exact_literal_property_keys_inner(db, type_id, &mut keys, &mut visited)?;
     Some(keys)
+}
+
+fn collect_exact_literal_property_keys_from_keyof_operand(
+    db: &dyn TypeDatabase,
+    operand: TypeId,
+    keys: &mut FxHashSet<Atom>,
+    visited: &mut FxHashSet<TypeId>,
+) -> Option<()> {
+    let evaluated_operand = crate::evaluation::evaluate::evaluate_type(db, operand);
+    let operand = if evaluated_operand != operand {
+        evaluated_operand
+    } else {
+        operand
+    };
+
+    match db.lookup(operand) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return None;
+            }
+            for prop in &shape.properties {
+                keys.insert(prop.name);
+            }
+            Some(())
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return None;
+            }
+            for prop in &shape.properties {
+                keys.insert(prop.name);
+            }
+            Some(())
+        }
+        Some(TypeData::Union(members)) => {
+            for &member in db.type_list(members).iter() {
+                collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)?;
+            }
+            Some(())
+        }
+        Some(TypeData::Intersection(members)) => {
+            let mut saw_precise_member = false;
+            for &member in db.type_list(members).iter() {
+                if collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)
+                    .is_some()
+                {
+                    saw_precise_member = true;
+                    continue;
+                }
+                if intersection_member_preserves_literal_keys(db, member) {
+                    continue;
+                }
+                return None;
+            }
+            saw_precise_member.then_some(())
+        }
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            info.constraint.and_then(|constraint| {
+                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+            })
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            collect_exact_literal_property_keys_from_keyof_operand(db, inner, keys, visited)
+        }
+        _ => {
+            let atoms = collect_property_name_atoms_for_diagnostics(db, operand, 8);
+            if atoms.is_empty() {
+                None
+            } else {
+                for atom in atoms {
+                    keys.insert(atom);
+                }
+                Some(())
+            }
+        }
+    }
 }
 
 fn intersection_member_preserves_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

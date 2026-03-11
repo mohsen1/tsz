@@ -11,6 +11,32 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn report_unknown_empty_binding_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) {
+        if parent_type != TypeId::UNKNOWN {
+            return;
+        }
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        if !pattern_data.elements.nodes.is_empty() {
+            return;
+        }
+
+        self.error_at_node(
+            pattern_idx,
+            "Object is of type 'unknown'.",
+            crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+        );
+    }
+
     fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
             return false;
@@ -112,6 +138,8 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) {
+        self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
+
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -744,17 +772,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if parent_type == TypeId::UNKNOWN {
-            if let Some(prop_name_str) = property_name.as_deref() {
-                let error_node = if element_data.property_name.is_some() {
-                    element_data.property_name
-                } else if element_data.name.is_some() {
-                    element_data.name
-                } else {
-                    NodeIndex::NONE
-                };
-                if element_data.initializer.is_none() {
-                    self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
-                }
+            let error_node = if element_data.property_name.is_some() {
+                element_data.property_name
+            } else if element_data.name.is_some() {
+                element_data.name
+            } else {
+                NodeIndex::NONE
+            };
+            if element_data.initializer.is_none()
+                && let Some(ref prop_name_str) = property_name
+            {
+                self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+            } else if element_data.initializer.is_none() {
+                self.error_at_node(
+                    error_node,
+                    "Object is of type 'unknown'.",
+                    crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                );
             }
             return TypeId::UNKNOWN;
         }

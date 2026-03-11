@@ -1633,9 +1633,23 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            let (_type_params, type_param_updates) =
+                                self.push_type_parameters(&sig.type_parameters);
+                            if let Some(params) = &sig.parameters {
+                                for &param_idx in &params.nodes {
+                                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                        && let Some(param) =
+                                            self.ctx.arena.get_parameter(param_node)
+                                        && param.type_annotation != NodeIndex::NONE
+                                    {
+                                        self.check_type_node(param.type_annotation);
+                                    }
+                                }
+                            }
                             if sig.type_annotation != NodeIndex::NONE {
                                 self.check_type_node(sig.type_annotation);
                             }
+                            self.pop_type_parameters(type_param_updates);
                             continue;
                         }
                         if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
