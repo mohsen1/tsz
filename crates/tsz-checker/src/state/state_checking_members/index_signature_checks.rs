@@ -167,25 +167,27 @@ impl<'a> CheckerState<'a> {
         // Type references: check if they resolve to type parameters
         if type_node_kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_node) = self.ctx.arena.get(type_annotation_idx)
-                && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
-                    // First try symbol resolution (works for binder-registered type params)
-                    if let TypeSymbolResolution::Type(sym_id) =
-                        self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                            && (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
-                                return true;
-                            }
-                    // Fallback: check the checker's type parameter stack (covers type params
-                    // from type aliases/generics that may not be in the binder's symbol table)
-                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && self
-                            .lookup_type_parameter(ident.escaped_text.as_str())
-                            .is_some()
-                        {
-                            return true;
-                        }
-                }
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+        {
+            // First try symbol resolution (works for binder-registered type params)
+            if let TypeSymbolResolution::Type(sym_id) =
+                self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0
+            {
+                return true;
+            }
+            // Fallback: check the checker's type parameter stack (covers type params
+            // from type aliases/generics that may not be in the binder's symbol table)
+            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && self
+                    .lookup_type_parameter(ident.escaped_text.as_str())
+                    .is_some()
+            {
+                return true;
+            }
+        }
 
         false
     }

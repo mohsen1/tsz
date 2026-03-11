@@ -877,7 +877,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol = self.get_cross_file_symbol(parent_sym)?;
-        if !has_js_ctor_brand && (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0
+        if !has_js_ctor_brand
+            && (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0
         {
             return None;
         }

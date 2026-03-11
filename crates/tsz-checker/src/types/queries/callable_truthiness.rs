@@ -111,13 +111,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if check_enum_members
-            && let Some(condition_result) = self.enum_member_condition_result(node_idx, ty) {
-                self.error_at_node_msg(
-                    node_idx,
-                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
-                    &[condition_result],
-                );
-            }
+            && let Some(condition_result) = self.enum_member_condition_result(node_idx, ty)
+        {
+            self.error_at_node_msg(
+                node_idx,
+                diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                &[condition_result],
+            );
+        }
 
         match self.get_syntactic_truthy_semantics(node_idx) {
             SyntacticTruthiness::AlwaysTruthy => {
