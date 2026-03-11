@@ -127,11 +127,22 @@ impl ParserState {
     pub(crate) fn parse_source_file_statements(&mut self) -> NodeList {
         let mut statements = Vec::new();
         let mut skip_after_binary_payload = false;
+        let mut previous_statement_was_block = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             let pos_before = self.token_pos();
             if skip_after_binary_payload {
                 break;
+            }
+
+            if previous_statement_was_block && self.is_token(SyntaxKind::EqualsToken) {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+                );
+                self.next_token();
+                previous_statement_was_block = false;
+                continue;
             }
 
             // Handle Unknown tokens (invalid characters) - must be checked FIRST
@@ -145,6 +156,7 @@ impl ParserState {
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.next_token();
+                previous_statement_was_block = false;
                 continue;
             }
 
@@ -159,6 +171,7 @@ impl ParserState {
                     );
                 }
                 self.next_token();
+                previous_statement_was_block = false;
                 // If the token after a stray top-level `}` already starts an expression,
                 // keep parsing there instead of resyncing past it. This preserves
                 // follow-up recovery like `from "./foo"` -> TS1434 in malformed
@@ -190,6 +203,7 @@ impl ParserState {
                     }
 
                     skip_after_binary_payload = true;
+                    previous_statement_was_block = false;
                     continue;
                 }
                 self.scanner.restore_state(snapshot);
@@ -256,7 +270,12 @@ impl ParserState {
                     !self.is_statement_start()
                 };
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
+                previous_statement_was_block = false;
             } else {
+                previous_statement_was_block = self
+                    .arena
+                    .get(stmt)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK);
                 statements.push(stmt);
             }
 
@@ -276,11 +295,22 @@ impl ParserState {
     /// Uses resynchronization to recover from errors and continue parsing.
     pub(crate) fn parse_statements(&mut self) -> NodeList {
         let mut statements = Vec::new();
+        let mut previous_statement_was_block = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken)
             && !self.is_token(SyntaxKind::CloseBraceToken)
         {
             let pos_before = self.token_pos();
+
+            if previous_statement_was_block && self.is_token(SyntaxKind::EqualsToken) {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected. This '=' follows a block of statements, so if you intended to write a destructuring assignment, you might need to wrap the whole assignment in parentheses.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
+                );
+                self.next_token();
+                previous_statement_was_block = false;
+                continue;
+            }
 
             // Error recovery: when inside a nested block within a class body (e.g.,
             // a method body with an unclosed `{`), terminate the block if we encounter
@@ -319,6 +349,7 @@ impl ParserState {
                     diagnostic_codes::INVALID_CHARACTER,
                 );
                 self.resync_after_error_with_statement_starts(false);
+                previous_statement_was_block = false;
                 continue;
             }
 
@@ -345,7 +376,12 @@ impl ParserState {
                     !self.is_statement_start()
                 };
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
+                previous_statement_was_block = false;
             } else {
+                previous_statement_was_block = self
+                    .arena
+                    .get(stmt)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK);
                 statements.push(stmt);
             }
 
