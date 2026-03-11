@@ -7099,11 +7099,11 @@ const val = obj.x;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // TODO: Should NOT emit 4111 when union member has explicit property 'x'.
-    // Currently incorrectly emits TS4111 for mixed union with index signature.
+    // Union member has explicit property 'x', so TS4111 should NOT fire.
+    // (Previously incorrectly emitted TS4111 for mixed union with index signature.)
     assert!(
-        codes.contains(&4111),
-        "Expected TS4111 (known incorrect behavior for mixed union), got: {codes:?}"
+        !codes.contains(&4111),
+        "Should not emit TS4111 when union member has explicit property 'x', got: {codes:?}"
     );
 }
 
