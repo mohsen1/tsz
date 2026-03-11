@@ -1304,120 +1304,110 @@ impl<'a> CheckerState<'a> {
                 // Proceed with the search
             }
         }
+        let result = (|| {
+            let class_node = self.ctx.arena.get(class_idx)?;
+            let class_data = self.ctx.arena.get_class(class_node)?;
 
-        let class_node = self.ctx.arena.get(class_idx)?;
-        let class_data = self.ctx.arena.get_class(class_node)?;
+            // Search direct members
+            for &member_idx in &class_data.members.nodes {
+                if let Some(info) = self.extract_class_member_info(member_idx, skip_private)
+                    && info.name == target_name
+                    && info.is_static == target_is_static
+                {
+                    return Some(info);
+                }
 
-        // Search direct members
-        for &member_idx in &class_data.members.nodes {
-            if let Some(info) = self.extract_class_member_info(member_idx, skip_private)
-                && info.name == target_name
-                && info.is_static == target_is_static
-            {
-                // Found it! Leave guard before returning
-                guard.leave(class_idx);
-                return Some(info);
-            }
-
-            if !target_is_static
-                && let Some(member_node) = self.ctx.arena.get(member_idx)
-                && member_node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR
-                && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
-            {
-                for &param_idx in &ctor.parameters.nodes {
-                    if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                        && self.has_parameter_property_modifier(&param.modifiers)
-                        && let Some(name) = self.get_property_name(param.name)
-                        && name == target_name
-                    {
-                        if skip_private && self.has_private_modifier(&param.modifiers) {
-                            continue;
+                if !target_is_static
+                    && let Some(member_node) = self.ctx.arena.get(member_idx)
+                    && member_node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR
+                    && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
+                {
+                    for &param_idx in &ctor.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && self.has_parameter_property_modifier(&param.modifiers)
+                            && let Some(name) = self.get_property_name(param.name)
+                            && name == target_name
+                        {
+                            if skip_private && self.has_private_modifier(&param.modifiers) {
+                                continue;
+                            }
+                            let visibility = if self.has_private_modifier(&param.modifiers) {
+                                MemberVisibility::Private
+                            } else if self.has_protected_modifier(&param.modifiers) {
+                                MemberVisibility::Protected
+                            } else {
+                                MemberVisibility::Public
+                            };
+                            let prop_type = if param.type_annotation.is_some() {
+                                self.get_type_from_type_node(param.type_annotation)
+                            } else {
+                                tsz_solver::TypeId::ANY
+                            };
+                            let info = ClassMemberInfo {
+                                name,
+                                type_id: prop_type,
+                                name_idx: param.name,
+                                visibility,
+                                is_method: false,
+                                is_static: false,
+                                is_accessor: false,
+                                is_abstract: false,
+                                has_override: self.has_override_modifier(&param.modifiers)
+                                    || self.has_jsdoc_override_tag(param_idx),
+                                is_jsdoc_override: !self.has_override_modifier(&param.modifiers)
+                                    && self.has_jsdoc_override_tag(param_idx),
+                                has_dynamic_name: false,
+                                has_computed_non_literal_name: false,
+                            };
+                            return Some(info);
                         }
-                        let visibility = if self.has_private_modifier(&param.modifiers) {
-                            MemberVisibility::Private
-                        } else if self.has_protected_modifier(&param.modifiers) {
-                            MemberVisibility::Protected
-                        } else {
-                            MemberVisibility::Public
-                        };
-                        let prop_type = if param.type_annotation.is_some() {
-                            self.get_type_from_type_node(param.type_annotation)
-                        } else {
-                            tsz_solver::TypeId::ANY
-                        };
-                        let info = ClassMemberInfo {
-                            name,
-                            type_id: prop_type,
-                            name_idx: param.name,
-                            visibility,
-                            is_method: false,
-                            is_static: false,
-                            is_accessor: false,
-                            is_abstract: false,
-                            has_override: self.has_override_modifier(&param.modifiers)
-                                || self.has_jsdoc_override_tag(param_idx),
-                            is_jsdoc_override: !self.has_override_modifier(&param.modifiers)
-                                && self.has_jsdoc_override_tag(param_idx),
-                            has_dynamic_name: false,
-                            has_computed_non_literal_name: false,
-                        };
-                        guard.leave(class_idx);
-                        return Some(info);
                     }
                 }
             }
-        }
 
-        // Walk up to base class
-        let heritage_clauses = match class_data.heritage_clauses.as_ref() {
-            Some(clauses) => clauses,
-            None => {
-                guard.leave(class_idx);
-                return None;
-            }
-        };
+            // Walk up to base class
+            let heritage_clauses = class_data.heritage_clauses.as_ref()?;
 
-        for &clause_idx in &heritage_clauses.nodes {
-            let clause_node = self.ctx.arena.get(clause_idx)?;
-            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
-            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-            let type_idx = *heritage.types.nodes.first()?;
-            let type_node = self.ctx.arena.get(type_idx)?;
-            let expr_idx =
-                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                    expr_type_args.expression
+            for &clause_idx in &heritage_clauses.nodes {
+                let clause_node = self.ctx.arena.get(clause_idx)?;
+                let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let type_idx = *heritage.types.nodes.first()?;
+                let type_node = self.ctx.arena.get(type_idx)?;
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+                let expr_node = self.ctx.arena.get(expr_idx)?;
+                let ident = self.ctx.arena.get_identifier(expr_node)?;
+                let base_name = &ident.escaped_text;
+                let sym_id = self.ctx.binder.file_locals.get(base_name)?;
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                let base_idx = if symbol.value_declaration.is_some() {
+                    symbol.value_declaration
                 } else {
-                    type_idx
+                    *symbol.declarations.first()?
                 };
-            let expr_node = self.ctx.arena.get(expr_idx)?;
-            let ident = self.ctx.arena.get_identifier(expr_node)?;
-            let base_name = &ident.escaped_text;
-            let sym_id = self.ctx.binder.file_locals.get(base_name)?;
-            let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            let base_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else {
-                *symbol.declarations.first()?
-            };
 
-            let result = self.find_member_in_class_chain_impl(
-                base_idx,
-                target_name,
-                target_is_static,
-                skip_private,
-                guard,
-            );
+                return self.find_member_in_class_chain_impl(
+                    base_idx,
+                    target_name,
+                    target_is_static,
+                    skip_private,
+                    guard,
+                );
+            }
 
-            // Always leave the guard before returning
-            guard.leave(class_idx);
-            return result;
-        }
+            None
+        })();
 
         guard.leave(class_idx);
-        None
+        result
     }
 
     pub(crate) const fn class_member_visibility_conflicts(
