@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 #[test]
 fn test_parse_single_file() {
@@ -265,6 +266,44 @@ fn test_merge_symbol_id_remapping() {
     // Both should be resolvable from global arena
     assert!(program.symbols.get(x_id).is_some());
     assert!(program.symbols.get(y_id).is_some());
+}
+
+#[test]
+fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let lib_dir = temp_dir.path();
+
+    fs::write(
+        lib_dir.join("lib.esnext.d.ts"),
+        "/// <reference lib=\"es2023.collection\" />\ninterface Root {}\n",
+    )
+    .expect("write esnext");
+    fs::write(
+        lib_dir.join("lib.es2023.collection.d.ts"),
+        "/// <reference lib=\"es5\" />\ninterface WeakKeyTypes { symbol: symbol; }\n",
+    )
+    .expect("write es2023.collection");
+    fs::write(
+        lib_dir.join("lib.es5.d.ts"),
+        "interface WeakKeyTypes { object: object; }\ninterface Symbol {}\n",
+    )
+    .expect("write es5");
+
+    let root = lib_dir.join("lib.esnext.d.ts");
+    let loaded = load_lib_files_for_binding_strict(&[root.as_path()]).expect("load libs");
+    let names: Vec<String> = loaded.iter().map(|lib| lib.file_name.clone()).collect();
+
+    assert_eq!(
+        names,
+        vec![
+            lib_dir.join("lib.es5.d.ts").to_string_lossy().to_string(),
+            lib_dir
+                .join("lib.es2023.collection.d.ts")
+                .to_string_lossy()
+                .to_string(),
+            lib_dir.join("lib.esnext.d.ts").to_string_lossy().to_string(),
+        ]
+    );
 }
 
 #[test]
