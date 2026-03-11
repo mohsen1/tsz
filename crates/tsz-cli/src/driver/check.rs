@@ -10,19 +10,27 @@ fn is_declaration_file(name: &str) -> bool {
 
 /// Load lib.d.ts files and create `LibContext` objects for the checker.
 ///
-/// This function reuses already-loaded lib files from the binding phase, avoiding a second
-/// parse/bind pass during checker setup.
+/// The binding pipeline mutates per-file binder state while injecting lib symbols into the
+/// unified program. Reusing those same `LibFile` binders as checker lib contexts leaks that
+/// binding-phase state into lib type resolution and can corrupt structural relations between
+/// recursive lib types like `Promise<T>` and `PromiseLike<T>`.
+///
+/// Build a fresh checker-facing lib context set from the same on-disk lib files so program
+/// binding and checker lib resolution stay isolated.
 pub(super) fn load_lib_files_for_contexts(lib_files: &[Arc<LibFile>]) -> Vec<LibContext> {
     if lib_files.is_empty() {
         return Vec::new();
     }
 
-    // Keep the original lib binders/arenas for checker-side lookups. The source-file
-    // binder already merged lib symbols into a canonical SymbolId space during binding.
-    // Building a second independently merged lib binder here creates a different
-    // SymbolId universe for the same lib names, which breaks merged-lib lookup paths
-    // that mix source-binder SymbolIds with checker lib-context binders.
-    lib_files
+    let lib_paths: Vec<PathBuf> = lib_files
+        .iter()
+        .map(|lib| PathBuf::from(&lib.file_name))
+        .collect();
+    let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+    let fresh_lib_files = parallel::load_lib_files_for_binding_strict(&lib_path_refs)
+        .expect("failed to reload lib files for checker contexts");
+
+    fresh_lib_files
         .iter()
         .map(|lib| LibContext {
             arena: Arc::clone(&lib.arena),
@@ -1171,6 +1179,9 @@ pub(super) fn check_file_for_parallel<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args::CliArgs;
+    use std::path::PathBuf;
+    use tsz_common::common::ModuleKind;
 
     fn collect_test_diagnostics(files: &[(&str, &str)]) -> Vec<Diagnostic> {
         let bind_results: Vec<_> = files
@@ -1192,6 +1203,97 @@ mod tests {
             &type_cache_output,
             false,
         )
+    }
+
+    fn default_cli_args_for_test() -> CliArgs {
+        clap::Parser::try_parse_from(["tsz"]).expect("default args should parse")
+    }
+
+    fn resolved_options_for_es2015_strict_test() -> ResolvedCompilerOptions {
+        let mut args = default_cli_args_for_test();
+        args.ignore_config = true;
+        args.strict = true;
+        args.target = Some(crate::args::Target::Es2015);
+
+        let mut resolved = crate::config::resolve_compiler_options(None)
+            .expect("resolve default compiler options");
+        crate::driver::apply_cli_overrides(&mut resolved, &args).expect("apply cli overrides");
+        if matches!(resolved.printer.module, ModuleKind::None) {
+            resolved.printer.module = ModuleKind::ES2015;
+            resolved.checker.module = ModuleKind::ES2015;
+        }
+        resolved
+    }
+
+    #[test]
+    fn test_compile_inner_program_build_promise_is_assignable_to_promise_like() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"
+declare const p: Promise<number>;
+const q: PromiseLike<number> = p;
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path.clone()];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        );
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected compile-inner program build Promise<T> -> PromiseLike<T> assignability, got: {diagnostics:?}"
+        );
     }
 
     #[test]
