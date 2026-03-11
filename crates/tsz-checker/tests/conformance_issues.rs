@@ -261,6 +261,62 @@ function partial(x: Basic) {
 }
 
 #[test]
+fn test_switch_case_dispatch_excludes_prior_matching_cases() {
+    let source = r#"
+function assertNever(x: never) { return x; }
+
+function f(x: string | number | boolean) {
+    switch (typeof x) {
+        case "string": return;
+        case "number": return;
+        case "boolean": return;
+        case "number": return assertNever(x);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected duplicate switch case to see never after prior matching cases. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_typeof_switch_default_excludes_object_constrained_type_params() {
+    let source = r#"
+type L = (x: number) => string;
+type R = { x: string, y: number };
+
+function assertNever(x: never) { return x; }
+
+function f<X extends L, Y extends R>(xy: X | Y) {
+    switch (typeof xy) {
+        case "function": return;
+        case "object": return;
+        default: return assertNever(xy);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected object-constrained type parameters to be excluded in switch(typeof) default. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_mixed_constructor_unions_still_report_ts2511() {
     let source = r#"
 class ConcreteA {}

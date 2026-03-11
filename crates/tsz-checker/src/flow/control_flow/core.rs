@@ -1438,9 +1438,11 @@ impl<'a> FlowAnalyzer<'a> {
                 reference,
             )
         } else {
-            self.narrow_by_switch_clause(
+            self.narrow_by_switch_case_clause(
                 pre_switch_type,
                 switch_data.expression,
+                switch_data.case_block,
+                clause_idx,
                 clause.expression,
                 reference,
                 &narrowing,

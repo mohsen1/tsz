@@ -103,6 +103,118 @@ impl<'a> FlowAnalyzer<'a> {
         self.narrow_by_binary_expr(type_id, &binary, target, true, narrowing, FlowNodeId::NONE)
     }
 
+    pub(crate) fn narrow_by_switch_case_clause(
+        &self,
+        type_id: TypeId,
+        switch_expr: NodeIndex,
+        case_block: NodeIndex,
+        clause_idx: NodeIndex,
+        case_expr: NodeIndex,
+        target: NodeIndex,
+        narrowing: &NarrowingContext,
+    ) -> TypeId {
+        let Some(case_block_node) = self.arena.get(case_block) else {
+            return self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing);
+        };
+        let Some(case_block_data) = self.arena.get_block(case_block_node) else {
+            return self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing);
+        };
+
+        if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
+            && self.is_matching_reference(typeof_operand, target)
+        {
+            let mut narrowed = type_id;
+            let mut saw_current = false;
+
+            for &idx in &case_block_data.statements.nodes {
+                let Some(clause_node) = self.arena.get(idx) else {
+                    continue;
+                };
+                let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                    continue;
+                };
+
+                if idx == clause_idx {
+                    saw_current = true;
+                    if clause.expression.is_none() {
+                        break;
+                    }
+                    let Some(typeof_result) = self.literal_string_from_node(case_expr) else {
+                        break;
+                    };
+                    return narrowing.narrow_by_typeof(narrowed, typeof_result);
+                }
+
+                if clause.expression.is_none() {
+                    continue;
+                }
+
+                let Some(typeof_result) = self.literal_string_from_node(clause.expression) else {
+                    break;
+                };
+
+                narrowed = narrowing.narrow_by_typeof_negation(narrowed, typeof_result);
+                if narrowed == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+            }
+
+            if saw_current {
+                return narrowed;
+            }
+        }
+
+        let mut narrowed = type_id;
+        let mut saw_current = false;
+
+        for &idx in &case_block_data.statements.nodes {
+            let Some(clause_node) = self.arena.get(idx) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                continue;
+            };
+
+            if idx == clause_idx {
+                saw_current = true;
+                if !clause.expression.is_none() {
+                    narrowed = self.narrow_by_switch_clause(
+                        narrowed,
+                        switch_expr,
+                        case_expr,
+                        target,
+                        narrowing,
+                    );
+                }
+                break;
+            }
+
+            if clause.expression.is_none() {
+                continue;
+            }
+
+            let binary = BinaryExprData {
+                left: switch_expr,
+                operator_token: SyntaxKind::EqualsEqualsEqualsToken as u16,
+                right: clause.expression,
+            };
+            narrowed = self.narrow_by_binary_expr(
+                narrowed,
+                &binary,
+                target,
+                false,
+                narrowing,
+                FlowNodeId::NONE,
+            );
+        }
+
+        if saw_current {
+            narrowed
+        } else {
+            self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing)
+        }
+    }
+
     pub(crate) fn narrow_by_default_switch_clause(
         &self,
         type_id: TypeId,

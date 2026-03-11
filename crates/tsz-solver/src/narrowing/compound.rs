@@ -69,8 +69,12 @@ impl<'a> NarrowingContext<'a> {
     /// Keeps primitives, undefined, void, and function types.
     /// Excludes object types (objects, arrays, tuples, class instances).
     /// Note: null should already be excluded before calling this.
-    fn narrow_excluding_typeof_object(&self, source_type: TypeId) -> TypeId {
+    pub(crate) fn narrow_excluding_typeof_object(&self, source_type: TypeId) -> TypeId {
         let resolved = self.resolve_type(source_type);
+
+        if let Some(narrowed) = self.narrow_type_param_excluding_typeof_object(resolved) {
+            return narrowed;
+        }
 
         // For non-union types, check if it's an object type
         let Some(members) = union_list_id(self.db, resolved) else {
