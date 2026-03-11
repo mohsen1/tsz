@@ -817,7 +817,22 @@ impl<'a> CheckerState<'a> {
                         &type_args,
                     );
 
-                    let raw_interface_type = self.get_type_of_symbol(sym_id);
+                    let raw_interface_type = if is_class {
+                        let mut instance_type = None;
+                        for &decl_idx in &symbol.declarations {
+                            if let Some(node) = self.ctx.arena.get(decl_idx)
+                                && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                                && let Some(target_class_data) = self.ctx.arena.get_class(node)
+                            {
+                                instance_type =
+                                    Some(self.get_class_instance_type(decl_idx, target_class_data));
+                                break;
+                            }
+                        }
+                        instance_type.unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    };
                     let interface_type = tsz_solver::instantiate_type(
                         self.ctx.types,
                         raw_interface_type,
