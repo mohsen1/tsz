@@ -725,6 +725,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             })
             .collect();
 
+        if source_params_unpacked.len() == target_params_unpacked.len()
+            && source_params_unpacked
+                .iter()
+                .zip(target_params_unpacked.iter())
+                .all(|(source_param, target_param)| {
+                    source_param.type_id == target_param.type_id
+                        && source_param.optional == target_param.optional
+                        && source_param.rest == target_param.rest
+                })
+        {
+            return SubtypeResult::True;
+        }
+
         // Handle union-of-tuple rest parameters in target.
         // When target has `...args: [A] | [B, C] | [D]`, try each union member separately.
         // Source matches if its params are compatible with ANY of the union member tuple shapes.
@@ -753,6 +766,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // Build full param list for this variant
                     let mut variant_params: Vec<ParamInfo> = prefix_params.to_vec();
                     variant_params.extend(member_unpacked);
+
+                    let source_variant_has_rest =
+                        source_params_unpacked.last().is_some_and(|p| p.rest);
+                    if !source_variant_has_rest {
+                        let exact_variant_match = source_params_unpacked.len()
+                            == variant_params.len()
+                            && source_params_unpacked
+                                .iter()
+                                .zip(variant_params.iter())
+                                .all(|(source_param, target_param)| {
+                                    source_param.type_id == target_param.type_id
+                                        && source_param.optional == target_param.optional
+                                        && source_param.rest == target_param.rest
+                                });
+                        if exact_variant_match {
+                            return SubtypeResult::True;
+                        }
+                        continue;
+                    }
 
                     // Try the comparison with this variant
                     if self

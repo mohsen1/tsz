@@ -7,7 +7,7 @@ use crate::diagnostics::{
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeData, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn elaboration_source_expression_type(&mut self, expr_idx: NodeIndex) -> TypeId {
@@ -108,6 +108,12 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display) =
+            self.contextual_function_argument_display(arg_type, param_type, arg_idx)
+        {
+            return display;
+        }
+
         let display_type = if param_type == TypeId::NEVER {
             let direct_arg_type = self.get_type_of_node(arg_idx);
             if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
@@ -119,6 +125,170 @@ impl<'a> CheckerState<'a> {
             tsz_solver::widening::widen_type(self.ctx.types, arg_type)
         };
         self.format_type_for_assignability_message(display_type)
+    }
+
+    fn contextual_function_argument_display(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        let func = self.ctx.arena.get_function(node)?;
+        if !matches!(
+            node.kind,
+            k if k == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                || k == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+        ) || !tsz_solver::type_queries::is_callable_type(self.ctx.types, arg_type)
+        {
+            return None;
+        }
+
+        let shape = tsz_solver::type_queries::get_function_shape(self.ctx.types, arg_type)?;
+        let expected = self.evaluate_application_type(param_type);
+        let ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, expected);
+
+        let mut rendered = Vec::with_capacity(func.parameters.nodes.len());
+        for (index, &param_idx) in func.parameters.nodes.iter().enumerate() {
+            let param_node = self.ctx.arena.get(param_idx)?;
+            let param = self.ctx.arena.get_parameter(param_node)?;
+            let name = if let Some(name_node) = self.ctx.arena.get(param.name) {
+                if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
+                    name_data.escaped_text.clone()
+                } else if matches!(
+                    name_node.kind,
+                    k if k == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || k == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN
+                ) {
+                    self.binding_name_for_signature_display(param.name)
+                        .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
+                        .unwrap_or_else(|| self.parameter_name_for_error(param.name))
+                } else {
+                    self.parameter_name_for_error(param.name)
+                }
+            } else {
+                "_".to_string()
+            };
+
+            let optional = param.question_token || param.initializer.is_some();
+            let rest = param.dot_dot_dot_token;
+
+            let type_display = if param.type_annotation.is_some() {
+                let annotated_type = self.get_type_from_type_node(param.type_annotation);
+                self.format_type_for_assignability_message(annotated_type)
+            } else if let Some(display) =
+                self.contextual_rest_union_parameter_display(expected, index)
+            {
+                display
+            } else {
+                let type_id = if rest {
+                    ctx.get_rest_parameter_type(index)
+                } else {
+                    ctx.get_parameter_type(index)
+                }
+                .or_else(|| shape.params.get(index).map(|param| param.type_id))
+                .unwrap_or(TypeId::ANY);
+                self.format_type_for_assignability_message(type_id)
+            };
+
+            let type_display = if optional && !type_display.contains("undefined") {
+                format!("{type_display} | undefined")
+            } else {
+                type_display
+            };
+
+            rendered.push(format!(
+                "{}{}{}: {}",
+                if rest { "..." } else { "" },
+                name,
+                if optional { "?" } else { "" },
+                type_display
+            ));
+        }
+
+        Some(format!(
+            "({}) => {}",
+            rendered.join(", "),
+            self.format_type_for_assignability_message(shape.return_type)
+        ))
+    }
+
+    fn contextual_rest_union_parameter_display(
+        &mut self,
+        expected: TypeId,
+        index: usize,
+    ) -> Option<String> {
+        let params = if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, expected)
+        {
+            shape.params.clone()
+        } else {
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, expected)
+                .and_then(|shape| shape.call_signatures.first().cloned())
+                .map(|sig| sig.params)?
+        };
+
+        let last_param = params.last()?;
+        if !last_param.rest {
+            return None;
+        }
+        let rest_start = params.len().saturating_sub(1);
+        if index < rest_start {
+            return None;
+        }
+
+        self.rest_union_member_display(last_param.type_id, index - rest_start)
+    }
+
+    fn rest_union_member_display(
+        &mut self,
+        rest_type: TypeId,
+        rest_index: usize,
+    ) -> Option<String> {
+        match self.ctx.types.lookup(rest_type) {
+            Some(TypeData::ReadonlyType(inner)) => {
+                self.rest_union_member_display(inner, rest_index)
+            }
+            Some(TypeData::Union(members)) => {
+                let members = self.ctx.types.type_list(members);
+                let displays: Vec<String> = members
+                    .iter()
+                    .rev()
+                    .filter_map(|&member| self.rest_tuple_member_display(member, rest_index))
+                    .collect();
+                let is_numeric_literal_union = displays.len() > 1
+                    && displays
+                        .iter()
+                        .all(|display| display.parse::<f64>().is_ok());
+                if !is_numeric_literal_union {
+                    return None;
+                }
+                Some(displays.join(" | "))
+            }
+            _ => None,
+        }
+    }
+
+    fn rest_tuple_member_display(&mut self, member: TypeId, rest_index: usize) -> Option<String> {
+        match self.ctx.types.lookup(member) {
+            Some(TypeData::ReadonlyType(inner)) => {
+                self.rest_tuple_member_display(inner, rest_index)
+            }
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.ctx.types.tuple_list(elements);
+                if let Some(element) = elements.get(rest_index) {
+                    return Some(self.format_type_for_assignability_message(element.type_id));
+                }
+                let last = elements.last()?;
+                last.rest
+                    .then(|| self.format_type_for_assignability_message(last.type_id))
+            }
+            Some(TypeData::Array(element)) => {
+                Some(self.format_type_for_assignability_message(element))
+            }
+            _ => None,
+        }
     }
 
     fn format_call_parameter_type_for_diagnostic(
