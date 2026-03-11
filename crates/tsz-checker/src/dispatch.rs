@@ -1959,4 +1959,58 @@ let b = {
             ts2304.iter().map(|d| &d.message_text).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn class_namespace_merge_same_file_no_ts2351() {
+        // Same-file class+namespace merge: `new A()` inside `namespace A` should
+        // resolve to the class constructor, not produce TS2351.
+        let diags = check_source_diagnostics(
+            r#"
+class A {
+    id: string;
+}
+namespace A {
+    export var Instance = new A();
+}
+"#,
+        );
+        let ts2351: Vec<_> = diags.iter().filter(|d| d.code == 2351).collect();
+        assert_eq!(
+            ts2351.len(),
+            0,
+            "Expected no TS2351 for class+namespace merge, got: {:?}",
+            ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn dotted_namespace_class_merge_same_file_no_ts2351() {
+        // Dotted namespace `X.Y` with class+namespace merge in same file.
+        let diags = check_source_diagnostics(
+            r#"
+namespace X.Y {
+    export class Point {
+        constructor(x: number, y: number) {
+            this.x = x;
+            this.y = y;
+        }
+        x: number;
+        y: number;
+    }
+}
+namespace X.Y {
+    export namespace Point {
+        export var Origin = new Point(0, 0);
+    }
+}
+"#,
+        );
+        let ts2351: Vec<_> = diags.iter().filter(|d| d.code == 2351).collect();
+        assert_eq!(
+            ts2351.len(),
+            0,
+            "Expected no TS2351 for dotted namespace class merge, got: {:?}",
+            ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        );
+    }
 }

@@ -336,6 +336,17 @@ Example: deleteExpressionMustBeOptional.ts
   `memberVariableDeclarations1`, `classPropertyErrorOnNameOnly`, `tsxAttributeErrors`,
   `tsxAttributeResolution1/9/10/14`).
 
+- ~~False positive TS2351 in cross-file class+namespace declaration merge~~ **FIXED** (2026-03-11)
+  Fix: `new_target_is_class_symbol` in `complex.rs` only checked the current binder
+  when deciding whether to suppress TS2351 for circular class resolution. In multi-file
+  mode with cross-file class+namespace merges (e.g., `class Point` in file A, `namespace Point`
+  in file B), the identifier resolved to the namespace symbol (no CLASS flag), causing a
+  false TS2351. The fix walks up enclosing namespace declarations and searches all binders'
+  namespace exports for a CLASS symbol with the same name. Fixes 2 conformance tests
+  (`ClassAndModuleWithSameNameAndCommonRoot`, `ClassAndModuleWithSameNameAndCommonRootES6`)
+  and removes false TS2351 from `ModuleAndClassWithSameNameAndCommonRoot` (still fails
+  for other reasons).
+
 - ~~Missing TS2300 for cross-file TYPE_ALIAS + INTERFACE conflicts~~ **FIXED** (2026-03-11)
   Fix: `can_merge_symbols_cross_file` in `parallel.rs` was missing the TYPE_ALIAS +
   INTERFACE merge case. When `type A = {}` in one file conflicts with `interface A {}`
