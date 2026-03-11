@@ -256,16 +256,16 @@ impl<'a> CheckerState<'a> {
         if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(left_access) = arena.get_access_expr(left_node)
         {
-            let direct_exports_name = arena.get_identifier_at(left_access.expression).and_then(
-                |ident| {
+            let direct_exports_name = arena
+                .get_identifier_at(left_access.expression)
+                .and_then(|ident| {
                     (ident.escaped_text == "exports").then(|| {
                         arena
                             .get_identifier_at(left_access.name_or_argument)
                             .map(|name| name.escaped_text.to_string())
                     })
-                },
-            )
-            .flatten();
+                })
+                .flatten();
             let module_exports_name = arena.get(left_access.expression).and_then(|target_node| {
                 if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                     return None;
