@@ -454,11 +454,29 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Enum objects (e.g. `E` or `Ns.E`) are values, not property-name types.
+        // Enum members remain valid because their resolved symbols are enum members,
+        // not the enum container itself.
+        let enum_object_ref = self
+            .resolve_identifier_symbol(computed.expression)
+            .or_else(|| self.resolve_qualified_symbol(computed.expression))
+            .map(|sym_id| {
+                self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                    .unwrap_or(sym_id)
+            })
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| {
+                (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+                    && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+            });
+
         // TS2464: type must be string, number, symbol, or any (including literals).
         // This check ignores strictNullChecks: undefined/null always fail.
         // Suppress this diagnostic in files with parse errors to avoid noise (e.g., [await] without operand).
         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-        if !self.has_parse_errors() && !evaluator.is_valid_computed_property_name_type(expr_type) {
+        if !self.has_parse_errors()
+            && (enum_object_ref || !evaluator.is_valid_computed_property_name_type(expr_type))
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 name_idx,
