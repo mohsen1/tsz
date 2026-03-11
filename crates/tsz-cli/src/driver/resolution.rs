@@ -1063,20 +1063,10 @@ fn expand_module_path_candidates(
     for ext in extensions {
         candidates.extend(candidates_with_suffixes_and_extension(&base, ext, suffixes));
     }
-    if options.resolve_json_module {
-        candidates.extend(candidates_with_suffixes_and_extension(
-            &base, "json", suffixes,
-        ));
-    }
     let index = base.join("index");
     for ext in extensions {
         candidates.extend(candidates_with_suffixes_and_extension(
             &index, ext, suffixes,
-        ));
-    }
-    if options.resolve_json_module {
-        candidates.extend(candidates_with_suffixes_and_extension(
-            &index, "json", suffixes,
         ));
     }
     candidates
