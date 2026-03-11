@@ -1035,21 +1035,22 @@ impl<'a> CheckerState<'a> {
         if is_relative(trimmed)
             && let Some(parent) = Path::new(&self.ctx.file_name).parent()
         {
-            let normalized = parent.join(trimmed).components().fold(
-                PathBuf::new(),
-                |mut path, component| {
-                    match component {
-                        Component::Prefix(prefix) => path.push(prefix.as_os_str()),
-                        Component::RootDir => path.push(component.as_os_str()),
-                        Component::CurDir => {}
-                        Component::ParentDir => {
-                            path.pop();
+            let normalized =
+                parent
+                    .join(trimmed)
+                    .components()
+                    .fold(PathBuf::new(), |mut path, component| {
+                        match component {
+                            Component::Prefix(prefix) => path.push(prefix.as_os_str()),
+                            Component::RootDir => path.push(component.as_os_str()),
+                            Component::CurDir => {}
+                            Component::ParentDir => {
+                                path.pop();
+                            }
+                            Component::Normal(part) => path.push(part),
                         }
-                        Component::Normal(part) => path.push(part),
-                    }
-                    path
-                },
-            );
+                        path
+                    });
             push_candidate(normalized.to_string_lossy().to_string());
         }
 
@@ -1125,7 +1126,8 @@ impl<'a> CheckerState<'a> {
             if let Some(interface) = arena.get_interface(node) {
                 let (interface_type_params, interface_type_param_updates) =
                     if std::ptr::eq(arena, self.ctx.arena) {
-                        let (params, updates) = self.push_type_parameters(&interface.type_parameters);
+                        let (params, updates) =
+                            self.push_type_parameters(&interface.type_parameters);
                         (params, Some(updates))
                     } else {
                         (Vec::new(), None)
@@ -1159,8 +1161,11 @@ impl<'a> CheckerState<'a> {
                         let type_id = if std::ptr::eq(arena, self.ctx.arena) {
                             let mut type_id = self.get_type_of_interface_member_simple(member_idx);
                             if let Some(substitution) = interface_substitution.as_ref() {
-                                type_id =
-                                    tsz_solver::instantiate_type(self.ctx.types, type_id, substitution);
+                                type_id = tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    type_id,
+                                    substitution,
+                                );
                             }
                             type_id
                         } else {
@@ -1531,8 +1536,9 @@ impl<'a> CheckerState<'a> {
                     Self::merge_properties(&augmentation_members, &base_shape.properties)
                 } else {
                     let mut properties = base_shape.properties.clone();
-                    if let Some(prototype_prop) =
-                        properties.iter_mut().find(|prop| prop.name == prototype_name)
+                    if let Some(prototype_prop) = properties
+                        .iter_mut()
+                        .find(|prop| prop.name == prototype_name)
                     {
                         let augmented_prototype = self.apply_module_augmentations(
                             module_spec,

@@ -1691,7 +1691,8 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
+        manifest_dir
+            .join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
         manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.core.d.ts"),
@@ -1705,7 +1706,8 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
+        manifest_dir
+            .join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
         manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.core.d.ts"),
@@ -5666,7 +5668,7 @@ b({ callback: (x) => {} });
 
 #[test]
 fn test_optional_function_property_in_union_with_primitive_contextually_types_object_literal_branch()
-{
+ {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 type Validate = (text: string, pos: number, self: Rule) => number | boolean;

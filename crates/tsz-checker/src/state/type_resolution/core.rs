@@ -243,21 +243,21 @@ impl<'a> CheckerState<'a> {
                 // apply module augmentations using the import symbol's module specifier.
                 if result != TypeId::ERROR {
                     let lib_binders = self.get_lib_binders();
-                    let imported_module =
-                        self.ctx
-                            .binder
-                            .get_symbol_with_libs(sym_id, &lib_binders)
-                            .and_then(|symbol| {
-                                symbol.import_module.as_ref().map(|module_specifier| {
-                                    (
-                                        module_specifier.clone(),
-                                        symbol
-                                            .import_name
-                                            .clone()
-                                            .unwrap_or_else(|| symbol.escaped_name.clone()),
-                                    )
-                                })
-                            });
+                    let imported_module = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().map(|module_specifier| {
+                                (
+                                    module_specifier.clone(),
+                                    symbol
+                                        .import_name
+                                        .clone()
+                                        .unwrap_or_else(|| symbol.escaped_name.clone()),
+                                )
+                            })
+                        });
                     if let Some((module_specifier, aug_name)) = imported_module {
                         result =
                             self.apply_module_augmentations(&module_specifier, &aug_name, result);
@@ -686,9 +686,7 @@ impl<'a> CheckerState<'a> {
                         })
                         .or_else(|| {
                             self.resolve_named_import_module_for_local_name(name)
-                                .map(|module_specifier| {
-                                    (module_specifier, name.to_string())
-                                })
+                                .map(|module_specifier| (module_specifier, name.to_string()))
                         });
                     if let Some((module_specifier, aug_name)) = imported_module {
                         // Get the Application's base DefId and augment its body
@@ -745,12 +743,9 @@ impl<'a> CheckerState<'a> {
                                 })
                                 .or_else(|| {
                                     if base_is_class {
-                                        target_class_sym_id
-                                            .and_then(|candidate_sym_id| {
-                                                self.class_instance_type_from_symbol(
-                                                    candidate_sym_id,
-                                                )
-                                            })
+                                        target_class_sym_id.and_then(|candidate_sym_id| {
+                                            self.class_instance_type_from_symbol(candidate_sym_id)
+                                        })
                                     } else {
                                         None
                                     }
@@ -811,10 +806,9 @@ impl<'a> CheckerState<'a> {
                             .get_module_augmentation_declarations(&module_specifier, &aug_name)
                             .iter()
                             .any(|augmentation| {
-                                augmentation
-                                    .arena
-                                    .as_ref()
-                                    .is_none_or(|arena| std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                                augmentation.arena.as_ref().is_none_or(|arena| {
+                                    std::ptr::eq(arena.as_ref(), self.ctx.arena)
+                                })
                             });
                         if !has_same_arena_augmentation {
                             if let Some((_, app_args)) =
@@ -829,8 +823,11 @@ impl<'a> CheckerState<'a> {
                                 if !augmentation_members.is_empty() {
                                     let aug_object =
                                         self.ctx.types.factory().object(augmentation_members);
-                                    result =
-                                        self.ctx.types.factory().intersection(vec![result, aug_object]);
+                                    result = self
+                                        .ctx
+                                        .types
+                                        .factory()
+                                        .intersection(vec![result, aug_object]);
                                 }
                             } else {
                                 result = self.apply_module_augmentations(
