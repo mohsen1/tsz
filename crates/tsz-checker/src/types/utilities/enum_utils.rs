@@ -1513,7 +1513,7 @@ fn resolve_enum_member_value(
 ) -> Option<f64> {
     let enum_name = arena.get_identifier_text(enum_data.name)?;
     let (target_enum_decl_idx, target_idx) =
-        find_enum_member_decl(arena, enum_data, &enum_name, name)?;
+        find_enum_member_decl(arena, enum_data, enum_name, name)?;
     let target_enum_data = arena.get_enum_at(target_enum_decl_idx)?;
     let m_idx = target_enum_data.members.nodes[target_idx];
     let m_node = arena.get(m_idx)?;
@@ -1586,7 +1586,10 @@ fn find_enum_member_decl(
     None
 }
 
-fn source_file_ancestor(arena: &tsz_parser::parser::NodeArena, mut node_idx: NodeIndex) -> Option<NodeIndex> {
+fn source_file_ancestor(
+    arena: &tsz_parser::parser::NodeArena,
+    mut node_idx: NodeIndex,
+) -> Option<NodeIndex> {
     loop {
         let node = arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::SOURCE_FILE {
@@ -1596,7 +1599,10 @@ fn source_file_ancestor(arena: &tsz_parser::parser::NodeArena, mut node_idx: Nod
     }
 }
 
-fn enum_namespace_path(arena: &tsz_parser::parser::NodeArena, mut enum_decl_idx: NodeIndex) -> Vec<String> {
+fn enum_namespace_path(
+    arena: &tsz_parser::parser::NodeArena,
+    mut enum_decl_idx: NodeIndex,
+) -> Vec<String> {
     let mut path = Vec::new();
     while let Some(parent_idx) = arena.get_extended(enum_decl_idx).map(|ext| ext.parent) {
         enum_decl_idx = parent_idx;
