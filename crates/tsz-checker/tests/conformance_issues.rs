@@ -1511,7 +1511,8 @@ const obj = {
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2322 && message.contains("Type 'undefined' is not assignable to type 'string'.")
+            *code == 2322
+                && message.contains("Type 'undefined' is not assignable to type 'string'.")
         }),
         "Expected JSDoc shorthand property mismatch to preserve the undefined source type. Actual diagnostics: {diagnostics:#?}"
     );
