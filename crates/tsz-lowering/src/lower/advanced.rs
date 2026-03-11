@@ -628,6 +628,20 @@ impl<'a> TypeLowering<'a> {
                     };
                 return self.interner.application(base_type, type_args);
             }
+
+            if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
+                && let Some(resolve_params) = self.lazy_type_params_resolver
+                && let Some(type_params) = resolve_params(def_id)
+                && !type_params.is_empty()
+                && type_params.iter().all(|param| param.default.is_some())
+            {
+                let default_args = type_params
+                    .into_iter()
+                    .map(|param| param.default.unwrap_or(TypeId::ERROR))
+                    .collect();
+                return self.interner.application(base_type, default_args);
+            }
+
             base_type
         } else {
             TypeId::ERROR

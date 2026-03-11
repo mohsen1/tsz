@@ -744,6 +744,8 @@ impl<'a> CheckerState<'a> {
 
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
                 let computed_names = self.precompute_computed_property_names(&declarations);
+                let prewarmed_type_params =
+                    self.prewarm_member_type_reference_params(&declarations);
 
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -764,6 +766,12 @@ impl<'a> CheckerState<'a> {
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
                     computed_names.get(&expr_idx).copied()
                 };
+                let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+                    prewarmed_type_params
+                        .get(&def_id)
+                        .cloned()
+                        .or_else(|| self.ctx.get_def_type_params(def_id))
+                };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -772,7 +780,8 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings)
-                .with_computed_name_resolver(&computed_name_resolver);
+                .with_computed_name_resolver(&computed_name_resolver)
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver);
                 let mut interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 

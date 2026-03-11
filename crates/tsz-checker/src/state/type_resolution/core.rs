@@ -916,7 +916,15 @@ impl<'a> CheckerState<'a> {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
                     }
-                    let type_params = self.get_type_params_for_symbol(sym_id);
+                    let mut type_params = self.get_type_params_for_symbol(sym_id);
+                    if type_params.is_empty() {
+                        type_params =
+                            self.extract_declared_type_params_for_reference_symbol(sym_id, name);
+                        if !type_params.is_empty() {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx.insert_def_type_params(def_id, type_params.clone());
+                        }
+                    }
                     let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
                     if required_count > 0 {
                         // tsc uses the original declaration name, not the local alias.
@@ -1004,6 +1012,67 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, type_name_idx);
         TypeId::ERROR
+    }
+
+    fn extract_declared_type_params_for_reference_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+            return Vec::new();
+        };
+        let declarations = symbol.declarations.clone();
+
+        for &decl_idx in &declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                if let Some(name_node) = self.ctx.arena.get(type_alias.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text != expected_name
+                {
+                    continue;
+                }
+                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    return params;
+                }
+            }
+
+            if let Some(iface) = self.ctx.arena.get_interface(node) {
+                if let Some(name_node) = self.ctx.arena.get(iface.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text != expected_name
+                {
+                    continue;
+                }
+                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    return params;
+                }
+            }
+
+            if let Some(class) = self.ctx.arena.get_class(node) {
+                if let Some(name_node) = self.ctx.arena.get(class.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text != expected_name
+                {
+                    continue;
+                }
+                let (params, updates) = self.push_type_parameters(&class.type_parameters);
+                self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    return params;
+                }
+            }
+        }
+
+        Vec::new()
     }
 
     fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
@@ -1487,6 +1556,7 @@ impl<'a> CheckerState<'a> {
         // Pre-compute computed property names that the lowering can't resolve from AST alone.
         // This handles cases like `[k]` where k is a `const` unique symbol variable.
         let computed_names = self.precompute_computed_property_names(&declarations);
+        let prewarmed_type_params = self.prewarm_member_type_reference_params(&declarations);
 
         // Get type parameters from the first interface declaration
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
@@ -1512,6 +1582,12 @@ impl<'a> CheckerState<'a> {
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
             computed_names.get(&expr_idx).copied()
         };
+        let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
+            prewarmed_type_params
+                .get(&def_id)
+                .cloned()
+                .or_else(|| self.ctx.get_def_type_params(def_id))
+        };
         let lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
@@ -1520,7 +1596,8 @@ impl<'a> CheckerState<'a> {
             &value_resolver,
         )
         .with_type_param_bindings(type_param_bindings)
-        .with_computed_name_resolver(&computed_name_resolver);
+        .with_computed_name_resolver(&computed_name_resolver)
+        .with_lazy_type_params_resolver(&lazy_type_params_resolver);
         let interface_type =
             lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 
@@ -1528,6 +1605,48 @@ impl<'a> CheckerState<'a> {
         let _ = params; // params are not needed for this path
 
         self.merge_interface_heritage_types(&declarations, interface_type)
+    }
+
+    pub(crate) fn prewarm_member_type_reference_params(
+        &mut self,
+        declarations: &[NodeIndex],
+    ) -> rustc_hash::FxHashMap<tsz_solver::def::DefId, Vec<tsz_solver::TypeParamInfo>> {
+        let mut stack = Vec::new();
+        let mut params_by_def = rustc_hash::FxHashMap::default();
+
+        for &decl_idx in declarations {
+            stack.push(decl_idx);
+
+            while let Some(node_idx) = stack.pop() {
+                let Some(node) = self.ctx.arena.get(node_idx) else {
+                    continue;
+                };
+
+                if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                {
+                    let has_type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|args| !args.nodes.is_empty());
+                    if !has_type_args
+                        && let Some(sym_id_raw) =
+                            self.resolve_type_symbol_for_lowering(type_ref.type_name)
+                    {
+                        let sym_id = tsz_binder::SymbolId(sym_id_raw);
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        let params = self.get_type_params_for_symbol(sym_id);
+                        if !params.is_empty() {
+                            params_by_def.insert(def_id, params);
+                        }
+                    }
+                }
+
+                stack.extend(self.ctx.arena.get_children(node_idx));
+            }
+        }
+
+        params_by_def
     }
 
     /// Pre-compute property names for computed property name expressions in interface members.
