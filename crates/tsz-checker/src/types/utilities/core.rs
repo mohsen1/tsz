@@ -538,6 +538,15 @@ impl<'a> CheckerState<'a> {
         tsz_solver::widening::widen_type(self.ctx.types, type_id)
     }
 
+    /// Widen a type for diagnostic display purposes.
+    ///
+    /// Like `widen_literal_type` but preserves boolean literal intrinsics
+    /// (`true`/`false`), so narrowed types like `string | false` display
+    /// correctly instead of being widened to `string | boolean`.
+    pub(crate) fn widen_type_for_display(&self, type_id: TypeId) -> TypeId {
+        tsz_solver::widening::widen_type_for_display(self.ctx.types, type_id)
+    }
+
     /// Widen a mutable binding initializer type (let/var semantics).
     ///
     /// In addition to primitive literal widening, TypeScript widens enum member
