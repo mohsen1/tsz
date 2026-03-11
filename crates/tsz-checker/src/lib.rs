@@ -280,6 +280,9 @@ mod enum_nominality_tests;
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
 #[cfg(test)]
+#[path = "../tests/for_in_narrowing_tests.rs"]
+mod for_in_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
@@ -291,6 +294,9 @@ mod intersection_signatures;
 #[cfg(test)]
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
+#[cfg(test)]
+#[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
+mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_accessibility_tests.rs"]
 mod jsdoc_accessibility_tests;
