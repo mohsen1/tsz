@@ -586,6 +586,262 @@ declare module "./a" {
 }
 
 #[test]
+fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
+    let files = vec![
+        (
+            "file1.ts".to_string(),
+            r#"
+declare global {
+    interface TopLevel {
+        duplicate1: () => string;
+        duplicate2: () => string;
+        duplicate3: () => string;
+    }
+}
+export {}
+"#
+            .to_string(),
+        ),
+        (
+            "file2.ts".to_string(),
+            r#"
+import "./file1";
+declare global {
+    interface TopLevel {
+        duplicate1(): number;
+        duplicate2(): number;
+        duplicate3(): number;
+    }
+}
+export {}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file1 = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "file1.ts")
+        .expect("expected file1.ts result");
+    let file2 = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "file2.ts")
+        .expect("expected file2.ts result");
+
+    let file1_codes: Vec<u32> = file1
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300 || diag.code == 6200)
+        .map(|diag| diag.code)
+        .collect();
+    let file2_codes: Vec<u32> = file2
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300 || diag.code == 6200)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        file1_codes,
+        vec![2300, 2300, 2300],
+        "Expected file1.ts to report per-member TS2300 diagnostics for global augmentation conflicts. Diagnostics: {:#?}",
+        file1.diagnostics
+    );
+    assert_eq!(
+        file2_codes,
+        vec![2300, 2300, 2300],
+        "Expected file2.ts to report per-member TS2300 diagnostics for global augmentation conflicts. Diagnostics: {:#?}",
+        file2.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_module_augmentation_member_conflicts_aggregate_to_ts6200() {
+    let files = vec![
+        (
+            "file1.ts".to_string(),
+            r#"
+declare module "someMod" {
+    export interface TopLevel {
+        duplicate1: () => string;
+        duplicate2: () => string;
+        duplicate3: () => string;
+        duplicate4: () => string;
+        duplicate5: () => string;
+        duplicate6: () => string;
+        duplicate7: () => string;
+        duplicate8: () => string;
+        duplicate9: () => string;
+    }
+}
+"#
+            .to_string(),
+        ),
+        (
+            "file2.ts".to_string(),
+            r#"
+/// <reference path="./file1" />
+
+declare module "someMod" {
+    export interface TopLevel {
+        duplicate1(): number;
+        duplicate2(): number;
+        duplicate3(): number;
+        duplicate4(): number;
+        duplicate5(): number;
+        duplicate6(): number;
+        duplicate7(): number;
+        duplicate8(): number;
+        duplicate9(): number;
+    }
+}
+export {};
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file1 = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "file1.ts")
+        .expect("expected file1.ts result");
+    let file2 = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "file2.ts")
+        .expect("expected file2.ts result");
+
+    let file1_codes: Vec<u32> = file1
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300 || diag.code == 6200)
+        .map(|diag| diag.code)
+        .collect();
+    let file2_codes: Vec<u32> = file2
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300 || diag.code == 6200)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        file1_codes,
+        vec![6200],
+        "Expected file1.ts to aggregate large module augmentation conflicts into TS6200. Diagnostics: {:#?}",
+        file1.diagnostics
+    );
+    assert_eq!(
+        file2_codes,
+        vec![6200],
+        "Expected file2.ts to aggregate large module augmentation conflicts into TS6200. Diagnostics: {:#?}",
+        file2.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_cross_file_enum_conflicts_emit_ts2567() {
+    let files = vec![
+        (
+            "file1.ts".to_string(),
+            r#"
+enum D {
+    bar
+}
+class E {}
+"#
+            .to_string(),
+        ),
+        (
+            "file2.ts".to_string(),
+            r#"
+function D() {
+    return 0;
+}
+enum E {
+    bar
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file1 = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "file1.ts")
+        .expect("expected file1.ts result");
+    let file2 = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "file2.ts")
+        .expect("expected file2.ts result");
+
+    let file1_codes: Vec<u32> = file1
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2567)
+        .map(|diag| diag.code)
+        .collect();
+    let file2_codes: Vec<u32> = file2
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2567)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        file1_codes,
+        vec![2567, 2567],
+        "Expected file1.ts to report TS2567 for cross-file enum conflicts. Diagnostics: {:#?}",
+        file1.diagnostics
+    );
+    assert_eq!(
+        file2_codes,
+        vec![2567, 2567],
+        "Expected file2.ts to report TS2567 for cross-file enum conflicts. Diagnostics: {:#?}",
+        file2.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
