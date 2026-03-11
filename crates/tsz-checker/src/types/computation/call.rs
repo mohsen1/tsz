@@ -1874,10 +1874,11 @@ impl<'a> CheckerState<'a> {
                 Some(prop.name)
             } else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
                 Some(method.name)
-            } else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
-                Some(accessor.name)
             } else {
-                None
+                self.ctx
+                    .arena
+                    .get_accessor(elem_node)
+                    .map(|accessor| accessor.name)
             };
 
             name_idx
