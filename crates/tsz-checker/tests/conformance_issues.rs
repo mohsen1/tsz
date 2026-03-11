@@ -7567,6 +7567,32 @@ fn ts7008_static_property_without_assignment_in_static_block() {
     );
 }
 
+#[test]
+fn ts7008_private_identifier_in_ambient_class_is_suppressed() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+        declare class A {
+            #prop;
+        }
+        class B {
+            #prop;
+        }
+        "#,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        },
+    );
+
+    let ts7008_count = diagnostics.iter().filter(|(code, _)| *code == 7008).count();
+
+    assert_eq!(
+        ts7008_count, 1,
+        "Expected only the non-ambient private field to emit TS7008. Got: {diagnostics:?}"
+    );
+}
+
 // TS1479: CJS file importing ESM module
 // Tests the current_is_commonjs detection logic with different file extensions.
 
