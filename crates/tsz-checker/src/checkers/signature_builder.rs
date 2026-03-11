@@ -361,19 +361,33 @@ impl<'a> CheckerState<'a> {
                 || (self.is_js_file() && param.type_annotation.is_none());
             let rest = param.dot_dot_dot_token;
 
+            let effective_type = if param.question_token
+                && self.ctx.strict_null_checks()
+                && type_id != TypeId::ANY
+                && type_id != TypeId::ERROR
+                && type_id != TypeId::UNDEFINED
+            {
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![type_id, TypeId::UNDEFINED])
+            } else {
+                type_id
+            };
+
             // Check for "this" parameter by name
             if let Some(name_atom) = name
                 && name_atom == this_atom
             {
                 if this_type.is_none() {
-                    this_type = Some(type_id);
+                    this_type = Some(effective_type);
                 }
                 continue;
             }
 
             params.push(ParamInfo {
                 name,
-                type_id,
+                type_id: effective_type,
                 optional,
                 rest,
             });
