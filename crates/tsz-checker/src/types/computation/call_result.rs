@@ -23,12 +23,7 @@ impl<'a> CheckerState<'a> {
         let expected = self.resolve_type_for_property_access(expected);
         let expected = self.resolve_lazy_type(expected);
         let expected = self.evaluate_application_type(expected);
-        tsz_solver::contains_type_matching(self.ctx.types, expected, |key| {
-            matches!(
-                key,
-                tsz_solver::TypeData::Intrinsic(tsz_solver::IntrinsicKind::Never)
-            )
-        })
+        crate::query_boundaries::common::contains_never_type(self.ctx.types, expected)
     }
 
     fn argument_supports_literal_elaboration(&self, arg_idx: NodeIndex) -> bool {
