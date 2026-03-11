@@ -1811,6 +1811,35 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_token(SyntaxKind::ColonToken) {
+                    self.error_comma_expected();
+                    self.next_token();
+
+                    let recover_start = self.token_pos();
+                    let _ = self.parse_type();
+                    if self.token_pos() == recover_start
+                        && !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::CloseParenToken
+                                | SyntaxKind::SemicolonToken
+                                | SyntaxKind::EndOfFileToken
+                        )
+                    {
+                        self.next_token();
+                    }
+
+                    if self.parse_optional(SyntaxKind::CommaToken) {
+                        continue;
+                    }
+                    if self.is_token(SyntaxKind::CloseParenToken)
+                        || self.is_token(SyntaxKind::SemicolonToken)
+                        || self.is_token(SyntaxKind::EndOfFileToken)
+                    {
+                        break;
+                    }
+                }
+
                 // Missing comma - check if next token looks like another argument
                 // If so, emit comma error for better diagnostics
                 if self.is_expression_start()
