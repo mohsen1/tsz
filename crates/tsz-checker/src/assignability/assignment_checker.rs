@@ -52,27 +52,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let (prop_name, error_node) = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                (
-                    self.get_property_name_resolved(prop.name),
-                    prop.name,
-                )
-            } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
-                    (
-                        self.ctx
-                            .arena
-                            .get(shorthand.name)
-                            .and_then(|node| self.ctx.arena.get_identifier(node))
-                            .map(|ident| ident.escaped_text.clone()),
-                        shorthand.name,
-                    )
+            let (prop_name, error_node) =
+                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                    (self.get_property_name_resolved(prop.name), prop.name)
+                } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
+                        (
+                            self.ctx
+                                .arena
+                                .get(shorthand.name)
+                                .and_then(|node| self.ctx.arena.get_identifier(node))
+                                .map(|ident| ident.escaped_text.clone()),
+                            shorthand.name,
+                        )
+                    } else {
+                        (None, NodeIndex::NONE)
+                    }
                 } else {
                     (None, NodeIndex::NONE)
-                }
-            } else {
-                (None, NodeIndex::NONE)
-            };
+                };
 
             if let Some(prop_name) = prop_name
                 && let Some(declaring_class_name) =
