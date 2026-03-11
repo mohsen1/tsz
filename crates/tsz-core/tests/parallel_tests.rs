@@ -971,6 +971,189 @@ class D {
 }
 
 #[test]
+fn test_check_files_parallel_private_name_static_instance_conflicts_emit_ts2804() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+class A {
+    #foo = "foo";
+    static #foo() { }
+}
+class B {
+    static get #bar() { return ""; }
+    set #bar(value: string) { }
+}
+"#
+        .to_string(),
+    )];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected test.ts result");
+
+    let ts2804_messages: Vec<&str> = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2804)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2804_messages.len(),
+        2,
+        "Expected TS2804 on the later static/instance private-name conflicts only. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert!(
+        ts2804_messages
+            .iter()
+            .all(|msg| msg
+                .contains("Static and instance elements cannot share the same private name")),
+        "Expected TS2804 static/instance private-name message. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert!(
+        file.diagnostics.iter().all(|diag| diag.code != 2300),
+        "Did not expect TS2300 for pure static/instance private-name conflicts. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_duplicate_private_accessors_report_all_occurrences() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+class A {
+    get #foo() { return ""; }
+    get #foo() { return ""; }
+}
+class B {
+    static set #bar(value: string) { }
+    static set #bar(value: string) { }
+}
+"#
+        .to_string(),
+    )];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected test.ts result");
+
+    let ts2300_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300)
+        .count();
+
+    assert_eq!(
+        ts2300_count, 4,
+        "Expected TS2300 on both private getter declarations and both private setter declarations. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_private_accessor_before_field_reports_field_only() {
+    let source = r#"
+function cases() {
+    class A {
+        get #foo() { return ""; }
+        #foo = "foo";
+    }
+    class B {
+        set #foo(value: string) { }
+        #foo = "foo";
+    }
+    class C {
+        static set #foo(value: string) { }
+        static #foo = "foo";
+    }
+}
+"#;
+    let files = vec![("test.ts".to_string(), source.to_string())];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected test.ts result");
+
+    let ts2300_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300)
+        .count();
+    let ts2300_starts: Vec<u32> = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300)
+        .map(|diag| diag.start)
+        .collect();
+
+    let expected_starts: Vec<usize> = source
+        .match_indices("#foo = \"foo\";")
+        .map(|(idx, _)| idx)
+        .collect();
+
+    assert_eq!(
+        ts2300_count, 3,
+        "Expected TS2300 only on the later field declarations. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    for expected_start in expected_starts {
+        assert!(
+            ts2300_starts.contains(&(expected_start as u32)),
+            "Expected TS2300 at field start {expected_start}, got starts {:?}. Diagnostics: {:#?}",
+            ts2300_starts,
+            file.diagnostics
+        );
+    }
+    assert!(
+        file.diagnostics.iter().all(|diag| diag.code != 2804),
+        "Did not expect TS2804 for same-staticness private accessor/field conflicts. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
