@@ -6208,6 +6208,30 @@ var z1 = G[G.A];
 }
 
 #[test]
+fn test_const_enum_element_access_missing_string_literal_member_reports_ts2339() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+const enum E { A }
+var x = E["B"];
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 for missing const enum string-literal member access.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 for missing const enum string-literal member access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_regexp_literal_exec_preserves_nullability() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
