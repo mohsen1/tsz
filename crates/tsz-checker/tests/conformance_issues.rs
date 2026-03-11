@@ -2226,6 +2226,43 @@ let x = new alias.Class();
 }
 
 #[test]
+fn test_class_extends_user_defined_generic_without_type_args_reports_ts2314() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base<T, U> {}
+class Derived extends Base {}
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2314),
+        "Expected TS2314 for omitted type arguments on user-defined generic base class. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_optional_method_parameter_accepts_optional_boolean_argument() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class C {
+    outer(flag?: boolean) {
+        return this.inner(flag);
+    }
+
+    inner(flag?: boolean) {
+        return flag;
+    }
+}
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect TS2345 when passing an optional boolean to another optional boolean parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_super_call_args_match_instantiated_generic_base_ctor() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

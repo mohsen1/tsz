@@ -240,12 +240,17 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     } else if required_count > 0
-                        // In class extends clauses, TypeScript allows omitting type
-                        // arguments (e.g. `class C extends Array {}`). The type
-                        // defaults to the constructor's instance type with default args.
-                        && !(is_class_declaration && is_extends_clause)
                         && let Some(name) = self.heritage_name_text(expr_idx)
                     {
+                        // In class extends clauses, TypeScript only allows omitted type
+                        // arguments for a small set of array-like built-ins
+                        // (`class C extends Array {}`), not arbitrary generic bases.
+                        let allows_omitted_type_args_in_extends = is_class_declaration
+                            && is_extends_clause
+                            && matches!(name.as_str(), "Array" | "ReadonlyArray" | "ConcatArray");
+                        if allows_omitted_type_args_in_extends {
+                            continue;
+                        }
                         let type_params = self.get_type_params_for_symbol(heritage_sym);
                         let display_name = Self::format_generic_display_name_with_interner(
                             &name,
