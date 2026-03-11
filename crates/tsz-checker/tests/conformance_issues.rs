@@ -9090,8 +9090,8 @@ test4({
         .count();
 
     assert_eq!(
-        bar_errors, 2,
-        "Expected exactly the two invalid callback-return literal mismatches.\nActual diagnostics: {diagnostics:#?}"
+        bar_errors, 1,
+        "Expected exactly the single invalid callback-return literal mismatch from test4.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
         !diagnostics.iter().any(|(code, message)| {

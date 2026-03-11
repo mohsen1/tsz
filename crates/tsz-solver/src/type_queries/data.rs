@@ -90,6 +90,16 @@ pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(db, type_id, |key| matches!(key, TypeData::Error))
 }
 
+/// Check if a type contains the intrinsic `never` type.
+pub fn contains_never_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NEVER {
+        return true;
+    }
+    contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::Intrinsic(crate::types::IntrinsicKind::Never))
+    })
+}
+
 // =============================================================================
 // Type Extraction Helpers
 // =============================================================================

@@ -48,6 +48,10 @@ pub(crate) fn contains_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     tsz_solver::type_queries::contains_error_type_db(db, type_id)
 }
 
+pub(crate) fn contains_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_never_type_db(db, type_id)
+}
+
 pub(crate) fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_string_type(db, type_id)
 }
