@@ -842,6 +842,135 @@ enum E {
 }
 
 #[test]
+fn test_check_files_parallel_var_and_duplicate_functions_keep_ts2300() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+var foo: string;
+function foo(): number { }
+function foo(): number { }
+"#
+        .to_string(),
+    )];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected test.ts result");
+
+    let ts2300_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300)
+        .count();
+    let ts2393_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2393)
+        .count();
+    let ts2355_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2355)
+        .count();
+
+    assert_eq!(
+        ts2300_count, 3,
+        "Expected TS2300 on the var and both function declarations. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert_eq!(
+        ts2393_count, 2,
+        "Expected TS2393 on both function implementations. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert_eq!(
+        ts2355_count, 2,
+        "Expected TS2355 on both function implementations. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_class_property_after_method_emits_ts2717() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+class C {
+    a(): number { return 0; }
+    a: number;
+}
+class K {
+    b: number;
+    b(): number { return 0; }
+}
+class D {
+    c: number;
+    c: string;
+}
+"#
+        .to_string(),
+    )];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected test.ts result");
+
+    let ts2717_messages: Vec<&str> = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2717)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2717_messages.len(),
+        2,
+        "Expected TS2717 for 'a' and 'c' only. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert!(
+        ts2717_messages
+            .iter()
+            .any(|msg| msg.contains("Property 'a' must be of type '() => number'")),
+        "Expected method-vs-property TS2717 for 'a'. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert!(
+        ts2717_messages
+            .iter()
+            .any(|msg| msg.contains("Property 'c' must be of type 'number'")),
+        "Expected property-vs-property TS2717 for 'c'. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)

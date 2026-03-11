@@ -1250,6 +1250,45 @@ impl<'a> CheckerState<'a> {
         Some((name, prop.name, type_id))
     }
 
+    fn get_class_method_type_info(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, TypeId)> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return None;
+        }
+
+        let method = self.ctx.arena.get_method_decl(member_node)?;
+        let name = self.get_member_name_text(method.name)?;
+        let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        let (params, _this_type) = self.extract_params_from_parameter_list(&method.parameters);
+        let return_type = if method.type_annotation.is_some() {
+            self.get_type_from_type_node(method.type_annotation)
+        } else if method.body.is_some() {
+            self.infer_return_type_from_body(member_idx, method.body, None)
+        } else {
+            TypeId::ANY
+        };
+        self.pop_type_parameters(type_param_updates);
+
+        let type_id = self
+            .ctx
+            .types
+            .factory()
+            .function(tsz_solver::FunctionShape {
+                type_params,
+                params,
+                this_type: None,
+                return_type,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: true,
+            });
+
+        Some((name, method.name, type_id))
+    }
+
     /// Extract type info for a class accessor declaration.
     /// For getters, use explicit return annotation if present, otherwise infer from body.
     /// For setters, use the first parameter type annotation (or `any` if omitted).
@@ -1486,6 +1525,46 @@ impl<'a> CheckerState<'a> {
                     self.report_duplicate_class_member_ts2300(idx);
                 }
             } else if property_count > 0 && method_count > 0 {
+                let mut first_member_type: Option<(TypeId, String)> = None;
+                for (&idx, &is_property) in info.indices.iter().zip(info.is_property.iter()) {
+                    if first_member_type.is_none() {
+                        first_member_type = if is_property {
+                            self.get_class_property_declared_type_info(idx)
+                                .map(|(name, _name_node, type_id)| (type_id, name))
+                        } else {
+                            self.get_class_method_type_info(idx)
+                                .map(|(name, _name_node, type_id)| (type_id, name))
+                        }
+                        .filter(|(type_id, _)| !self.type_contains_error(*type_id));
+                        continue;
+                    }
+
+                    if !is_property {
+                        continue;
+                    }
+
+                    let Some((name, name_node, current_type)) =
+                        self.get_class_property_declared_type_info(idx)
+                    else {
+                        continue;
+                    };
+                    let Some((first_type, _first_name)) = first_member_type.as_ref() else {
+                        continue;
+                    };
+                    if self.type_contains_error(current_type) || *first_type == current_type {
+                        continue;
+                    }
+
+                    let display_name = self.get_member_name_display_text(name_node).unwrap_or(name);
+                    let first_type_str = self.format_type(*first_type);
+                    let current_type_str = self.format_type(current_type);
+                    self.error_at_node_msg(
+                        name_node,
+                        diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                        &[&display_name, &first_type_str, &current_type_str],
+                    );
+                }
+
                 // Mixed properties and methods: check if first is property
                 let first_is_property = info.is_property.first().copied().unwrap_or(false);
                 let skip_count = usize::from(!first_is_property);
