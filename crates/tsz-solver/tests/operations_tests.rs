@@ -9945,6 +9945,51 @@ fn test_union_single_plus_multi_overload_succeeds() {
     );
 }
 
+#[test]
+fn test_union_generic_single_signature_members_require_shared_call_signature() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let generic_number = interner.function(FunctionShape {
+        params: vec![ParamInfo::required(interner.intern_string("a"), TypeId::NUMBER)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: Some(TypeId::NUMBER),
+            default: None,
+            is_const: false,
+        }],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let generic_string = interner.function(FunctionShape {
+        params: vec![ParamInfo::required(interner.intern_string("a"), TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![TypeParamInfo {
+            name: interner.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let union = interner.union(vec![generic_number, generic_string]);
+    let result = evaluator.resolve_call(union, &[TypeId::STRING]);
+
+    assert!(
+        matches!(result, CallResult::NotCallable { .. }),
+        "Expected NotCallable for incompatible generic single-signature union, got {result:?}"
+    );
+}
+
 /// Test that `resolve_call` correctly handles `IndexAccess` types where the
 /// object type is a type parameter with a mapped type constraint.
 ///
