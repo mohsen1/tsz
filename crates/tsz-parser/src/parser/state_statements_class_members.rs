@@ -856,6 +856,15 @@ impl ParserState {
             return self.parse_static_block();
         }
 
+        if matches!(
+            self.token(),
+            SyntaxKind::GlobalKeyword | SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword
+        ) && self.look_ahead_is_module_declaration()
+        {
+            self.recover_invalid_module_like_class_member();
+            return NodeIndex::NONE;
+        }
+
         // Parse modifiers (static, public, private, protected, readonly, abstract, override)
         let diag_len_before_modifiers = self.parse_diagnostics.len();
         let parsed_modifiers = self.parse_class_member_modifiers();
@@ -1510,6 +1519,35 @@ impl ParserState {
                     initializer,
                 },
             )
+        }
+    }
+
+    fn recover_invalid_module_like_class_member(&mut self) {
+        self.parse_error_at_current_token(
+            "Unexpected token. A constructor, method, accessor, or property was expected.",
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+        );
+        self.next_token();
+
+        if !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+            && !self.scanner.has_preceding_line_break()
+        {
+            self.error_token_expected(";");
+
+            while !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+            {
+                self.next_token();
+            }
+        }
+
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
         }
     }
 
