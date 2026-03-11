@@ -1890,6 +1890,34 @@ class C5 {
     }
 
     #[test]
+    fn ts2352_angle_bracket_type_display_no_trailing_gt() {
+        // For `<T>expr`, the type node span may include `>` — verify it's stripped
+        let diags = check_source_diagnostics(
+            r#"
+class A { foo() { return ""; } }
+class B extends A { bar() { return 1; } }
+function foo2<T extends A>(x: T) {
+    var y = x;
+    y = <T>new B();
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected 1 TS2352, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        // Verify message says "type 'T'" not "type 'T>'"
+        let msg = &matching[0].message_text;
+        assert!(
+            msg.contains("to type 'T'"),
+            "Expected 'to type 'T'' in message, got: {msg}"
+        );
+    }
+
+    #[test]
     fn ts2352_this_type_assertion_static_no_error() {
         // In static context, `this` is invalid (TS2526), so TS2352 should not fire
         let diags = check_source_diagnostics(
