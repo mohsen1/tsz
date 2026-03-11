@@ -1777,7 +1777,18 @@ impl ParserState {
             }
         }
 
-        let name = if self.is_identifier_or_keyword() {
+        let name = if self.is_reserved_word() {
+            use tsz_common::diagnostics::diagnostic_codes;
+
+            self.error_reserved_word_identifier();
+            if self.is_token(SyntaxKind::OpenParenToken) {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::IDENTIFIER_EXPECTED,
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+            NodeIndex::NONE
+        } else if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
         } else {
             self.parse_identifier()
