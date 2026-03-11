@@ -410,6 +410,21 @@ Example: deleteExpressionMustBeOptional.ts
   `genericStaticAnyTypeFunction`, `thisInGenericStaticMembers`, and others where
   `this.staticMethod()` inside static methods was incorrectly flagged.
 
+- ~~False positive TS2403 for namespace-local variables shadowing globals~~ **FIXED** (2026-03-11)
+  Fix: The TS2403 "Subsequent variable declarations must have the same type" check in
+  `variable_checking/core.rs` compared namespace-local variables against lib.d.ts globals
+  by name. For example, `namespace M { var Symbol: SymbolConstructor; }` would falsely
+  trigger TS2403 comparing against the global `Symbol`. The lib lookup path was missing
+  the `is_in_namespace` guard that the intra-file check already had. Also needed to skip
+  `prior_type_found` tracking for namespace-local variables so the lib type doesn't pollute
+  the stored `var_decl_types` for subsequent checks.
+  Fixes 12 conformance tests (+12 net, 10543 → 10554, 83.6% → 83.9%), including
+  `symbolProperty20/22/55`, `assertionFunctionWildcardImport1`,
+  `declarationEmitComputedNameCausesImportToBePainted`,
+  `declarationEmitComputedPropertyNameEnum3`, `errorOnEnumReferenceInCondition`,
+  `objectLiteralEnumPropertyNames`, and others where namespace-local variables or enum
+  objects were incorrectly compared against global lib declarations.
+
 ---
 
 ### RC-5: Entity Name Resolution (~6%)
