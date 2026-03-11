@@ -1169,7 +1169,6 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
 }
 
 #[test]
-#[ignore = "merged lib contexts lose toLocaleString overload; tracked upstream"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         r#"
@@ -4049,7 +4048,6 @@ const fn2: <T>(x: T) => void = function test(t) {
 /// Mirrors: contextualSignatureInstantiation2.ts
 /// Expected: no TS2345
 #[test]
-#[ignore = "false-positive TS2345: contextual signature instantiation chain not yet supported"]
 fn test_contextual_signature_instantiation_chain_no_false_ts2345() {
     let diagnostics = compile_and_get_diagnostics(
         r"

@@ -1,7 +1,6 @@
 use std::fs;
 
 #[test]
-#[ignore = "architecture boundary not yet implemented"]
 fn member_access_uses_centralized_mutual_assignability_gateway() {
     let source = fs::read_to_string("src/state/state_checking_members/member_access.rs")
         .expect("failed to read src/state/state_checking_members/member_access.rs");

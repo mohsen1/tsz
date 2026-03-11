@@ -562,7 +562,6 @@ class C {
 }
 
 #[test]
-#[ignore = "TODO: Test infrastructure doesn't populate definition store for type aliases. The test creates a type alias `type Tup = [string, number]` which is stored as a Lazy(DefId) type, but since the test doesn't go through the full lowering pipeline, the definition is not registered in the definition_store. This causes resolve_lazy_type() to fail and the type alias remains unresolved, breaking tuple assignability checks. Fix by either: 1) Making test infrastructure go through full lowering pipeline, or 2) Adding a test-specific lowering pass that populates the definition store."]
 fn test_tuple_array_assignability_in_checker() {
     use crate::parser::ParserState;
 
@@ -1092,7 +1091,6 @@ export function f(node: { body: number }) {
 }
 
 #[test]
-#[ignore = "excess property in return statements needs explicit checker path (solver path suppressed by 5a649e2c)"]
 fn test_excess_property_in_return_statement() {
     use crate::parser::ParserState;
 
@@ -6969,7 +6967,6 @@ fn test_symbol_property_not_found() {
 // ============== Property access from index signature tests (error 4111) ==============
 
 #[test]
-#[ignore = "property access from index signature not yet stable"]
 fn test_property_access_from_index_signature_4111() {
     use crate::parser::ParserState;
 
@@ -9192,12 +9189,7 @@ class C {
 }
 
 /// Test TS2355: Async function returning Promise<T> requires return statement
-///
-/// NOTE: Currently ignored - async function return statement validation is not fully
-/// implemented. The checker should emit TS2355 when async functions returning Promise<T>
-/// don't have return statements, but this is not being detected correctly.
 #[test]
-#[ignore = "Async function return statement validation not fully implemented"]
 fn test_async_promise_number_requires_return() {
     use crate::parser::ParserState;
 
@@ -10130,7 +10122,6 @@ const value = arr["0"];
 }
 
 #[test]
-#[ignore = "element access index signature lowering not yet stable"]
 fn test_checker_lowers_element_access_string_index_signature() {
     use crate::parser::ParserState;
 
@@ -10171,7 +10162,6 @@ const value = map["foo"];
 }
 
 #[test]
-#[ignore = "element access index signature lowering not yet stable"]
 fn test_checker_lowers_element_access_number_index_signature() {
     use crate::parser::ParserState;
 
@@ -10216,7 +10206,6 @@ const value = map[1];
 /// When noImplicitAny is enabled, accessing an object with a string index
 /// that has no index signature should emit TS7053.
 #[test]
-#[ignore = "TS7053 not yet implemented for element access without index signature"]
 fn test_checker_element_access_requires_index_signature() {
     use crate::parser::ParserState;
 
@@ -15215,11 +15204,7 @@ if (typeof obj.prop === "string") {
     );
 }
 
-// TODO: computed element access with mutable `let` key should NOT be narrowed
-// (tsc returns `string | number`, we incorrectly narrow to `string`).
-// Requires flow analysis to check key constness before narrowing element access.
 #[test]
-#[ignore = "pre-existing: computed element access narrowing doesn't check key mutability"]
 fn test_flow_narrowing_not_applied_for_computed_element_access() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -19355,7 +19340,6 @@ configure({ timeout: 5000, retries: 3 });
 ///
 /// Fresh object literals in return statements are checked for excess properties.
 #[test]
-#[ignore = "excess property in return statements needs explicit checker path (solver path suppressed by 5a649e2c)"]
 fn test_freshness_return_statement_checked() {
     use crate::parser::ParserState;
 
@@ -23423,11 +23407,7 @@ if ((o = fn()).done) {
 }
 
 /// Test destructuring assignment default value narrowing with complex patterns
-///
-/// NOTE: Currently ignored - complex destructuring assignment narrowing with nested
-/// patterns and default values is not fully implemented.
 #[test]
-#[ignore = "Complex destructuring assignment narrowing not fully implemented"]
 fn test_destructuring_assignment_default_order_narrows() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -25355,7 +25335,6 @@ let { x = 42 }: { x: string } = obj;
 }
 
 #[test]
-#[ignore = "binding element default value checking not yet implemented"]
 fn test_binding_element_default_value_isolated_check() {
     use crate::parser::ParserState;
 

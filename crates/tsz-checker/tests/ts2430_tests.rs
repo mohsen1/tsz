@@ -197,7 +197,6 @@ interface I2 extends T2 {
 }
 
 #[test]
-#[ignore = "mapped type evaluation not yet fully supported in unit test env"]
 fn test_interface_extends_mapped_type_alias_incompatible() {
     // Interface extends a mapped type alias with incompatible property
     let source = r#"
