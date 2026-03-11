@@ -622,7 +622,8 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     from_index_signature,
                 } => {
-                    if from_index_signature
+                    if self.ctx.skip_flow_narrowing
+                        && from_index_signature
                         && crate::query_boundaries::state::checking::is_type_parameter_like(
                             self.ctx.types,
                             object_type,

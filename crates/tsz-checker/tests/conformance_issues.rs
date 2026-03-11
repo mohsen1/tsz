@@ -7658,6 +7658,36 @@ function f4<T extends { [K in keyof T]: string }>(k: keyof T) {
 }
 
 #[test]
+fn test_generic_string_index_constraint_allows_read_but_rejects_write_via_dot_access() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f<T extends { [key: string]: number }>(c: T, k: keyof T) {
+    c.x;
+    c[k];
+    c.x = 1;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'x' does not exist on type 'T'")
+        }),
+        "Expected TS2339 for generic write through dot access.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|(code, message)| {
+                *code == 2339 && message.contains("Property 'x' does not exist on type 'T'")
+            })
+            .count(),
+        1,
+        "Expected only the write access to error.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2538_for_any_index() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
