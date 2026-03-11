@@ -1102,7 +1102,10 @@ impl<'a> CheckerState<'a> {
             k if k == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(expr_node)?;
                 let left = self.get_simple_computed_name_expr_text(access.expression)?;
-                let right = self.ctx.arena.get_identifier_text(access.name_or_argument)?;
+                let right = self
+                    .ctx
+                    .arena
+                    .get_identifier_text(access.name_or_argument)?;
                 Some(format!("{left}.{right}"))
             }
             k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
