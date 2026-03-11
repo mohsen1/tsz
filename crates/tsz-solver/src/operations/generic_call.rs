@@ -17,6 +17,26 @@ use crate::types::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
+/// Check if a type constraint is a primitive type (string, number, boolean, bigint)
+/// or a union containing a primitive. Used to preserve literal types during inference
+/// when the constraint implies literals should be kept (e.g., `T extends string`).
+fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::STRING
+        || type_id == TypeId::NUMBER
+        || type_id == TypeId::BOOLEAN
+        || type_id == TypeId::BIGINT
+    {
+        return true;
+    }
+    if let Some(TypeData::Union(list_id)) = interner.lookup(type_id) {
+        let members = interner.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| constraint_is_primitive_type(interner, m));
+    }
+    false
+}
+
 fn instantiate_call_type(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -2228,24 +2248,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let inferred_ty = if tp.is_const {
             arg_ty
         } else {
-            let widened =
-                crate::operations::widening::widen_type(self.interner.as_type_database(), arg_ty);
-            // When a constraint exists and the widened type violates it, fall back
-            // to the unwidened (literal) type. This matches tsc's behavior: for
-            // `<T extends 'a' | 'b'>(x: T)` called with `'a'`, T infers as `"a"`
-            // (not `string`), because widening to `string` would violate the
-            // constraint. Similarly for tuple constraints like
-            // `<T extends [string, string, 'a' | 'b']>(x: T)`.
-            if let Some(constraint) = tp.constraint {
-                if !self.checker.is_assignable_to(widened, constraint)
-                    && self.checker.is_assignable_to(arg_ty, constraint)
-                {
-                    arg_ty
+            // When the declared constraint is a primitive type (string, number,
+            // boolean, bigint) or a union thereof, preserve literal types without
+            // widening. This matches tsc's getInferredType which checks
+            // isLiteralType(constraint) and skips getWidenedLiteralType.
+            // Example: `<T extends string>(x: T): T` called with `"hello"`
+            // should infer T = "hello", not T = string.
+            let constraint_is_primitive = tp
+                .constraint
+                .is_some_and(|c| constraint_is_primitive_type(self.interner, c));
+            if constraint_is_primitive {
+                arg_ty
+            } else {
+                let widened = crate::operations::widening::widen_type(
+                    self.interner.as_type_database(),
+                    arg_ty,
+                );
+                // When a constraint exists and the widened type violates it, fall back
+                // to the unwidened (literal) type. This matches tsc's behavior: for
+                // `<T extends 'a' | 'b'>(x: T)` called with `'a'`, T infers as `"a"`
+                // (not `string`), because widening to `string` would violate the
+                // constraint. Similarly for tuple constraints like
+                // `<T extends [string, string, 'a' | 'b']>(x: T)`.
+                if let Some(constraint) = tp.constraint {
+                    if !self.checker.is_assignable_to(widened, constraint)
+                        && self.checker.is_assignable_to(arg_ty, constraint)
+                    {
+                        arg_ty
+                    } else {
+                        widened
+                    }
                 } else {
                     widened
                 }
-            } else {
-                widened
             }
         };
         if let Some(constraint) = tp.constraint
