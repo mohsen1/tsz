@@ -1384,6 +1384,17 @@ fn compile_and_get_diagnostics_named_with_lib_and_options(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
+    compile_and_get_raw_diagnostics_named_with_lib_and_options(file_name, source, options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
+    file_name: &str,
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<tsz_common::diagnostics::Diagnostic> {
     let lib_files = load_lib_files_for_test();
 
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
@@ -1413,12 +1424,7 @@ fn compile_and_get_diagnostics_named_with_lib_and_options(
     }
 
     checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    checker.ctx.diagnostics
 }
 
 fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
@@ -7625,6 +7631,70 @@ fn ts7008_private_identifier_in_ambient_class_is_suppressed() {
     assert_eq!(
         ts7008_count, 1,
         "Expected only the non-ambient private field to emit TS7008. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2803_private_method_destructuring_assignment_anchors_at_private_name() {
+    let source = r#"
+class A {
+    #method() {}
+    constructor() {
+        ({ x: this.#method } = { x: () => {} });
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2803: Vec<_> = diagnostics.iter().filter(|d| d.code == 2803).collect();
+    assert_eq!(ts2803.len(), 1, "Expected one TS2803. Got: {diagnostics:?}");
+
+    let expected_start = source
+        .find("this.#method")
+        .map(|idx| idx as u32 + "this.".len() as u32)
+        .expect("expected test source to contain `this.#method`");
+    assert_eq!(
+        ts2803[0].start, expected_start,
+        "Expected TS2803 to anchor at `#method` in the destructuring target."
+    );
+}
+
+#[test]
+fn ts2803_static_private_method_destructuring_assignment_anchors_at_private_name() {
+    let source = r#"
+class A {
+    static #method() {}
+    static assign() {
+        ({ x: A.#method } = { x: () => {} });
+    }
+}
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2803: Vec<_> = diagnostics.iter().filter(|d| d.code == 2803).collect();
+    assert_eq!(ts2803.len(), 1, "Expected one TS2803. Got: {diagnostics:?}");
+
+    let expected_start = source
+        .find("A.#method")
+        .map(|idx| idx as u32 + "A.".len() as u32)
+        .expect("expected test source to contain `A.#method`");
+    assert_eq!(
+        ts2803[0].start, expected_start,
+        "Expected TS2803 to anchor at `#method` in the static destructuring target."
     );
 }
 
