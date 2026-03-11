@@ -1441,6 +1441,8 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        self.validate_jsdoc_template_tag_syntax_at_decl(class_idx);
+
         let template_names = Self::jsdoc_template_type_params(&jsdoc);
         if template_names.is_empty() {
             return (Vec::new(), Vec::new());
