@@ -587,12 +587,8 @@ impl<'a> CheckerState<'a> {
             index_constraint =
                 self.resolve_index_constraint_from_declaration(data.index_type, data.object_type);
         }
-        let error_anchor =
-            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, index_type) {
-                node_idx
-            } else {
-                data.index_type
-            };
+        let error_anchor = node_idx;
+        let concrete_error_anchor = data.index_type;
         if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, object_type)
             && index_constraint.is_some_and(|constraint| {
                 constraint == object_type
@@ -1030,7 +1026,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.try_emit_concrete_index_access_error(
-                error_anchor,
+                concrete_error_anchor,
                 object_type_for_check,
                 index_type_for_check,
                 self.type_node_refers_to_type_parameter(data.object_type),
