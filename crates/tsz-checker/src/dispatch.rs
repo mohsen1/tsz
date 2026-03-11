@@ -1371,34 +1371,46 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     self.checker.ctx.types,
                                     asserted_type,
                                 ) {
-                                    // Try resolving the type parameter's constraint
-                                    if let Some(constraint) =
-                                        tsz_solver::type_queries::get_type_parameter_constraint(
-                                            self.checker.ctx.types,
-                                            asserted_type,
-                                        )
-                                    {
-                                        // Only check if constraint is concrete (not itself generic)
-                                        // and not too broad (unknown/any).
-                                        if !generic_query::contains_type_parameters(
-                                            self.checker.ctx.types,
-                                            constraint,
-                                        ) && constraint != TypeId::UNKNOWN
-                                            && constraint != TypeId::ANY
+                                    // Only bare unconstrained type parameters suppress TS2352.
+                                    // Structured targets like `T[]` or `(x: T) => T` still have
+                                    // enough shape for overlap checking, and tsc reports TS2352
+                                    // for assertions like `null as T[]`.
+                                    if tsz_solver::type_queries::is_type_parameter_like(
+                                        self.checker.ctx.types,
+                                        asserted_type,
+                                    ) {
+                                        // Try resolving the type parameter's constraint.
+                                        if let Some(constraint) =
+                                            tsz_solver::type_queries::get_type_parameter_constraint(
+                                                self.checker.ctx.types,
+                                                asserted_type,
+                                            )
                                         {
-                                            // Use the ORIGINAL asserted type (not constraint)
-                                            // for overlap checking. tsc's isTypeComparableTo
-                                            // checks against the type parameter itself, not its
-                                            // constraint. Using the constraint is too permissive
-                                            // and prevents TS2352 from firing when the expression
-                                            // type satisfies the constraint but not the type param.
-                                            (true, asserted_type)
+                                            // Only check if constraint is concrete (not itself generic)
+                                            // and not too broad (unknown/any).
+                                            if !generic_query::contains_type_parameters(
+                                                self.checker.ctx.types,
+                                                constraint,
+                                            ) && constraint != TypeId::UNKNOWN
+                                                && constraint != TypeId::ANY
+                                            {
+                                                // Use the ORIGINAL asserted type (not constraint)
+                                                // for overlap checking. tsc's isTypeComparableTo
+                                                // checks against the type parameter itself, not its
+                                                // constraint. Using the constraint is too permissive
+                                                // and prevents TS2352 from firing when the expression
+                                                // type satisfies the constraint but not the type param.
+                                                (true, asserted_type)
+                                            } else {
+                                                (false, asserted_type)
+                                            }
                                         } else {
+                                            // No constraint — unconstrained naked `T` is compatible
+                                            // with anything for TS2352 purposes.
                                             (false, asserted_type)
                                         }
                                     } else {
-                                        // No constraint — skip (unconstrained T is compatible with anything)
-                                        (false, asserted_type)
+                                        (true, asserted_type)
                                     }
                                 } else {
                                     (true, asserted_type)
@@ -1415,10 +1427,25 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // one common property.
                                 // Use effective_asserted (which may be a resolved constraint)
                                 // for the overlap check.
-                                let source_to_target =
-                                    self.checker.is_assignable_to(expr_type, effective_asserted);
-                                let target_to_source =
-                                    self.checker.is_assignable_to(effective_asserted, expr_type);
+                                let structured_generic_assertion_target =
+                                    generic_query::contains_type_parameters(
+                                        self.checker.ctx.types,
+                                        effective_asserted,
+                                    ) && !tsz_solver::type_queries::is_type_parameter_like(
+                                        self.checker.ctx.types,
+                                        effective_asserted,
+                                    );
+
+                                let source_to_target = if structured_generic_assertion_target {
+                                    false
+                                } else {
+                                    self.checker.is_assignable_to(expr_type, effective_asserted)
+                                };
+                                let target_to_source = if structured_generic_assertion_target {
+                                    false
+                                } else {
+                                    self.checker.is_assignable_to(effective_asserted, expr_type)
+                                };
                                 if !source_to_target && !target_to_source {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it
@@ -1932,6 +1959,24 @@ class C2 {
             ts2352.len(),
             0,
             "Expected no TS2352 in static context, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2352_structured_target_with_type_parameter_still_reports() {
+        let diags = check_source_diagnostics(
+            r#"
+function f<T>() {
+    const x = <T[]>null;
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "Expected TS2352 for `null as T[]`, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
