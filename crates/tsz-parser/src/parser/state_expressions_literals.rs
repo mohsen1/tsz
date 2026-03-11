@@ -854,11 +854,16 @@ impl ParserState {
                 );
                 None
             } else {
-                Some(if self.look_ahead_is_import_options_object_literal() {
-                    self.parse_import_options_object_literal()
-                } else {
-                    self.parse_assignment_expression()
-                })
+                Some(
+                    if self.in_import_type_options_context
+                        && !self.fallback_import_type_options_once
+                        && self.look_ahead_is_import_options_object_literal()
+                    {
+                        self.parse_import_options_object_literal()
+                    } else {
+                        self.parse_assignment_expression()
+                    },
+                )
             }
         } else {
             None
@@ -876,9 +881,9 @@ impl ParserState {
         }
 
         let end_pos = self.token_end();
-        let defer_close_paren_recovery =
-            options.is_some() && self.is_token(SyntaxKind::CloseBraceToken);
-        if !defer_close_paren_recovery {
+        let tail_recovered = self.import_attribute_tail_recovered;
+        self.import_attribute_tail_recovered = false;
+        if !tail_recovered {
             self.parse_expected(SyntaxKind::CloseParenToken);
         }
 
@@ -2306,6 +2311,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut properties = Vec::new();
+        let mut aborted_after_nested_recovery = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2317,6 +2323,11 @@ impl ParserState {
 
             if prop.is_some() {
                 properties.push(prop);
+            }
+
+            if self.import_attribute_tail_recovered {
+                aborted_after_nested_recovery = true;
+                break;
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
@@ -2356,7 +2367,9 @@ impl ParserState {
         }
 
         let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        if !aborted_after_nested_recovery {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+        }
 
         self.arena.add_literal_expr(
             syntax_kind_ext::OBJECT_LITERAL_EXPRESSION,
@@ -2431,6 +2444,7 @@ impl ParserState {
                     }
                     self.next_token();
                 }
+                self.abort_intersection_continuation = true;
                 self.report_invalid_import_attribute_tail_recovery(semicolon_recovery);
                 aborted_on_invalid_key = true;
                 break;
@@ -2483,37 +2497,49 @@ impl ParserState {
             self.parse_error_at(start, length, "';' expected.", diagnostic_codes::EXPECTED);
         }
 
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
         let mut saw_dot = false;
-        while !self.is_token(SyntaxKind::EndOfFileToken) {
-            match self.token() {
-                SyntaxKind::CloseBraceToken
-                | SyntaxKind::CloseParenToken
-                | SyntaxKind::DotToken => {
-                    self.parse_error_at_current_token(
-                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                    saw_dot |= self.is_token(SyntaxKind::DotToken);
-                }
-                _ if saw_dot && self.is_identifier_or_keyword() => {
-                    self.parse_error_at_current_token(
-                        diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                    saw_dot = false;
-                }
-                SyntaxKind::SemicolonToken => break,
-                _ => {}
+        while matches!(
+            self.token(),
+            SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::DotToken
+        ) {
+            let token = self.token();
+            self.parse_error_at_current_token(
+                diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            if token == SyntaxKind::CloseParenToken {
+                self.import_attribute_tail_recovered = true;
             }
-
+            saw_dot = token == SyntaxKind::DotToken;
             self.next_token();
+            if self.scanner.has_preceding_line_break() {
+                return;
+            }
         }
 
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
+        if saw_dot && self.is_identifier_or_keyword() {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            let next_has_line_break = self.scanner.has_preceding_line_break();
+            let next_token = self.token();
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+
+            if !next_has_line_break {
+                self.parse_error_at_current_token(
+                    diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+            }
+            self.next_token();
+            if !next_has_line_break && next_token == SyntaxKind::CloseParenToken {
+                self.parse_error_at_current_token(
+                    diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+            }
+        }
     }
 
     /// Parse member expression base (identifier with property/element access, but no calls)
