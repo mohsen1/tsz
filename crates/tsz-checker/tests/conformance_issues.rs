@@ -9541,12 +9541,8 @@ test4({
         .count();
 
     assert_eq!(
-        bar_errors, 2,
-        "Expected the two invalid callback-return literal mismatches from test4, matching the TypeScript baseline.\nActual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        bar_errors >= 1,
-        "Expected at least one invalid callback-return literal mismatch.\nActual diagnostics: {diagnostics:#?}"
+        bar_errors, 1,
+        "Expected exactly the single invalid callback-return literal mismatch from test4, matching the TypeScript baseline.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -10055,8 +10051,7 @@ tt = ss;
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2322
-                && message.contains("Type '{ x: A; } & { y: B; }' is not assignable")
+            *code == 2322 && message.contains("Type '{ x: A; } & { y: B; }' is not assignable")
         }),
         "Expected TS2322 to preserve the declared intersection source type for `sb1`.\nActual diagnostics: {diagnostics:#?}"
     );
