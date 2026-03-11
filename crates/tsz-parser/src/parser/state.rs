@@ -1755,6 +1755,14 @@ impl ParserState {
                 );
             }
 
+            // `clasd MyClass {}` should still surface the same follow-up missing
+            // semicolon error that a normal expression statement would report at
+            // `MyClass`, rather than cascading into a second TS1434 on the next
+            // statement pass.
+            if suggestion == "class" && self.is_token(SyntaxKind::Identifier) {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            }
+
             return;
         }
 
