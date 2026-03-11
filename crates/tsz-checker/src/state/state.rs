@@ -1084,6 +1084,7 @@ impl<'a> CheckerState<'a> {
 
         // Clear this node's cache
         self.ctx.node_types.remove(&idx.0);
+        self.ctx.implicit_any_checked_closures.remove(&idx);
 
         // Recursively clear children
         let Some(node) = self.ctx.arena.get(idx) else {
