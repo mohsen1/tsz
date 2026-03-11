@@ -11,6 +11,79 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn contextual_property_presence(
+        &mut self,
+        type_id: TypeId,
+        property_name: &str,
+        depth: usize,
+    ) -> ContextualPropertyPresence {
+        use crate::query_boundaries::assignability::ExcessPropertiesKind;
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        if depth == 0 || matches!(type_id, TypeId::ANY | TypeId::ERROR) {
+            return ContextualPropertyPresence::Unknown;
+        }
+
+        match self.resolve_property_access_with_env(type_id, property_name) {
+            PropertyAccessResult::Success { .. } => return ContextualPropertyPresence::Present,
+            PropertyAccessResult::PropertyNotFound { .. } => {}
+            _ => return ContextualPropertyPresence::Unknown,
+        }
+
+        let resolved_type = self.resolve_type_for_property_access(type_id);
+        if resolved_type != type_id {
+            match self.contextual_property_presence(resolved_type, property_name, depth - 1) {
+                ContextualPropertyPresence::Present => return ContextualPropertyPresence::Present,
+                ContextualPropertyPresence::Unknown => return ContextualPropertyPresence::Unknown,
+                ContextualPropertyPresence::Absent => {}
+            }
+        }
+
+        let evaluated_type = self.evaluate_type_with_env(type_id);
+        let evaluated_type = self.resolve_type_for_property_access(evaluated_type);
+        let evaluated_type = self.resolve_lazy_type(evaluated_type);
+        let evaluated_type = self.evaluate_application_type(evaluated_type);
+        if evaluated_type != type_id && evaluated_type != resolved_type {
+            match self.contextual_property_presence(evaluated_type, property_name, depth - 1) {
+                ContextualPropertyPresence::Present => return ContextualPropertyPresence::Present,
+                ContextualPropertyPresence::Unknown => return ContextualPropertyPresence::Unknown,
+                ContextualPropertyPresence::Absent => {}
+            }
+        }
+
+        match crate::query_boundaries::assignability::classify_for_excess_properties(
+            self.ctx.types,
+            type_id,
+        ) {
+            ExcessPropertiesKind::Object(_) => ContextualPropertyPresence::Absent,
+            ExcessPropertiesKind::ObjectWithIndex(_) => ContextualPropertyPresence::Present,
+            ExcessPropertiesKind::Union(members) | ExcessPropertiesKind::Intersection(members) => {
+                let mut saw_unknown = false;
+                for member in members {
+                    match self.contextual_property_presence(member, property_name, depth - 1) {
+                        ContextualPropertyPresence::Present => {
+                            return ContextualPropertyPresence::Present;
+                        }
+                        ContextualPropertyPresence::Unknown => saw_unknown = true,
+                        ContextualPropertyPresence::Absent => {}
+                    }
+                }
+                if saw_unknown {
+                    ContextualPropertyPresence::Unknown
+                } else {
+                    ContextualPropertyPresence::Absent
+                }
+            }
+            ExcessPropertiesKind::NotObject => {
+                if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id) {
+                    ContextualPropertyPresence::Unknown
+                } else {
+                    ContextualPropertyPresence::Absent
+                }
+            }
+        }
+    }
+
     pub(crate) fn check_destructuring_default_initializer(
         &mut self,
         default_idx: NodeIndex,
@@ -344,6 +417,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let property_presence =
+            self.contextual_property_presence(original_contextual_type, property_name, 6);
+        if property_presence == ContextualPropertyPresence::Absent {
+            best_property_type = None;
+        }
+
         if let Some(property_type) = best_property_type {
             return Some(self.sanitize_contextual_property_type(property_type));
         }
@@ -351,7 +430,9 @@ impl<'a> CheckerState<'a> {
         // If contextual extraction fails but the parent context is generic/deferred,
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
-        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type) {
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, contextual_type)
+            && property_presence != ContextualPropertyPresence::Absent
+        {
             tracing::trace!(
                 contextual_type = contextual_type.0,
                 property_name,
@@ -2010,4 +2091,11 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(resolved);
         self.ctx.types.collect_object_spread_properties(resolved)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContextualPropertyPresence {
+    Present,
+    Absent,
+    Unknown,
 }
