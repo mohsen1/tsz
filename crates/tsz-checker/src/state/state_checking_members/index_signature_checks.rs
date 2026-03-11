@@ -124,12 +124,77 @@ impl<'a> CheckerState<'a> {
         let has_param_grammar_error = param_data.dot_dot_dot_token || param_data.question_token;
 
         if !is_valid && !has_param_grammar_error {
-            self.error_at_node(
-                param_idx,
-                diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
-                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
-            );
+            // TS1337: when the type is a generic type parameter or literal type,
+            // emit the more specific "cannot be a literal type or generic type" message.
+            let is_generic_or_literal = self
+                .is_type_param_or_literal_in_index_sig(type_node.kind, param_data.type_annotation);
+            if is_generic_or_literal {
+                self.error_at_node(
+                    param_idx,
+                    diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                );
+            } else {
+                self.error_at_node(
+                    param_idx,
+                    diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                );
+            }
         }
+    }
+
+    /// Check if the type annotation of an index signature parameter is a type parameter
+    /// or a literal type (triggers TS1337 instead of TS1268).
+    pub(crate) fn is_type_param_or_literal_in_index_sig(
+        &self,
+        type_node_kind: u16,
+        type_annotation_idx: NodeIndex,
+    ) -> bool {
+        use crate::symbol_resolver::TypeSymbolResolution;
+        use tsz_scanner::SyntaxKind;
+
+        // Literal types: string/number/boolean literals
+        if type_node_kind == syntax_kind_ext::LITERAL_TYPE
+            || type_node_kind == SyntaxKind::StringLiteral as u16
+            || type_node_kind == SyntaxKind::NumericLiteral as u16
+            || type_node_kind == SyntaxKind::TrueKeyword as u16
+            || type_node_kind == SyntaxKind::FalseKeyword as u16
+        {
+            return true;
+        }
+
+        // Type references: check if they resolve to type parameters
+        if type_node_kind == syntax_kind_ext::TYPE_REFERENCE as u16 {
+            if let Some(type_node) = self.ctx.arena.get(type_annotation_idx) {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                    // First try symbol resolution (works for binder-registered type params)
+                    if let TypeSymbolResolution::Type(sym_id) =
+                        self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                    {
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            if (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
+                                return true;
+                            }
+                        }
+                    }
+                    // Fallback: check the checker's type parameter stack (covers type params
+                    // from type aliases/generics that may not be in the binder's symbol table)
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        if self
+                            .lookup_type_parameter(ident.escaped_text.as_str())
+                            .is_some()
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Check that property types are assignable to index signature types (TS2411).
