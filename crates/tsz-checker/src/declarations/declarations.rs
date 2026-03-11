@@ -4,8 +4,11 @@
 //! This module separates declaration checking logic from the monolithic `CheckerState`.
 
 use crate::context::CheckerContext;
+use crate::diagnostics::format_message;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 
 /// Declaration type checker that operates on the shared context.
 ///
@@ -13,6 +16,15 @@ use tsz_scanner::SyntaxKind;
 /// All declaration type checking goes through this checker.
 pub struct DeclarationChecker<'a, 'ctx> {
     pub ctx: &'a mut CheckerContext<'ctx>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IsolatedEnumInitializerKind {
+    LiteralNumeric,
+    NonLiteralNumeric,
+    LiteralString,
+    NonLiteralString,
+    Other,
 }
 
 impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
@@ -663,24 +675,70 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
         }
 
-        // TS1061: Enum member must have initializer
+        // TS18055/TS18056 isolatedModules enum restrictions, plus TS1061 fallback.
         let mut auto_incrementable = true;
+        let mut previous_initializer_kind = IsolatedEnumInitializerKind::Other;
         for &member_idx in &enum_data.members.nodes {
             if let Some(member_node) = self.ctx.arena.get(member_idx)
                 && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
             {
+                let name_node = self.ctx.arena.get(member_data.name).unwrap_or(member_node);
                 if member_data.initializer.is_none() {
                     if !auto_incrementable {
-                        let name_node = self.ctx.arena.get(member_data.name).unwrap_or(member_node);
-                        self.ctx.error(
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                            "Enum member must have initializer.".to_string(),
-                            diagnostic_codes::ENUM_MEMBER_MUST_HAVE_INITIALIZER,
-                        );
+                        if self.ctx.isolated_modules()
+                            && previous_initializer_kind
+                                == IsolatedEnumInitializerKind::NonLiteralNumeric
+                        {
+                            self.ctx.error(
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                                diagnostic_messages::ENUM_MEMBER_FOLLOWING_A_NON_LITERAL_NUMERIC_MEMBER_MUST_HAVE_AN_INITIALIZER_WHEN.to_string(),
+                                diagnostic_codes::ENUM_MEMBER_FOLLOWING_A_NON_LITERAL_NUMERIC_MEMBER_MUST_HAVE_AN_INITIALIZER_WHEN,
+                            );
+                        } else {
+                            self.ctx.error(
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                                "Enum member must have initializer.".to_string(),
+                                diagnostic_codes::ENUM_MEMBER_MUST_HAVE_INITIALIZER,
+                            );
+                        }
                     }
                     auto_incrementable = true;
+                    previous_initializer_kind = IsolatedEnumInitializerKind::Other;
                 } else {
+                    previous_initializer_kind = self.classify_isolated_enum_initializer(
+                        member_data.initializer,
+                        enum_data,
+                        0,
+                    );
+                    if self.ctx.isolated_modules()
+                        && previous_initializer_kind
+                            == IsolatedEnumInitializerKind::NonLiteralString
+                        && let Some(member_name) =
+                            self.ctx.arena.get_identifier_text(member_data.name)
+                    {
+                        let enum_name = self
+                            .ctx
+                            .arena
+                            .get_identifier_text(enum_data.name)
+                            .unwrap_or("");
+                        let display_name = format!("{enum_name}.{member_name}");
+                        let error_node = self
+                            .ctx
+                            .arena
+                            .get(member_data.initializer)
+                            .unwrap_or(name_node);
+                        self.ctx.error(
+                            error_node.pos,
+                            error_node.end - error_node.pos,
+                            format_message(
+                                diagnostic_messages::HAS_A_STRING_TYPE_BUT_MUST_HAVE_SYNTACTICALLY_RECOGNIZABLE_STRING_SYNTAX_WHEN_IS,
+                                &[display_name.as_str()],
+                            ),
+                            diagnostic_codes::HAS_A_STRING_TYPE_BUT_MUST_HAVE_SYNTACTICALLY_RECOGNIZABLE_STRING_SYNTAX_WHEN_IS,
+                        );
+                    }
                     auto_incrementable =
                         self.is_numeric_constant_enum_expr(member_data.initializer, enum_data, 0);
                 }
@@ -980,6 +1038,354 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 } else {
                     false
                 }
+            }
+            _ => false,
+        }
+    }
+
+    fn classify_isolated_enum_initializer(
+        &self,
+        expr_idx: NodeIndex,
+        enum_data: &tsz_parser::parser::node::EnumData,
+        depth: u32,
+    ) -> IsolatedEnumInitializerKind {
+        if depth > 100 || expr_idx.is_none() {
+            return IsolatedEnumInitializerKind::Other;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+
+        if self.is_numeric_constant_enum_expr(expr_idx, enum_data, 0) {
+            return IsolatedEnumInitializerKind::LiteralNumeric;
+        }
+
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+            {
+                IsolatedEnumInitializerKind::LiteralString
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .ctx
+                .arena
+                .get_parenthesized(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |paren| {
+                    self.classify_isolated_enum_initializer(paren.expression, enum_data, depth + 1)
+                }),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION =>
+            {
+                self.ctx.arena.get_type_assertion(node).map_or(
+                    IsolatedEnumInitializerKind::Other,
+                    |assertion| {
+                        self.classify_isolated_enum_initializer(
+                            assertion.expression,
+                            enum_data,
+                            depth + 1,
+                        )
+                    },
+                )
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => self
+                .ctx
+                .arena
+                .get_binary_expr(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |binary| {
+                    if binary.operator_token == SyntaxKind::PlusToken as u16
+                        && (self.is_syntactically_recognizable_string_initializer(binary.left)
+                            || self.is_syntactically_recognizable_string_initializer(binary.right))
+                    {
+                        IsolatedEnumInitializerKind::LiteralString
+                    } else {
+                        IsolatedEnumInitializerKind::Other
+                    }
+                }),
+            k if k == SyntaxKind::Identifier as u16 => {
+                let resolved = self
+                    .resolve_identifier_like_symbol(expr_idx)
+                    .and_then(|sym_id| self.resolve_imported_const_target(sym_id))
+                    .or_else(|| self.resolve_identifier_like_symbol(expr_idx));
+                resolved.map_or(IsolatedEnumInitializerKind::Other, |sym_id| {
+                    self.classify_symbol_backed_enum_initializer(sym_id, enum_data, depth + 1)
+                })
+            }
+            _ => self.variable_initializer_widened_kind(expr_idx),
+        }
+    }
+
+    fn variable_initializer_widened_kind(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> IsolatedEnumInitializerKind {
+        let Some(type_id) = self.ctx.node_types.get(&expr_idx.0).copied() else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+        match type_id {
+            TypeId::STRING => IsolatedEnumInitializerKind::NonLiteralString,
+            TypeId::NUMBER => IsolatedEnumInitializerKind::NonLiteralNumeric,
+            _ => IsolatedEnumInitializerKind::Other,
+        }
+    }
+
+    fn is_syntactically_recognizable_string_initializer(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.ctx.arena.get_parenthesized(node).is_some_and(|paren| {
+                    self.is_syntactically_recognizable_string_initializer(paren.expression)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn resolve_identifier_like_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        self.ctx
+            .binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
+    }
+
+    fn resolve_imported_const_target(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return Some(sym_id);
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let target_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(&symbol.escaped_name);
+        let source_file_idx = if symbol.decl_file_idx == u32::MAX {
+            self.ctx.current_file_idx
+        } else {
+            symbol.decl_file_idx as usize
+        };
+        self.ctx
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .entry(sym_id)
+            .or_insert(source_file_idx);
+        self.ctx
+            .resolve_alias_import_member(sym_id, module_specifier, target_name)
+    }
+
+    fn classify_symbol_backed_enum_initializer(
+        &self,
+        sym_id: SymbolId,
+        enum_data: &tsz_parser::parser::node::EnumData,
+        depth: u32,
+    ) -> IsolatedEnumInitializerKind {
+        let cross_file_idx = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&sym_id)
+            .copied();
+        let (symbol, arena) = if let Some(file_idx) = cross_file_idx {
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                return IsolatedEnumInitializerKind::Other;
+            };
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                return IsolatedEnumInitializerKind::Other;
+            };
+            (symbol, self.ctx.get_arena_for_file(file_idx as u32))
+        } else {
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                return IsolatedEnumInitializerKind::Other;
+            };
+            (symbol, self.ctx.arena)
+        };
+
+        let decl_idx = if symbol.value_declaration.is_none() {
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            symbol.value_declaration
+        };
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+        let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+        if var_decl.initializer.is_none() {
+            return self
+                .declared_type_annotation_kind_in_arena(arena, var_decl.type_annotation)
+                .unwrap_or(IsolatedEnumInitializerKind::Other);
+        }
+        let inner = if cross_file_idx.is_some() {
+            self.classify_initializer_kind_in_arena(arena, var_decl.initializer, depth)
+        } else {
+            self.classify_isolated_enum_initializer(var_decl.initializer, enum_data, depth)
+        };
+        match inner {
+            IsolatedEnumInitializerKind::LiteralNumeric
+            | IsolatedEnumInitializerKind::NonLiteralNumeric => {
+                IsolatedEnumInitializerKind::NonLiteralNumeric
+            }
+            IsolatedEnumInitializerKind::LiteralString
+            | IsolatedEnumInitializerKind::NonLiteralString => {
+                IsolatedEnumInitializerKind::NonLiteralString
+            }
+            IsolatedEnumInitializerKind::Other => {
+                self.variable_initializer_widened_kind(var_decl.initializer)
+            }
+        }
+    }
+
+    fn classify_initializer_kind_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> IsolatedEnumInitializerKind {
+        if depth > 100 || expr_idx.is_none() {
+            return IsolatedEnumInitializerKind::Other;
+        }
+
+        let Some(node) = arena.get(expr_idx) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                IsolatedEnumInitializerKind::LiteralNumeric
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+            {
+                IsolatedEnumInitializerKind::LiteralString
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => arena
+                .get_parenthesized(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |paren| {
+                    self.classify_initializer_kind_in_arena(arena, paren.expression, depth + 1)
+                }),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION =>
+            {
+                arena.get_type_assertion(node).map_or(
+                    IsolatedEnumInitializerKind::Other,
+                    |assertion| {
+                        self.classify_initializer_kind_in_arena(
+                            arena,
+                            assertion.expression,
+                            depth + 1,
+                        )
+                    },
+                )
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => arena
+                .get_unary_expr(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |unary| {
+                    match self.classify_initializer_kind_in_arena(arena, unary.operand, depth + 1) {
+                        IsolatedEnumInitializerKind::LiteralNumeric
+                        | IsolatedEnumInitializerKind::NonLiteralNumeric => {
+                            IsolatedEnumInitializerKind::NonLiteralNumeric
+                        }
+                        _ => IsolatedEnumInitializerKind::Other,
+                    }
+                }),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                arena
+                    .get_binary_expr(node)
+                    .map_or(IsolatedEnumInitializerKind::Other, |binary| {
+                        if binary.operator_token == SyntaxKind::PlusToken as u16
+                            && (self.is_syntactically_recognizable_string_initializer_in_arena(
+                                arena,
+                                binary.left,
+                            ) || self
+                                .is_syntactically_recognizable_string_initializer_in_arena(
+                                    arena,
+                                    binary.right,
+                                ))
+                        {
+                            IsolatedEnumInitializerKind::LiteralString
+                        } else {
+                            match (
+                                self.classify_initializer_kind_in_arena(
+                                    arena,
+                                    binary.left,
+                                    depth + 1,
+                                ),
+                                self.classify_initializer_kind_in_arena(
+                                    arena,
+                                    binary.right,
+                                    depth + 1,
+                                ),
+                            ) {
+                                (
+                                    IsolatedEnumInitializerKind::LiteralNumeric
+                                    | IsolatedEnumInitializerKind::NonLiteralNumeric,
+                                    IsolatedEnumInitializerKind::LiteralNumeric
+                                    | IsolatedEnumInitializerKind::NonLiteralNumeric,
+                                ) => IsolatedEnumInitializerKind::NonLiteralNumeric,
+                                _ => IsolatedEnumInitializerKind::Other,
+                            }
+                        }
+                    })
+            }
+            _ => IsolatedEnumInitializerKind::Other,
+        }
+    }
+
+    fn declared_type_annotation_kind_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        type_annotation: NodeIndex,
+    ) -> Option<IsolatedEnumInitializerKind> {
+        let type_node = arena.get(type_annotation)?;
+        match type_node.kind {
+            k if k == SyntaxKind::StringKeyword as u16 => {
+                Some(IsolatedEnumInitializerKind::NonLiteralString)
+            }
+            k if k == SyntaxKind::NumberKeyword as u16 => {
+                Some(IsolatedEnumInitializerKind::NonLiteralNumeric)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_syntactically_recognizable_string_initializer_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                arena.get_parenthesized(node).is_some_and(|paren| {
+                    self.is_syntactically_recognizable_string_initializer_in_arena(
+                        arena,
+                        paren.expression,
+                    )
+                })
             }
             _ => false,
         }

@@ -266,6 +266,57 @@ const e1: X.Foo | boolean = Z.Foo.A;
 }
 
 #[test]
+fn test_isolated_modules_non_literal_numeric_enum_member_uses_ts18056() {
+    let source = r#"
+const foo = 2;
+enum A {
+    a = foo,
+    b,
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            isolated_modules: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18056),
+        "Expected TS18056 for a missing initializer after a non-literal numeric enum member. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1061),
+        "Did not expect fallback TS1061 when TS18056 should be emitted. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_isolated_modules_non_literal_string_enum_member_uses_ts18055() {
+    let source = r#"
+const bar = "bar";
+enum A {
+    a = bar,
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            isolated_modules: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18055),
+        "Expected TS18055 for a non-syntactic string enum initializer under isolatedModules. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_assignment_preserves_numeric_literal_source_display() {
     let source = r#"
 enum E {
@@ -5535,6 +5586,24 @@ fn compile_two_files_get_diagnostics(
     b_source: &str,
     module_spec: &str,
 ) -> Vec<(u32, String)> {
+    compile_two_files_get_diagnostics_with_options(
+        a_source,
+        b_source,
+        module_spec,
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            no_lib: true,
+            ..Default::default()
+        },
+    )
+}
+
+fn compile_two_files_get_diagnostics_with_options(
+    a_source: &str,
+    b_source: &str,
+    module_spec: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
     let mut parser_a = ParserState::new("a.ts".to_string(), a_source.to_string());
     let root_a = parser_a.parse_source_file();
     let mut binder_a = BinderState::new();
@@ -5572,11 +5641,6 @@ fn compile_two_files_get_diagnostics(
     let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
 
     let types = TypeInterner::new();
-    let options = CheckerOptions {
-        module: tsz_common::common::ModuleKind::CommonJS,
-        no_lib: true,
-        ..Default::default()
-    };
     let mut checker = CheckerState::new(
         arena_b.as_ref(),
         binder_b.as_ref(),
@@ -5617,6 +5681,63 @@ fn compile_two_files_get_diagnostics(
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+#[test]
+fn test_isolated_modules_imported_non_literal_numeric_enum_member_uses_ts18056() {
+    let diagnostics = compile_two_files_get_diagnostics_with_options(
+        "export const foo = 2;",
+        r#"
+import { foo } from "./helpers";
+enum A {
+    a = foo,
+    b,
+}
+"#,
+        "./helpers",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            isolated_modules: true,
+            no_lib: true,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18056),
+        "Expected TS18056 for an imported non-literal numeric enum member under isolatedModules. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1061),
+        "Did not expect fallback TS1061 for an imported non-literal numeric enum member. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_isolated_modules_imported_non_literal_string_enum_member_uses_ts18055() {
+    let diagnostics = compile_two_files_get_diagnostics_with_options(
+        r#"export const bar = "bar";"#,
+        r#"
+import { bar } from "./helpers";
+enum A {
+    a = bar,
+}
+"#,
+        "./helpers",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            isolated_modules: true,
+            no_lib: true,
+            no_types_and_symbols: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18055),
+        "Expected TS18055 for an imported non-syntactic string enum initializer under isolatedModules. Actual diagnostics: {diagnostics:#?}"
+    );
 }
 
 fn compile_ambient_module_and_consumer_get_diagnostics(
