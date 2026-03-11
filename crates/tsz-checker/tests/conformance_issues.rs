@@ -1876,6 +1876,89 @@ var z = y[0].m;
 }
 
 #[test]
+fn test_generic_literal_key_constraints_do_not_fall_through_to_ts7053() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+let mappedObject: {[K in "foo"]: null | {x: string}} = {foo: {x: "hello"}};
+declare function foo<T>(x: T): null | T;
+
+function bar<K extends "foo">(key: K) {
+  const element = foo(mappedObject[key]);
+  if (element == null)
+    return;
+  const x = element.x;
+}
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 when the generic key constraint is a concrete literal. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_nullish_and_logical_expressions_do_not_emit_false_ts2322() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare const a: string | undefined;
+declare const b: string | undefined;
+declare const c: string | undefined;
+
+a ?? (b || c);
+(a || b) ?? c;
+a ?? (b && c);
+(a && b) ?? c;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 for parenthesized nullish/logical combinations. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_logical_or_under_type_assertion_does_not_emit_false_ts2322() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface Arg<T = any, Params extends Record<string, any> = Record<string, any>> {
+    "__is_argument__"?: true;
+    meta?: T;
+    params?: Params;
+}
+
+export function myFunction<T = any, U extends Record<string, any> = Record<string, any>>(arg: Arg<T, U>) {
+    return (arg.params || {}) as U;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 from a logical-or branch inside a type assertion. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_string_is_assignable_to_iterable_string_under_es2015() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r##"
