@@ -8383,6 +8383,91 @@ type InferableComponentEnhancerWithProps<TInjectedProps, TNeedsProps> =
 }
 
 #[test]
+fn test_no_false_ts2344_for_self_mapped_index_access_return_type() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A { x: number }
+
+declare function isA(a: unknown): a is A;
+
+type FunctionsObj<T> = {
+    [K in keyof T]: () => unknown
+}
+
+function g<
+    T extends FunctionsObj<T>,
+    M extends keyof T
+>(a2: ReturnType<T[M]>, x: A) {
+    x = a2;
+}
+
+function g2<
+    T extends FunctionsObj<T>,
+    M extends keyof T
+>(a2: ReturnType<T[M]>) {
+    if (isA(a2)) {
+        a2.x;
+    }
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Self-mapped indexed access constraints should not trigger TS2344.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2344_for_mapped_type_preserving_record_constraint() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Same<T> = { [P in keyof T]: T[P] };
+
+type T1<T extends Record<PropertyKey, number>> = T;
+type T2<U extends Record<PropertyKey, number>> = T1<Same<U>>;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Homomorphic mapped types over constrained records should defer TS2344 until instantiation.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_false_ts2344_for_composite_type_args_with_unresolved_members() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Foo1<A,B> = [A, B] extends unknown[][] ? Bar1<[A, B]> : 'else'
+type Bar1<T extends unknown[][]> = T
+
+type Foo2<A> = Set<A> extends Set<unknown[]> ? Bar2<Set<A>> : 'else'
+type Bar2<T extends Set<unknown[]>> = T
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Composite type arguments whose evaluated base still contains type parameters should not trigger TS2344.\nActual: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_interface_extending_array_constraint() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r"
