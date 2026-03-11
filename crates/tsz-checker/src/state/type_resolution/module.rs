@@ -100,7 +100,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn resolve_named_import_module_for_local_name(&self, local_name: &str) -> Option<String> {
+    pub(crate) fn resolve_named_import_module_for_local_name(
+        &self,
+        local_name: &str,
+    ) -> Option<String> {
         let source_file = self.ctx.arena.source_files.first()?;
 
         for &stmt_idx in &source_file.statements.nodes {

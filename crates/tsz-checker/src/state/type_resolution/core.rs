@@ -243,15 +243,24 @@ impl<'a> CheckerState<'a> {
                 // apply module augmentations using the import symbol's module specifier.
                 if result != TypeId::ERROR {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && let Some(module_specifier) = symbol.import_module.as_ref()
-                    {
-                        let aug_name = symbol
-                            .import_name
-                            .as_deref()
-                            .unwrap_or(&symbol.escaped_name);
+                    let imported_module =
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .and_then(|symbol| {
+                                symbol.import_module.as_ref().map(|module_specifier| {
+                                    (
+                                        module_specifier.clone(),
+                                        symbol
+                                            .import_name
+                                            .clone()
+                                            .unwrap_or_else(|| symbol.escaped_name.clone()),
+                                    )
+                                })
+                            });
+                    if let Some((module_specifier, aug_name)) = imported_module {
                         result =
-                            self.apply_module_augmentations(module_specifier, aug_name, result);
+                            self.apply_module_augmentations(&module_specifier, &aug_name, result);
                     }
                 }
 
@@ -545,7 +554,7 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                let result = lowering.lower_type(idx);
+                let mut result = lowering.lower_type(idx);
 
                 // Ensure Application types from lib types have their base DefId
                 // fully registered (body + params) in BOTH type environments.
@@ -660,37 +669,105 @@ impl<'a> CheckerState<'a> {
                 // (e.g., map() from `declare module "./observable"`) are included.
                 if let Some(sym_id) = sym_id {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        && let Some(module_specifier) = symbol.import_module.as_ref()
-                    {
-                        let aug_name = symbol
-                            .import_name
-                            .as_deref()
-                            .unwrap_or(&symbol.escaped_name);
+                    let imported_module = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().map(|module_specifier| {
+                                (
+                                    module_specifier.clone(),
+                                    symbol
+                                        .import_name
+                                        .clone()
+                                        .unwrap_or_else(|| symbol.escaped_name.clone()),
+                                )
+                            })
+                        })
+                        .or_else(|| {
+                            self.resolve_named_import_module_for_local_name(name)
+                                .map(|module_specifier| {
+                                    (module_specifier, name.to_string())
+                                })
+                        });
+                    if let Some((module_specifier, aug_name)) = imported_module {
                         // Get the Application's base DefId and augment its body
                         if let Some((app_base, _)) =
                             query::get_application_info(self.ctx.types, result)
                             && let Some(base_def_id) =
                                 query::get_lazy_def_id(self.ctx.types, app_base)
                         {
+                            let base_sym_id = self.ctx.def_to_symbol_id_with_fallback(base_def_id);
+                            let target_class_sym_id = base_sym_id
+                                .filter(|&candidate_sym_id| {
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(candidate_sym_id, &lib_binders)
+                                        .is_some_and(|base_symbol| {
+                                            base_symbol.flags & symbol_flags::CLASS != 0
+                                        })
+                                })
+                                .or_else(|| {
+                                    self.resolve_cross_file_export(&module_specifier, &aug_name)
+                                        .or_else(|| {
+                                            self.ctx
+                                                .binder
+                                                .module_exports
+                                                .get(&module_specifier)
+                                                .and_then(|exports| exports.get(&aug_name))
+                                        })
+                                        .filter(|&candidate_sym_id| {
+                                            self.ctx
+                                                .binder
+                                                .get_symbol_with_libs(
+                                                    candidate_sym_id,
+                                                    &lib_binders,
+                                                )
+                                                .is_some_and(|base_symbol| {
+                                                    base_symbol.flags & symbol_flags::CLASS != 0
+                                                })
+                                        })
+                                });
+                            let base_is_class = target_class_sym_id.is_some();
                             // Try to get the body from type_env (interface) or
-                            // class_instance_types (class).
-                            let body = self.ctx.type_env.try_borrow().ok().and_then(|env| {
-                                let def = env.get_def(base_def_id);
-                                let inst = env.get_class_instance_type(base_def_id);
-                                def.or(inst)
-                            });
+                            // class_instance_types (class). If the environment has
+                            // not been primed for an imported class yet, recover the
+                            // class instance type directly from the target symbol.
+                            let body = self
+                                .ctx
+                                .type_env
+                                .try_borrow()
+                                .ok()
+                                .and_then(|env| {
+                                    let def = env.get_def(base_def_id);
+                                    let inst = env.get_class_instance_type(base_def_id);
+                                    def.or(inst)
+                                })
+                                .or_else(|| {
+                                    if base_is_class {
+                                        target_class_sym_id
+                                            .and_then(|candidate_sym_id| {
+                                                self.class_instance_type_from_symbol(
+                                                    candidate_sym_id,
+                                                )
+                                            })
+                                    } else {
+                                        None
+                                    }
+                                });
                             if let Some(body) = body {
                                 let augmented = self.apply_module_augmentations(
-                                    module_specifier,
-                                    aug_name,
+                                    &module_specifier,
+                                    &aug_name,
                                     body,
                                 );
                                 if augmented != body {
                                     // Update the body in type_env so that all future
                                     // evaluations of this Application use the augmented type.
                                     if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                                        if env.get_class_instance_type(base_def_id).is_some() {
+                                        if base_is_class
+                                            || env.get_class_instance_type(base_def_id).is_some()
+                                        {
                                             env.insert_class_instance_type(base_def_id, augmented);
                                         } else {
                                             let params =
@@ -709,7 +786,9 @@ impl<'a> CheckerState<'a> {
                                     // Also update type_environment (flow analyzer snapshot)
                                     if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut()
                                     {
-                                        if env.get_class_instance_type(base_def_id).is_some() {
+                                        if base_is_class
+                                            || env.get_class_instance_type(base_def_id).is_some()
+                                        {
                                             env.insert_class_instance_type(base_def_id, augmented);
                                         } else {
                                             let params =
@@ -726,6 +805,39 @@ impl<'a> CheckerState<'a> {
                                         }
                                     }
                                 }
+                            }
+                        }
+                        let has_same_arena_augmentation = self
+                            .get_module_augmentation_declarations(&module_specifier, &aug_name)
+                            .iter()
+                            .any(|augmentation| {
+                                augmentation
+                                    .arena
+                                    .as_ref()
+                                    .is_none_or(|arena| std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                            });
+                        if !has_same_arena_augmentation {
+                            if let Some((_, app_args)) =
+                                query::get_application_info(self.ctx.types, result)
+                            {
+                                let augmentation_members = self
+                                    .get_module_augmentation_members_instantiated(
+                                        &module_specifier,
+                                        &aug_name,
+                                        &app_args,
+                                    );
+                                if !augmentation_members.is_empty() {
+                                    let aug_object =
+                                        self.ctx.types.factory().object(augmentation_members);
+                                    result =
+                                        self.ctx.types.factory().intersection(vec![result, aug_object]);
+                                }
+                            } else {
+                                result = self.apply_module_augmentations(
+                                    &module_specifier,
+                                    &aug_name,
+                                    result,
+                                );
                             }
                         }
                     }

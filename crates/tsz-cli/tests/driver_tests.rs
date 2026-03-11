@@ -7057,3 +7057,94 @@ function bad1(x, {a, b}) {}
         result.diagnostics
     );
 }
+
+#[test]
+fn module_augmentation_method_type_params_and_members_resolve_across_files() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "strict": true,
+            "module": "commonjs",
+            "noEmit": true
+          },
+          "files": ["observable.ts", "map.ts", "main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("observable.ts"),
+        r#"export declare class Observable<T> {
+    filter(pred: (e: T) => boolean): Observable<T>;
+}
+"#,
+    );
+    write_file(
+        &base.join("map.ts"),
+        r#"import { Observable } from "./observable";
+
+Observable.prototype.map = function (proj) {
+    return this;
+}
+
+declare module "./observable" {
+    interface Observable<T> {
+        map<U>(proj: (e: T) => U): Observable<U>;
+    }
+
+    class Bar {}
+    const y = 10;
+    function z() { }
+}
+"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        r#"import { Observable } from "./observable";
+import "./map";
+
+const x = {} as Observable<number>;
+x.map(e => e.toFixed());
+let before: number;
+before.toFixed();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED),
+        "Expected the real TS2454 to remain, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|d| {
+            d.code != diagnostic_codes::CANNOT_FIND_NAME || !d.message_text.contains("'U'")
+        }),
+        "Unexpected TS2304 on augmentation method type parameter `U`: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Unexpected TS2339 for augmented `Observable.map`: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != 7006),
+        "Unexpected TS7006 while contextual typing augmented `Observable.map`: {:?}",
+        result.diagnostics
+    );
+}
