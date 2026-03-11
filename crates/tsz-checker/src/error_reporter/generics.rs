@@ -60,7 +60,10 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
 
-            let exists = target_shape.properties.iter().any(|prop| prop.name == prop_name);
+            let exists = target_shape
+                .properties
+                .iter()
+                .any(|prop| prop.name == prop_name);
             if !exists {
                 return Some(report_idx);
             }

@@ -104,11 +104,7 @@ impl<'a> CheckerState<'a> {
         {
             let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
             if !shape.properties.is_empty() {
-                return (
-                    shape.properties.to_vec(),
-                    has_index_signature,
-                    display_name,
-                );
+                return (shape.properties.to_vec(), has_index_signature, display_name);
             }
         }
 
