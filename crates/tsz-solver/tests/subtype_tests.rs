@@ -15421,6 +15421,83 @@ fn test_index_signature_any_value() {
 }
 
 #[test]
+fn test_object_with_named_props_satisfies_number_index_any() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("one"),
+        TypeId::NUMBER,
+    )]);
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(checker.is_subtype_of(source, target));
+    assert_eq!(checker.explain_failure(source, target), None);
+}
+
+#[test]
+fn test_string_is_not_subtype_of_string_index_any() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(!checker.is_subtype_of(TypeId::STRING, target));
+    assert!(matches!(
+        checker.explain_failure(TypeId::STRING, target),
+        Some(SubtypeFailureReason::TypeMismatch { .. })
+    ));
+}
+
+#[test]
+fn test_boolean_is_not_subtype_of_number_index_any() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(!checker.is_subtype_of(TypeId::BOOLEAN, target));
+    assert!(matches!(
+        checker.explain_failure(TypeId::BOOLEAN, target),
+        Some(SubtypeFailureReason::TypeMismatch { .. })
+    ));
+}
+
+#[test]
 fn test_index_signature_unknown_value() {
     // { [key: string]: unknown } - safe unknown
     let interner = TypeInterner::new();

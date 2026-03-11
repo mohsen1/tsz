@@ -426,6 +426,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
+                let source_kind = self.apparent_primitive_kind(source);
+                let has_string_index = t_shape.string_index.is_some();
+                let has_number_index = t_shape.number_index.is_some();
+                let allow_indexed_structural = !has_string_index
+                    && (!has_number_index || source_kind == Some(IntrinsicKind::String));
+                if !allow_indexed_structural {
+                    if let Some(s_kind) = source_kind
+                        && self.is_boxed_primitive_subtype(s_kind, target)
+                    {
+                        return SubtypeResult::True;
+                    }
+                    if let Some(tracer) = &mut self.tracer
+                        && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                            source_type: source,
+                            target_type: target,
+                        })
+                    {
+                        return SubtypeResult::False;
+                    }
+                    return SubtypeResult::False;
+                }
                 let result = self.check_object_with_index_subtype(&shape, None, &t_shape);
                 if result.is_true() {
                     return result;

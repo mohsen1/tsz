@@ -297,34 +297,48 @@ impl<'a> CheckerState<'a> {
 
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
-                && missing_props.len() > 1
             {
                 let src_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
                 let tgt_str = self.format_assignability_type_for_message(target, source);
-                let prop_list: Vec<String> = missing_props
-                    .iter()
-                    .take(4)
-                    .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
-                    .collect();
-                let props_joined = prop_list.join(", ");
-                let (message, code) = if missing_props.len() > 4 {
-                    let more_count = (missing_props.len() - 4).to_string();
+                let (message, code) = if missing_props.len() == 1 {
+                    let prop_name = self
+                        .ctx
+                        .types
+                        .resolve_atom_ref(missing_props[0])
+                        .to_string();
                     (
                         format_message(
-                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                            &[&src_str, &tgt_str, &props_joined, &more_count],
+                            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                            &[&prop_name, &src_str, &tgt_str],
                         ),
-                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     )
                 } else {
-                    (
-                        format_message(
-                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                            &[&src_str, &tgt_str, &props_joined],
-                        ),
-                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                    )
+                    let prop_list: Vec<String> = missing_props
+                        .iter()
+                        .take(4)
+                        .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                        .collect();
+                    let props_joined = prop_list.join(", ");
+                    if missing_props.len() > 4 {
+                        let more_count = (missing_props.len() - 4).to_string();
+                        (
+                            format_message(
+                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                &[&src_str, &tgt_str, &props_joined, &more_count],
+                            ),
+                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        )
+                    } else {
+                        (
+                            format_message(
+                                diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                &[&src_str, &tgt_str, &props_joined],
+                            ),
+                            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                        )
+                    }
                 };
                 self.ctx.diagnostics.push(Diagnostic::error(
                     self.ctx.file_name.clone(),
