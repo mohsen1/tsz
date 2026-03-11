@@ -1373,6 +1373,11 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
+                    // Only compare against lib declarations when the current variable
+                    // is at file scope. Variables inside namespace bodies (whether
+                    // exported or not) are distinct from global declarations and
+                    // should never trigger TS2403 against lib.d.ts types.
+                    let is_in_namespace = current_ns_export_status.is_some();
                     if let Some(name) = symbol_name {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
@@ -1397,22 +1402,27 @@ impl<'a> CheckerState<'a> {
                                         lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
-                                        // Check compatibility (skip for bare declarations)
-                                        if !is_bare_declaration
-                                            && !self
-                                                .are_var_decl_types_compatible(lib_type, final_type)
-                                            && let Some(ref name) = var_name
-                                        {
-                                            self.error_subsequent_variable_declaration(
-                                                name, lib_type, final_type, decl_idx,
-                                            );
+                                        // Skip entirely for namespace-local variables —
+                                        // they don't merge with lib globals.
+                                        if !is_in_namespace {
+                                            // Check compatibility (skip for bare declarations)
+                                            if !is_bare_declaration
+                                                && !self.are_var_decl_types_compatible(
+                                                    lib_type, final_type,
+                                                )
+                                                && let Some(ref name) = var_name
+                                            {
+                                                self.error_subsequent_variable_declaration(
+                                                    name, lib_type, final_type, decl_idx,
+                                                );
+                                            }
+                                            prior_type_found =
+                                                Some(if let Some(prev) = prior_type_found {
+                                                    self.refine_var_decl_type(prev, lib_type)
+                                                } else {
+                                                    lib_type
+                                                });
                                         }
-                                        prior_type_found =
-                                            Some(if let Some(prev) = prior_type_found {
-                                                self.refine_var_decl_type(prev, lib_type)
-                                            } else {
-                                                lib_type
-                                            });
                                     }
                                 }
                             }
