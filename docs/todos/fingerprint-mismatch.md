@@ -107,7 +107,7 @@ tsz:  "Operator '+' cannot be applied to types 'I' and 'number'"
 
 **Solver location:** Return type inference (`evaluate`), enum type display, literal preservation policy.
 
-#### Sub-pattern C: Property List Ordering (13 fingerprints) — PARTIALLY FIXED
+#### Sub-pattern C: Property List Ordering (13 fingerprints) — DONE
 
 ```
 tsc:  "missing properties: length, pop, push, concat, and 25 more"
@@ -116,9 +116,9 @@ tsz:  "missing properties: lastIndexOf, concat, entries, indexOf, toString, and 
 
 **Affected tests:** `arrayAssignmentTest1` (5 fingerprints), `noInferUnionExcessPropertyCheck1`
 
-**Status: PARTIALLY FIXED** (2026-03-10)
+**Status: FIXED** (2026-03-11)
 
-**Fix:** Three changes to correctly track and preserve property declaration order:
+**Fix:** Four changes to correctly track and preserve property declaration order:
 1. **Threshold fix**: Changed `.take(5)` to `.take(4)` in TS2740 message formatting to show
    first 4 properties + "and N more", matching tsc behavior.
 2. **Lowering path**: Added forward declaration order assignment in `TypeLowering` for
@@ -126,11 +126,12 @@ tsz:  "missing properties: lastIndexOf, concat, entries, indexOf, toString, and 
    was causing later declarations' properties to appear first.
 3. **Instantiation preservation**: Fixed `instantiate_properties` which was zeroing out
    `declaration_order` during generic type instantiation (e.g., `Array<T>` → `Array<any>`).
-
-**Remaining issue:** Array property lists still differ because tsz considers `toString`
-and `toLocaleString` as "missing" (not found via `lookup_property` on source types),
-while tsc recognizes them as present via Object.prototype inheritance. This causes both
-wrong property selection (positions 2-3) and wrong "N more" count (27 vs 25).
+4. **Object.prototype filtering**: Filter Object.prototype methods (`toString`,
+   `toLocaleString`, `valueOf`, `hasOwnProperty`, `isPrototypeOf`,
+   `propertyIsEnumerable`, `constructor`) from the TS2739/TS2740 "missing" property list.
+   tsc never lists these as "missing" because every object inherits them via
+   Object.prototype. Applied in both `assignability.rs` and `call_errors.rs`.
+   Fixes `arrayAssignmentTest1` (5 fingerprints).
 
 #### Sub-pattern D: Infinity/NaN Display — DONE
 
@@ -353,10 +354,9 @@ This single fix addresses both RC-2A (container-vs-element spans) and much of RC
 
 **Priority: MEDIUM | Difficulty: LOW | Location: Solver diagnostic helper**
 
-**Partial fix applied** (2026-03-10): Property declaration ordering infrastructure is now in
-place across the full pipeline (lowering → instantiation → diagnostic rendering). Remaining
-blocker: Object.prototype inherited properties (`toString`, `toLocaleString`) not recognized
-as present on source types during `explain_object_failure`, causing wrong "missing" list.
+**FIXED** (2026-03-11): Property declaration ordering and Object.prototype filtering now
+match tsc behavior. Four fixes: threshold (take 4), lowering order, instantiation
+preservation, and Object.prototype method filtering in diagnostic rendering.
 
 ### Phase 5: Entity Name Resolution (est. ~45 tests recovered)
 

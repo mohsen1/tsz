@@ -22,7 +22,7 @@ fn is_builtin_wrapper_name(name: &str) -> bool {
 /// it typically means the source type inherits it implicitly but its `ObjectShape`
 /// doesn't include it. In this case, the mismatch is a type compatibility issue
 /// (TS2322), not a missing property issue (TS2741).
-fn is_object_prototype_method(name: &str) -> bool {
+pub(super) fn is_object_prototype_method(name: &str) -> bool {
     matches!(
         name,
         "valueOf"
@@ -652,16 +652,16 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // Filter out private brand properties — they are internal implementation
-                // details and should never appear in user-facing diagnostics.
+                // Filter out private brand properties and Object.prototype methods.
+                // Private brands are internal implementation details.
+                // Object.prototype methods (toString, valueOf, etc.) exist on every
+                // object via prototype inheritance — tsc's getPropertiesOfType includes
+                // them on the source's apparent type, so they're never "missing".
                 let filtered_names: Vec<_> = property_names
                     .iter()
                     .filter(|name| {
-                        !self
-                            .ctx
-                            .types
-                            .resolve_atom_ref(**name)
-                            .starts_with("__private_brand")
+                        let s = self.ctx.types.resolve_atom_ref(**name);
+                        !s.starts_with("__private_brand") && !is_object_prototype_method(&s)
                     })
                     .collect();
 
@@ -689,27 +689,9 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // If all missing properties are Object.prototype methods, emit TS2322.
-                // Same reasoning as the single-property TS2741 guard above.
-                let all_object_proto = !filtered_names.is_empty()
-                    && filtered_names.iter().all(|name| {
-                        is_object_prototype_method(&self.ctx.types.resolve_atom_ref(**name))
-                    });
-                if all_object_proto {
-                    let src_str = self.format_type_diagnostic(*source_type);
-                    let tgt_str = self.format_type_diagnostic(*target_type);
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
-                    );
-                    return Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    );
-                }
+                // Note: Object.prototype methods are already filtered from filtered_names above.
+                // If ALL missing properties were Object.prototype methods, filtered_names
+                // will be empty and the empty check below emits TS2322 (matching tsc).
 
                 // If all missing properties were private brands, emit TS2322 instead.
                 if filtered_names.is_empty() {

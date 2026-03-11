@@ -4,6 +4,7 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -1042,10 +1043,16 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let src_str = self.format_type_diagnostic(*source_type);
+                // Filter out Object.prototype methods — they exist on every object
+                // via prototype inheritance and should never appear as "missing".
                 let names: Vec<String> = property_names
                     .iter()
+                    .filter(|a| !is_object_prototype_method(&self.ctx.types.resolve_atom_ref(**a)))
                     .map(|a| self.ctx.types.resolve_atom_ref(*a).to_string())
                     .collect();
+                if names.is_empty() {
+                    return None;
+                }
                 let count = names.len();
                 if count <= 4 {
                     // TS2739: Type 'X' is missing the following properties from type 'Y': a, b, c
