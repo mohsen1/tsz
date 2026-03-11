@@ -1108,6 +1108,20 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        // Direct standard iterator/generator return annotations are already handled
+        // by body-level `return`/`yield` checking. The extra whole-signature
+        // assignability check is only needed for custom iterator-like types
+        // that add requirements beyond the standard library contracts.
+        if let Some(type_ref) = self
+            .ctx
+            .arena
+            .get(error_node)
+            .and_then(|node| self.ctx.arena.get_type_ref(node))
+            && let Some(name) = self.node_text(type_ref.type_name)
+            && Self::is_generator_like_name(&name)
+        {
+            return;
+        }
         let gen_name = if is_async {
             "AsyncGenerator"
         } else {
