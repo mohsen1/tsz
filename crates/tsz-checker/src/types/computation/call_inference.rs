@@ -619,13 +619,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         result: CallResult,
         instantiated_params: &[tsz_solver::ParamInfo],
+        args: &[NodeIndex],
         arg_types: &[TypeId],
     ) -> CallResult {
         if !matches!(result, CallResult::Success(_)) {
             return result;
         }
 
-        for (index, &actual) in arg_types.iter().enumerate() {
+        for (index, &cached_actual) in arg_types.iter().enumerate() {
             let expected = instantiated_params
                 .get(index)
                 .map(|param| {
@@ -651,6 +652,12 @@ impl<'a> CheckerState<'a> {
             let Some(expected) = expected else {
                 break;
             };
+
+            let actual = args
+                .get(index)
+                .copied()
+                .map(|arg_idx| self.refreshed_generic_call_arg_type(arg_idx, cached_actual))
+                .unwrap_or(cached_actual);
 
             if !assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected) {
                 return CallResult::ArgumentTypeMismatch {

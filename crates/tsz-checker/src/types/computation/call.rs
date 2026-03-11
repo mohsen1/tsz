@@ -14,6 +14,7 @@ use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallResult, ContextualTypeContext, TypeId};
 
 use super::call_inference::should_preserve_contextual_application_shape;
@@ -21,6 +22,28 @@ use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn refreshed_generic_call_arg_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        cached_arg_type: TypeId,
+    ) -> TypeId {
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return cached_arg_type;
+        };
+
+        match arg_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.clear_type_cache_recursive(arg_idx);
+                self.get_type_of_node(arg_idx)
+            }
+            _ => cached_arg_type,
+        }
+    }
+
     /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
     ///
     /// Computes the return type of function/method calls.
@@ -1758,6 +1781,7 @@ impl<'a> CheckerState<'a> {
                     self.recheck_generic_call_arguments_with_real_types(
                         retry.0.clone(),
                         instantiated_params,
+                        args,
                         &arg_types,
                     )
                 } else {
@@ -1794,6 +1818,7 @@ impl<'a> CheckerState<'a> {
                 self.recheck_generic_call_arguments_with_real_types(
                     result,
                     instantiated_params,
+                    args,
                     &arg_types,
                 )
             } else {
@@ -1806,7 +1831,16 @@ impl<'a> CheckerState<'a> {
                     // a fresh structural check on the evaluated instantiated param.
                     if let Some(param) = instantiated_params.get(*index) {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
-                        let arg_type = arg_types.get(*index).copied().unwrap_or(TypeId::UNKNOWN);
+                        let arg_type = args
+                            .get(*index)
+                            .copied()
+                            .map(|arg_idx| {
+                                self.refreshed_generic_call_arg_type(
+                                    arg_idx,
+                                    arg_types.get(*index).copied().unwrap_or(TypeId::UNKNOWN),
+                                )
+                            })
+                            .unwrap_or(TypeId::UNKNOWN);
                         // Use a fresh subtype check (no cache) to avoid false
                         // negatives from stale query cache entries after inference.
                         assign_query::is_fresh_subtype_of(self.ctx.types, arg_type, evaluated_param)
@@ -1827,7 +1861,10 @@ impl<'a> CheckerState<'a> {
                     {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
                         if !is_type_parameter_type(self.ctx.types, evaluated_param) {
-                            let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
+                            let arg_type = self.refreshed_generic_call_arg_type(
+                                arg_idx,
+                                arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
+                            );
                             self.check_object_literal_excess_properties(
                                 arg_type,
                                 evaluated_param,

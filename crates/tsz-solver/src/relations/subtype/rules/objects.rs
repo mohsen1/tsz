@@ -605,15 +605,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // If source has string index, all number-indexed properties must be compatible
-        // (since number converts to string for property access)
+        // For declared source types, if source has both string and number indexes,
+        // the number index value type must be compatible with the string index value
+        // type. Fresh object literals can transiently infer different string/number
+        // index value unions during generic contextual typing, and tsc does not reject
+        // assignment on that basis when the target index type already accepts both.
         if let (Some(s_string_idx), Some(s_number_idx)) =
             (&source.string_index, &source.number_index)
+            && !source
+                .flags
+                .contains(crate::types::ObjectFlags::FRESH_LITERAL)
             && !self
                 .check_subtype(s_number_idx.value_type, s_string_idx.value_type)
                 .is_true()
         {
-            // This is a constraint violation in the source itself
             return SubtypeResult::False;
         }
 
