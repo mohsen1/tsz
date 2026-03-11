@@ -971,6 +971,23 @@ impl<'a> CheckerState<'a> {
                 && expected_type != TypeId::ANY
                 && !self.type_contains_error(expected_type)
             {
+                let use_async_promise_union_context = self.ctx.in_async_context()
+                    && expected_type != TypeId::UNKNOWN
+                    && expected_type != TypeId::NEVER
+                    && !tsz_solver::is_union_type(self.ctx.types, expected_type)
+                    && !self.is_promise_type(expected_type)
+                    && self
+                        .ctx
+                        .arena
+                        .get(return_data.expression)
+                        .is_some_and(|expr_node| {
+                            matches!(
+                                expr_node.kind,
+                                syntax_kind_ext::CALL_EXPRESSION
+                                    | syntax_kind_ext::NEW_EXPRESSION
+                                    | syntax_kind_ext::AWAIT_EXPRESSION
+                            )
+                        });
                 // For async functions, the return type has been unwrapped from Promise<T>
                 // to T. But return expressions like `return new Promise(resolve => ...)`
                 // need Promise<T> in the contextual type for generic constructor inference.
@@ -978,12 +995,7 @@ impl<'a> CheckerState<'a> {
                 // Only apply when expected_type is the unwrapped T (not a union or Promise).
                 // If expected_type is already a union or Promise-like, the transformation
                 // would create nonsensical nested types.
-                if self.ctx.in_async_context()
-                    && expected_type != TypeId::UNKNOWN
-                    && expected_type != TypeId::NEVER
-                    && !tsz_solver::is_union_type(self.ctx.types, expected_type)
-                    && !self.is_promise_type(expected_type)
-                {
+                if use_async_promise_union_context {
                     let promise_like_t = self.get_promise_like_type(expected_type);
                     let promise_t = self.get_promise_type(expected_type);
                     let mut members = vec![expected_type, promise_like_t];
