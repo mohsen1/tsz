@@ -321,6 +321,75 @@ enum A {
 }
 
 #[test]
+fn test_jsdoc_override_tag_uses_jsdoc_diagnostic_family() {
+    let source = r#"
+class A {
+    /**
+     * @method
+     * @param {string | number} a
+     * @returns {boolean}
+     */
+    foo(a) {
+        return typeof a === "string";
+    }
+    bar() {}
+}
+
+class B extends A {
+    /**
+     * @override
+     * @method
+     * @param {string | number} a
+     * @returns {boolean}
+     */
+    foo(a) {
+        return super.foo(a);
+    }
+
+    bar() {}
+
+    /** @override */
+    baz() {}
+}
+
+class C {
+    /** @override */
+    foo() {}
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_override: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 4119),
+        "Expected TS4119 for missing JSDoc @override on overriding JS member. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 4121),
+        "Expected TS4121 for JSDoc @override on class without extends. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 4122),
+        "Expected TS4122 for JSDoc @override on missing base member. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 4112)
+            && !has_error(&diagnostics, 4114)
+            && !has_error(&diagnostics, 4123),
+        "Did not expect TypeScript-keyword override diagnostics for JSDoc @override cases. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_assignment_preserves_numeric_literal_source_display() {
     let source = r#"
 enum E {

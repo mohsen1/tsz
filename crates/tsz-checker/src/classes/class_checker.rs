@@ -286,10 +286,18 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     info.name_idx,
                     &crate::diagnostics::format_message(
-                        diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                        if self.ctx.is_js_file() {
+                            diagnostic_messages::THIS_MEMBER_MUST_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_OVERRIDES
+                        } else {
+                            diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE
+                        },
                         &[base_class_name],
                     ),
-                    diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                    if self.ctx.is_js_file() {
+                        diagnostic_codes::THIS_MEMBER_MUST_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_OVERRIDES
+                    } else {
+                        diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE
+                    },
                 );
             }
 
@@ -785,10 +793,18 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         info.name_idx,
                         &crate::diagnostics::format_message(
-                            crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                            if info.is_jsdoc_override {
+                                crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
+                            } else {
+                                crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
+                            },
                             &[&derived_class_name],
                         ),
-                        crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                        if info.is_jsdoc_override {
+                            crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
+                        } else {
+                            crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
+                        },
                     );
                 }
                 // Also check constructor parameter properties
@@ -981,10 +997,18 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     info.name_idx,
                     &crate::diagnostics::format_message(
-                        diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                        if info.is_jsdoc_override {
+                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
+                        } else {
+                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
+                        },
                         &[&derived_class_name],
                     ),
-                    diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                    if info.is_jsdoc_override {
+                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_CONTAIN
+                    } else {
+                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N
+                    },
                 );
             }
 
@@ -1191,21 +1215,15 @@ impl<'a> CheckerState<'a> {
                     } else {
                         &base_instance_member_names
                     };
-                    if let Some(suggestion) =
-                        self.find_override_name_suggestion(suggestion_names, &member_name)
+                    if !is_jsdoc_override
+                        && let Some(suggestion) =
+                            self.find_override_name_suggestion(suggestion_names, &member_name)
                     {
                         // TS4117 (keyword) or TS4123 (JSDoc): "Did you mean ...?"
-                        let (msg, code) = if is_jsdoc_override {
-                            (
-                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D_2,
-                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D_2,
-                            )
-                        } else {
-                            (
-                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
-                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
-                            )
-                        };
+                        let (msg, code) = (
+                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                        );
                         self.error_at_node(
                             member_name_idx,
                             &crate::diagnostics::format_message(
@@ -1268,19 +1286,35 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &crate::diagnostics::format_message(
-                            diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_AN_ABSTRACT_METH,
+                            if self.ctx.is_js_file() {
+                                diagnostic_messages::THIS_MEMBER_MUST_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_OVERRIDES
+                            } else {
+                                diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_AN_ABSTRACT_METH
+                            },
                             &[&base_class_name],
                         ),
-                        diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_AN_ABSTRACT_METH,
+                        if self.ctx.is_js_file() {
+                            diagnostic_codes::THIS_MEMBER_MUST_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_OVERRIDES
+                        } else {
+                            diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_AN_ABSTRACT_METH
+                        },
                     );
                 } else {
                     self.error_at_node(
                         member_name_idx,
                         &crate::diagnostics::format_message(
-                            diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                            if self.ctx.is_js_file() {
+                                diagnostic_messages::THIS_MEMBER_MUST_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_OVERRIDES
+                            } else {
+                                diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE
+                            },
                             &[&base_class_name],
                         ),
-                        diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                        if self.ctx.is_js_file() {
+                            diagnostic_codes::THIS_MEMBER_MUST_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_OVERRIDES
+                        } else {
+                            diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE
+                        },
                     );
                 }
                 continue;
