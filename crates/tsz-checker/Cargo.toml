@@ -111,5 +111,9 @@ path = "tests/jsdoc_type_expression_tests.rs"
 name = "static_member_access_types"
 path = "tests/static_member_access_types.rs"
 
+[[test]]
+name = "contextual_tuple_tests"
+path = "tests/contextual_tuple_tests.rs"
+
 [lints]
 workspace = true

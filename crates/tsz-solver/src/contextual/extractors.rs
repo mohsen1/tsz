@@ -75,6 +75,9 @@ pub(crate) fn collect_from_intersection(
 /// `...string[]`). When used as a contextual type for individual element positions,
 /// we need the element type (e.g., `string`), not the array type.
 fn rest_element_contextual_type(db: &dyn TypeDatabase, rest_type: TypeId) -> TypeId {
+    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(rest_type) {
+        return rest_element_contextual_type(db, inner);
+    }
     // Array type: extract element type
     if let Some(TypeData::Array(elem)) = db.lookup(rest_type) {
         return elem;
@@ -851,6 +854,11 @@ fn extract_param_type_at_inner(
     if let Some(last_param) = rest_param {
         // Adjust index relative to rest parameter start
         let rest_index = index - rest_start;
+        if let Some(TypeData::ReadonlyType(inner)) = db.lookup(last_param.type_id) {
+            let mut mock_params = params.to_vec();
+            mock_params.last_mut().unwrap().type_id = inner;
+            return extract_param_type_at_inner(db, &mock_params, index, arg_count);
+        }
         if let Some(TypeData::Array(elem)) = db.lookup(last_param.type_id) {
             return Some(elem);
         }
@@ -858,6 +866,7 @@ fn extract_param_type_at_inner(
             let members = db.type_list(members);
             let types: Vec<TypeId> = members
                 .iter()
+                .rev()
                 .filter_map(|&member| {
                     let mut mock_params = params.to_vec();
                     mock_params.last_mut().unwrap().type_id = member;
