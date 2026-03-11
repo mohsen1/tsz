@@ -206,7 +206,7 @@ impl<'a> CheckerState<'a> {
         // When `get_type_of_node` widens literals (e.g., "" -> string, 42 -> number),
         // tsc still shows the literal type in error messages like TS2339.
         // Try to recover the literal type from the expression node for display purposes.
-        let display_object_type = if matches!(
+        let mut display_object_type = if matches!(
             original_object_type,
             TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
         ) {
@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
         // For `obj?.prop ?? fallback`, defer this work: the optional-chain fast path
         // below will resolve property access through `resolve_type_for_property_access`,
         // and eagerly evaluating applications here is redundant on hot paths.
-        let object_type = if access.question_dot_token && skip_optional_base_flow {
+        let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
         } else {
             self.evaluate_application_type(original_object_type)
@@ -234,7 +234,7 @@ impl<'a> CheckerState<'a> {
         // But `.c` should only be reached when `o` is defined, so we strip nullish
         // types. Only do this when this access is NOT itself an optional chain
         // (`question_dot_token` is false) but is part of one (parent has `?.`).
-        let object_type = if !access.question_dot_token
+        object_type = if !access.question_dot_token
             && super::computation::access::is_optional_chain(self.ctx.arena, access.expression)
         {
             let (non_nullish, _) = self.split_nullish_type(object_type);
@@ -242,6 +242,22 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+
+        if object_type == TypeId::ANY
+            && self.is_js_file()
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+            && self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .is_none()
+        {
+            let namespace_type = self.current_file_commonjs_namespace_type();
+            object_type = namespace_type;
+            display_object_type = namespace_type;
+        }
 
         // Fast path for optional chaining on non-class receivers when the
         // property resolves successfully without diagnostics.
@@ -387,6 +403,25 @@ impl<'a> CheckerState<'a> {
                 }
                 return self.apply_flow_narrowing(idx, property_type);
             }
+        }
+
+        if object_type == TypeId::ANY
+            && self.is_js_file()
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "module")
+            && self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .is_none()
+            && self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+        {
+            return self.current_file_commonjs_namespace_type();
         }
 
         // Don't report errors for any/error types - check BEFORE accessibility
@@ -722,29 +757,18 @@ impl<'a> CheckerState<'a> {
                         // With optional chaining, missing property results in undefined
                         return TypeId::UNDEFINED;
                     }
-                    // In JS checkJs mode, CommonJS `module.exports` accesses are valid.
+                    // In JS checkJs mode, unresolved CommonJS `module.exports` accesses
+                    // should use the current file's export surface instead of `any`.
                     if property_name == "exports"
                         && self.is_js_file()
                         && let Some(obj_node) = self.ctx.arena.get(access.expression)
                         && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
                         && ident.escaped_text == "module"
+                        && self
+                            .resolve_identifier_symbol_without_tracking(access.expression)
+                            .is_none()
                     {
-                        if let Some(namespace_type) =
-                            self.commonjs_namespace_type_for_file(self.ctx.current_file_idx)
-                        {
-                            let display_name = self
-                                .ctx
-                                .file_name
-                                .rsplit_once('/')
-                                .map(|(_, name)| name)
-                                .unwrap_or(self.ctx.file_name.as_str())
-                                .to_string();
-                            self.ctx
-                                .namespace_module_names
-                                .insert(namespace_type, display_name);
-                            return namespace_type;
-                        }
-                        return TypeId::ANY;
+                        return self.current_file_commonjs_namespace_type();
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
                     // Returns `any` type for properties that were assigned via expando pattern.

@@ -1,11 +1,235 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
+use std::collections::BTreeSet;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
-use tsz_solver::Visibility;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn current_file_commonjs_namespace_type(&mut self) -> TypeId {
+        let mut export_names = BTreeSet::new();
+        for source_file in &self.ctx.arena.source_files {
+            for &stmt_idx in &source_file.statements.nodes {
+                self.collect_current_file_commonjs_export_names(stmt_idx, &mut export_names);
+            }
+        }
+
+        let mut props = Vec::with_capacity(export_names.len());
+        for (declaration_order, name) in export_names.into_iter().enumerate() {
+            let name_atom = self.ctx.types.intern_string(&name);
+            props.push(PropertyInfo {
+                name: name_atom,
+                type_id: TypeId::ANY,
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: declaration_order as u32,
+            });
+        }
+
+        let namespace_type = self.ctx.types.factory().object(props);
+        self.ctx
+            .namespace_module_names
+            .insert(namespace_type, self.current_file_commonjs_module_name());
+        namespace_type
+    }
+
+    fn collect_current_file_commonjs_export_names(
+        &self,
+        root: NodeIndex,
+        names: &mut BTreeSet<String>,
+    ) {
+        let mut stack = vec![root];
+
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+
+            if self.is_commonjs_scope_boundary(node.kind) {
+                continue;
+            }
+
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::EqualsToken as u16
+                && let Some(name) =
+                    self.current_file_commonjs_export_target_member_name(binary.left)
+            {
+                names.insert(name);
+            }
+
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(name) = self.current_file_commonjs_define_property_export_name(idx)
+            {
+                names.insert(name);
+            }
+
+            for child_idx in self.ctx.arena.get_children(idx) {
+                stack.push(child_idx);
+            }
+        }
+    }
+
+    fn is_commonjs_scope_boundary(&self, kind: u16) -> bool {
+        matches!(
+            kind,
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR
+                || k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::MODULE_DECLARATION
+        )
+    }
+
+    fn current_file_commonjs_export_target_member_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if !self.is_current_file_commonjs_export_base(access.expression) {
+                    return None;
+                }
+                self.ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if !self.is_current_file_commonjs_export_base(access.expression) {
+                    return None;
+                }
+                self.current_file_commonjs_static_member_name(access.name_or_argument)
+            }
+            _ => None,
+        }
+    }
+
+    fn current_file_commonjs_define_property_export_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let callee_node = self.ctx.arena.get(call.expression)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let callee = self.ctx.arena.get_access_expr(callee_node)?;
+        let is_object_define_property = self
+            .ctx
+            .arena
+            .get_identifier_at(callee.expression)
+            .is_some_and(|ident| ident.escaped_text == "Object")
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(callee.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "defineProperty");
+        if !is_object_define_property {
+            return None;
+        }
+
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() < 2 || !self.is_current_file_commonjs_export_base(args.nodes[0]) {
+            return None;
+        }
+
+        self.current_file_commonjs_static_member_name(args.nodes[1])
+    }
+
+    fn current_file_commonjs_static_member_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_current_file_commonjs_export_base(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+                && self
+                    .resolve_identifier_symbol_without_tracking(idx)
+                    .is_none();
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| {
+                ident.escaped_text == "module"
+                    && self
+                        .resolve_identifier_symbol_without_tracking(access.expression)
+                        .is_none()
+            })
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    fn current_file_commonjs_module_name(&self) -> String {
+        let file_name = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str())
+            .unwrap_or(self.ctx.file_name.as_str());
+        let stripped = Self::strip_known_module_extension(file_name);
+        stripped
+            .rsplit(|ch| ['/', '\\'].contains(&ch))
+            .next()
+            .unwrap_or(stripped)
+            .to_string()
+    }
+
+    fn strip_known_module_extension(path: &str) -> &str {
+        for ext in &[
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+            ".mjs", ".cjs",
+        ] {
+            if let Some(stripped) = path.strip_suffix(ext) {
+                return stripped;
+            }
+        }
+        path
+    }
+
     fn collect_direct_commonjs_assignment_exports(
         &self,
         arena: &tsz_parser::parser::NodeArena,
@@ -32,16 +256,16 @@ impl<'a> CheckerState<'a> {
         if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(left_access) = arena.get_access_expr(left_node)
         {
-            let direct_exports_name = arena
-                .get_identifier_at(left_access.expression)
-                .and_then(|ident| {
+            let direct_exports_name = arena.get_identifier_at(left_access.expression).and_then(
+                |ident| {
                     (ident.escaped_text == "exports").then(|| {
                         arena
                             .get_identifier_at(left_access.name_or_argument)
                             .map(|name| name.escaped_text.to_string())
                     })
-                })
-                .flatten();
+                },
+            )
+            .flatten();
             let module_exports_name = arena.get(left_access.expression).and_then(|target_node| {
                 if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                     return None;
