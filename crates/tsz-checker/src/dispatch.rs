@@ -1982,6 +1982,22 @@ function f<T>() {
     }
 
     #[test]
+    fn ts2352_array_assertion_anchors_first_excess_property() {
+        let source = r#"
+<{ id: number; }[]>[{ foo: "s" }];
+"#;
+        let diags = check_source_diagnostics(source);
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+        assert_eq!(matching.len(), 1, "Expected one TS2352, got: {diags:?}");
+
+        let foo_pos = source.find("foo").expect("expected foo property") as u32;
+        assert_eq!(
+            matching[0].start, foo_pos,
+            "Expected TS2352 to anchor at the excess property name, got: {matching:?}"
+        );
+    }
+
+    #[test]
     fn type_params_in_object_literal_methods_no_ts2304() {
         // Type parameters in object literal method shorthands must be in scope
         // for parameter types, return types, and body type references.

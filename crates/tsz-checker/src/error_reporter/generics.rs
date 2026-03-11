@@ -13,6 +13,73 @@ use tsz_solver::TypeId;
 use tsz_solver::{CallSignature, CallableShape, TypeSubstitution, instantiate_type};
 
 impl<'a> CheckerState<'a> {
+    fn type_assertion_overlap_anchor_in_expression(
+        &self,
+        expr_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> Option<NodeIndex> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let array = self.ctx.arena.get_literal_expr(node)?;
+            let element_target = common::array_element_type(self.ctx.types, target_type)?;
+            for &element_idx in &array.elements.nodes {
+                if let Some(anchor) =
+                    self.type_assertion_overlap_anchor_in_expression(element_idx, element_target)
+                {
+                    return Some(anchor);
+                }
+            }
+            return None;
+        }
+
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let target_shape = common::object_shape_for_type(self.ctx.types, target_type)?;
+        let object = self.ctx.arena.get_literal_expr(node)?;
+
+        for &element_idx in &object.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+
+            let (prop_name, report_idx) = match element_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(element_node)?;
+                    let name = self.get_property_name(prop.name)?;
+                    (self.ctx.types.intern_string(&name), prop.name)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_shorthand_property(element_node)?;
+                    let name = self.get_identifier_text_from_idx(prop.name)?;
+                    (self.ctx.types.intern_string(&name), prop.name)
+                }
+                _ => continue,
+            };
+
+            let exists = target_shape.properties.iter().any(|prop| prop.name == prop_name);
+            if !exists {
+                return Some(report_idx);
+            }
+        }
+
+        None
+    }
+
+    fn type_assertion_overlap_anchor(&self, idx: NodeIndex, target_type: TypeId) -> NodeIndex {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return idx;
+        };
+        let Some(assertion) = self.ctx.arena.get_type_assertion(node) else {
+            return idx;
+        };
+        self.type_assertion_overlap_anchor_in_expression(assertion.expression, target_type)
+            .unwrap_or(idx)
+    }
+
     fn widen_function_like_assertion_source(&self, type_id: TypeId) -> TypeId {
         if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
             let widened_return = tsz_solver::widen_literal_type(self.ctx.types, return_type);
@@ -427,8 +494,9 @@ impl<'a> CheckerState<'a> {
         };
         let source_str = source_str.trim_end_matches(';').to_string();
         let target_str = target_str.trim_end_matches(';').to_string();
+        let report_idx = self.type_assertion_overlap_anchor(idx, target_type);
         self.error_at_node_msg(
-            idx,
+            report_idx,
             diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
             &[&source_str, &target_str],
         );
