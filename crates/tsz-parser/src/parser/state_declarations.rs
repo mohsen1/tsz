@@ -1289,6 +1289,23 @@ impl ParserState {
                 let modifiers = self.make_node_list(vec![declare_modifier]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
+            SyntaxKind::ImportKeyword => {
+                use tsz_common::diagnostics::diagnostic_codes;
+
+                self.parse_error_at(
+                    declare_start,
+                    declare_end - declare_start,
+                    "A 'declare' modifier cannot be used with an import declaration.",
+                    diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION,
+                );
+
+                let modifiers = Some(self.make_node_list(all_modifiers));
+                if self.look_ahead_is_import_equals() {
+                    self.parse_import_equals_declaration_with_modifiers(start_pos, modifiers)
+                } else {
+                    self.parse_import_declaration_with_modifiers(start_pos, modifiers)
+                }
+            }
             SyntaxKind::AwaitKeyword => {
                 // declare await using
                 let modifiers = self.make_node_list(vec![declare_modifier]);
@@ -1694,6 +1711,14 @@ impl ParserState {
     /// import "mod";
     pub(crate) fn parse_import_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.parse_import_declaration_with_modifiers(start_pos, None)
+    }
+
+    pub(crate) fn parse_import_declaration_with_modifiers(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
         self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ImportKeyword);
 
@@ -1805,7 +1830,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ImportDeclData {
-                modifiers: None,
+                modifiers,
                 // For regular imports, type-only lives in ImportClauseData, not here.
                 is_type_only: false,
                 import_clause,

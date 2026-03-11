@@ -6770,6 +6770,50 @@ fn ts2307_emitted_for_commonjs_module() {
     );
 }
 
+#[test]
+fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2015" }, "files": ["test.ts"] }"#,
+    );
+    write_file(&base.join("test.ts"), "declare import a = b;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1079_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION)
+        .collect();
+    assert!(
+        !ts1079_diags.is_empty(),
+        "Expected TS1079 for `declare import`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts1079_diags
+            .iter()
+            .any(|diag| diag.message_text.contains("'declare'")),
+        "Expected TS1079 message to mention the declare modifier, got: {ts1079_diags:?}"
+    );
+
+    let declare_ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("declare")
+        })
+        .collect();
+    assert!(
+        declare_ts2304_diags.is_empty(),
+        "Unexpected TS2304 on `declare`: {declare_ts2304_diags:?}"
+    );
+}
+
 /// TS8002: `export import x = require(...)` in a JS file should report at the
 /// `export` keyword (position 0), not the inner `import` keyword.
 #[test]
