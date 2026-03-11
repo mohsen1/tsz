@@ -706,9 +706,9 @@ impl<'a> CheckerState<'a> {
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 // tsc preserves literal types within the same primitive family
-                // (e.g., '0' and '2' for number-to-number) but widens number/boolean
-                // literals across different families (e.g., 'number' and 'symbol').
-                // String and bigint literals are always preserved regardless of family.
+                // (e.g., '0' and '2' for number-to-number) but widens all literals
+                // to their primitive types across different families (e.g., '"foo"'
+                // becomes 'string' when compared against 'number').
                 let left_base = tsz_solver::type_queries::widen_literal_to_primitive(
                     self.ctx.types,
                     left_narrow,
@@ -721,17 +721,10 @@ impl<'a> CheckerState<'a> {
                     // Same primitive family: preserve all literals
                     (left_narrow, right_narrow)
                 } else {
-                    // Different families: widen number/boolean but keep string/bigint
-                    (
-                        tsz_solver::operations::widen_non_string_bigint_literal(
-                            self.ctx.types,
-                            left_narrow,
-                        ),
-                        tsz_solver::operations::widen_non_string_bigint_literal(
-                            self.ctx.types,
-                            right_narrow,
-                        ),
-                    )
+                    // Different families: widen all literals to primitive types.
+                    // tsc widens both sides (e.g., '"foo"' → 'string', '0' → 'number')
+                    // when the operands are from different primitive families.
+                    (left_base, right_base)
                 };
                 let (left_str, right_str) = self.format_type_pair(left_display, right_display);
                 let message = format_message(
