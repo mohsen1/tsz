@@ -624,7 +624,9 @@ impl<'a> CheckerState<'a> {
                         && checker
                             .find_jsdoc_for_function(decl_idx)
                             .as_ref()
-                            .is_some_and(|jsdoc| !CheckerState::jsdoc_type_tag_declares_callable(jsdoc));
+                            .is_some_and(|jsdoc| {
+                                !CheckerState::jsdoc_type_tag_declares_callable(jsdoc)
+                            });
                     if evaluated_type != TypeId::ANY && !jsdoc_blocks_callable_context {
                         checker.ctx.contextual_type = Some(evaluated_type);
                         // Clear cached type to force recomputation with contextual type
@@ -680,21 +682,20 @@ impl<'a> CheckerState<'a> {
                         .and_then(|init_node| {
                             if !matches!(
                                 init_node.kind,
-                                syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
                             ) {
                                 return None;
                             }
                             let func = checker.ctx.arena.get_function(init_node)?;
                             let body_node = checker.ctx.arena.get(func.body)?;
-                            Some(
-                                checker.ctx.diagnostics[diag_len_before_init..]
-                                    .iter()
-                                    .any(|diag| {
-                                        diag.start >= body_node.pos
-                                            && diag.start < body_node.end
-                                            && matches!(diag.code, 2322 | 2339)
-                                    }),
-                            )
+                            Some(checker.ctx.diagnostics[diag_len_before_init..].iter().any(
+                                |diag| {
+                                    diag.start >= body_node.pos
+                                        && diag.start < body_node.end
+                                        && matches!(diag.code, 2322 | 2339)
+                                },
+                            ))
                         })
                         .unwrap_or(false);
 

@@ -444,7 +444,10 @@ fn jsdoc_extract_type_tag_expr_braceless_function_type() {
 #[test]
 fn jsdoc_extract_type_tag_expr_braceless_missing_type() {
     let jsdoc = "@type";
-    assert_eq!(CheckerState::jsdoc_extract_type_tag_expr_braceless(jsdoc), None);
+    assert_eq!(
+        CheckerState::jsdoc_extract_type_tag_expr_braceless(jsdoc),
+        None
+    );
 }
 
 #[test]
