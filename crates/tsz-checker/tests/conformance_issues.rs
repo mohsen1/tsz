@@ -6260,6 +6260,43 @@ var z1 = G[G.A];
 }
 
 #[test]
+fn test_duplicate_class_computed_unique_symbol_members_report_ts2300() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+const uniqueSymbol0 = Symbol.for("");
+const uniqueSymbol1 = Symbol.for("");
+
+function getUniqueSymbol0(): typeof uniqueSymbol0 {
+  return uniqueSymbol0;
+}
+
+class Cls1 {
+  [uniqueSymbol0] = "first";
+  [uniqueSymbol0] = "last";
+  [uniqueSymbol1] = "first";
+  [uniqueSymbol1] = "last";
+}
+
+class Cls2 {
+  [getUniqueSymbol0()] = "first";
+  [getUniqueSymbol0()] = "last";
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2300_count = diagnostics.iter().filter(|(code, _)| *code == 2300).count();
+    assert!(
+        ts2300_count >= 3,
+        "Expected TS2300 for duplicate computed class members keyed by unique symbols and repeated computed expressions.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_const_enum_element_access_missing_string_literal_member_reports_ts2339() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

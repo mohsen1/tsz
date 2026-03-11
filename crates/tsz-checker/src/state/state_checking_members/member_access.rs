@@ -1082,9 +1082,44 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {}
             }
+
+            if let Some(expr_text) = self.get_simple_computed_name_expr_text(computed.expression) {
+                return Some(format!("[{expr_text}]"));
+            }
         }
 
         None
+    }
+
+    fn get_simple_computed_name_expr_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(expr_node)
+                .map(|ident| ident.escaped_text.clone()),
+            k if k == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(expr_node)?;
+                let left = self.get_simple_computed_name_expr_text(access.expression)?;
+                let right = self.ctx.arena.get_identifier_text(access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.ctx.arena.get_call_expr(expr_node)?;
+                let callee = self.get_simple_computed_name_expr_text(call.expression)?;
+                let args = call.arguments.as_ref()?;
+                if !args.nodes.is_empty() {
+                    return None;
+                }
+                Some(format!("{callee}()"))
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.ctx.arena.get_parenthesized(expr_node)?;
+                self.get_simple_computed_name_expr_text(paren.expression)
+            }
+            _ => None,
+        }
     }
 
     /// Get the name node from an interface member for error reporting.
