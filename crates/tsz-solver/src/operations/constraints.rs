@@ -969,6 +969,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
+                if let (Some(s_idx), Some(t_idx)) = (&s_shape.number_index, &t_shape.string_index) {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_idx.value_type,
+                        t_idx.value_type,
+                        priority,
+                    );
+                }
+                if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.number_index) {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_idx.value_type,
+                        t_idx.value_type,
+                        priority,
+                    );
+                }
                 self.constrain_properties_against_index_signatures(
                     ctx,
                     var_map,

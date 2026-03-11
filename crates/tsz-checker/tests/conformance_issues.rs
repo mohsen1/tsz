@@ -9242,3 +9242,53 @@ const t3 = {
         "Expected TS1117 for literal computed object property duplicates.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_computed_property_contextual_index_signatures_accept_mixed_literal_members() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface I<T> {
+    [s: string]: T;
+}
+
+declare function foo<T>(obj: I<T>): T
+
+foo({
+    p: "",
+    0: () => { },
+    ["hi" + "bye"]: true,
+    [0 + 1]: 0,
+    [+"hi"]: [0]
+});
+
+interface N<T> {
+    [n: number]: T;
+}
+interface S<T> {
+    [s: string]: T;
+}
+
+declare function bar<T>(obj: N<T>): T;
+declare function baz<T>(obj: S<T>): T;
+
+bar({
+    0: () => { },
+    ["hi" + "bye"]: true,
+    [0 + 1]: 0,
+    [+"hi"]: [0]
+});
+
+baz({ p: "" });
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "Expected computed-property contextual index signature calls to succeed.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
