@@ -273,6 +273,24 @@ impl ParserState {
             if depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0
+                && at_param_start
+                && !matches!(
+                    self.token(),
+                    SyntaxKind::CloseParenToken
+                        | SyntaxKind::AtToken
+                        | SyntaxKind::DotDotDotToken
+                        | SyntaxKind::OpenBracketToken
+                        | SyntaxKind::OpenBraceToken
+                )
+                && !self.is_identifier_or_keyword()
+            {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
+            if depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
                 && matches!(
                     self.token(),
                     SyntaxKind::ColonToken | SyntaxKind::QuestionToken
@@ -424,21 +442,6 @@ impl ParserState {
         // allowed here — TS1200 will be emitted during actual parsing.
         let is_arrow = if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
             true
-        } else if self.is_token(SyntaxKind::ColonToken)
-            && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
-        {
-            // Support single-parameter typed arrows in lookahead: `x: T => expr`.
-            let saved_arena_len = self.arena.nodes.len();
-            let saved_diagnostics_len = self.parse_diagnostics.len();
-
-            self.next_token();
-            let _ = self.parse_type();
-            let result = !self.scanner.has_preceding_line_break()
-                && self.is_token(SyntaxKind::EqualsGreaterThanToken);
-
-            self.arena.nodes.truncate(saved_arena_len);
-            self.parse_diagnostics.truncate(saved_diagnostics_len);
-            result
         } else {
             false
         };
@@ -1811,6 +1814,12 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    self.error_comma_expected();
+                    self.next_token();
+                    continue;
+                }
+
                 if self.is_token(SyntaxKind::ColonToken) {
                     self.error_comma_expected();
                     self.next_token();

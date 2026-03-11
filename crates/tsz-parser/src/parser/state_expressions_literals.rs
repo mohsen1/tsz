@@ -1607,7 +1607,7 @@ impl ParserState {
             )
         } else {
             // Shorthand property - but certain property names require `:` syntax
-            if requires_colon {
+            if requires_colon && !self.is_token(SyntaxKind::SemicolonToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
             }

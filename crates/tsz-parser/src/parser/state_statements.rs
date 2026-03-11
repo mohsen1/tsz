@@ -1384,6 +1384,35 @@ impl ParserState {
                     break;
                 }
 
+                if self.is_token(SyntaxKind::ColonToken) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+
+                    self.error_comma_expected();
+                    self.next_token();
+
+                    let recover_start = self.token_pos();
+                    let _ = self.parse_type();
+                    if self.token_pos() == recover_start
+                        && !matches!(
+                            self.token(),
+                            SyntaxKind::CommaToken
+                                | SyntaxKind::SemicolonToken
+                                | SyntaxKind::CloseBraceToken
+                                | SyntaxKind::EndOfFileToken
+                        )
+                    {
+                        self.next_token();
+                    }
+
+                    if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                        self.parse_error_at_current_token(
+                            "';' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                    }
+                    break;
+                }
+
                 // `=>` after a declaration is never a valid comma separator.
                 // Break silently so parse_semicolon() in the caller can emit
                 // "';' expected." at the `=` position, matching tsc's diagnostic.
