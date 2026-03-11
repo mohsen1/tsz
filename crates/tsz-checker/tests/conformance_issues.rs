@@ -266,7 +266,11 @@ const e1: X.Foo | boolean = Z.Foo.A;
 }
 
 #[test]
-fn test_isolated_modules_non_literal_numeric_enum_member_uses_ts18056() {
+fn test_isolated_modules_same_file_const_numeric_no_ts18056() {
+    // tsc traces through same-file const variables: `const foo = 2` evaluates to
+    // value=2, resolvedOtherFiles=false, so auto-increment works and TS18056 does
+    // NOT fire. Our classify_symbol_backed_enum_initializer now correctly traces
+    // same-file consts and classifies them as LiteralNumeric (not NonLiteralNumeric).
     let source = r#"
 const foo = 2;
 enum A {
@@ -284,17 +288,17 @@ enum A {
     );
 
     assert!(
-        has_error(&diagnostics, 18056),
-        "Expected TS18056 for a missing initializer after a non-literal numeric enum member. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        !has_error(&diagnostics, 1061),
-        "Did not expect fallback TS1061 when TS18056 should be emitted. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 18056),
+        "Should NOT emit TS18056 for same-file const numeric — tsc traces through. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
 #[test]
-fn test_isolated_modules_non_literal_string_enum_member_uses_ts18055() {
+fn test_isolated_modules_same_file_const_string_no_ts18055() {
+    // tsc traces through same-file const variables: `const bar = "bar"` evaluates
+    // to value="bar", isSyntacticallyString=true, so TS18055 does NOT fire.
+    // Our classify_symbol_backed_enum_initializer now correctly traces same-file
+    // consts and classifies them as LiteralString (not NonLiteralString).
     let source = r#"
 const bar = "bar";
 enum A {
@@ -311,8 +315,8 @@ enum A {
     );
 
     assert!(
-        has_error(&diagnostics, 18055),
-        "Expected TS18055 for a non-syntactic string enum initializer under isolatedModules. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 18055),
+        "Should NOT emit TS18055 for same-file const string — tsc traces through. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

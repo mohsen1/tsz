@@ -8,7 +8,6 @@ use crate::diagnostics::format_message;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
 
 /// Declaration type checker that operates on the shared context.
 ///
@@ -1113,20 +1112,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     self.classify_symbol_backed_enum_initializer(sym_id, enum_data, depth + 1)
                 })
             }
-            _ => self.variable_initializer_widened_kind(expr_idx),
-        }
-    }
-
-    fn variable_initializer_widened_kind(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> IsolatedEnumInitializerKind {
-        let Some(type_id) = self.ctx.node_types.get(&expr_idx.0).copied() else {
-            return IsolatedEnumInitializerKind::Other;
-        };
-        match type_id {
-            TypeId::STRING => IsolatedEnumInitializerKind::NonLiteralString,
-            TypeId::NUMBER => IsolatedEnumInitializerKind::NonLiteralNumeric,
+            // Unrecognized syntax — return Other (not NonLiteralString).
+            // TS18055 should only fire when the initializer value IS a known string
+            // but the syntax isn't recognizable. Runtime expressions like method calls
+            // (e.g., `2..toFixed(0)`) have string TYPE but no compile-time string VALUE,
+            // so tsc doesn't emit TS18055 for them.
             _ => IsolatedEnumInitializerKind::Other,
         }
     }
@@ -1194,6 +1184,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             .borrow()
             .get(&sym_id)
             .copied();
+        // A symbol is truly cross-file only if its file index differs from
+        // the file currently being checked. In project mode, cross_file_symbol_targets
+        // contains ALL symbols (including same-file ones).
+        let is_cross_file = cross_file_idx.is_some_and(|idx| idx != self.ctx.current_file_idx);
         let (symbol, arena) = if let Some(file_idx) = cross_file_idx {
             let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
                 return IsolatedEnumInitializerKind::Other;
@@ -1229,23 +1223,27 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 .declared_type_annotation_kind_in_arena(arena, var_decl.type_annotation)
                 .unwrap_or(IsolatedEnumInitializerKind::Other);
         }
-        let inner = if cross_file_idx.is_some() {
-            self.classify_initializer_kind_in_arena(arena, var_decl.initializer, depth)
+        if is_cross_file {
+            // Cross-file reference under isolatedModules: a single-file transpiler
+            // can't trace the value, so downgrade to non-literal. This correctly
+            // triggers TS18055/TS18056 for imported string/numeric consts.
+            let inner = self.classify_initializer_kind_in_arena(arena, var_decl.initializer, depth);
+            match inner {
+                IsolatedEnumInitializerKind::LiteralNumeric
+                | IsolatedEnumInitializerKind::NonLiteralNumeric => {
+                    IsolatedEnumInitializerKind::NonLiteralNumeric
+                }
+                IsolatedEnumInitializerKind::LiteralString
+                | IsolatedEnumInitializerKind::NonLiteralString => {
+                    IsolatedEnumInitializerKind::NonLiteralString
+                }
+                IsolatedEnumInitializerKind::Other => IsolatedEnumInitializerKind::Other,
+            }
         } else {
+            // Same-file reference: tsc traces through const variable declarations
+            // in the same file, so preserve the inner classification. A same-file
+            // `const LOCAL = 'hello'` is syntactically recognizable through the const.
             self.classify_isolated_enum_initializer(var_decl.initializer, enum_data, depth)
-        };
-        match inner {
-            IsolatedEnumInitializerKind::LiteralNumeric
-            | IsolatedEnumInitializerKind::NonLiteralNumeric => {
-                IsolatedEnumInitializerKind::NonLiteralNumeric
-            }
-            IsolatedEnumInitializerKind::LiteralString
-            | IsolatedEnumInitializerKind::NonLiteralString => {
-                IsolatedEnumInitializerKind::NonLiteralString
-            }
-            IsolatedEnumInitializerKind::Other => {
-                self.variable_initializer_widened_kind(var_decl.initializer)
-            }
         }
     }
 
