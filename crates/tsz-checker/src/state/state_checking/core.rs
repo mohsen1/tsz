@@ -1552,6 +1552,10 @@ impl<'a> CheckerState<'a> {
                     if decl.type_annotation.is_some() || decl.initializer.is_none() {
                         continue;
                     }
+                    if self.report_isolated_decl_computed_property_names(decl_idx, decl.initializer)
+                    {
+                        continue;
+                    }
                     // tsc emits TS9010 only when the initializer type genuinely
                     // can't be inferred. For const + literal, object/array literal,
                     // arrow/function/class expressions, tsc uses more specific
@@ -1567,6 +1571,209 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn report_isolated_decl_computed_property_names(
+        &mut self,
+        decl_idx: NodeIndex,
+        init_idx: NodeIndex,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = init_idx;
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                        return false;
+                    };
+                    current = paren.expression;
+                }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION =>
+                {
+                    let Some(assertion) = self.ctx.arena.get_type_assertion(node) else {
+                        return false;
+                    };
+                    current = assertion.expression;
+                }
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                    break;
+                }
+                _ => return false,
+            }
+        }
+
+        let Some(obj_node) = self.ctx.arena.get(current) else {
+            return false;
+        };
+        let Some(obj) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return false;
+        };
+
+        let var_name = self
+            .ctx
+            .arena
+            .get(decl_idx)
+            .and_then(|node| self.ctx.arena.get_variable_declaration(node))
+            .and_then(|decl| self.ctx.arena.get_identifier_at(decl.name))
+            .map(|ident| ident.escaped_text.clone())
+            .unwrap_or_default();
+
+        let mut reported = false;
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            let computed_name = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node)
+            {
+                Some(prop.name)
+            } else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                Some(method.name)
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
+                Some(accessor.name)
+            } else {
+                None
+            };
+
+            let Some(name_idx) = computed_name else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                continue;
+            }
+            if self.is_isolated_decl_simple_computed_name(name_idx) {
+                continue;
+            }
+            self.report_isolated_decl_computed_name_dependency(name_idx);
+
+            self.error_at_node(
+                name_idx,
+                diagnostic_messages::COMPUTED_PROPERTY_NAMES_ON_CLASS_OR_OBJECT_LITERALS_CANNOT_BE_INFERRED_WITH_ISOL,
+                diagnostic_codes::COMPUTED_PROPERTY_NAMES_ON_CLASS_OR_OBJECT_LITERALS_CANNOT_BE_INFERRED_WITH_ISOL,
+            );
+
+            if let Some((start, length)) = self.get_node_span(name_idx) {
+                let related = crate::diagnostics::DiagnosticRelatedInformation {
+                    category: crate::diagnostics::DiagnosticCategory::Message,
+                    code: diagnostic_codes::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message_text: crate::diagnostics::format_message(
+                        diagnostic_messages::ADD_A_TYPE_ANNOTATION_TO_THE_VARIABLE,
+                        &[&var_name],
+                    ),
+                };
+                if let Some(last) = self.ctx.diagnostics.last_mut() {
+                    last.related_information.push(related);
+                }
+            }
+
+            reported = true;
+        }
+
+        reported
+    }
+
+    fn is_isolated_decl_simple_computed_name(&self, name_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self
+                .ctx
+                .arena
+                .get_unary_expr(expr_node)
+                .is_some_and(|unary| {
+                    (unary.operator == SyntaxKind::MinusToken as u16
+                        || unary.operator == SyntaxKind::PlusToken as u16)
+                        && self.ctx.arena.get(unary.operand).is_some_and(|operand| {
+                            operand.kind == SyntaxKind::NumericLiteral as u16
+                                || operand.kind == SyntaxKind::BigIntLiteral as u16
+                        })
+                }),
+            _ => false,
+        }
+    }
+
+    fn report_isolated_decl_computed_name_dependency(&mut self, name_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return;
+        }
+
+        let Some(sym_id) = self.resolve_identifier_symbol(computed.expression) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+        if symbol.flags & symbol_flags::VARIABLE == 0 || !symbol.value_declaration.is_some() {
+            return;
+        }
+        let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return;
+        };
+        if var_decl.type_annotation.is_some() || var_decl.initializer.is_none() {
+            return;
+        }
+        if self.is_isolated_decl_type_inferrable(var_decl.initializer) {
+            return;
+        }
+
+        self.error_at_node(
+            var_decl.name,
+            diagnostic_messages::VARIABLE_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+            diagnostic_codes::VARIABLE_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+        );
     }
 
     /// Check whether an initializer's type is inferrable for `--isolatedDeclarations`.

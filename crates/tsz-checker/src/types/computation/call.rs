@@ -1624,6 +1624,7 @@ impl<'a> CheckerState<'a> {
             let fresh_subtype = assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected);
             if fresh_subtype {
                 if let Some(&arg_idx) = args.get(index)
+                    && !self.object_literal_has_computed_property_names(arg_idx)
                     && self
                         .ctx
                         .arena
@@ -1848,6 +1849,41 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = Some(original_ctx);
         }
         self.handle_call_result(result, call_context)
+    }
+}
+
+impl<'a> CheckerState<'a> {
+    fn object_literal_has_computed_property_names(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
+            return false;
+        };
+
+        obj.elements.nodes.iter().any(|&elem_idx| {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let name_idx = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                Some(prop.name)
+            } else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                Some(method.name)
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
+                Some(accessor.name)
+            } else {
+                None
+            };
+
+            name_idx
+                .and_then(|name_idx| self.ctx.arena.get(name_idx))
+                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        })
     }
 }
 
