@@ -614,14 +614,12 @@ impl<'a> CheckerState<'a> {
                     // of the initializer against the declared type, and use the
                     // declared type as the property type (not the initializer type).
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
-                        let declared_check_type =
-                            if self.is_assignable_to(value_type, declared_type) {
-                                declared_type
-                            } else {
-                                tsz_solver::remove_undefined(self.ctx.types, declared_type)
-                            };
                         // Check initializer assignability against @type (TS2322)
-                        if prop.initializer != prop.name {
+                        if prop.initializer != prop.name
+                            && !self.is_assignable_to(value_type, declared_type)
+                        {
+                            let declared_check_type =
+                                tsz_solver::remove_undefined(self.ctx.types, declared_type);
                             self.check_assignable_or_report_at_exact_anchor(
                                 value_type,
                                 declared_check_type,
