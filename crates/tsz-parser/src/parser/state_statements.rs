@@ -693,8 +693,10 @@ impl ParserState {
             self.parse_expression_statement()
         } else if self.look_ahead_is_import_equals() {
             self.parse_import_equals_declaration()
-        } else {
+        } else if self.look_ahead_is_import_declaration() {
             self.parse_import_declaration()
+        } else {
+            NodeIndex::NONE
         }
     }
 
@@ -911,6 +913,28 @@ impl ParserState {
     /// Look ahead to see if we have "import (" (dynamic import call)
     pub(crate) fn look_ahead_is_import_call(&mut self) -> bool {
         look_ahead_is_import_call(&mut self.scanner, self.current_token)
+    }
+
+    /// Look ahead to see if `import` is starting a declaration rather than an expression.
+    /// Valid starts are:
+    /// - string literal: `import "mod";`
+    /// - identifier/keyword: default import or contextual modifier/name
+    /// - `{` / `*`: named or namespace imports
+    fn look_ahead_is_import_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `import`
+        let result = matches!(
+            self.token(),
+            SyntaxKind::StringLiteral
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::DeferKeyword
+        ) || self.is_identifier_or_keyword();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Look ahead to see if we have `export =`.
