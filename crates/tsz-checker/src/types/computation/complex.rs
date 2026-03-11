@@ -244,6 +244,114 @@ fn expression_needs_contextual_return_type(state: &CheckerState, expr_idx: NodeI
 }
 
 impl<'a> CheckerState<'a> {
+    fn type_node_contains_abstract_constructor(
+        &self,
+        type_idx: NodeIndex,
+        visited_aliases: &mut rustc_hash::FxHashSet<NodeIndex>,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+
+        if let Some(query) = self.ctx.arena.get_type_query(node) {
+            return self
+                .class_symbol_from_expression(query.expr_name)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| (symbol.flags & symbol_flags::ABSTRACT) != 0);
+        }
+
+        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+            return composite
+                .types
+                .nodes
+                .iter()
+                .any(|&member| self.type_node_contains_abstract_constructor(member, visited_aliases));
+        }
+
+        if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+            return self.type_node_contains_abstract_constructor(wrapped.type_node, visited_aliases);
+        }
+
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            let Some(sym_id) = self
+                .resolve_identifier_symbol(type_ref.type_name)
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, type_ref.type_name))
+            else {
+                return false;
+            };
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                return false;
+            };
+
+            if (symbol.flags & symbol_flags::ABSTRACT) != 0 {
+                return true;
+            }
+
+            if (symbol.flags & symbol_flags::TYPE_ALIAS) == 0 {
+                return false;
+            }
+
+            for &decl_idx in &symbol.declarations {
+                if !visited_aliases.insert(decl_idx) {
+                    continue;
+                }
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                    continue;
+                }
+                if let Some(alias) = self.ctx.arena.get_type_alias(decl_node)
+                    && self.type_node_contains_abstract_constructor(alias.type_node, visited_aliases)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn declared_new_target_contains_abstract_constructor(&mut self, expr_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self
+            .resolve_identifier_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return false;
+        };
+
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.type_annotation.is_some()
+        {
+            let mut visited_aliases = rustc_hash::FxHashSet::default();
+            return self.type_node_contains_abstract_constructor(
+                var_decl.type_annotation,
+                &mut visited_aliases,
+            );
+        }
+
+        if let Some(param) = self.ctx.arena.get_parameter(decl_node)
+            && param.type_annotation.is_some()
+        {
+            let mut visited_aliases = rustc_hash::FxHashSet::default();
+            return self.type_node_contains_abstract_constructor(
+                param.type_annotation,
+                &mut visited_aliases,
+            );
+        }
+
+        false
+    }
+
     pub(crate) const fn should_suppress_weak_key_arg_mismatch(
         &mut self,
         _callee_expr: NodeIndex,
@@ -356,6 +464,15 @@ impl<'a> CheckerState<'a> {
             return early;
         }
 
+        if self.declared_new_target_contains_abstract_constructor(new_expr.expression) {
+            self.error_at_node(
+                idx,
+                "Cannot create an instance of an abstract class.",
+                diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
+            );
+            return TypeId::ERROR;
+        }
+
         // Get the type of the constructor expression.
         // Fast path for local class identifiers: avoid full identifier typing
         // machinery after `check_new_expression_target` has already validated
@@ -417,6 +534,19 @@ impl<'a> CheckerState<'a> {
             self.resolve_self_referencing_constructor(constructor_type, new_expr.expression)
         {
             return instance_type;
+        }
+
+        // Check abstract constructor unions before constructor-type normalization
+        // collapses nested aliases into a merged callable shape. Mixed unions like
+        // `Concretes | Abstracts` need to preserve their member structure here.
+        let raw_resolved_constructor_type = self.resolve_lazy_type(constructor_type);
+        if self.type_contains_abstract_class(raw_resolved_constructor_type) {
+            self.error_at_node(
+                idx,
+                "Cannot create an instance of an abstract class.",
+                diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
+            );
+            return TypeId::ERROR;
         }
 
         // Validate explicit type arguments against constraints (TS2344)

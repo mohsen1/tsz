@@ -173,6 +173,74 @@ abstract class C1 {
 }
 
 #[test]
+fn test_mixed_constructor_unions_still_report_ts2511() {
+    let source = r#"
+class ConcreteA {}
+class ConcreteB {}
+abstract class AbstractA {}
+abstract class AbstractB {}
+
+type Abstracts = typeof AbstractA | typeof AbstractB;
+type Concretes = typeof ConcreteA | typeof ConcreteB;
+type ConcretesOrAbstracts = Concretes | Abstracts;
+
+declare const cls1: ConcretesOrAbstracts;
+declare const cls2: Abstracts;
+declare const cls3: typeof ConcreteA | typeof AbstractA | typeof AbstractB;
+
+new cls1();
+new cls2();
+new cls3();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2511_count = diagnostics.iter().filter(|(code, _)| *code == 2511).count();
+
+    assert_eq!(
+        ts2511_count,
+        3,
+        "Expected TS2511 for mixed and all-abstract constructor unions. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_abstract_class_union_instantiation_shape_reports_all_ts2511s_with_libs() {
+    let source = r#"
+class ConcreteA {}
+class ConcreteB {}
+abstract class AbstractA { a: string; }
+abstract class AbstractB { b: string; }
+
+type Abstracts = typeof AbstractA | typeof AbstractB;
+type Concretes = typeof ConcreteA | typeof ConcreteB;
+type ConcretesOrAbstracts = Concretes | Abstracts;
+
+declare const cls1: ConcretesOrAbstracts;
+declare const cls2: Abstracts;
+declare const cls3: Concretes;
+
+new cls1();
+new cls2();
+new cls3();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2511_count = diagnostics.iter().filter(|(code, _)| *code == 2511).count();
+
+    assert_eq!(
+        ts2511_count,
+        2,
+        "Expected TS2511 for mixed and abstract declared constructor unions in the conformance shape. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_union_display_collapses_members_to_enum_name() {
     let source = r#"
 namespace X {

@@ -221,8 +221,9 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(sym_id) = callable_shape.symbol
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & symbol_flags::ABSTRACT) != 0
             {
-                return (symbol.flags & symbol_flags::ABSTRACT) != 0;
+                return true;
             }
         }
 
