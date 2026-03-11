@@ -485,11 +485,7 @@ impl ParserState {
 
         // Check if => follows the identifier. Line breaks before => are
         // allowed here — TS1200 will be emitted during actual parsing.
-        let is_arrow = if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-            true
-        } else {
-            false
-        };
+        let is_arrow = self.is_token(SyntaxKind::EqualsGreaterThanToken);
 
         self.scanner.restore_state(snapshot);
         self.current_token = current;

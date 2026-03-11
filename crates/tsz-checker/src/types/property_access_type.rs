@@ -1847,18 +1847,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(parent_name) = rightmost_namespace_name(self.ctx.arena, object_expr_idx) else {
-            return None;
-        };
-        let Some(member_id) = self.resolve_qualified_symbol(access_idx) else {
-            return None;
-        };
-        let Some(member_symbol) = self
+        let parent_name = rightmost_namespace_name(self.ctx.arena, object_expr_idx)?;
+        let member_id = self.resolve_qualified_symbol(access_idx)?;
+        let member_symbol = self
             .get_cross_file_symbol(member_id)
-            .or_else(|| self.ctx.binder.get_symbol(member_id))
-        else {
-            return None;
-        };
+            .or_else(|| self.ctx.binder.get_symbol(member_id))?;
 
         if (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE)) == 0
             || member_symbol.is_type_only

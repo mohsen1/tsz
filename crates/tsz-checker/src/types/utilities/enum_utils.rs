@@ -1313,9 +1313,7 @@ impl<'a> CheckerState<'a> {
             .map(|(class_idx, _)| class_idx)
             .or_else(|| {
                 let object_node = self.ctx.arena.get(access.expression)?;
-                if self.ctx.arena.get_identifier(object_node).is_none() {
-                    return None;
-                }
+                self.ctx.arena.get_identifier(object_node)?;
                 let sym_id = self.resolve_identifier_symbol(access.expression)?;
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
                 let value_decl = symbol.value_declaration;
@@ -1401,10 +1399,9 @@ impl<'a> CheckerState<'a> {
             let expr_node = self.ctx.arena.get(ret.expression)?;
             if expr_node.kind == SyntaxKind::Identifier as u16
                 && let Some(sym_id) = self.resolve_identifier_symbol(ret.expression)
+                && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
             {
-                if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id) {
-                    return Some(self.get_class_name_from_decl(class_idx));
-                }
+                return Some(self.get_class_name_from_decl(class_idx));
             }
         }
 

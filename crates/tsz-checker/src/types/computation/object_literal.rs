@@ -2455,7 +2455,15 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<tsz_solver::PropertyInfo> {
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.resolve_lazy_type(resolved);
-        self.ctx.types.collect_object_spread_properties(resolved)
+        self.ctx
+            .types
+            .collect_object_spread_properties(resolved)
+            .into_iter()
+            .map(|mut prop| {
+                prop.parent_id = None;
+                prop
+            })
+            .collect()
     }
 }
 

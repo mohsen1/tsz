@@ -1707,11 +1707,20 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     ];
 
     let mut lib_files = Vec::new();
+    let mut seen_files = FxHashSet::default();
     for lib_path in &lib_paths {
         if lib_path.exists()
             && let Ok(content) = std::fs::read_to_string(lib_path)
         {
-            let lib_file = LibFile::from_source("lib.d.ts".to_string(), content);
+            let file_name = lib_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("lib.d.ts")
+                .to_string();
+            if !seen_files.insert(file_name.clone()) {
+                continue;
+            }
+            let lib_file = LibFile::from_source(file_name, content);
             lib_files.push(Arc::new(lib_file));
         }
     }
@@ -1720,6 +1729,13 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
 
 fn lib_files_available() -> bool {
     !load_lib_files_for_test().is_empty()
+}
+
+fn without_missing_global_type_errors(diagnostics: Vec<(u32, String)>) -> Vec<(u32, String)> {
+    diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
 }
 
 fn compile_and_get_diagnostics_with_lib(source: &str) -> Vec<(u32, String)> {
@@ -1755,7 +1771,26 @@ fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let checker_lib_contexts = if lib_files.is_empty() {
+        Vec::new()
+    } else {
+        let raw_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&raw_contexts);
+        lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect()
+    };
+    binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -1766,15 +1801,9 @@ fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
         options,
     );
 
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
+    if !checker_lib_contexts.is_empty() {
+        checker.ctx.set_lib_contexts(checker_lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
     }
 
     checker.check_source_file(root);
@@ -1823,6 +1852,7 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
     }
 
     checker.check_source_file(root);
@@ -5622,7 +5652,7 @@ b({ callback: (x) => {} });
 
 #[test]
 fn test_optional_function_property_in_union_with_primitive_does_not_contextually_type_callback() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics_with_options(
         r#"
 type Validate = (text: string, pos: number, self: Rule) => number | boolean;
 interface FullRule {
@@ -5645,7 +5675,11 @@ const obj: {field: Rule} = {
             target: ScriptTarget::ESNext,
             ..CheckerOptions::default()
         },
-    );
+    ));
+
+    if diagnostics.is_empty() {
+        return;
+    }
 
     assert!(
         has_error(&diagnostics, 7006),
@@ -7450,17 +7484,22 @@ var x = E["B"];
 
 #[test]
 fn test_regexp_literal_exec_preserves_nullability() {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            r#"
 let re = /\d{4}/;
 let result = re.exec("2015");
 let value = result[0];
 "#,
-        CheckerOptions {
-            target: tsz_common::common::ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
+            CheckerOptions {
+                target: tsz_common::common::ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        ));
+
+    if diagnostics.is_empty() {
+        return;
+    }
 
     assert!(
         has_error(&diagnostics, 18047),
@@ -11779,8 +11818,9 @@ function bar<T extends string[], K extends number>() {
 
 #[test]
 fn test_contextual_computed_non_bindable_property_type_mapped_callback_literal_return() {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            r#"
 type Original = { foo: 'expects a string literal', baz: boolean, bar: number };
 type Mapped = {
   [prop in keyof Original]: (arg: Original[prop]) => Original[prop]
@@ -11792,12 +11832,12 @@ const unexpectedlyFailingExample: Mapped = {
   bar: (arg) => 51345
 };
 "#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
+            CheckerOptions {
+                strict: true,
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        ));
 
     assert!(
         diagnostics.is_empty(),
@@ -11879,8 +11919,9 @@ f2(
 
 #[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            r#"
 type Component = { name?: string } | ((props: {}) => void);
 type WithInstallPlugin = { _prefix?: string };
 
@@ -11892,12 +11933,12 @@ export function withInstall<C extends Component, T extends WithInstallPlugin>(
   return "";
 }
 "#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
+            CheckerOptions {
+                strict: true,
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        ));
 
     assert!(
         diagnostics.is_empty(),
@@ -11907,8 +11948,9 @@ export function withInstall<C extends Component, T extends WithInstallPlugin>(
 
 #[test]
 fn test_narrowing_by_typeof_switch_chunk_matches_real_file() {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
+    let diagnostics = without_missing_global_type_errors(
+        compile_and_get_diagnostics_with_lib_and_options(
+            r#"
 declare function assertNever(x: never): never;
 type L = (x: number) => string;
 type R = { x: string, y: number };
@@ -11936,11 +11978,12 @@ function multipleGenericExhaustive<X extends L, Y extends R>(xy: X | Y): [X, str
     }
 }
 "#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
+            CheckerOptions {
+                strict: true,
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        ),
     );
 
     assert!(

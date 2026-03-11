@@ -1606,13 +1606,12 @@ impl BinderState {
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = arena.get_unary_expr(node) {
                     self.bind_expression(arena, unary.operand);
-                    if unary.operator == SyntaxKind::PlusPlusToken as u16
-                        || unary.operator == SyntaxKind::MinusMinusToken as u16
+                    if (unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                        && !Self::is_inside_class_member_computed_property_name(arena, idx)
                     {
-                        if !Self::is_inside_class_member_computed_property_name(arena, idx) {
-                            let flow = self.create_flow_assignment(idx);
-                            self.current_flow = flow;
-                        }
+                        let flow = self.create_flow_assignment(idx);
+                        self.current_flow = flow;
                     }
                 }
                 return;

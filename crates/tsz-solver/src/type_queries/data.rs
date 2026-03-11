@@ -1124,6 +1124,7 @@ pub fn instantiate_mapped_template_for_property(
     instantiate_type(db, template, &subst)
 }
 
+#[allow(dead_code)]
 fn substitute_mapped_bound_parameter_for_property(
     db: &dyn TypeDatabase,
     type_id: TypeId,
