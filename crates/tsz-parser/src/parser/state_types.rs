@@ -604,7 +604,7 @@ impl ParserState {
 
         // Parse : and type
         self.parse_expected(SyntaxKind::ColonToken);
-        let type_node = self.parse_type();
+        let type_node = self.parse_named_tuple_member_type();
 
         let end_pos = self.token_end();
 
@@ -620,6 +620,38 @@ impl ParserState {
                 type_node,
             },
         )
+    }
+
+    fn parse_named_tuple_member_type(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        let type_node = if self.is_token(SyntaxKind::DotDotDotToken) {
+            self.next_token();
+            let element_type = self.parse_type();
+            let rest_end = self.token_end();
+            self.arena.add_wrapped_type(
+                syntax_kind_ext::REST_TYPE,
+                start_pos,
+                rest_end,
+                crate::parser::node::WrappedTypeData {
+                    type_node: element_type,
+                },
+            )
+        } else {
+            self.parse_type()
+        };
+
+        if self.parse_optional(SyntaxKind::QuestionToken) {
+            let end_pos = self.token_end();
+            return self.arena.add_wrapped_type(
+                syntax_kind_ext::OPTIONAL_TYPE,
+                start_pos,
+                end_pos,
+                crate::parser::node::WrappedTypeData { type_node },
+            );
+        }
+
+        type_node
     }
 
     /// Parse tuple type: [T, U, V], [name: T], [...T[]], [T?]
