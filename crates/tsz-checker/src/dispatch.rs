@@ -791,19 +791,26 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 if let Some(ref class_info) = self.checker.ctx.enclosing_class {
                     // Inside a class but no explicit this type on stack -
-                    // return the class instance type (e.g., for constructor default params)
+                    // return the class instance/constructor type depending on static context.
                     // BUT: if `this` is inside a nested regular function (not a class member),
                     // that function creates its own `this` binding, so don't use the class type.
                     let has_intermediate_function =
                         self.checker.is_this_in_nested_function_inside_class(idx);
+                    // Walk the AST to determine static context — can't rely on
+                    // in_static_member flag since it's only set during check_class_member.
+                    let is_in_static = self.checker.is_this_in_static_class_member(idx);
                     if !has_intermediate_function {
                         if let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
                             && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
                         {
-                            let class_instance = self
-                                .checker
-                                .get_class_instance_type(class_info.class_idx, class_data);
-                            return self.checker.apply_flow_narrowing(idx, class_instance);
+                            let this_type = if is_in_static {
+                                self.checker
+                                    .get_class_constructor_type(class_info.class_idx, class_data)
+                            } else {
+                                self.checker
+                                    .get_class_instance_type(class_info.class_idx, class_data)
+                            };
+                            return self.checker.apply_flow_narrowing(idx, this_type);
                         }
                         TypeId::ANY
                     } else {
