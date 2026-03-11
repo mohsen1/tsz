@@ -55,6 +55,17 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing call expression data - propagate error
         };
 
+        if let Some(callee_ident) = self.ctx.arena.get_identifier_at(call.expression)
+            && callee_ident.escaped_text == "require"
+            && let Some(args) = &call.arguments
+            && let Some(first_arg) = args.nodes.first().copied()
+            && let Some(module_specifier) = self.get_require_module_specifier(first_arg)
+            && let Some(namespace_type) =
+                self.commonjs_define_property_namespace_type(&module_specifier, None)
+        {
+            return namespace_type;
+        }
+
         // For IIFEs (immediately invoked function expressions), wrap the call expression's
         // contextual type into a callable type so the function expression resolver can extract
         // the return type (and for generators, the yield type).
