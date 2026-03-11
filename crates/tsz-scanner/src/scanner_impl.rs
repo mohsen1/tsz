@@ -91,6 +91,7 @@ pub struct ScannerSnapshot {
     pub token_invalid_separator_pos: Option<usize>,
     pub token_invalid_separator_is_consecutive: bool,
     pub regex_flag_errors: Vec<RegexFlagError>,
+    pub scanner_diagnostics: Vec<ScannerDiagnostic>,
 }
 
 /// The scanner state that holds the current position and token information.
@@ -2661,6 +2662,7 @@ impl ScannerState {
             token_invalid_separator_pos: self.token_invalid_separator_pos,
             token_invalid_separator_is_consecutive: self.token_invalid_separator_is_consecutive,
             regex_flag_errors: self.regex_flag_errors.clone(),
+            scanner_diagnostics: self.scanner_diagnostics.clone(),
         }
     }
 
@@ -2677,6 +2679,7 @@ impl ScannerState {
         self.token_invalid_separator_is_consecutive =
             snapshot.token_invalid_separator_is_consecutive;
         self.regex_flag_errors = snapshot.regex_flag_errors;
+        self.scanner_diagnostics = snapshot.scanner_diagnostics;
     }
 
     /// Get the interned atom for the current identifier token.

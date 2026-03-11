@@ -391,6 +391,21 @@ fn dotted_decimal_bigint_suffix_reports_ts1353_and_ts1434() {
 }
 
 #[test]
+fn dotted_decimal_bigint_suffix_does_not_duplicate_ts1353_from_lookahead() {
+    let (parser, _root) = parse_source("g.2n;");
+    let ts1353_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1353)
+        .count();
+    assert_eq!(
+        ts1353_count, 1,
+        "expected a single TS1353 after speculative scans, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn keyword_followed_by_string_literal_reports_ts1434() {
     let (parser, _root) = parse_source(r#"from "./foo";"#);
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
