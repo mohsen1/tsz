@@ -81,6 +81,11 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        self.augment_namespace_props_with_commonjs_exports_for_file(
+            self.ctx.current_file_idx,
+            &mut props,
+        );
+
         let namespace_type = self.ctx.types.factory().object(props);
         self.ctx.namespace_module_names.insert(
             namespace_type,
@@ -130,7 +135,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_commonjs_scope_boundary(&self, kind: u16) -> bool {
+    const fn is_commonjs_scope_boundary(&self, kind: u16) -> bool {
         matches!(
             kind,
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
@@ -455,14 +460,16 @@ impl<'a> CheckerState<'a> {
 
         for name_text in ordered_names {
             let name_atom = self.ctx.types.intern_string(&name_text);
-            if props.iter().any(|prop| prop.name == name_atom) {
-                continue;
-            }
             let Some(rhs_expr) = pending_props.get(&name_text).copied() else {
                 continue;
             };
             let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
             if rhs_type == TypeId::UNDEFINED {
+                continue;
+            }
+            if let Some(existing) = props.iter_mut().find(|prop| prop.name == name_atom) {
+                existing.type_id = rhs_type;
+                existing.write_type = rhs_type;
                 continue;
             }
             props.push(tsz_solver::PropertyInfo {
