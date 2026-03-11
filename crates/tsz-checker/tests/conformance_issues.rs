@@ -7834,6 +7834,38 @@ class D14<T extends U, U extends V, V extends Date> extends C3<Date> {
     );
 }
 
+#[test]
+fn test_ts2345_function_argument_display_widens_unannotated_literal_return() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare function foo3(cb: (x: number) => number): typeof cb;
+var r5 = foo3((x: number) => '');
+        "#,
+    );
+
+    let ts2345_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2345_messages.len(),
+        1,
+        "Expected a single TS2345 for incompatible callback argument.\nActual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2345_messages[0].contains("(x: number) => string"),
+        "TS2345 should widen the displayed callback return type from the literal to string.\nActual message: {}",
+        ts2345_messages[0]
+    );
+    assert!(
+        !ts2345_messages[0].contains("(x: number) => \"\""),
+        "TS2345 should not display the literal return type for an unannotated callback.\nActual message: {}",
+        ts2345_messages[0]
+    );
+}
+
 /// Verify that private name access works correctly for instance members accessed
 /// via parameters typed as the same class (e.g., `a.#x` where `a: A` inside class A).
 ///
