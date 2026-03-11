@@ -8008,8 +8008,49 @@ a = b = c = d = e = null;
         .collect();
 
     assert!(
-        ts2322_messages.iter().all(|message| message.contains("Type 'null'")),
+        ts2322_messages
+            .iter()
+            .all(|message| message.contains("Type 'null'")),
         "Expected chained assignment diagnostics to report the terminal RHS source type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_static_class_type_param_error_suppresses_cascading_call_mismatch() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+namespace Editor {
+    export class List<T> {
+        public next: List<T>;
+        public prev: List<T>;
+
+        constructor(public isHead: boolean, public data: T) {}
+
+        public static MakeHead(): List<T> {
+            var entry: List<T> = new List<T>(true, null);
+            return entry;
+        }
+    }
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2302_count = diagnostics.iter().filter(|(code, _)| *code == 2302).count();
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert!(
+        ts2302_count >= 3,
+        "Expected TS2302s for illegal class type-parameter references in static member.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2345_count, 0,
+        "Did not expect a cascading TS2345 once TS2302 has already invalidated the call.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
