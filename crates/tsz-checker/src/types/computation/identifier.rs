@@ -933,11 +933,23 @@ impl<'a> CheckerState<'a> {
             }
             // In CommonJS module mode, these globals are implicitly available
             if self.ctx.compiler_options.module.is_commonjs() {
+                if name == "exports"
+                    && let Some(namespace_type) =
+                        self.commonjs_namespace_type_for_file(self.ctx.current_file_idx)
+                {
+                    return namespace_type;
+                }
                 return TypeId::ANY;
             }
             // JS files implicitly have CommonJS globals (require, exports, module, etc.)
             // tsc never emits TS2580 for JS files — they're treated as CommonJS by default
             if self.is_js_file() {
+                if name == "exports"
+                    && let Some(namespace_type) =
+                        self.commonjs_namespace_type_for_file(self.ctx.current_file_idx)
+                {
+                    return namespace_type;
+                }
                 return TypeId::ANY;
             }
             // Otherwise, emit TS2591 suggesting @types/node installation

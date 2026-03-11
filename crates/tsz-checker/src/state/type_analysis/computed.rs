@@ -8,21 +8,33 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 impl<'a> CheckerState<'a> {
+    pub(crate) fn commonjs_namespace_type_for_file(&mut self, target_file_idx: usize) -> Option<TypeId> {
+        let mut props = Vec::new();
+        self.augment_namespace_props_with_commonjs_exports_for_file(target_file_idx, &mut props);
+        if props.is_empty() {
+            return None;
+        }
+        let namespace_type = self.ctx.types.factory().object(props);
+        if let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32)) {
+            self.ctx
+                .namespace_module_names
+                .insert(namespace_type, specifier.clone());
+        }
+        Some(namespace_type)
+    }
+
     pub(crate) fn commonjs_define_property_namespace_type(
         &mut self,
         module_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
-        let mut props = Vec::new();
-        self.augment_namespace_props_with_define_property_exports(
-            module_name,
-            source_file_idx,
-            &mut props,
-        );
-        if props.is_empty() {
-            return None;
-        }
-        let namespace_type = self.ctx.types.factory().object(props);
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        let namespace_type = self.commonjs_namespace_type_for_file(target_file_idx)?;
         self.ctx
             .namespace_module_names
             .insert(namespace_type, module_name.to_string());
