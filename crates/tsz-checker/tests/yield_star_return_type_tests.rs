@@ -172,3 +172,20 @@ function* f(): Generator<number, boolean, string> {
         "discarded yield* should not produce TS7057 or TS2322, got: {diags:?}"
     );
 }
+
+#[test]
+fn yield_star_generator_iife_contextually_types_nested_callback() {
+    let source = r#"
+function* g(): IterableIterator<(x: string) => number> {
+    yield * function* () {
+        yield x => x.length;
+    }();
+}
+"#;
+    let diags = codes_with_strict(source);
+    let ts7006_count = diags.iter().filter(|&&c| c == 7006).count();
+    assert_eq!(
+        ts7006_count, 0,
+        "yield* generator IIFE should contextually type nested callback params, got: {diags:?}"
+    );
+}
