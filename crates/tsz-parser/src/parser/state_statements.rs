@@ -235,7 +235,6 @@ impl ParserState {
                 //    stray artifact from earlier bracket-mismatch errors.
                 let current = self.token_pos();
                 let is_stray_close = self.last_error_pos != 0
-                    && current.abs_diff(self.last_error_pos) <= 3
                     && matches!(
                         self.token(),
                         SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
