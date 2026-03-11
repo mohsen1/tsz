@@ -20,6 +20,15 @@ thread_local! {
     // Limits total work across all nesting levels and context boundaries. Resets when
     // the outermost `ensure_application_symbols_resolved` call completes.
     static APP_SYMBOL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Fuel counter for total DefId resolutions across recursive `ensure_refs_resolved`
+    // invocations. The cascade ensure_refs_resolved → resolve_and_insert_def_type →
+    // get_type_of_symbol → evaluate_type_with_env → ensure_relation_input_ready →
+    // ensure_refs_resolved can cause explosive work on React/JSX type graphs.
+    // This fuel counter limits total resolution work rather than depth, allowing
+    // deep-but-narrow chains while cutting off wide-and-deep type explosions.
+    static REFS_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Tracks whether we're inside a top-level `ensure_refs_resolved` call tree.
+    static REFS_RESOLUTION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
@@ -34,6 +43,40 @@ const MAX_APP_SYMBOL_RESOLUTION_DEPTH: u32 = 1;
 // Prevents exponential work on deeply-nested generic type graphs (e.g., react16.d.ts
 // with InferProps<V>, RequiredKeys<V>, Validator<T> chains).
 const MAX_APP_SYMBOL_RESOLUTION_FUEL: u32 = 200;
+
+// Maximum total DefId resolutions allowed across all recursive `ensure_refs_resolved`
+// invocations within one top-level call. React/JSX type graphs (react16.d.ts) have
+// hundreds of interconnected generic types that cascade through resolve_and_insert_def_type.
+// This budget allows normal code (typically <100 resolutions) while cutting off explosions.
+const MAX_REFS_RESOLUTION_FUEL: u32 = 2000;
+
+/// Check if refs resolution fuel is exhausted.
+pub(crate) fn refs_resolution_fuel_exhausted() -> bool {
+    REFS_RESOLUTION_FUEL.get() >= MAX_REFS_RESOLUTION_FUEL
+}
+
+/// Increment the refs resolution fuel counter. Called from `ensure_refs_resolved`
+/// each time a DefId is resolved via `resolve_and_insert_def_type`.
+pub(crate) fn increment_refs_resolution_fuel() {
+    REFS_RESOLUTION_FUEL.set(REFS_RESOLUTION_FUEL.get() + 1);
+}
+
+/// Enter a top-level refs resolution scope. Resets fuel if not already active.
+/// Returns true if this is the outermost call (and thus responsible for cleanup).
+pub(crate) fn enter_refs_resolution_scope() -> bool {
+    if REFS_RESOLUTION_ACTIVE.get() {
+        false
+    } else {
+        REFS_RESOLUTION_ACTIVE.set(true);
+        REFS_RESOLUTION_FUEL.set(0);
+        true
+    }
+}
+
+/// Exit a top-level refs resolution scope.
+pub(crate) fn exit_refs_resolution_scope() {
+    REFS_RESOLUTION_ACTIVE.set(false);
+}
 
 impl<'a> CheckerState<'a> {
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
@@ -91,7 +134,12 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        self.ensure_relation_input_ready(type_id);
+        // Fuel-guard the eager ref resolution to prevent cascading through
+        // resolve_and_insert_def_type → get_type_of_symbol → evaluate_type_with_env
+        // → ensure_relation_input_ready → ensure_refs_resolved loops.
+        if REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL {
+            self.ensure_relation_input_ready(type_id);
+        }
 
         // Use type_env (not type_environment) because type_env is updated during
         // type checking with user-defined DefId→TypeId mappings, while

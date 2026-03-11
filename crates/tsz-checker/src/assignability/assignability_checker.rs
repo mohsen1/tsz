@@ -293,14 +293,26 @@ impl<'a> CheckerState<'a> {
     /// can check assignability against the intersection, we need to ensure A and B
     /// are resolved and in `type_env` so the subtype checker can resolve them.
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
+        use crate::state_domain::type_environment::lazy::{
+            enter_refs_resolution_scope, exit_refs_resolution_scope,
+            increment_refs_resolution_fuel, refs_resolution_fuel_exhausted,
+        };
+
         if self.ctx.refs_resolved.contains(&type_id) {
             return;
         }
+
+        let is_outermost = enter_refs_resolution_scope();
+
         let mut visited_types = FxHashSet::default();
         let mut visited_def_ids = FxHashSet::default();
         let mut worklist = vec![type_id];
 
         while let Some(current) = worklist.pop() {
+            if refs_resolution_fuel_exhausted() {
+                break;
+            }
+
             if !visited_types.insert(current) {
                 continue;
             }
@@ -311,9 +323,13 @@ impl<'a> CheckerState<'a> {
             }
 
             for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+                if refs_resolution_fuel_exhausted() {
+                    break;
+                }
                 if !visited_def_ids.insert(def_id) {
                     continue;
                 }
+                increment_refs_resolution_fuel();
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
@@ -323,6 +339,10 @@ impl<'a> CheckerState<'a> {
             }
         }
         self.ctx.refs_resolved.insert(type_id);
+
+        if is_outermost {
+            exit_refs_resolution_scope();
+        }
     }
 
     /// Evaluate a type for assignability checking.

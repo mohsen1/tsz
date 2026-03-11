@@ -98,20 +98,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
         if node.kind == syntax_kind_ext::TYPE_QUERY {
             if let Some(query) = self.ctx.arena.get_type_query(node) {
                 // Check if the query references the target symbol
                 // We need to know if it's a "bare" reference or a property access
                 let expr_node = self.ctx.arena.get(query.expr_name)?;
-
                 let is_bare_identifier =
                     expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16;
-
                 // Extract the symbol referenced by the query
                 let mut referenced_sym = None;
                 let mut error_node = query.expr_name;
-
                 if is_bare_identifier {
                     referenced_sym =
                         self.ctx
@@ -154,7 +150,6 @@ impl<'a> CheckerState<'a> {
                         error_node = access.expression;
                     }
                 }
-
                 if let Some(sym) = referenced_sym
                     && sym == target_sym
                 {
@@ -165,7 +160,6 @@ impl<'a> CheckerState<'a> {
                     }
                     return Some(error_node);
                 }
-
                 // Also check type arguments if any (always recursive)
                 if let Some(ref args) = query.type_arguments {
                     for &arg_idx in &args.nodes {
@@ -182,7 +176,6 @@ impl<'a> CheckerState<'a> {
             }
             return None;
         }
-
         // Explicitly recurse into type annotations of members, as generic get_children might miss them
         if matches!(
             node.kind,
@@ -247,7 +240,6 @@ impl<'a> CheckerState<'a> {
             {
                 use tsz_parser::parser::node_flags;
                 let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
-
                 if is_const && var_decl.initializer.is_none() {
                     // Skip for destructuring patterns - they get TS1182 from the parser
                     let is_binding_pattern =
@@ -257,7 +249,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-
                     // Check if this is in a for-in or for-of loop (allowed)
                     let is_in_for_loop =
                         if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
@@ -270,7 +261,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-
                     if !is_in_for_loop && !is_binding_pattern {
                         self.ctx.error(
                             node.pos,
@@ -352,14 +342,12 @@ impl<'a> CheckerState<'a> {
         // the var initialization would write to the outer hoisted variable while the
         // block-scoped binding shadows it — this is a runtime SyntaxError.
         self.check_var_declared_names_not_shadowed(decl_idx, var_decl);
-
         // Check if this is a destructuring pattern (object/array binding)
         let is_destructuring = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
             name_node.kind != SyntaxKind::Identifier as u16
         } else {
             false
         };
-
         // Get the variable name for adding to local scope
         let var_name = if !is_destructuring {
             if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
@@ -373,10 +361,8 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-
         // TS1212/1213/1214: Identifier expected. '{0}' is a reserved word in strict mode.
         // Check if variable name is a strict-mode reserved word used in strict context.
-
         let mut is_ambient = self.ctx.is_declaration_file();
         if !is_ambient {
             let mut current = decl_idx;
@@ -461,7 +447,6 @@ impl<'a> CheckerState<'a> {
         {
             self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
         }
-
         // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
         if let Some(ref name) = var_name
             && name == "let"
@@ -505,7 +490,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
-
         // TS1039/TS1254: Check initializers in ambient contexts.
         // Use is_in_ambient_context (checks for explicit `declare` keyword ancestors)
         // rather than is_ambient_declaration (which also returns true for all .d.ts files).
@@ -531,7 +515,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
             let mut has_type_annotation = var_decl.type_annotation.is_some();
             let mut declared_type = if has_type_annotation {
@@ -540,7 +523,6 @@ impl<'a> CheckerState<'a> {
                 checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
                 checker.check_type_for_parameter_properties(var_decl.type_annotation);
                 let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
-
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
                 if is_catch_variable
                     && type_id != TypeId::ANY
@@ -554,7 +536,6 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
                     );
                 }
-
                 type_id
             } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
@@ -605,7 +586,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         declared_type
                     };
-
                     // Set contextual type for the initializer (but not for 'any')
                     let prev_context = checker.ctx.contextual_type;
                     let initializer_is_function = checker
@@ -685,7 +665,6 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     checker.ctx.contextual_type = prev_context;
-
                     let function_initializer_body_has_error = checker
                         .ctx
                         .arena
@@ -709,7 +688,6 @@ impl<'a> CheckerState<'a> {
                             ))
                         })
                         .unwrap_or(false);
-
                     // Check assignability (skip for 'any' since anything is assignable to any,
                     // and skip for TypeId::ERROR since the type annotation failed to resolve).
                     // Note: we intentionally do NOT use type_contains_error() here because it
@@ -781,9 +759,6 @@ impl<'a> CheckerState<'a> {
                                         var_decl.initializer,
                                     );
                                     if checker.ctx.diagnostics.len() == diags_before {
-                                        // Try per-property elaboration for object literals before
-                                        // the generic TS2322. tsc reports TS2322 on the specific
-                                        // mismatching property (e.g. inside an object literal assigned
                                         // to an index-signature type) instead of on the outer assignment.
                                         // Only attempt elaboration when overall assignment fails and
                                         // the initializer is an object literal (arrays/tuples are
@@ -806,10 +781,7 @@ impl<'a> CheckerState<'a> {
                                                 declared_type,
                                             )
                                         {
-                                            // Elaboration emitted per-property TS2322 errors.
-                                            // Skip the generic TS2322 on the outer assignment.
                                         } else {
-                                            // No elaboration possible — fall back to generic TS2322
                                             let _ = checker.check_assignable_or_report_at(
                                                 checked_init_type,
                                                 declared_type,
@@ -822,7 +794,6 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-
                     // Note: Freshness is tracked by the TypeId flags.
                     // Fresh vs non-fresh object types are interned distinctly.
                 }
@@ -841,7 +812,6 @@ impl<'a> CheckerState<'a> {
                 // Type annotation determines the final type
                 return declared_type;
             }
-
             // No type annotation - infer from initializer
             if var_decl.initializer.is_some() {
                 checker.report_malformed_jsdoc_satisfies_tags(decl_idx);
@@ -870,7 +840,6 @@ impl<'a> CheckerState<'a> {
                     }
                     return init_type;
                 }
-
                 // Clear cache for closure initializers so TS7006 is properly emitted.
                 // During build_type_environment, closures are typed without contextual info
                 // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate
@@ -883,7 +852,6 @@ impl<'a> CheckerState<'a> {
                 {
                     checker.clear_type_cache_recursive(var_decl.initializer);
                 }
-
                 // When the binding pattern contains array sub-patterns and the
                 // initializer has matching array literals, provide a contextual type
                 // so array literals produce positional (tuple) types instead of widened
@@ -899,7 +867,6 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut init_type = checker.get_type_of_node(var_decl.initializer);
                 checker.ctx.contextual_type = prev_contextual;
-
                 // TypeScript treats unannotated empty-array declaration initializers
                 // (`let/var/const x = []`) as evolving-any arrays for subsequent writes.
                 // Keep expression-level `[]` behavior unchanged by only applying this to
@@ -922,7 +889,6 @@ impl<'a> CheckerState<'a> {
                 {
                     init_type = checker.ctx.types.factory().array(TypeId::ANY);
                 }
-
                 // When strictNullChecks is off, undefined and null widen to any
                 // (TypeScript treats `var x = undefined` as `any` without strict)
                 if !checker.ctx.strict_null_checks()
@@ -930,7 +896,6 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
-
                 // Under noImplicitAny, mutable unannotated bindings initialized with
                 // `undefined`/`null` should behave like evolving-any variables so later
                 // assignments don't produce TS2322 (TypeScript reports implicit-any diagnostics).
@@ -941,10 +906,8 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
-
                 // Note: Freshness is tracked by the TypeId flags.
                 // Fresh vs non-fresh object types are interned distinctly.
-
                 if checker.is_const_variable_declaration(decl_idx) {
                     // When the initializer type is `any` or `unknown` (e.g. from
                     // a JSDoc `@type {*}` cast), the assertion determines the type.
@@ -971,7 +934,6 @@ impl<'a> CheckerState<'a> {
                     }
                     return init_type;
                 }
-
                 // Only widen when the initializer is a "fresh" literal expression
                 // (direct literal in source code). Types from variable references,
                 // narrowing, or computed expressions are "non-fresh" and NOT widened.
@@ -1042,7 +1004,6 @@ impl<'a> CheckerState<'a> {
                 let ast_circular = self
                     .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
                     .is_some();
-
                 // Then try semantic check
                 let semantic_circular = !ast_circular
                     && query::has_type_query_for_symbol(
@@ -1051,7 +1012,6 @@ impl<'a> CheckerState<'a> {
                         sym_id.0,
                         |ty| self.resolve_lazy_type(ty),
                     );
-
                 // Third check: transitive typeof circularity.
                 // E.g., `var d: typeof e; var e: typeof d;` — the AST check only
                 // sees `typeof e` doesn't directly reference `d`, but following the
@@ -1059,7 +1019,6 @@ impl<'a> CheckerState<'a> {
                 let transitive_circular = !ast_circular
                     && !semantic_circular
                     && self.check_transitive_type_query_circularity(final_type, sym_id);
-
                 if (ast_circular || semantic_circular || transitive_circular)
                     && let Some(ref name) = var_name
                 {
@@ -1132,7 +1091,6 @@ impl<'a> CheckerState<'a> {
                     // shape, ensuring `var e = E; var e: typeof E;` is compatible.
                     self.annotation_ts2403_type(var_decl.type_annotation, final_type)
                 };
-
             // Variables without an initializer/annotation can still get a contextual type in some
             // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
             // type may already be cached from the contextual typing logic; prefer that over the
@@ -1145,7 +1103,6 @@ impl<'a> CheckerState<'a> {
             {
                 final_type = inferred;
             }
-
             // TS7005: Variable implicitly has an 'any' type
             // Report this error when noImplicitAny is enabled and the variable has no type annotation
             // and the inferred type is 'any'.
@@ -1172,7 +1129,6 @@ impl<'a> CheckerState<'a> {
                         name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                     });
-
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
                     if (is_ambient || is_const || is_exported) && !self.ctx.is_declaration_file() {
                         // TS7005: Ambient, const, and exported declarations emit at the declaration site.
@@ -1324,7 +1280,6 @@ impl<'a> CheckerState<'a> {
                 // their symbols.
                 let current_ns_export_status = self.var_decl_namespace_export_status(decl_idx);
                 let is_non_exported_ns_var = current_ns_export_status == Some(false);
-
                 // Skip TS2403 when declarations in the same namespace have
                 // different export visibility (one exported, one not). In tsc,
                 // these are separate symbols (locals vs exports table) and
@@ -1345,7 +1300,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         false
                     };
-
                 let local_decl_count = self
                     .ctx
                     .binder
@@ -1358,7 +1312,6 @@ impl<'a> CheckerState<'a> {
                             .count()
                     })
                     .unwrap_or(0);
-
                 if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
                     if local_decl_count <= 1 {
                         let refined = self.refine_var_decl_type(prev_type, final_type);
@@ -1383,7 +1336,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-
                     if !is_mergeable_declaration
                         && !is_bare_declaration
                         && !is_non_exported_ns_var
@@ -1414,7 +1366,6 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_symbol(sym_id)
                         .map(|s| s.escaped_name.clone());
-
                     // 1. Check lib contexts for prior declarations (e.g. 'var symbol' in lib.d.ts)
                     // Extract data to avoid holding borrow on self during loop
                     let types = self.ctx.types;
@@ -1425,7 +1376,6 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
-
                     if let Some(name) = symbol_name {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
@@ -1448,10 +1398,8 @@ impl<'a> CheckerState<'a> {
                                             );
                                         // Ensure lib checker can resolve types from other lib files
                                         lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
-
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
-
                                         // Check compatibility (skip for bare declarations)
                                         if !is_bare_declaration
                                             && !self
@@ -1462,7 +1410,6 @@ impl<'a> CheckerState<'a> {
                                                 name, lib_type, final_type, decl_idx,
                                             );
                                         }
-
                                         prior_type_found =
                                             Some(if let Some(prev) = prior_type_found {
                                                 self.refine_var_decl_type(prev, lib_type)
@@ -1474,7 +1421,6 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-
                     // 2. Check local declarations (in case of intra-file redeclaration)
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         for &other_decl in &symbol.declarations {
@@ -1486,7 +1432,6 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                                 let other_type = self.get_type_of_node(other_decl);
-
                                 // Check if other declaration is mergeable (namespace, etc.)
                                 let other_node_kind =
                                     self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
@@ -1498,7 +1443,6 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::INTERFACE_DECLARATION
                                         | syntax_kind_ext::FUNCTION_DECLARATION
                                 );
-
                                 // Functions, classes, and enums don't merge with variables,
                                 // so they should not establish a "previous variable type" for TS2403.
                                 // Only other variables and namespaces (which DO merge with vars) establish this.
@@ -1509,18 +1453,15 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::BINDING_ELEMENT
                                         | syntax_kind_ext::MODULE_DECLARATION
                                 );
-
                                 if !establishes_var_type {
                                     continue;
                                 }
-
                                 // Skip TS2403 when either declaration is a non-exported
                                 // namespace variable — non-exported members are local to
                                 // their namespace body and don't merge with other bodies.
                                 let is_other_non_exported_ns_var = self
                                     .var_decl_namespace_export_status(other_decl)
                                     == Some(false);
-
                                 if !is_other_mergeable
                                     && !is_bare_declaration
                                     && !is_non_exported_ns_var
@@ -1533,7 +1474,6 @@ impl<'a> CheckerState<'a> {
                                         name, other_type, final_type, decl_idx,
                                     );
                                 }
-
                                 prior_type_found = Some(if let Some(prev) = prior_type_found {
                                     self.refine_var_decl_type(prev, other_type)
                                 } else {
@@ -1542,7 +1482,6 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-
                     let type_to_store = if let Some(prior) = prior_type_found {
                         self.refine_var_decl_type(prior, raw_declared_type)
                     } else {
@@ -1629,7 +1568,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-
                 self.record_destructured_binding_group(
                     var_decl.name,
                     resolved_for_union,

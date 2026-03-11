@@ -1,8 +1,4 @@
 //! Expression type computation dispatcher.
-//!
-//! This module provides the `ExpressionDispatcher` which handles the dispatch
-//! of type computation requests to appropriate specialized methods based on
-//! the syntax node kind.
 
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
@@ -14,23 +10,16 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 /// Dispatcher for expression type computation.
-///
-/// `ExpressionDispatcher` handles the dispatch of type computation for different
-/// node kinds, delegating to specialized methods in `CheckerState`.
 pub struct ExpressionDispatcher<'a, 'b> {
-    /// Reference to the checker state.
     pub checker: &'a mut CheckerState<'b>,
 }
 
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
-    /// Create a new expression dispatcher.
     pub const fn new(checker: &'a mut CheckerState<'b>) -> Self {
         Self { checker }
     }
 
-    /// Resolve a literal type: preserve the narrow literal if we're in a const
-    /// assertion, contextual typing expects it, or we're computing a type for
-    /// a compound expression (conditional/logical) that should preserve literals.
+    /// Resolve a literal type: preserve if const assertion or contextual typing expects it.
     fn resolve_literal(&mut self, literal_type: Option<TypeId>, widened: TypeId) -> TypeId {
         match literal_type {
             Some(lit)
@@ -47,7 +36,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     fn get_expected_yield_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
         let enclosing_fn_idx = self.checker.find_enclosing_function(idx)?;
         let fn_node = self.checker.ctx.arena.get(enclosing_fn_idx)?;
-
         let declared_return_type_node =
             if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
                 if !func.asterisk_token || func.type_annotation.is_none() {
@@ -83,7 +71,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             .arena
             .get_identifier(type_name_node)
             .map(|ident| ident.escaped_text.as_str())?;
-
         if !matches!(
             type_name,
             "Generator"
@@ -100,7 +87,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .checker
                 .get_generator_yield_type_argument(declared_return_type);
         }
-
         if let Some(first_arg) = type_ref
             .type_arguments
             .as_ref()
@@ -108,7 +94,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         {
             return Some(self.checker.get_type_from_type_node(first_arg));
         }
-
         let declared_return_type = self
             .checker
             .get_type_from_type_node(declared_return_type_node);
@@ -120,11 +105,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return false;
         };
-
         if node.kind == SyntaxKind::UndefinedKeyword as u16 {
             return true;
         }
-
         if node.kind == syntax_kind_ext::UNION_TYPE
             && let Some(composite) = self.checker.ctx.arena.get_composite_type(node)
         {
@@ -135,7 +118,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .copied()
                 .any(|member| self.type_node_includes_undefined(member));
         }
-
         false
     }
 
@@ -157,7 +139,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             } else {
                 return None;
             };
-
         let declared_return_node = self.checker.ctx.arena.get(declared_return_type_node)?;
         if declared_return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;
@@ -186,8 +167,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         Some(self.type_node_includes_undefined(first_arg))
     }
 
-    /// Get the declared generator type (`Generator<TYield, TReturn, TNext>`) for the enclosing generator function.
-    /// Returns `None` if not in a generator or if the generator has no explicit type annotation.
+    /// Get the declared generator type for the enclosing generator function.
     fn get_expected_generator_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
         let enclosing_fn_idx = self.checker.find_enclosing_function(idx)?;
         let fn_node = self.checker.ctx.arena.get(enclosing_fn_idx)?;
@@ -245,7 +225,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // The yield* expression result is TReturn of the delegated iterator, NOT TNext
         // of the containing generator (which is what regular yield returns).
         let mut yield_star_return_type: Option<TypeId> = None;
-
         let yielded_type = if yield_expr.expression.is_none() {
             TypeId::UNDEFINED
         } else {
@@ -404,7 +383,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     .push(yielded_type);
             }
         }
-
         if let Some(expected_yield_type) = self.get_expected_yield_type(idx) {
             let error_node = if yield_expr.expression.is_none() {
                 idx
@@ -415,12 +393,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             self.checker.ensure_relation_input_ready(yielded_type);
             self.checker
                 .ensure_relation_input_ready(expected_yield_type);
-
             let resolved_expected_yield_type = self.checker.resolve_lazy_type(expected_yield_type);
             let syntactic_yield_allows_undefined = self
                 .explicit_generator_yield_allows_undefined(idx)
                 .unwrap_or(false);
-
             let bare_yield_requires_error = yield_expr.expression.is_none()
                 && expected_yield_type != TypeId::ANY
                 && expected_yield_type != TypeId::UNKNOWN
@@ -448,7 +424,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 return yield_star_return_type.unwrap_or(TypeId::ANY);
             }
-
             if bare_yield_requires_error {
                 self.checker.check_assignable_or_report(
                     yielded_type,
@@ -543,7 +518,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 
     /// Check if an expression's result value is unused (discarded).
-    /// Mirrors TypeScript's `expressionResultIsUnused` from utilities.ts.
     fn expression_result_is_unused(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         loop {
@@ -613,9 +587,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
     }
 
-    /// Check if a yield expression is the initializer of a variable declaration
-    /// with a destructuring binding pattern (object or array). TSC derives a
-    /// contextual type from the binding pattern, so TS7057 is suppressed.
+    /// Check if a yield expression is in a binding pattern initializer (suppresses TS7057).
     fn yield_is_in_binding_pattern_initializer(&self, idx: NodeIndex) -> bool {
         let Some(ext) = self.checker.ctx.arena.get_extended(idx) else {
             return false;
@@ -667,8 +639,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         false
     }
 
-    /// Check if a yield expression appears inside an argument of a dynamic import call.
-    /// TypeScript contextually types `import(yield "x")` as string and does not emit TS7057.
+    /// Check if a yield expression is inside a dynamic import argument (suppresses TS7057).
     fn yield_is_direct_dynamic_import_argument(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut guard = 0u32;
@@ -723,9 +694,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 
     /// Dispatch type computation based on node kind.
-    ///
-    /// This method examines the syntax node kind and dispatches to the
-    /// appropriate specialized type computation method.
     pub fn dispatch_type_computation(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -909,7 +877,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::SuperKeyword as u16 => {
                 self.checker.get_type_of_super_keyword(idx)
             }
-
             // Literals — preserve literal types when contextual typing expects them.
             k if k == SyntaxKind::NumericLiteral as u16 => self.resolve_literal(
                 self.checker.literal_type_from_initializer(idx),
@@ -946,27 +913,22 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.resolve_literal(Some(literal_type), TypeId::BOOLEAN)
             }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
-
             // Binary expressions
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 self.checker.get_type_of_binary_expression(idx)
             }
-
             // Call expressions
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 self.checker.get_type_of_call_expression(idx)
             }
-
             // Tagged template expressions (e.g., `tag\`hello ${x}\``)
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.checker.get_type_of_tagged_template_expression(idx)
             }
-
             // New expressions
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.checker.get_type_of_new_expression(idx)
             }
-
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
@@ -987,32 +949,26 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ANY
                 }
             }
-
             // Property access
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 self.checker.get_type_of_property_access(idx)
             }
-
             // Element access
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 self.checker.get_type_of_element_access(idx)
             }
-
             // Conditional expression (ternary)
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 self.checker.get_type_of_conditional_expression(idx)
             }
-
             // Variable declaration
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 self.checker.get_type_of_variable_declaration(idx)
             }
-
             // Function declaration
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.checker.get_type_of_function(idx)
             }
-
             // Function expression
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
                 if self.checker.is_js_file() {
@@ -1020,7 +976,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 self.checker.get_type_of_function(idx)
             }
-
             // Arrow function
             k if k == syntax_kind_ext::ARROW_FUNCTION => {
                 if self.checker.is_js_file() {
@@ -1028,22 +983,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 self.checker.get_type_of_function(idx)
             }
-
             // Array literal
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.checker.get_type_of_array_literal(idx)
             }
-
             // Object literal
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.checker.get_type_of_object_literal(idx)
             }
-
             // Prefix unary expression
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 self.checker.get_type_of_prefix_unary(idx)
             }
-
             // Postfix unary expression - ++ and -- require numeric operand and valid l-value
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
@@ -1064,7 +1015,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     {
                         return TypeId::NUMBER;
                     }
-
                     let mut arithmetic_ok = true;
 
                     {
@@ -1076,7 +1026,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let resolved_type = self.checker.evaluate_type_with_env(operand_type);
                         let is_valid = evaluator.is_arithmetic_operand(resolved_type)
                             || self.checker.is_enum_like_type(operand_type);
-
                         if !is_valid {
                             arithmetic_ok = false;
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1094,7 +1043,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let emitted_lvalue = self
                             .checker
                             .check_increment_decrement_operand(unary.operand);
-
                         if !emitted_lvalue {
                             // TS2588: Cannot assign to 'x' because it is a constant.
                             let is_const = self.checker.check_const_assignment(unary.operand);
@@ -1109,24 +1057,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         }
                     }
                 }
-
                 TypeId::NUMBER
             }
-
             // typeof expression
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => TypeId::STRING,
-
             // void expression
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
-
             // await expression - unwrap Promise<T> to get T, with contextual typing (Phase 6 - tsz-3)
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
                 self.checker.get_type_of_await_expression(idx)
             }
-
             // yield expression
             k if k == syntax_kind_ext::YIELD_EXPRESSION => self.get_type_of_yield_expression(idx),
-
             // Parenthesized expression - just pass through to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.checker.ctx.arena.get_parenthesized(node) {
@@ -1229,7 +1171,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ERROR
                 }
             }
-
             // Type assertions / `as` / `satisfies`
             k if k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION
@@ -1256,7 +1197,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         } else {
                             false
                         };
-
                     // Set the in_const_assertion flag to preserve literal types in nested expressions
                     let prev_in_const_assertion = self.checker.ctx.in_const_assertion;
                     if is_const_assertion {
@@ -1279,7 +1219,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // Check for duplicate properties in type literal nodes (TS2300)
                         self.checker
                             .check_type_for_parameter_properties(assertion.type_node);
-
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
 
@@ -1293,11 +1232,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self.checker.get_type_of_node(assertion.expression);
-
                         // Restore contextual type
                         self.checker.ctx.contextual_type = prev_contextual_type;
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // TS8037: Type satisfaction expressions can only be used in TypeScript files
                             if self.checker.is_js_file() {
@@ -1433,7 +1370,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             } else {
                                 (false, asserted_type)
                             };
-
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
                                 // (i.e., the types don't "sufficiently overlap").
@@ -1459,7 +1395,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         self.checker.ctx.types,
                                         effective_asserted,
                                     );
-
                                 let source_to_target = if structured_generic_assertion_target {
                                     true // can't evaluate — assume overlap
                                 } else {
@@ -1556,7 +1491,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     }
                                 }
                             }
-
                             asserted_type
                         }
                     }
@@ -1564,27 +1498,22 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ERROR
                 }
             }
-
             // Template expression (e.g., `hello ${name}`)
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
                 self.checker.get_type_of_template_expression(idx)
             }
-
             // No-substitution template literal - always preserve literal type.
             // Widening happens at binding sites, not at expression evaluation.
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => self.resolve_literal(
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::STRING,
             ),
-
             // =========================================================================
             // Type Nodes - Delegate to TypeNodeChecker
             // =========================================================================
-
             // Type nodes that need binder resolution - delegate to get_type_from_type_node
             // which handles special cases with proper symbol resolution
             k if k == syntax_kind_ext::TYPE_REFERENCE => self.checker.get_type_from_type_node(idx),
-
             // Type nodes handled by TypeNodeChecker
             k if k == syntax_kind_ext::UNION_TYPE
                 || k == syntax_kind_ext::INTERSECTION_TYPE
@@ -1598,7 +1527,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 let mut checker = crate::TypeNodeChecker::new(&mut self.checker.ctx);
                 checker.check(idx)
             }
-
             // Keyword types - when recovered into value positions, TypeScript emits TS2693.
             // NullKeyword has no value-position check (null is a valid value).
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
@@ -1611,10 +1539,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     type_id
                 }
             }
-
             // Qualified name (A.B.C) - resolve namespace member access
             k if k == syntax_kind_ext::QUALIFIED_NAME => self.checker.resolve_qualified_name(idx),
-
             // Declaration nodes - not expressions, return VOID to avoid wasted work.
             // These are handled by check_statement → check_interface_declaration / check_class_declaration.
             // get_type_of_node may be called on them (e.g., for index signature compatibility checks),
@@ -1627,7 +1553,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             {
                 TypeId::VOID
             }
-
             // JSX Elements (Rule #36: JSX Intrinsic Lookup)
             k if k == syntax_kind_ext::JSX_ELEMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_element(node) {
@@ -1640,7 +1565,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     } else {
                         None
                     };
-
                     let prev_contextual = self.checker.ctx.contextual_type;
                     if children_ctx_type.is_some() {
                         self.checker.ctx.contextual_type = children_ctx_type;
@@ -1686,7 +1610,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         child_types.push(child_type);
                     }
                     self.checker.ctx.contextual_type = prev_contextual;
-
                     // Store children info for use in check_jsx_attributes_against_props.
                     // Synthesize the children type:
                     // - 0 children → None (no children prop synthesized)
@@ -1710,7 +1633,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             text_child_indices,
                         ));
                     }
-
                     // Check closing element for TS7026 (tsc emits for both opening and closing tags)
                     self.checker
                         .check_jsx_closing_element_for_implicit_any(jsx.closing_element);
@@ -1749,7 +1671,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
             k if k == tsz_scanner::SyntaxKind::JsxText as u16 => TypeId::STRING,
-
             // Non-null assertion: x!
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
                 // TS8013: Non-null assertions can only be used in TypeScript files
@@ -1790,12 +1711,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ERROR
                 }
             }
-
             // Type predicate nodes appear in function return type positions
             // (`x is T` or `asserts x is T`). We delegate to type node resolution
             // to correctly get `boolean` or `void`.
             k if k == syntax_kind_ext::TYPE_PREDICATE => self.checker.get_type_from_type_node(idx),
-
             // ExpressionWithTypeArguments: `expr<T>` used as a standalone expression
             // (e.g., `List<number>.makeChild()`). Evaluate the inner expression
             // to trigger name resolution (TS2304) even though the overall node
@@ -1807,14 +1726,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ERROR
                 }
             }
-
             // MetaProperty: `new.target` (import.meta is parsed as PROPERTY_ACCESS_EXPRESSION)
             k if k == syntax_kind_ext::META_PROPERTY => {
                 // new.target returns the constructor function or undefined.
                 // Return any as a safe fallback.
                 TypeId::ANY
             }
-
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
@@ -1828,10 +1745,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 
     /// TS1355: Check that an expression is a valid target for `as const`.
-    ///
-    /// Valid targets: string/number/bigint/boolean literals, array/object literals,
-    /// template expressions, enum member references, parenthesized valid targets,
-    /// and prefix unary `-` on numeric literals.
     fn check_const_assertion_expression(&mut self, expr_idx: NodeIndex) {
         if self.is_valid_const_assertion_arg(expr_idx) {
             return;
@@ -1893,11 +1806,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 }
 
-/// Maps a syntax kind to its keyword type name and `TypeId`.
-///
-/// Returns `Some((name, type_id))` for keyword types that need value-position
-/// checking (TS2693), or `None` for non-keyword kinds.
-/// `NullKeyword` is excluded because `null` is a valid value expression.
+/// Maps a syntax kind to its keyword type name and `TypeId` for TS2693 checking.
 const fn keyword_type_mapping(kind: u16) -> Option<(&'static str, TypeId)> {
     match kind {
         k if k == SyntaxKind::NumberKeyword as u16 => Some(("number", TypeId::NUMBER)),

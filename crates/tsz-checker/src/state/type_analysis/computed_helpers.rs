@@ -81,9 +81,7 @@ impl<'a> CheckerState<'a> {
         if ctx_type == literal_type {
             return true;
         }
-        // tsc rule: "If the contextual type is a literal type, we consider this
-        // a literal context for ALL literals of the same base type."
-        // e.g., contextual type "A" allows literal "f" because both are string literals.
+        // tsc: literal contextual type allows ALL literals of the same base type.
         if tsz_solver::type_queries::are_same_base_literal_kind(
             self.ctx.types,
             ctx_type,
@@ -200,12 +198,8 @@ impl<'a> CheckerState<'a> {
         type_node: NodeIndex,
         in_union_or_intersection: bool,
     ) -> bool {
-        // Depth guard: this function recurses through union/intersection members
-        // and evaluated type expansions. For recursive type aliases like
-        // `type N<T, K> = T | { [P in K]: N<T, K> }[K]`, evaluation can produce
-        // a union containing N again, and the two TypeIds alternate indefinitely.
-        // The depth counter on `ctx.circ_ref_depth` (limit 30) prevents stack
-        // overflow while allowing legitimate shallow circularity detection.
+        // Depth guard: recursive type aliases can cause infinite expansion.
+        // Limit via `ctx.circ_ref_depth` (limit 30) to prevent stack overflow.
         if !self.ctx.circ_ref_depth.borrow_mut().enter() {
             return false; // Conservatively: not a direct circular reference
         }
@@ -265,12 +259,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    // Always mark the target itself as circular.  For same-file
-                    // cycles, the target is on the stack and already marked above.
-                    // For cross-file cycles, the target comes from the parent's
-                    // resolution set but is NOT on this checker's stack — mark it
-                    // explicitly so the parent can detect circularity after the
-                    // delegation returns.
+                    // Always mark the target itself as circular (handles cross-file cycles).
                     self.ctx.circular_type_aliases.insert(target_sym_id);
                 }
 
@@ -1315,19 +1304,6 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    // Resolve a typeof type reference to its structural type.
-    //
-    // This function resolves `typeof X` type queries to the actual type of `X`.
-    // This is useful for type operations where we need the structural type rather
-    // than the type query itself.
-    // **TypeQuery Resolution:**
-    // - **TypeQuery**: `typeof X` → get the type of symbol X
-    // - **Other types**: Return unchanged (not a typeof query)
-    //
-    // **Use Cases:**
-    // - Assignability checking (need actual type, not typeof reference)
-    // - Type comparison (typeof X should be compared to X's type)
-    // - Generic constraint evaluation
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
@@ -1349,20 +1325,12 @@ impl<'a> CheckerState<'a> {
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
 
         // Mark the private identifier symbol as referenced for unused-variable tracking.
-        // Private identifier accesses (`this.#foo`) go through this path (not
-        // `check_property_accessibility`), so reference tracking must happen here.
-        // Without this, ES private members accessed via `this.#foo` would be falsely
-        // reported as unused (TS6133).
         for &sym_id in &symbols {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
 
-        // NOTE: Do NOT emit TS18016 here for property access expressions.
-        // `obj.#prop` is always valid syntax — the private identifier in a property
-        // access position is grammatically correct. TSC only emits TS18016 for truly
-        // invalid positions (object literals, standalone expressions). For property
-        // access, the error is always semantic (TS18013: can't access private member),
-        // which is handled below based on the object's type.
+        // NOTE: Do NOT emit TS18016 here — property access position is grammatically valid.
+        // Semantic errors (TS18013) are handled below based on the object's type.
 
         // Evaluate for type checking but preserve original for error messages
         // This preserves nominal identity (e.g., D<string>) in error messages
@@ -1545,15 +1513,8 @@ impl<'a> CheckerState<'a> {
 
         // Resolve Lazy class references to their constructor types for STATIC private members.
         //
-        // When a class type is referenced during its own type construction (e.g., in a static
-        // field initializer `static s = C.#method()`), the identifier resolves to
-        // `Lazy(class_def_id)` — a placeholder inserted to break circular resolution. This
-        // Lazy type would otherwise resolve to the *instance* type (via
-        // `resolve_and_insert_def_type`), causing the compatibility check to fail when the
-        // private member is static (whose declaring type is the constructor type).
-        //
-        // Only apply this resolution for static members; for instance members the Lazy
-        // resolves to the instance type which is correct.
+        // Resolve Lazy class references to constructor types for static private members.
+        // Only for static members; instance members correctly resolve via Lazy.
         let member_is_static = self.ctx.binder.get_symbol(symbols[0]).is_some_and(|sym| {
             sym.declarations
                 .iter()
@@ -1636,17 +1597,11 @@ impl<'a> CheckerState<'a> {
                     );
                     return TypeId::ERROR;
                 }
-                // In write context (assignment target), use the setter parameter type
-                // instead of the read type. For setter-only accessors (no getter),
-                // the read type is `undefined` but assignments should check against
-                // the setter's parameter type.
+                // In write context, use the setter parameter type instead of the read type.
                 if self.ctx.skip_flow_narrowing {
                     write_type.unwrap_or(type_id)
                 } else if type_id == TypeId::UNDEFINED && write_type.is_some() {
                     // TS2806: Reading from a private setter-only accessor.
-                    // The property has a setter but no getter, so reading is invalid.
-                    // Report at the full property access expression (idx), not just the name,
-                    // to match tsc's error location.
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         idx,
@@ -1873,13 +1828,8 @@ impl<'a> CheckerState<'a> {
         if let Some((sym_id, true)) =
             target_binder.resolve_import_with_reexports_type_only(file_name, export_name)
         {
-            // The binder's type-only flag conflates chain-level type-only
-            // (from `export type *`) with symbol-level type-only (from
-            // `import type { A }` merged with a value declaration).
-            // When the resolved symbol has both ALIAS and VALUE flags, the
-            // is_type_only came from a merged import-type + value declaration,
-            // NOT from the wildcard chain. Don't treat it as type-only here;
-            // the caller's is_type_only_export_symbol already handles that case.
+            // When the resolved symbol has both ALIAS and VALUE flags, the type-only
+            // came from a merged import-type + value declaration, not the wildcard chain.
             use tsz_binder::symbol_flags;
             if let Some(sym) = target_binder.symbols.get(sym_id)
                 && sym.flags & symbol_flags::ALIAS != 0
