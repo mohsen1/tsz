@@ -6323,6 +6323,37 @@ fn compile_control_byte_binary_file_preserves_parser_diagnostics() {
 }
 
 #[test]
+fn compile_short_garbage_payload_binary_suppresses_parser_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    let binary_path = base.join("binary.ts");
+    let content = b"// @target: es2015\n\xEF\xBF\xBD\x1F\xEF\xBF\xBD\x03\xEF\xBF\xBD\x03\x19\x1F";
+    std::fs::write(&binary_path, content).expect("failed to write corrupted file");
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015"
+          },
+          "files": ["binary.ts"]
+        }"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1490],
+        "Expected only TS1490 for short garbage binary payloads. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn ts2688_unresolved_types_in_tsconfig() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
