@@ -6632,6 +6632,52 @@ export { _Default, _ImportRelative };
 }
 
 #[test]
+fn types_entry_resolves_direct_declaration_file_from_type_root() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/phaser/types/phaser.d.ts"),
+        "declare const a: number;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "typeRoots": ["node_modules/phaser/types"],
+            "types": ["phaser"]
+          },
+          "files": ["a.ts"]
+        }"#,
+    );
+    write_file(&base.join("a.ts"), "a;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        ts2688_diags.is_empty(),
+        "Expected direct declaration file under typeRoots to satisfy the types entry, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert!(
+        ts2304_diags.is_empty(),
+        "Expected declarations from direct typeRoots file to be visible, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2307_emitted_for_commonjs_module() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
