@@ -412,12 +412,14 @@ var r = foo<number>({ bar: 1, baz: '' });
         .collect();
 
     if errors.is_empty() {
-        // Accept TS2345 (argument-level) as a valid alternative to TS2322 (property-level)
-        let has_ts2345 = diagnostics.iter().any(|d| {
-            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        // Accept TS2345 at argument level as an alternative to property-level TS2322
+        let has_assignability_error = diagnostics.iter().any(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                || d.code
+                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
         });
         assert!(
-            diagnostics.is_empty() || has_ts2345,
+            diagnostics.is_empty() || has_assignability_error,
             "Expected TS2322, TS2345, or no diagnostics for current generic-inference behavior, got: {diagnostics:?}"
         );
         return;
@@ -1008,9 +1010,11 @@ foo({ x: false, y: 0, z: "" });
         *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
     });
 
+    // tsc elaborates property-level TS2322; we currently emit TS2345 at the
+    // argument level. Accept either until full elaboration is implemented.
     assert!(
         ts2322_count >= 2 || has_ts2345,
-        "Expected property-level TS2322 or top-level TS2345 for mismatched object literal fields, got: {diagnostics:?}"
+        "Expected property-level TS2322 or argument-level TS2345 for mismatched fields, got: {diagnostics:?}"
     );
 }
 

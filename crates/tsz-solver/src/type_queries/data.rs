@@ -7,7 +7,7 @@
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{LiteralValue, MappedModifier, PropertyInfo, TypeData, TypeId};
+use crate::types::{IntrinsicKind, LiteralValue, MappedModifier, PropertyInfo, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
@@ -90,13 +90,16 @@ pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(db, type_id, |key| matches!(key, TypeData::Error))
 }
 
-/// Check if a type contains the intrinsic `never` type.
+/// Check if a type contains the `never` intrinsic.
+///
+/// Delegates to `visitor_predicates::contains_type_matching` with a `Never`-only
+/// predicate, plus a fast path for the well-known `TypeId::NEVER`.
 pub fn contains_never_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NEVER {
         return true;
     }
     contains_type_matching(db, type_id, |key| {
-        matches!(key, TypeData::Intrinsic(crate::types::IntrinsicKind::Never))
+        matches!(key, TypeData::Intrinsic(IntrinsicKind::Never))
     })
 }
 

@@ -9,3 +9,10 @@ pub(crate) fn types_are_comparable(db: &dyn TypeDatabase, source: TypeId, target
 pub(crate) fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_like_type(db, type_id)
 }
+
+pub(crate) fn get_index_access_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, TypeId)> {
+    tsz_solver::type_queries::get_index_access_types(db, type_id)
+}

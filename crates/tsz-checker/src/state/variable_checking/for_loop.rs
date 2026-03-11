@@ -19,9 +19,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some((base, _index)) =
-            tsz_solver::type_queries::get_index_access_types(self.ctx.types, expr_type)
-        {
+        if let Some((base, _index)) = query::get_index_access_types(self.ctx.types, expr_type) {
             let evaluated_base = self.evaluate_type_with_env(base);
             return query::is_type_parameter_like(self.ctx.types, base)
                 || query::is_type_parameter_like(self.ctx.types, evaluated_base)
