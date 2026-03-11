@@ -481,7 +481,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn assignment_source_is_return_expression(&self, anchor_idx: NodeIndex) -> bool {
+    pub(crate) fn assignment_source_is_return_expression(&self, anchor_idx: NodeIndex) -> bool {
         let mut current = anchor_idx;
         let mut guard = 0;
 
@@ -631,7 +631,10 @@ impl<'a> CheckerState<'a> {
         Some(expr_idx)
     }
 
-    fn declared_type_annotation_text_for_expression(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn declared_type_annotation_text_for_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         fn sanitize_type_annotation_text(text: String) -> Option<String> {
             let mut text = text.trim().trim_start_matches(':').trim().to_string();
             while matches!(text.chars().last(), Some(',') | Some(';')) {
@@ -666,22 +669,36 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl = self.ctx.arena.get(symbol.value_declaration)?;
-
-        if let Some(param) = self.ctx.arena.get_parameter(decl)
-            && param.type_annotation.is_some()
-        {
-            return self
-                .node_text(param.type_annotation)
-                .and_then(sanitize_type_annotation_text);
+        let mut declarations = Vec::new();
+        if let Some(decl) = self.ctx.arena.get(symbol.value_declaration) {
+            declarations.push(decl);
+        }
+        for decl_idx in &symbol.declarations {
+            if let Some(decl) = self.ctx.arena.get(*decl_idx)
+                && !declarations
+                    .iter()
+                    .any(|existing| existing.pos == decl.pos && existing.end == decl.end)
+            {
+                declarations.push(decl);
+            }
         }
 
-        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
-            && var_decl.type_annotation.is_some()
-        {
-            return self
-                .node_text(var_decl.type_annotation)
-                .and_then(sanitize_type_annotation_text);
+        for decl in declarations {
+            if let Some(param) = self.ctx.arena.get_parameter(decl)
+                && param.type_annotation.is_some()
+            {
+                return self
+                    .node_text(param.type_annotation)
+                    .and_then(sanitize_type_annotation_text);
+            }
+
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
+                && var_decl.type_annotation.is_some()
+            {
+                return self
+                    .node_text(var_decl.type_annotation)
+                    .and_then(sanitize_type_annotation_text);
+            }
         }
 
         None

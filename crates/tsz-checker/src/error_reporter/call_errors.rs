@@ -411,6 +411,7 @@ impl<'a> CheckerState<'a> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
         if let Some(node) = self.ctx.arena.get(expr_idx)
             && node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && self.assignment_source_is_return_expression(source_idx)
             && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
         {
             let mut elaborated = false;

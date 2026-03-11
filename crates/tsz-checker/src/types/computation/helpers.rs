@@ -265,6 +265,27 @@ impl<'a> CheckerState<'a> {
             .get(cond.condition)
             .is_some_and(|n| n.kind == SyntaxKind::FalseKeyword as u16);
 
+        let should_suppress_contextual_branch_assignability =
+            prev_context.is_some() && !self.assignment_source_is_return_expression(idx);
+        let suppress_contextual_branch_ts2322 =
+            |state: &mut Self, branch_idx: NodeIndex, diag_len_before: usize| {
+                if !should_suppress_contextual_branch_assignability {
+                    return;
+                }
+                let Some(branch_node) = state.ctx.arena.get(branch_idx) else {
+                    return;
+                };
+                let branch_start = branch_node.pos;
+                let branch_end = branch_node.end;
+                let recent = state.ctx.diagnostics.split_off(diag_len_before);
+                for diag in recent {
+                    let in_branch = diag.start >= branch_start && diag.start < branch_end;
+                    if !(in_branch && diag.code == 2322) {
+                        state.ctx.diagnostics.push(diag);
+                    }
+                }
+            };
+
         // Compute branch types with the outer contextual type for inference.
         // Branch typing may mutate contextual state while recursing, so restore
         // it explicitly before each branch.
@@ -281,7 +302,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.emitted_diagnostics = dedup_snapshot;
             ty
         } else {
-            self.get_type_of_node(cond.when_true)
+            let diag_len = self.ctx.diagnostics.len();
+            let ty = self.get_type_of_node(cond.when_true);
+            suppress_contextual_branch_ts2322(self, cond.when_true, diag_len);
+            ty
         };
 
         self.ctx.contextual_type = prev_context;
@@ -294,7 +318,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.emitted_diagnostics = dedup_snapshot;
             ty
         } else {
-            self.get_type_of_node(cond.when_false)
+            let diag_len = self.ctx.diagnostics.len();
+            let ty = self.get_type_of_node(cond.when_false);
+            suppress_contextual_branch_ts2322(self, cond.when_false, diag_len);
+            ty
         };
 
         self.ctx.contextual_type = prev_context;
