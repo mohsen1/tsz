@@ -52,13 +52,16 @@ impl<'a> DiagnosticBuilder<'a> {
         match self.interner.lookup(ty) {
             Some(crate::types::TypeData::Mapped(mapped_id)) => {
                 let mapped = self.interner.mapped_type(mapped_id);
-                let names =
-                    crate::type_queries::collect_finite_mapped_property_names(
-                        self.interner,
-                        mapped_id,
-                    )?;
+                let names = crate::type_queries::collect_finite_mapped_property_names(
+                    self.interner,
+                    mapped_id,
+                )?;
                 let mut names: Vec<_> = names.into_iter().collect();
-                names.sort_by(|a, b| self.interner.resolve_atom_ref(*a).cmp(&self.interner.resolve_atom_ref(*b)));
+                names.sort_by(|a, b| {
+                    self.interner
+                        .resolve_atom_ref(*a)
+                        .cmp(&self.interner.resolve_atom_ref(*b))
+                });
 
                 let mut properties = Vec::with_capacity(names.len());
                 for name in names {
@@ -249,7 +252,8 @@ impl<'a> DiagnosticBuilder<'a> {
             let parts: Vec<String> = members
                 .iter()
                 .map(|&member| {
-                    if let Some(materialized) = self.materialize_finite_mapped_type_for_display(member)
+                    if let Some(materialized) =
+                        self.materialize_finite_mapped_type_for_display(member)
                     {
                         changed = true;
                         self.formatter.format(materialized).to_string()

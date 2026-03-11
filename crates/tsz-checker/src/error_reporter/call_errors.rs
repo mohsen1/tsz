@@ -63,14 +63,18 @@ impl<'a> CheckerState<'a> {
         let mut contextual_property_type = None;
         let mut env_property_type = None;
         for candidate in [target_type, resolved_target, evaluated_target] {
-            if let Some(property_type) = self.ctx.types.contextual_property_type(candidate, prop_name)
+            if let Some(property_type) = self
+                .ctx
+                .types
+                .contextual_property_type(candidate, prop_name)
                 && self.should_prefer_property_target_type(contextual_property_type, property_type)
             {
                 contextual_property_type = Some(property_type);
             }
 
-            if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
-                self.resolve_property_access_with_env(candidate, prop_name)
+            if let tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id, ..
+            } = self.resolve_property_access_with_env(candidate, prop_name)
                 && self.should_prefer_property_target_type(env_property_type, type_id)
             {
                 env_property_type = Some(type_id);
@@ -92,14 +96,12 @@ impl<'a> CheckerState<'a> {
                         .map(|p| p.type_id)
                 });
 
-            let effective_type = if self.should_prefer_property_target_type(
-                contextual_property_type,
-                type_id,
-            ) {
-                type_id
-            } else {
-                contextual_property_type.unwrap_or(type_id)
-            };
+            let effective_type =
+                if self.should_prefer_property_target_type(contextual_property_type, type_id) {
+                    type_id
+                } else {
+                    contextual_property_type.unwrap_or(type_id)
+                };
             return Some((
                 effective_type,
                 declared_optional_type.unwrap_or(effective_type),

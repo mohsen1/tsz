@@ -154,8 +154,10 @@ impl<'a> CheckerState<'a> {
                     property_type = property_type.0,
                     "contextual_object_literal_property_type: pre-eval extracted"
                 );
-                best_property_type =
-                    self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+                best_property_type = self.prefer_more_specific_contextual_property_type(
+                    best_property_type,
+                    property_type,
+                );
             }
 
             if let Some(env_property_type) = env_property_type {
@@ -175,8 +177,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: union-member extracted"
             );
-            best_property_type =
-                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         let resolved_original_contextual_type =
@@ -194,8 +196,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: resolved-original extracted"
             );
-            best_property_type =
-                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         if resolved_original_contextual_type != original_contextual_type
@@ -209,8 +211,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: resolved-union-member extracted"
             );
-            best_property_type =
-                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         // Cache the expensive contextual type resolution chain.
@@ -253,8 +255,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: extracted"
             );
-            best_property_type =
-                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         if let Some(type_id) = env_property_type {
@@ -339,10 +341,14 @@ impl<'a> CheckerState<'a> {
             return Some(current);
         }
 
-        if matches!(current, TypeId::ANY | TypeId::UNKNOWN) && !matches!(candidate, TypeId::ANY | TypeId::UNKNOWN) {
+        if matches!(current, TypeId::ANY | TypeId::UNKNOWN)
+            && !matches!(candidate, TypeId::ANY | TypeId::UNKNOWN)
+        {
             return Some(candidate);
         }
-        if matches!(candidate, TypeId::ANY | TypeId::UNKNOWN) && !matches!(current, TypeId::ANY | TypeId::UNKNOWN) {
+        if matches!(candidate, TypeId::ANY | TypeId::UNKNOWN)
+            && !matches!(current, TypeId::ANY | TypeId::UNKNOWN)
+        {
             return Some(current);
         }
 

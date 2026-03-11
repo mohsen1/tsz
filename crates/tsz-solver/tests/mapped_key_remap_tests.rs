@@ -4,7 +4,8 @@
 
 use crate::types::*;
 use crate::{
-    evaluation::evaluate::evaluate_type, intern::TypeInterner,
+    evaluation::evaluate::evaluate_type,
+    intern::TypeInterner,
     type_queries::{collect_finite_mapped_property_names, get_finite_mapped_property_type},
 };
 
@@ -179,7 +180,7 @@ fn test_finite_mapped_property_names_resolve_concrete_filtering_remap() {
         collect_finite_mapped_property_names(&interner, mapped_id).expect("expected finite keys");
     let rendered_names: Vec<_> = names
         .iter()
-        .map(|name| interner.resolve_atom(*name).to_string())
+        .map(|name| interner.resolve_atom(*name))
         .collect();
     assert!(
         names.contains(&interner.intern_string("FOO")),
@@ -255,8 +256,8 @@ fn test_finite_mapped_property_type_specializes_key_filtered_template() {
     let foo_ty =
         get_finite_mapped_property_type(&interner, mapped_id, "FOO").expect("expected FOO type");
     let foo_ty = evaluate_type(&interner, foo_ty);
-    let foo_members = crate::type_queries::get_union_members(&interner, foo_ty)
-        .unwrap_or_else(|| vec![foo_ty]);
+    let foo_members =
+        crate::type_queries::get_union_members(&interner, foo_ty).unwrap_or_else(|| vec![foo_ty]);
     assert_eq!(foo_members, vec![foo_event]);
 
     assert!(
