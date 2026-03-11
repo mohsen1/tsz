@@ -413,6 +413,36 @@ declare module "b" {
 }
 
 #[test]
+fn export_equals_default_property_does_not_create_default_module_export() {
+    let source = r#"
+var x = {
+    default: 42,
+    answer: 1
+};
+
+export = x;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let module_exports = binder
+        .module_exports
+        .get("test.ts")
+        .expect("expected cached module exports for file");
+    assert!(
+        module_exports.has("export="),
+        "expected explicit export= target to stay cached"
+    );
+    assert!(
+        !module_exports.has("default"),
+        "default-valued export= members must not masquerade as real default exports"
+    );
+}
+
+#[test]
 fn iife_no_flow_start_node() {
     // For a non-async, non-generator IIFE, the binder should NOT create a
     // FlowStart node for the function body. This means the IIFE body runs

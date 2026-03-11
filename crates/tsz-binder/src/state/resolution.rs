@@ -588,6 +588,17 @@ impl BinderState {
             };
             return Some((sym_id, sym_is_type_only));
         }
+        if export_name == "default"
+            && let Some(module_table) = self.module_exports.get(module_specifier)
+            && let Some(sym_id) = module_table.get("export=")
+        {
+            let sym_is_type_only = if let Some(sym) = self.symbols.get(sym_id) {
+                is_type_only || sym.is_type_only
+            } else {
+                is_type_only
+            };
+            return Some((sym_id, sym_is_type_only));
+        }
 
         // Not found in direct exports, check for named re-exports
         if let Some(file_reexports) = self.reexports.get(module_specifier) {

@@ -7029,6 +7029,52 @@ function process(v: Variant) {
     );
 }
 
+#[test]
+fn test_export_equals_default_property_keeps_default_import_on_export_object() {
+    let diagnostics = compile_two_files_get_diagnostics_with_options(
+        r#"
+var x = {
+    greeting: "hello, world",
+    default: 42
+};
+
+export = x;
+"#,
+        r#"
+import foo from "./a";
+foo.toExponential(2);
+
+import { default as namedFoo } from "./a";
+namedFoo.toExponential(2);
+"#,
+        "./a",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2339_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2339_messages.len(),
+        2,
+        "Expected both default-import forms to stay typed as the export= object, not its `default` property. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339_messages.iter().all(|message| message.contains(
+            "Property 'toExponential' does not exist on type '{ greeting: string; default: number; }'."
+        )),
+        "Expected TS2339 to report against the full export= object surface. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Multi-file helpers for cross-file type-only export tests
 // ---------------------------------------------------------------------------

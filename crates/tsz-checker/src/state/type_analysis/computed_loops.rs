@@ -52,6 +52,9 @@ impl<'a> CheckerState<'a> {
         if export_type == tsz_solver::TypeId::ERROR || export_type == tsz_solver::TypeId::ANY {
             return None;
         }
+        if export_name == "default" {
+            return Some(export_type);
+        }
 
         match self.resolve_property_access_with_env(export_type, export_name) {
             PropertyAccessResult::Success { type_id, .. } => Some(type_id),
