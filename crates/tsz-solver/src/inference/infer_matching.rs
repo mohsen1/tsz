@@ -46,7 +46,7 @@ impl<'a> InferenceContext<'a> {
     ///    - Contravariant positions (function parameters): `infer(target, source)` (swapped!)
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// let mut ctx = InferenceContext::new(&interner);
     /// let t_var = ctx.fresh_type_param(interner.intern_string("T"), false);
     ///

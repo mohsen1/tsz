@@ -23,7 +23,7 @@ use tsz_common::interner::Atom;
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// fn check_subtype_with_tracer<T: SubtypeTracer>(
 ///     source: TypeId,
 ///     target: TypeId,

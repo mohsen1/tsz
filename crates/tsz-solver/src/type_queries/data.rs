@@ -165,7 +165,7 @@ pub fn get_intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
 /// If the type is neither, returns `None` (the caller should handle the non-compound case).
 ///
 /// This eliminates the common checker anti-pattern of:
-/// ```ignore
+/// ```text
 /// if let Some(members) = get_union_members(db, ty) {
 ///     let mapped: Vec<_> = members.into_iter().map(|m| transform(m)).collect();
 ///     factory.union(mapped)

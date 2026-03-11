@@ -58,7 +58,7 @@ use tsz_common::interner::Atom;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```text
 /// use crate::relations::variance::compute_variance;
 /// use crate::types::*;
 ///

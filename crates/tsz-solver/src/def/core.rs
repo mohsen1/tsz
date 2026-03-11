@@ -334,7 +334,7 @@ impl DefinitionInfo {
 ///
 /// ## Usage
 ///
-/// ```ignore
+/// ```text
 /// let store = DefinitionStore::new();
 ///
 /// // Register a type alias

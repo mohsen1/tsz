@@ -199,7 +199,7 @@ impl<'a> CheckerContext<'a> {
     /// the type parameters needed for generic substitution.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// // For type List<T> = { value: T; next: List<T> | null }
     /// let def_id = ctx.get_or_create_def_id(list_sym_id);
     /// let params = vec![TypeParamInfo { name: "T", ... }];
@@ -257,7 +257,7 @@ impl<'a> CheckerContext<'a> {
     /// It handles the indirection automatically: `TypeId` → `DefId` → `SymbolId`.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// // Old (broken):
     /// if let Some(sym_ref) = get_ref_symbol(self.ctx.types, type_id) {
     ///     let sym_id = SymbolId(sym_ref.0); // BROKEN CAST
@@ -320,7 +320,7 @@ impl<'a> CheckerContext<'a> {
     /// representation.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// let formatter = self.create_type_formatter();
     /// let type_str = formatter.format(type_id);  // Shows "List<number>" not "Lazy(1)<number>"
     /// ```

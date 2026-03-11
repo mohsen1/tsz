@@ -14,7 +14,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! use tsz::parallel::parse_files_parallel;
 //!
 //! let files = vec![

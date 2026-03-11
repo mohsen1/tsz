@@ -17,7 +17,7 @@
 //! [`RecursionProfile`] provides named presets that eliminate magic numbers and
 //! make the intent of each guard clear at the call site:
 //!
-//! ```ignore
+//! ```text
 //! // Before (what does 50, 100_000 mean?)
 //! let guard = RecursionGuard::new(50, 100_000);
 //!
@@ -237,7 +237,7 @@ impl RecursionResult {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```text
 /// use crate::recursion::{RecursionGuard, RecursionProfile, RecursionResult};
 ///
 /// let mut guard = RecursionGuard::with_profile(RecursionProfile::TypeEvaluation);
@@ -515,7 +515,7 @@ impl<K: Hash + Eq + Copy> Drop for RecursionGuard<K> {
 ///
 /// # Usage
 ///
-/// ```ignore
+/// ```text
 /// let mut counter = DepthCounter::with_profile(RecursionProfile::ExpressionCheck);
 ///
 /// if !counter.enter() {

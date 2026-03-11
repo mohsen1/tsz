@@ -60,7 +60,7 @@ pub fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// // Functions are invokable
 /// assert!(is_invokable_type(&db, function_type));
 ///

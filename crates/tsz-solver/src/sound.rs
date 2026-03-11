@@ -149,7 +149,7 @@ impl SoundDiagnostic {
 ///
 /// ## Usage
 ///
-/// ```ignore
+/// ```text
 /// let sound_lawyer = SoundLawyer::new(&interner, &env, config);
 ///
 /// // Strict assignability check
