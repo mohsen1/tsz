@@ -9,6 +9,11 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 impl<'a> CheckerState<'a> {
+    pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
+        tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
+    }
+
     /// Compute the type of a class symbol.
     ///
     /// Returns the class constructor type, merging with namespace exports
