@@ -859,17 +859,18 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .skip_parenthesized_and_assertions(var_decl.initializer);
-                let supports_pattern_context = checker
-                    .ctx
-                    .arena
-                    .get(contextual_init)
-                    .is_some_and(|init_node| {
-                        matches!(
-                            init_node.kind,
-                            syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        )
-                    });
+                let supports_pattern_context =
+                    checker
+                        .ctx
+                        .arena
+                        .get(contextual_init)
+                        .is_some_and(|init_node| {
+                            matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            )
+                        });
                 if is_destructuring
                     && supports_pattern_context
                     && let Some(ctx_type) =

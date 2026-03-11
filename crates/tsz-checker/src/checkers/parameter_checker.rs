@@ -718,11 +718,9 @@ impl<'a> CheckerState<'a> {
                     t = factory.union(vec![t, TypeId::UNDEFINED]);
                 }
                 Some(t)
-            } else if self.parameter_initializer_has_explicit_jsdoc_type(
-                param_idx,
-                param.name,
-                param_pos,
-            ) {
+            } else if self
+                .parameter_initializer_has_explicit_jsdoc_type(param_idx, param.name, param_pos)
+            {
                 self.parameter_symbol_ids(param_idx, param.name)
                     .into_iter()
                     .flatten()
