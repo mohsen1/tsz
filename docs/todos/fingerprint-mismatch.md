@@ -347,6 +347,19 @@ Example: deleteExpressionMustBeOptional.ts
   and removes false TS2351 from `ModuleAndClassWithSameNameAndCommonRoot` (still fails
   for other reasons).
 
+- ~~False positive TS2352 for structured generic assertion targets~~ **FIXED** (2026-03-11)
+  Fix: When the asserted type in `expr as T` or `<T>expr` contains unresolved type
+  parameters in a structured way (mapped types like `Boxified<T>`, indexed access like
+  `keyof T`, callables like `new () => T`, etc.), our overlap check can't meaningfully
+  evaluate because the shape depends on the unknown type parameter. Changed
+  `structured_generic_assertion_target` handling in `dispatch.rs` to treat these as
+  overlapping (`true`) instead of non-overlapping (`false`), suppressing false TS2352.
+  tsc's `isTypeComparableTo` handles these permissively. Fixes 8+ conformance tests
+  (`declarationEmitExpressionInExtends5`, `declarationEmitMappedTypePreservesTypeParameterConstraint`,
+  `genericIndexedAccessMethodIntersectionCanBeAccessed`, `genericWithIndexerOfTypeParameterType1`,
+  `substitutionTypeNoMergeOfAssignableType`, `typeAssertionToGenericFunctionType`,
+  `literalTypeWidening`, `mappedTypes4`).
+
 - ~~Cascading TS1128 false positives from orphaned `)` and `]` tokens~~ **FIXED** (2026-03-11)
   Fix: Widened the `is_stray_close` detection in `parse_source_file_statements`
   (`state_statements.rs`) to suppress TS1128 "Declaration or statement expected" for
