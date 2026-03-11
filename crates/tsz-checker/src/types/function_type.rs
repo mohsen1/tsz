@@ -1,5 +1,4 @@
 //! Function, method, and arrow function type resolution.
-
 use crate::computation::complex::is_contextually_sensitive;
 use crate::diagnostics::format_message;
 use crate::state::CheckerState;
@@ -7,20 +6,10 @@ use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
-
-// =============================================================================
-// Function Type Resolution
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Function Type Resolution
-    // =========================================================================
-
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::{FunctionShape, ParamInfo};
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -29,13 +18,11 @@ impl<'a> CheckerState<'a> {
             node.kind,
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
-
         // Rule #42: Increment closure depth when entering a function expression or arrow function
         // This causes mutable variables (let/var) to lose narrowing inside the closure
         if is_closure {
             self.ctx.inside_closure_depth += 1;
         }
-
         // Helper macro to decrement closure depth before returning
         // This ensures we properly track closure depth even on early returns
         macro_rules! return_with_cleanup {
@@ -46,7 +33,6 @@ impl<'a> CheckerState<'a> {
                 $expr
             }};
         }
-
         let (type_parameters, parameters, type_annotation, body, name_node, name_for_error) =
             if let Some(func) = self.ctx.arena.get_function(node) {
                 let name_node = if func.name.is_none() {
@@ -1295,9 +1281,6 @@ impl<'a> CheckerState<'a> {
                         // Leave callback return inference to the generic/reverse-mapped
                         // inference pass when the expected return still contains
                         // unresolved placeholders.
-                    } else if contextual_void_return_exception {
-                        // Contextual `() => void` callbacks may return a value.
-                        // Don't report a direct body-vs-void mismatch here.
                     } else if use_generic_return_mismatch {
                         let conditional_branch_mismatch = self
                             .ctx
@@ -1344,8 +1327,11 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     } else {
-                        let assignability_ok =
-                            self.check_assignable_or_report(actual_return, expected_return_type, body);
+                        let assignability_ok = self.check_assignable_or_report(
+                            actual_return,
+                            expected_return_type,
+                            body,
+                        );
                         if assignability_ok
                             && let Some(body_node) = self.ctx.arena.get(body)
                             && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
