@@ -320,6 +320,17 @@ Example: deleteExpressionMustBeOptional.ts
   `memberVariableDeclarations1`, `classPropertyErrorOnNameOnly`, `tsxAttributeErrors`,
   `tsxAttributeResolution1/9/10/14`).
 
+- ~~Missing TS2300 for cross-file TYPE_ALIAS + INTERFACE conflicts~~ **FIXED** (2026-03-11)
+  Fix: `can_merge_symbols_cross_file` in `parallel.rs` was missing the TYPE_ALIAS +
+  INTERFACE merge case. When `type A = {}` in one file conflicts with `interface A {}`
+  in another, tsc expects the symbols to be merged first (so the checker sees the
+  conflict) and then TS2300 to be emitted. Without the merge case, the symbols were
+  silently invisible across files. Added bidirectional TYPE_ALIAS + INTERFACE merge.
+  Fixes `noSymbolForMergeCrash.ts` at error-code level (TS2300 now emitted).
+  **Known remaining issue:** Fingerprint for `namespace A {}` declaration not emitted —
+  tsc reports TS2300 on ALL declarations of a poisoned merged symbol, but our pairwise
+  conflict checker only reports on the directly conflicting pair.
+
 ---
 
 ### RC-5: Entity Name Resolution (~6%)

@@ -1006,6 +1006,15 @@ const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bo
         return true;
     }
 
+    // Type Alias can merge with Interface (invalid, but merged to report duplicate)
+    if ((existing_flags & symbol_flags::TYPE_ALIAS) != 0
+        && (new_flags & symbol_flags::INTERFACE) != 0)
+        || ((existing_flags & symbol_flags::INTERFACE) != 0
+            && (new_flags & symbol_flags::TYPE_ALIAS) != 0)
+    {
+        return true;
+    }
+
     // Class can merge with Variable (invalid, but merged to report duplicate)
     if ((existing_flags & symbol_flags::CLASS) != 0 && (new_flags & symbol_flags::VARIABLE) != 0)
         || ((existing_flags & symbol_flags::VARIABLE) != 0
