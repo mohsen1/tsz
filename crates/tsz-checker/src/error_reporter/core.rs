@@ -1029,11 +1029,11 @@ impl<'a> CheckerState<'a> {
         let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
         let source_file = arena.source_files.first()?;
         let file_name = &source_file.file_name;
-        let stem = file_name.rsplit_once('.').map(|(base, _)| base).unwrap_or(file_name);
-        let basename = stem
-            .rsplit_once('/')
-            .map(|(_, name)| name)
-            .unwrap_or(stem);
+        let stem = file_name
+            .rsplit_once('.')
+            .map(|(base, _)| base)
+            .unwrap_or(file_name);
+        let basename = stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem);
         Some(basename.to_string())
     }
 

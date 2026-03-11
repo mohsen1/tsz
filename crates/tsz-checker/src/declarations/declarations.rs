@@ -591,9 +591,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
                     // tsc only treats string literal names as numeric when they are already in
                     // canonical numeric-property form; `"13e-1"` should not trigger TS2452.
-                    self.ctx.arena.get_literal(name_node).is_some_and(|lit| {
-                        tsz_solver::utils::is_numeric_literal_name(&lit.text)
-                    })
+                    self.ctx
+                        .arena
+                        .get_literal(name_node)
+                        .is_some_and(|lit| tsz_solver::utils::is_numeric_literal_name(&lit.text))
                 } else if name_node.kind
                     == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 {
