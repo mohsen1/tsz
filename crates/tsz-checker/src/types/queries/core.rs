@@ -234,6 +234,20 @@ impl<'a> CheckerState<'a> {
         self.ctx.arena.get_visibility_from_modifiers(modifiers)
     }
 
+    /// Get the effective member visibility, treating ECMAScript private identifiers
+    /// as non-public members even though they don't use `private` modifiers.
+    pub(crate) fn get_member_visibility(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        name_idx: NodeIndex,
+    ) -> tsz_solver::Visibility {
+        if self.is_private_identifier_name(name_idx) {
+            tsz_solver::Visibility::Private
+        } else {
+            self.get_visibility_from_modifiers(modifiers)
+        }
+    }
+
     /// Get the access level from modifiers (private/protected).
     pub(crate) fn member_access_level_from_modifiers(
         &self,

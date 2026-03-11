@@ -368,15 +368,18 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
 /// This is the type-computation portion of `keyof T` when T is an object.
 pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     let shape = get_object_shape(db, type_id)?;
-    if shape.properties.is_empty() {
-        return Some(TypeId::NEVER);
-    }
     let key_types: Vec<TypeId> = shape
         .properties
         .iter()
-        .filter(|p| p.visibility == crate::Visibility::Public)
+        .filter(|p| {
+            p.visibility == crate::Visibility::Public
+                && !db.resolve_atom_ref(p.name).starts_with("__private_brand_")
+        })
         .map(|p| db.literal_string_atom(p.name))
         .collect();
+    if key_types.is_empty() {
+        return Some(TypeId::NEVER);
+    }
     Some(crate::utils::union_or_single(db, key_types))
 }
 

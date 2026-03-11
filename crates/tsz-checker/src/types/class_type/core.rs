@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                     || self.jsdoc_has_readonly_tag(member_idx);
-                let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
                 prescan_props.push(PropertyInfo {
                     name: name_atom,
                     type_id: declared_type,
@@ -349,7 +349,7 @@ impl<'a> CheckerState<'a> {
                     };
                     self.ctx.node_types.insert(member_idx.0, type_id);
 
-                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
 
                     properties.insert(
                         name_atom,
@@ -414,7 +414,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
+                    let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
                     deferred_accessors.push(DeferredAccessor {
                         member_idx,
                         accessor,
@@ -691,7 +691,7 @@ impl<'a> CheckerState<'a> {
                 {
                     signature.return_type = self.ctx.types.this_type();
                 }
-                let visibility = self.get_visibility_from_modifiers(&method.modifiers);
+                let visibility = self.get_member_visibility(&method.modifiers, method.name);
                 let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                     overload_signatures: Vec::new(),
                     impl_signatures: Vec::new(),

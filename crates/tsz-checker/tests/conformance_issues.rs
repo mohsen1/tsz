@@ -7955,6 +7955,172 @@ class A {
     );
 }
 
+#[test]
+fn private_name_keyof_excludes_ecmascript_private_members() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r##"
+class A {
+    #fooField = 3;
+    #fooMethod() {}
+    get #fooProp() { return 1; }
+    set #fooProp(value: number) {}
+    bar = 3;
+    baz = 3;
+}
+
+let k: keyof A = "bar";
+k = "baz";
+
+k = "#fooField";
+k = "#fooMethod";
+k = "#fooProp";
+k = "fooField";
+k = "fooMethod";
+k = "fooProp";
+"##,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        6,
+        "Expected six TS2322 diagnostics. Got: {diagnostics:?}"
+    );
+    for expected in [
+        "\"#fooField\"",
+        "\"#fooMethod\"",
+        "\"#fooProp\"",
+        "\"fooField\"",
+        "\"fooMethod\"",
+        "\"fooProp\"",
+    ] {
+        assert!(
+            ts2322.iter().any(|(_, message)| {
+                message.contains(expected) && message.contains("type 'keyof A'")
+            }),
+            "Expected TS2322 mentioning {expected}. Got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn private_name_object_spread_excludes_private_members() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class C {
+    #prop = 1;
+    static #propStatic = 1;
+
+    method(other: C) {
+        const obj = { ...other };
+        obj.#prop;
+        const { ...rest } = other;
+        rest.#prop;
+
+        const statics = { ...C };
+        statics.#propStatic;
+        const { ...sRest } = C;
+        sRest.#propStatic;
+    }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        4,
+        "Expected four TS2339 diagnostics. Got: {diagnostics:?}"
+    );
+    let empty_object_count = ts2339
+        .iter()
+        .filter(|(_, message)| message.contains("type '{}'."))
+        .count();
+    let static_object_count = ts2339
+        .iter()
+        .filter(|(_, message)| message.contains("type '{ prototype: C; }'."))
+        .count();
+    assert_eq!(
+        empty_object_count, 2,
+        "Expected object spread/rest from instance to erase private names. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        static_object_count, 2,
+        "Expected constructor spread/rest to keep only public constructor properties. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn private_name_generic_class_assignments_preserve_instantiation_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class C<T> {
+    #foo: T;
+    #bar(): T {
+      return this.#foo;
+    }
+    constructor(t: T) {
+      this.#foo = t;
+      t = this.#bar();
+    }
+    set baz(t: T) {
+      this.#foo = t;
+    }
+    get baz(): T {
+      return this.#foo;
+    }
+}
+
+let a = new C(3);
+let b = new C("hello");
+
+a = b;
+b = a;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected two TS2322 diagnostics. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, message)| message
+            .contains("Type 'C<string>' is not assignable to type 'C<number>'.")),
+        "Expected generic instantiation display to preserve `C<string>` -> `C<number>`. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, message)| message
+            .contains("Type 'C<number>' is not assignable to type 'C<string>'.")),
+        "Expected generic instantiation display to preserve `C<number>` -> `C<string>`. Got: {diagnostics:?}"
+    );
+}
+
 // TS1479: CJS file importing ESM module
 // Tests the current_is_commonjs detection logic with different file extensions.
 

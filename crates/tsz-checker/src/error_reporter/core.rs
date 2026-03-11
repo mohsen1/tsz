@@ -11,6 +11,9 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     pub(super) fn widen_function_like_display_type(&mut self, type_id: TypeId) -> TypeId {
         let type_id = self.evaluate_type_with_env(type_id);
+        if tsz_solver::is_generic_application(self.ctx.types, type_id) {
+            return tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+        }
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
@@ -1393,25 +1396,37 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(0)
                     };
                 if type_param_count > 0 && shape.properties.len() >= type_param_count {
-                    // Collect non-brand properties with their names for stable sorting.
-                    // FxHashMap iteration order is non-deterministic; adding __private_brand
-                    // can shift hash bucket positions and reorder other properties.
-                    // Sort alphabetically so that `ClassPrivate<T,U>` produces consistent
-                    // type args regardless of whether private brands are present.
-                    // Note: `__private_brand_` sorts before lowercase names (ASCII '_' < 'a').
-                    let mut candidates: Vec<(String, TypeId)> = shape
-                        .properties
-                        .iter()
-                        .filter_map(|prop| {
-                            let name = self.ctx.types.resolve_atom_ref(prop.name).to_string();
-                            if name.starts_with("__private_brand_") {
-                                None
-                            } else {
-                                Some((name, prop.type_id))
-                            }
-                        })
-                        .collect();
-                    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                    // Recover instantiation args from actual value-carrying members first.
+                    // Methods tend to encode `T` as `() => T`, which produces noisy
+                    // displays like `C<() => string>` instead of `C<string>`.
+                    let build_candidates = |predicate: fn(&tsz_solver::PropertyInfo) -> bool| {
+                        let mut candidates: Vec<(String, TypeId)> = shape
+                            .properties
+                            .iter()
+                            .filter(|prop| predicate(prop))
+                            .filter_map(|prop| {
+                                let name = self.ctx.types.resolve_atom_ref(prop.name).to_string();
+                                if name.starts_with("__private_brand_") {
+                                    None
+                                } else {
+                                    Some((name, prop.type_id))
+                                }
+                            })
+                            .collect();
+                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                        candidates
+                    };
+                    let mut candidates =
+                        build_candidates(|prop| !prop.is_method && !prop.is_class_prototype);
+                    if candidates.len() < type_param_count {
+                        candidates = build_candidates(|prop| !prop.is_method);
+                    }
+                    if candidates.len() < type_param_count {
+                        candidates = build_candidates(|prop| !prop.is_class_prototype);
+                    }
+                    if candidates.len() < type_param_count {
+                        candidates = build_candidates(|_| true);
+                    }
                     let args: Vec<String> = candidates
                         .iter()
                         .take(type_param_count)

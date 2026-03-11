@@ -69,6 +69,14 @@ impl KeyofKeySet {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn should_include_keyof_property(&self, prop: &crate::PropertyInfo) -> bool {
+        prop.visibility == crate::Visibility::Public
+            && !self
+                .interner()
+                .resolve_atom_ref(prop.name)
+                .starts_with("__private_brand_")
+    }
+
     /// Helper to recursively evaluate keyof while respecting depth limits.
     /// Creates a `KeyOf` type and evaluates it through the main `evaluate()` method.
     fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
@@ -168,14 +176,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Object(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
-                    if shape.properties.is_empty() {
-                        return TypeId::NEVER;
-                    }
                     let key_types: Vec<TypeId> = shape
                         .properties
                         .iter()
+                        .filter(|p| self.should_include_keyof_property(p))
                         .map(|p| self.interner().literal_string_atom(p.name))
                         .collect();
+                    if key_types.is_empty() {
+                        return TypeId::NEVER;
+                    }
                     self.interner().union(key_types)
                 }
                 TypeData::ObjectWithIndex(shape_id) => {
@@ -183,6 +192,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut key_types: Vec<TypeId> = shape
                         .properties
                         .iter()
+                        .filter(|p| self.should_include_keyof_property(p))
                         .map(|p| self.interner().literal_string_atom(p.name))
                         .collect();
 
@@ -204,6 +214,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut key_types: Vec<TypeId> = shape
                         .properties
                         .iter()
+                        .filter(|p| self.should_include_keyof_property(p))
                         .map(|p| self.interner().literal_string_atom(p.name))
                         .collect();
 

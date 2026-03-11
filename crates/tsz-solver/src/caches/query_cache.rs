@@ -380,7 +380,13 @@ impl<'a> QueryCache<'a> {
         // This matches tsc's isSpreadPrototypeProperty() behavior.
         props
             .into_iter()
-            .filter(|p| !p.is_class_prototype)
+            .filter(|p| {
+                !p.is_class_prototype
+                    && p.visibility == Visibility::Public
+                    && !self
+                        .resolve_atom_ref(p.name)
+                        .starts_with("__private_brand_")
+            })
             .map(|mut p| {
                 p.readonly = false;
                 p.write_type = p.type_id;
