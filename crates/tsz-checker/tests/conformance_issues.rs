@@ -7750,6 +7750,32 @@ const so2: string = { "0": 1 };
 }
 
 #[test]
+fn test_object_literal_property_mismatch_widens_literal_source_display() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Foo {
+    inner: {
+        thing: string
+    }
+}
+
+const foo: Foo = {
+    inner: {
+        thing: 1
+    }
+};
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type 'string'")
+        }),
+        "Expected object-literal property mismatch to widen literal source display.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2538_for_any_index() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
