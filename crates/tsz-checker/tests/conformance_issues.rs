@@ -156,6 +156,29 @@ abc = secondAbcd;
 }
 
 #[test]
+fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
+    let source = r#"
+enum Colors {
+    Red,
+    Green,
+}
+
+function fill<B extends Colors>(f: B) {
+    f.Green;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2339)
+        .expect("expected TS2339 for enum-constrained type parameter property access");
+
+    assert!(
+        message.contains("Property 'Green' does not exist on type 'Colors'."),
+        "Expected enum constraint display instead of type parameter name. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_member_assignment_to_enum_object_target_displays_whole_enum() {
     let source = r#"
 namespace W {

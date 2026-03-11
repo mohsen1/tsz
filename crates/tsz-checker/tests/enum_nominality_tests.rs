@@ -271,3 +271,40 @@ let bad = Foo.nonExistent;
         "Expected 1 TS2339 for Foo.nonExistent, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_same_name_numeric_enums_are_subset_compatible() {
+    let source = r"
+namespace First { export enum E { a, b, c } }
+namespace Second { export enum E { a, b } }
+let x: First.E;
+let y: Second.E;
+x = y;
+";
+    test_enum_assignability(source, 0);
+}
+
+#[test]
+fn test_same_name_ambient_numeric_enums_are_compatible() {
+    let source = r"
+namespace First { export enum E { a, b, c } }
+declare namespace Second { export enum E { a, b, c } }
+let x: First.E;
+let y: Second.E;
+x = y;
+y = x;
+";
+    test_enum_assignability(source, 0);
+}
+
+#[test]
+fn test_const_enums_do_not_gain_same_name_compatibility() {
+    let source = r"
+namespace First { export enum E { a, b, c } }
+namespace Second { export const enum E { a, b, c } }
+let x: First.E;
+let y: Second.E;
+x = y;
+";
+    test_enum_assignability(source, 1);
+}

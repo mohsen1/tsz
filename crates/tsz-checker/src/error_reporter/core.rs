@@ -412,7 +412,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         tsz_solver::widening::widen_type(self.ctx.types, display_type)
                     };
-                return self.format_type_for_assignability_message(display_type);
+                return self.format_assignability_type_for_message(display_type, target);
             }
         }
 
@@ -448,7 +448,7 @@ impl<'a> CheckerState<'a> {
                 && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
                 && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
             {
-                return format!("typeof {}", symbol.escaped_name);
+                return self.format_assignability_type_for_message(display_type, target);
             }
             let display_type =
                 if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
@@ -494,7 +494,7 @@ impl<'a> CheckerState<'a> {
             return formatted;
         }
 
-        self.format_type_for_assignability_message(source)
+        self.format_assignability_type_for_message(source, target)
     }
 
     pub(super) fn is_literal_sensitive_assignment_target(&mut self, target: TypeId) -> bool {
@@ -633,7 +633,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    pub(super) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
+    pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
         if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
             return collapsed;
         }
@@ -734,6 +734,17 @@ impl<'a> CheckerState<'a> {
         formatted
     }
 
+    pub(crate) fn format_assignability_type_for_message(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> String {
+        if let Some(enum_name) = self.format_disambiguated_enum_name_for_assignment(ty, other) {
+            return enum_name;
+        }
+        self.format_type_for_assignability_message(ty)
+    }
+
     fn format_union_with_collapsed_enum_display(&mut self, ty: TypeId) -> Option<String> {
         let members = tsz_solver::type_queries::get_union_members(self.ctx.types, ty)?;
         if members.len() < 2 {
@@ -790,6 +801,65 @@ impl<'a> CheckerState<'a> {
 
         parts.reverse();
         Some(parts.join("."))
+    }
+
+    fn format_disambiguated_enum_name_for_assignment(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> Option<String> {
+        let ty_sym = self.enum_symbol_from_full_enum_type(ty)?;
+        let other_sym = self.enum_symbol_from_full_enum_type(other)?;
+        let ty_symbol = self.ctx.binder.get_symbol(ty_sym)?;
+        let other_symbol = self.ctx.binder.get_symbol(other_sym)?;
+
+        if ty_symbol.escaped_name != other_symbol.escaped_name {
+            return Some(ty_symbol.escaped_name.clone());
+        }
+
+        if self.is_top_level_module_enum_symbol(ty_sym) {
+            let module_name = self.ctx.module_specifiers.get(&ty_symbol.decl_file_idx)?;
+            return Some(format!(
+                "import(\"{module_name}\").{}",
+                ty_symbol.escaped_name
+            ));
+        }
+
+        if self.is_ambient_namespace_enum_symbol(ty_sym) {
+            return Some(ty_symbol.escaped_name.clone());
+        }
+
+        self.format_qualified_enum_name_for_message(ty)
+    }
+
+    fn is_top_level_module_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(ext.parent)
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::SOURCE_FILE)
+        })
+    }
+
+    fn is_ambient_namespace_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
+                return false;
+            };
+            self.ctx.arena.has_modifier(
+                &enum_decl.modifiers,
+                tsz_scanner::SyntaxKind::DeclareKeyword,
+            )
+        })
     }
 
     fn is_function_like_type(&mut self, ty: TypeId) -> bool {
