@@ -237,8 +237,9 @@ fn test_exponentiation_errors_do_suppress_deprecation() {
 #[test]
 fn test_grammar_error_classification() {
     use super::is_grammar_error_for_deprecation_priority;
-    // 8xxx: JS grammar errors
-    assert!(is_grammar_error_for_deprecation_priority(8024));
+    // 8xxx: JS grammar errors (8024 is JSDoc, not grammar)
+    assert!(is_grammar_error_for_deprecation_priority(8002));
+    assert!(!is_grammar_error_for_deprecation_priority(8024));
     // 1xxx parser errors in whitelist
     assert!(is_grammar_error_for_deprecation_priority(1003));
     assert!(is_grammar_error_for_deprecation_priority(1005));

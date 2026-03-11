@@ -180,7 +180,6 @@ impl<'a> CheckerState<'a> {
 
             contextual_signature_type_params =
                 self.contextual_type_params_from_expected(evaluated_type);
-
             Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 evaluated_type,
@@ -329,9 +328,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
-
                 let is_this_param = name == Some(this_atom);
-
                 let is_js_file = self.is_js_file();
                 let contextual_type = if let Some(ref helper) = ctx_helper {
                     if param.dot_dot_dot_token {
@@ -358,7 +355,6 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
                     || (has_unknown_expected_context && !is_js_file)
                     || (param.dot_dot_dot_token && ctx_helper.is_some());
-
                 // Use type annotation if present, otherwise infer from context
                 let type_id = if param.type_annotation.is_some() {
                     // Check parameter type for parameter properties in function types
@@ -407,7 +403,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-
                     let iife_arg_type = if contextual_type.is_none() {
                         self.infer_iife_parameter_type_from_arguments(
                             idx,
@@ -428,7 +423,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         contextual_type.or(iife_arg_type).unwrap_or(TypeId::ANY)
                     };
-
                     // JSDoc @param [name] bracket-optional without explicit type → T | undefined
                     let inferred_type = if is_js_file
                         && jsdoc_param_type.is_none()
@@ -454,7 +448,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         inferred_type
                     };
-
                     if inferred_type == TypeId::ANY && param.initializer.is_some() {
                         let init_type = self.get_type_of_node(param.initializer);
                         // Only widen when the initializer is a "fresh" literal expression
@@ -468,7 +461,6 @@ impl<'a> CheckerState<'a> {
                         inferred_type
                     }
                 };
-
                 let mut element_type_from_pattern = None;
                 if let Some(name_node) = self.ctx.arena.get(param.name)
                     && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -479,7 +471,6 @@ impl<'a> CheckerState<'a> {
                         element_type_from_pattern = Some(pattern_type);
                     }
                 }
-
                 let binding_context_type = type_id;
                 let type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some() {
@@ -490,7 +481,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     type_id
                 };
-
                 if is_this_param {
                     if this_type.is_none() {
                         this_type = Some(type_id);
@@ -499,7 +489,6 @@ impl<'a> CheckerState<'a> {
                     destructuring_context_param_types.push(None);
                     continue;
                 }
-
                 // TS7006: Check for implicit any. Skip closures during build_type_environment
                 // (no contextual type yet). JSDoc @param/@type annotations suppress TS7006.
                 let has_jsdoc_param = if !has_contextual_type && param.type_annotation.is_none() {
@@ -535,7 +524,6 @@ impl<'a> CheckerState<'a> {
                         contextual_index,
                     );
                 }
-
                 // In JS files, params without type annotations are implicitly optional
                 // unless a JSDoc @param tag or @type function annotation exists.
                 let js_implicit_optional = self.is_js_file()
@@ -567,7 +555,6 @@ impl<'a> CheckerState<'a> {
                             );
                             Self::jsdoc_param_is_rest(jsdoc, &pname)
                         }));
-
                 // Body type includes `| undefined` for optional params;
                 // ParamInfo.type_id uses declared type (no `| undefined`)
                 // to match tsc error messages. Solver handles optionality
@@ -598,7 +585,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     binding_context_type
                 };
-
                 params.push(ParamInfo {
                     name,
                     type_id,
@@ -762,7 +748,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (false, false, NodeIndex::NONE)
                 };
-
             // this_type was already pushed early (before parameter initializer checks)
 
             // Push contextual yield type EARLY (before infer_return_type_from_body)
@@ -913,7 +898,6 @@ impl<'a> CheckerState<'a> {
                 // 2. The return type annotation text looks like it references Promise
                 if is_async && !is_generator {
                     use tsz_scanner::SyntaxKind;
-
                     let should_emit_ts2705 = if self.is_global_promise_type(return_type) {
                         // Return type is exactly the global Promise<T> - OK
                         false
@@ -949,11 +933,9 @@ impl<'a> CheckerState<'a> {
                             None => false,
                         }
                     };
-
                     if should_emit_ts2705 {
                         use crate::context::ScriptTarget;
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
                         // For ES5/ES3 targets, emit TS1055 instead of TS2705
                         // TS1055: "Type 'X' is not a valid async function return type in ES5 because
                         //          it does not refer to a Promise-compatible constructor value."
@@ -962,7 +944,6 @@ impl<'a> CheckerState<'a> {
                             self.ctx.compiler_options.target,
                             ScriptTarget::ES3 | ScriptTarget::ES5
                         );
-
                         if is_es5_or_lower {
                             let type_name = self.format_type(return_type);
                             self.error_at_node(
@@ -992,7 +973,6 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-
                 // Note: TS2705 check for functions without explicit return types has been removed.
                 // TypeScript only emits TS2705 when there's an explicit non-Promise return type.
                 // The "Promise not in lib" check was also removed as it was emitting false positives.
@@ -1013,7 +993,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (false, false)
                 };
-
                 let effective_return_type = annotated_return_type.unwrap_or(return_type);
                 let mut check_return_type = self.return_type_for_implicit_return_check(
                     effective_return_type,
@@ -1032,7 +1011,6 @@ impl<'a> CheckerState<'a> {
                 let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(body);
                 let falls_through = self.function_body_falls_through(body);
-
                 if has_type_annotation
                     && requires_return
                     && falls_through
@@ -1108,7 +1086,6 @@ impl<'a> CheckerState<'a> {
                 && jsdoc_return_context.is_none()
                 && has_contextual_return
                 && return_context_for_circularity == Some(TypeId::VOID);
-
             let body_return_type = if is_generator && has_type_annotation {
                 let original_type = annotated_return_type.unwrap_or(return_type);
                 // TS2505: A generator cannot have a 'void' type annotation.
@@ -1410,7 +1387,6 @@ impl<'a> CheckerState<'a> {
                         self.ctx.contextual_type = body_return_context;
                     }
                 }
-
                 let suppress_expression_body_diagnostics =
                     self.ctx.arena.get(body).is_some_and(|body_node| {
                         body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
@@ -1423,11 +1399,9 @@ impl<'a> CheckerState<'a> {
                 let diag_len = self.ctx.diagnostics.len();
                 let emitted_before = suppress_expression_body_diagnostics
                     .then(|| self.ctx.emitted_diagnostics.clone());
-
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
-
                 self.check_statement(body);
 
                 if suppress_expression_body_diagnostics {
@@ -1461,14 +1435,12 @@ impl<'a> CheckerState<'a> {
                 // TYield is implicit any, while TS7057 fires per-expression.
                 if is_generator && !has_type_annotation && early_yield_type.is_none() {
                     let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
-
                     // Compute inferred yield type from collected operand types
                     let inferred_yield = if yield_types.is_empty() {
                         TypeId::NEVER // No yields → never
                     } else {
                         self.ctx.types.factory().union(yield_types)
                     };
-
                     // Widen and check for implicit any (mirrors infer_return_type_from_body)
                     let widened = self.widen_literal_type(inferred_yield);
                     let final_yield = if !self.ctx.strict_null_checks()
@@ -1480,7 +1452,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         widened
                     };
-
                     if final_yield == TypeId::ANY
                         && self.ctx.no_implicit_any()
                         && !self.is_js_file()

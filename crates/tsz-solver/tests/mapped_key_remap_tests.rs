@@ -400,7 +400,7 @@ fn test_finite_mapped_property_names_do_not_materialize_string_index_keys() {
     };
 
     let mapped = interner.mapped(MappedType {
-        type_param: key_param.clone(),
+        type_param: key_param,
         constraint: keyof_source,
         name_type: None,
         template: TypeId::BOOLEAN,

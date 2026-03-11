@@ -1473,66 +1473,60 @@ impl<'a> CheckerState<'a> {
         // current file while a class with the same name exists in another file
         // (class+namespace declaration merging across files). Walk up enclosing
         // namespaces and search all binders for a CLASS symbol with the same name.
-        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-            if !self.ctx.binder.is_external_module() {
-                let arena = self.ctx.arena;
-                let mut current = expr_idx;
-                for _ in 0..100 {
-                    let Some(ext) = arena.get_extended(current) else {
-                        break;
-                    };
-                    let parent_idx = ext.parent;
-                    if parent_idx.is_none() {
-                        break;
-                    }
-                    let Some(parent_node) = arena.get(parent_idx) else {
-                        break;
-                    };
-                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                        if let Some(module_data) = arena.get_module(parent_node)
-                            && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
-                        {
-                            let ns_name = ns_name_ident.escaped_text.as_str();
-                            // Search all binders for a CLASS symbol with the target
-                            // name exported from a namespace matching ns_name.
-                            for binder in all_binders.iter() {
-                                for (_, &parent_sym_id) in binder.file_locals.iter() {
-                                    let Some(parent_sym) =
-                                        self.ctx.binder.get_symbol(parent_sym_id)
-                                    else {
-                                        continue;
-                                    };
-                                    if parent_sym.flags
-                                        & (symbol_flags::NAMESPACE_MODULE
-                                            | symbol_flags::VALUE_MODULE)
-                                        == 0
-                                    {
-                                        continue;
-                                    }
-                                    if let Some(parent_exports) = parent_sym.exports.as_ref()
-                                        && let Some(nested_ns_id) = parent_exports.get(ns_name)
-                                        && let Some(nested_ns) =
-                                            self.ctx.binder.get_symbol(nested_ns_id)
-                                        && nested_ns.flags
-                                            & (symbol_flags::NAMESPACE_MODULE
-                                                | symbol_flags::VALUE_MODULE)
-                                            != 0
-                                        && let Some(nested_exports) = nested_ns.exports.as_ref()
-                                        && let Some(member_id) = nested_exports.get(name)
-                                        && self
-                                            .ctx
-                                            .binder
-                                            .get_symbol(member_id)
-                                            .is_some_and(|s| (s.flags & symbol_flags::CLASS) != 0)
-                                    {
-                                        return true;
-                                    }
-                                }
+        if let Some(all_binders) = self.ctx.all_binders.as_ref()
+            && !self.ctx.binder.is_external_module()
+        {
+            let arena = self.ctx.arena;
+            let mut current = expr_idx;
+            for _ in 0..100 {
+                let Some(ext) = arena.get_extended(current) else {
+                    break;
+                };
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    break;
+                }
+                let Some(parent_node) = arena.get(parent_idx) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module_data) = arena.get_module(parent_node)
+                    && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
+                {
+                    let ns_name = ns_name_ident.escaped_text.as_str();
+                    // Search all binders for a CLASS symbol with the target
+                    // name exported from a namespace matching ns_name.
+                    for binder in all_binders.iter() {
+                        for (_, &parent_sym_id) in binder.file_locals.iter() {
+                            let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
+                                continue;
+                            };
+                            if parent_sym.flags
+                                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                                == 0
+                            {
+                                continue;
+                            }
+                            if let Some(parent_exports) = parent_sym.exports.as_ref()
+                                && let Some(nested_ns_id) = parent_exports.get(ns_name)
+                                && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                                && nested_ns.flags
+                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                                    != 0
+                                && let Some(nested_exports) = nested_ns.exports.as_ref()
+                                && let Some(member_id) = nested_exports.get(name)
+                                && self
+                                    .ctx
+                                    .binder
+                                    .get_symbol(member_id)
+                                    .is_some_and(|s| (s.flags & symbol_flags::CLASS) != 0)
+                            {
+                                return true;
                             }
                         }
                     }
-                    current = parent_idx;
                 }
+                current = parent_idx;
             }
         }
         false
