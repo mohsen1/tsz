@@ -1,7 +1,9 @@
 //! Guard tests for module-resolution/binder regressions taken from TS conformance cases.
 
 use crate::context::CheckerOptions;
+use crate::context::ResolutionError;
 use crate::state::CheckerState;
+use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_binder::BinderState;
@@ -309,6 +311,82 @@ const x: import("foo") = { x: 0, y: 0 };
     assert!(
         !has_2307,
         "Should NOT emit TS2307 for import(\"foo\") — module is declared. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn import_declaration_prefers_driver_resolution_error_over_ambient_match() {
+    let src0 = r#"
+declare module "node:ph" {
+    export const value: number;
+}
+"#;
+    let src1 = r#"
+import * as ph from "node:ph";
+console.log(ph.value);
+"#;
+
+    let mut parser0 = ParserState::new(
+        "/a/b/node_modules/@types/node/ph.d.ts".to_string(),
+        src0.to_string(),
+    );
+    let root0 = parser0.parse_source_file();
+    let mut binder0 = BinderState::new();
+    binder0.bind_source_file(parser0.get_arena(), root0);
+
+    let mut parser1 = ParserState::new("/a/b/main.ts".to_string(), src1.to_string());
+    let root1 = parser1.parse_source_file();
+    let mut binder1 = BinderState::new();
+    binder1.bind_source_file(parser1.get_arena(), root1);
+
+    let arena0 = Arc::new(parser0.get_arena().clone());
+    let arena1 = Arc::new(parser1.get_arena().clone());
+    let binder0 = Arc::new(binder0);
+    let binder1 = Arc::new(binder1);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena1.as_ref(),
+        binder1.as_ref(),
+        &types,
+        "/a/b/main.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker
+        .ctx
+        .set_all_arenas(Arc::new(vec![Arc::clone(&arena0), Arc::clone(&arena1)]));
+    checker
+        .ctx
+        .set_all_binders(Arc::new(vec![Arc::clone(&binder0), Arc::clone(&binder1)]));
+    checker.ctx.set_current_file_idx(1);
+    checker.ctx.report_unresolved_imports = true;
+
+    let mut resolved_module_errors: FxHashMap<(usize, String), ResolutionError> =
+        FxHashMap::default();
+    resolved_module_errors.insert(
+        (1, "node:ph".to_string()),
+        ResolutionError {
+            code: 2307,
+            message: "Cannot find module 'node:ph' or its corresponding type declarations."
+                .to_string(),
+        },
+    );
+    checker
+        .ctx
+        .set_resolved_module_errors(Arc::new(resolved_module_errors));
+
+    checker.check_source_file(root1);
+
+    let has_2307 = checker.ctx.diagnostics.iter().any(|d| d.code == 2307);
+    assert!(
+        has_2307,
+        "Expected TS2307 when the driver reported node:ph resolution failure, got: {:?}",
         checker
             .ctx
             .diagnostics
