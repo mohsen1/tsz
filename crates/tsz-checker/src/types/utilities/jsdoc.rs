@@ -40,12 +40,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
-            return None;
-        };
-        let Some(all_binders) = self.ctx.all_binders.clone() else {
-            return None;
-        };
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
 
         for (file_idx, (arena, binder)) in all_arenas.iter().zip(all_binders.iter()).enumerate() {
             if file_idx == self.ctx.current_file_idx {

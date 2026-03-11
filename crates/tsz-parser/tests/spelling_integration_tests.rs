@@ -144,15 +144,15 @@ fn ts1435_interface_my_interface_space() {
 
 #[test]
 fn ts1434_unknown_identifier_after_misspelled_class() {
-    // "clasd MyClass2 {}" → TS1435 on "clasd", then ';' expected recovery.
+    // "clasd MyClass2 {}" → TS1435 on "clasd", then TS1434 on the stray identifier.
     let diags = parse_and_collect_codes("clasd MyClass2 {}");
     assert!(
         has_diagnostic(&diags, 1435, "class"),
         "expected TS1435 on 'clasd', got {diags:?}"
     );
     assert!(
-        has_diagnostic(&diags, 1005, "';' expected"),
-        "expected TS1005 ';' expected on follow-up token, got {diags:?}"
+        has_diagnostic(&diags, 1434, "Unexpected keyword or identifier"),
+        "expected TS1434 on follow-up token, got {diags:?}"
     );
 }
 

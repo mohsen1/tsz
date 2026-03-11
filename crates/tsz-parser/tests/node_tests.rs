@@ -1,6 +1,8 @@
 use super::*;
+use crate::{ParserState, syntax_kind_ext};
 use std::mem::size_of;
 use tsz_common::interner::Atom;
+use tsz_scanner::SyntaxKind;
 
 #[test]
 fn test_node_size() {
@@ -229,6 +231,50 @@ fn test_parent_mapping() {
         binary_extended.parent.is_none(),
         "Binary expression should have no parent (it's the root)"
     );
+}
+
+#[test]
+fn test_reserved_function_name_does_not_swallow_following_interface_declaration() {
+    let source = "function function() { }\ninterface void { }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let source_file = arena
+        .get_source_file_at(root)
+        .expect("source file should exist");
+    assert_eq!(
+        source_file.statements.nodes.len(),
+        2,
+        "expected function + interface statements after recovery"
+    );
+
+    let function_stmt = arena
+        .get(source_file.statements.nodes[0])
+        .expect("function statement should exist");
+    assert_eq!(
+        function_stmt.kind,
+        syntax_kind_ext::FUNCTION_DECLARATION,
+        "first statement should stay a function declaration"
+    );
+
+    let interface_stmt = arena
+        .get(source_file.statements.nodes[1])
+        .expect("interface statement should exist");
+    assert_eq!(
+        interface_stmt.kind,
+        syntax_kind_ext::INTERFACE_DECLARATION,
+        "second statement should stay an interface declaration"
+    );
+
+    let iface = arena
+        .get_interface(interface_stmt)
+        .expect("interface data should exist");
+    let name = arena
+        .get_identifier_at(iface.name)
+        .expect("interface name should be preserved");
+    assert_eq!(name.escaped_text, "void");
+    assert_eq!(arena.kind(iface.name), Some(SyntaxKind::Identifier as u16));
 }
 
 #[test]
