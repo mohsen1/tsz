@@ -1722,6 +1722,14 @@ impl<'a> CheckerState<'a> {
                     return (result, Vec::new());
                 }
 
+                if let Some(result) = self.resolve_direct_commonjs_assignment_export_type(
+                    module_name,
+                    export_name,
+                    Some(self.ctx.current_file_idx),
+                ) {
+                    return (result, Vec::new());
+                }
+
                 // Module augmentations can introduce named exports that don't appear
                 // in the base module export table. Treat those names as resolvable.
                 if self
@@ -1826,6 +1834,16 @@ impl<'a> CheckerState<'a> {
                                 );
                             if let Some(prop_type) = found_via_export_equals_type {
                                 return (prop_type, Vec::new());
+                            }
+                            if self
+                                .ctx
+                                .arena
+                                .get(value_decl)
+                                .is_some_and(|node| {
+                                    node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
+                                })
+                            {
+                                return (TypeId::ERROR, Vec::new());
                             }
                             self.emit_no_exported_member_error(
                                 module_name,
