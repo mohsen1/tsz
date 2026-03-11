@@ -1436,6 +1436,17 @@ impl<'a> CheckerState<'a> {
                     // Return structural type directly for type aliases (not Lazy) so
                     // conditional types are fully resolved during assignability checking.
                     let structural_type = self.get_type_of_symbol(sym_id);
+                    let structural_type = if structural_type != TypeId::ERROR
+                        && structural_type != TypeId::UNKNOWN
+                        && !tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            structural_type,
+                        )
+                    {
+                        self.evaluate_type_with_env(structural_type)
+                    } else {
+                        structural_type
+                    };
                     // Register for alias-name formatting in diagnostics
                     self.ctx
                         .register_resolved_type(sym_id, structural_type, Vec::new());

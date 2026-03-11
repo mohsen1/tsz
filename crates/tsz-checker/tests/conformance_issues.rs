@@ -7831,6 +7831,42 @@ const return5 = (x: string): string => x.startsWith("a") ? getAny() : 1;
 }
 
 #[test]
+fn test_non_generic_conditional_type_alias_resolves_before_assignability() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface Synthetic<A, B extends A> {}
+type SyntheticDestination<T, U> = U extends Synthetic<T, infer V> ? V : never;
+type TestSynthetic = SyntheticDestination<number, Synthetic<number, number>>;
+
+const y: TestSynthetic = 3;
+const z: TestSynthetic = '3';
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable to type 'number'")
+        }),
+        "Expected the failing assignment to compare against resolved `number`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains(
+                    "Type 'number' is not assignable to type 'SyntheticDestination<number, Synthetic<number, number>>'"
+                )
+        }),
+        "Expected the successful assignment to stop erroring once the alias resolves.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2538_for_any_index() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
