@@ -156,6 +156,107 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS7014: Check Closure-style JSDoc function parameter types for missing
+    /// return annotations, e.g. `@param {function(...[*])} cb`.
+    pub(crate) fn check_jsdoc_param_function_types_missing_return_type(
+        &mut self,
+        jsdoc: &str,
+        func_idx: NodeIndex,
+    ) {
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
+
+        let Some(comment_pos) = self.get_jsdoc_comment_pos_for_function(func_idx) else {
+            return;
+        };
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text = &sf.text;
+        let comment_start = comment_pos as usize;
+        let comment_end = self
+            .ctx
+            .arena
+            .get(func_idx)
+            .map_or(source_text.len(), |n| n.pos as usize);
+        let comment_text = &source_text[comment_start..comment_end.min(source_text.len())];
+
+        for (param_name, tag_offset) in Self::extract_jsdoc_param_names(jsdoc) {
+            let search_start = tag_offset;
+            let Some(rel_tag) = comment_text[search_start..].find("@param") else {
+                continue;
+            };
+            let tag_start = search_start + rel_tag;
+            let after_tag = &comment_text[tag_start + "@param".len()..];
+            let trimmed = after_tag.trim_start();
+            let leading_ws = after_tag.len() - trimmed.len();
+            if !trimmed.starts_with('{') {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut type_end = None;
+            for (i, ch) in trimmed.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            type_end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(type_end) = type_end else {
+                continue;
+            };
+            let type_expr = trimmed[1..type_end].trim();
+            let Some(rest) = type_expr.strip_prefix("function(") else {
+                continue;
+            };
+            let mut paren_depth = 1u32;
+            let mut close_idx = None;
+            for (i, ch) in rest.char_indices() {
+                match ch {
+                    '(' => paren_depth += 1,
+                    ')' => {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            close_idx = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close_idx) = close_idx else {
+                continue;
+            };
+            let after_close = rest[close_idx + 1..].trim();
+            if after_close.starts_with(':') {
+                continue;
+            }
+
+            let function_rel = tag_start + "@param".len() + leading_ws + 1;
+            let function_pos = comment_pos + function_rel as u32;
+            self.ctx.error(
+                function_pos,
+                "function".len() as u32,
+                crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                    &["any"],
+                ),
+                crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+            );
+
+            if param_name.is_empty() {
+                continue;
+            }
+        }
+    }
+
     /// Find the byte offset of a parameter name after `@param` in source text.
     ///
     /// Given the text after `@param`, skips optional `{type}` and whitespace,

@@ -239,6 +239,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             && let Some(ref jsdoc) = self.find_jsdoc_for_function(func_idx)
         {
             self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
+            self.check_jsdoc_param_function_types_missing_return_type(jsdoc, func_idx);
         }
 
         // Check parameter initializer placement for implementation vs signature (TS2371)
