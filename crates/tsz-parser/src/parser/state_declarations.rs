@@ -2102,10 +2102,10 @@ impl ParserState {
             let spec_had_errors = self.parse_diagnostics.len() > diagnostics_before;
 
             if spec_had_errors && self.is_token(SyntaxKind::CloseBraceToken) {
-                self.error_expression_expected();
-                let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
-                consumed_closing_brace = true;
-                leave_closing_brace_for_statement_recovery = false;
+                // For malformed import specifiers like `{ 0n as foo }`, tsc
+                // ends the import clause before `}` and lets statement recovery
+                // surface the stray `}` / `from` follow-up diagnostics (TS1128/TS1434).
+                leave_closing_brace_for_statement_recovery = true;
                 break;
             }
 
@@ -2122,9 +2122,7 @@ impl ParserState {
                     self.next_token();
                 }
                 if self.is_token(SyntaxKind::CloseBraceToken) {
-                    self.error_expression_expected();
-                    let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
-                    leave_closing_brace_for_statement_recovery = false;
+                    leave_closing_brace_for_statement_recovery = true;
                     break;
                 }
                 if self.is_token(SyntaxKind::FromKeyword) {
