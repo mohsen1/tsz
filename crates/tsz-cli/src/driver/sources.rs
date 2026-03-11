@@ -403,11 +403,23 @@ pub(super) fn collect_type_root_files(
         let has_wildcard = types.iter().any(|t| t == "*" || t.trim().is_empty());
         if !has_wildcard {
             let mut unresolved = Vec::new();
+            let synthetic_from_file = base_dir.join("__types__.ts");
             for name in types {
                 if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
                     files.insert(entry);
                 } else {
                     unresolved.push(name.clone());
+                    if let Some(entry) =
+                        crate::driver::resolution::resolve_type_reference_from_node_modules(
+                            name,
+                            &synthetic_from_file,
+                            base_dir,
+                            None,
+                            options,
+                        )
+                    {
+                        files.insert(entry);
+                    }
                 }
             }
             return (files.into_iter().collect(), unresolved);

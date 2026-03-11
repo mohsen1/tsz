@@ -67,12 +67,11 @@ pub(crate) fn resolve_type_package_from_roots(
     roots: &[PathBuf],
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
-    let candidates = type_package_candidates(name);
-    if candidates.is_empty() {
-        return None;
-    }
-
     for root in roots {
+        let candidates = type_package_candidates_for_root(name, root);
+        if candidates.is_empty() {
+            continue;
+        }
         for candidate in &candidates {
             let package_root = root.join(candidate);
             if !package_root.is_dir() {
@@ -194,6 +193,51 @@ pub(crate) fn type_package_candidates_pub(name: &str) -> Vec<String> {
     type_package_candidates(name)
 }
 
+fn type_package_candidates_for_root(name: &str, root: &Path) -> Vec<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+    let mut candidates = Vec::new();
+    let is_at_types_root = root.file_name().and_then(|name| name.to_str()) == Some("@types");
+
+    if let Some(stripped) = normalized.strip_prefix("@types/")
+        && !stripped.is_empty()
+    {
+        candidates.push(stripped.to_string());
+    }
+
+    if let Some(stripped) = normalized.strip_prefix('@')
+        && !normalized.starts_with("@types/")
+        && let Some((scope, pkg)) = stripped.split_once('/')
+        && !scope.is_empty()
+        && !pkg.is_empty()
+    {
+        let mangled = format!("{scope}__{pkg}");
+        if is_at_types_root {
+            candidates.push(mangled);
+        } else {
+            candidates.push(normalized.clone());
+        }
+        return candidates;
+    }
+
+    if !normalized.starts_with('@') && !normalized.contains('/') {
+        let at_types = format!("@types/{normalized}");
+        if !candidates.iter().any(|v| v == &at_types) {
+            candidates.push(at_types);
+        }
+    }
+
+    if !candidates.iter().any(|value| value == &normalized) {
+        candidates.push(normalized);
+    }
+
+    candidates
+}
+
 fn type_package_candidates(name: &str) -> Vec<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -218,6 +262,9 @@ fn type_package_candidates(name: &str) -> Vec<String> {
         && !scope.is_empty()
         && !pkg.is_empty()
     {
+        let plain_mangled = format!("{scope}__{pkg}");
+        candidates.push(plain_mangled);
+        candidates.push(format!("@types/@{scope}/{pkg}"));
         let mangled = format!("@types/{scope}__{pkg}");
         candidates.push(mangled);
     }
