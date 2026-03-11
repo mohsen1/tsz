@@ -1120,6 +1120,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    fn is_single_signature_callable_member(&self, member: TypeId) -> bool {
+        let member = self.normalize_union_member(member);
+        match self.interner.lookup(member) {
+            Some(TypeData::Function(_)) => true,
+            Some(TypeData::Callable(callable_id)) => {
+                let callable = self.interner.callable_shape(callable_id);
+                callable.call_signatures.len() == 1
+            }
+            _ => false,
+        }
+    }
+
     /// Try to compute a combined call signature for a union type.
     ///
     /// In TypeScript, when all members of a union have exactly one call signature
@@ -1575,6 +1587,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Standard per-member result aggregation (no combined signature or mixed failures)
         if !return_types.is_empty() {
+            if combined.is_none()
+                && !failures.is_empty()
+                && members
+                    .iter()
+                    .copied()
+                    .all(|member| self.is_single_signature_callable_member(member))
+            {
+                return CallResult::NotCallable { type_id: union_type };
+            }
+
             match compatibility {
                 UnionCallSignatureCompatibility::Compatible {
                     min_required,
