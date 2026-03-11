@@ -520,6 +520,75 @@ const x = (a) => a + 1;
 }
 
 #[test]
+fn test_jsdoc_callback_typedef_contextually_types_closure_parameters() {
+    let source = r#"
+/** @callback Sid
+ * @param {string} s
+ * @returns {string}
+ */
+var x = 1;
+
+/** @type {Sid} */
+var sid = s => s + "!";
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 for closure parameter contextually typed from JSDoc callback typedef. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_callback_typedef_on_constructor_scope_suppresses_ts7006() {
+    let source = r#"
+export class Preferences {
+  assignability = "no";
+  /**
+   * @callback ValueGetter_2
+   * @param {string} name
+   * @returns {boolean|number|string|undefined}
+   */
+  constructor() {}
+}
+
+/** @type {ValueGetter_2} */
+var ooscope2 = s => s.length > 0;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            module: tsz_common::common::ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 for closure typed from constructor-scoped JSDoc callback typedef. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_function_return_mismatch_reports_inner_body_error_only() {
     let source = r#"
 // @ts-check
