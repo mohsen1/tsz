@@ -159,11 +159,11 @@ impl<'a> CheckerState<'a> {
         // key_type=SYMBOL.  Extract any inherited symbol index from string_index
         // so we can check symbol-keyed properties against it.
         let mut inherited_symbol_value_type: Option<TypeId> = None;
-        if let Some(ref si) = index_info.string_index {
-            if si.key_type == TypeId::SYMBOL {
-                inherited_symbol_value_type = Some(si.value_type);
-                index_info.string_index = None;
-            }
+        if let Some(ref si) = index_info.string_index
+            && si.key_type == TypeId::SYMBOL
+        {
+            inherited_symbol_value_type = Some(si.value_type);
+            index_info.string_index = None;
         }
 
         // Scan members for own index signatures and detect duplicates (TS2374)

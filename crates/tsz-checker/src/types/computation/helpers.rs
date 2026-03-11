@@ -327,36 +327,15 @@ impl<'a> CheckerState<'a> {
         self.ctx.contextual_type = prev_context;
         self.ctx.preserve_literal_types = prev_preserve;
 
-        // Preserve branch literals when the surrounding context can make use of them.
-        // This includes explicit unit-type unions and generic literal-preserving contexts
-        // like `K extends keyof T`. Without this, expressions such as
-        // `getProperty(obj, cond ? "a" : "b")` widen to `string` before generic-call
-        // inference sees them, which produces false TS2345 errors.
-        let contextual_array_type = prev_context.and_then(|ctx_type| {
-            let resolved_ctx_type = self.resolve_lazy_type(ctx_type);
-            let evaluated_ctx_type = self.evaluate_application_type(resolved_ctx_type);
-            tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated_ctx_type)
-        });
-        let preserve_branch_literals = prev_context.is_some_and(|ctx_type| {
-            crate::query_boundaries::common::is_unit_type(self.ctx.types, ctx_type)
-                || (crate::query_boundaries::common::is_unit_type(self.ctx.types, when_true)
-                    && self.contextual_type_allows_literal(ctx_type, when_true))
-                || (crate::query_boundaries::common::is_unit_type(self.ctx.types, when_false)
-                    && self.contextual_type_allows_literal(ctx_type, when_false))
-        }) || contextual_array_type.is_some_and(|array_ctx| {
-            (tsz_solver::type_queries::is_tuple_type(self.ctx.types, when_true)
-                && self.is_assignable_to(when_true, array_ctx))
-                || (tsz_solver::type_queries::is_tuple_type(self.ctx.types, when_false)
-                    && self.is_assignable_to(when_false, array_ctx))
-        });
-        let (when_true, when_false) = if preserve_branch_literals {
-            (when_true, when_false)
-        } else {
-            (
-                tsz_solver::widening::widen_type(self.ctx.types, when_true),
-                tsz_solver::widening::widen_type(self.ctx.types, when_false),
-            )
-        };
+        // Do NOT widen branch literal types here. In tsc, conditional expressions
+        // preserve literal types (possibly "fresh") and widening is deferred to the
+        // point of use: `let`/`var` declarations widen via
+        // `widen_initializer_type_for_mutable_binding`, and return type inference
+        // widens via `widen_literal_type` in `infer_return_type_from_body`.
+        // Eagerly widening here caused false TS2322 errors when the result was
+        // assigned to a `const` with a literal union annotation, e.g.:
+        //   const c1 = cond ? "foo" : "bar";        // should be "foo" | "bar"
+        //   const c2: "foo" | "bar" = c1;            // should pass
 
         // Use Solver API for type computation (Solver-First architecture)
         expression_ops::compute_conditional_expression_type(
