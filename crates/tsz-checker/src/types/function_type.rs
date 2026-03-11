@@ -1199,8 +1199,9 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .types
                     .lookup(raw_expected_return_type)
-                    .is_some_and(|data| matches!(data, tsz_solver::types::TypeData::IndexAccess(_, _)))
-                {
+                    .is_some_and(|data| {
+                        matches!(data, tsz_solver::types::TypeData::IndexAccess(_, _))
+                    }) {
                     let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
                     if evaluated != TypeId::ERROR {
                         evaluated
