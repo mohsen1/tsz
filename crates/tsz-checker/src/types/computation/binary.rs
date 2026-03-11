@@ -281,6 +281,64 @@ impl<'a> CheckerState<'a> {
                     let right_type = self.get_type_of_node(right_idx);
                     self.ctx.contextual_type = prev_context;
 
+                    let should_check_contextual_right = prev_context.is_some() && {
+                        let mut parent_idx = self
+                            .ctx
+                            .arena
+                            .get_extended(node_idx)
+                            .map(|ext| ext.parent)
+                            .unwrap_or(NodeIndex::NONE);
+                        let mut check = true;
+                        for _ in 0..4 {
+                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                                break;
+                            };
+                            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                parent_idx = self
+                                    .ctx
+                                    .arena
+                                    .get_extended(parent_idx)
+                                    .map(|ext| ext.parent)
+                                    .unwrap_or(NodeIndex::NONE);
+                                continue;
+                            }
+                            if matches!(
+                                parent_node.kind,
+                                syntax_kind_ext::AS_EXPRESSION
+                                    | syntax_kind_ext::TYPE_ASSERTION
+                                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                            ) {
+                                check = false;
+                            } else if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                && let Some(parent_binary) =
+                                    self.ctx.arena.get_binary_expr(parent_node)
+                                && matches!(
+                                    parent_binary.operator_token,
+                                    k if k == SyntaxKind::BarBarToken as u16
+                                        || k == SyntaxKind::AmpersandAmpersandToken as u16
+                                        || k == SyntaxKind::QuestionQuestionToken as u16
+                                        || k == SyntaxKind::CommaToken as u16
+                                )
+                            {
+                                check = false;
+                            }
+                            break;
+                        }
+                        check
+                    };
+                    if should_check_contextual_right
+                        && right_type != TypeId::ANY
+                        && right_type != TypeId::ERROR
+                        && right_type != TypeId::UNKNOWN
+                    {
+                        let _ = self.check_assignable_or_report_at_exact_anchor(
+                            right_type,
+                            prev_context.unwrap(),
+                            right_idx,
+                            right_idx,
+                        );
+                    }
+
                     type_stack.push(left_type);
                     type_stack.push(right_type);
                     stack.push((node_idx, true));
