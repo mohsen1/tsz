@@ -37,6 +37,55 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    fn should_suppress_missing_property_for_literal_default(
+        &self,
+        pattern_idx: NodeIndex,
+        element_data: &tsz_parser::parser::node::BindingElementData,
+    ) -> bool {
+        if element_data.initializer.is_none() {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        let source_expr = match parent_node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let Some(decl) = self.ctx.arena.get_variable_declaration(parent_node) else {
+                    return false;
+                };
+                if decl.name != pattern_idx || decl.type_annotation.is_some() {
+                    return false;
+                }
+                decl.initializer
+            }
+            syntax_kind_ext::PARAMETER => {
+                let Some(param) = self.ctx.arena.get_parameter(parent_node) else {
+                    return false;
+                };
+                if param.name != pattern_idx
+                    || param.type_annotation.is_some()
+                    || self.ctx.contextual_type.is_some()
+                {
+                    return false;
+                }
+                param.initializer
+            }
+            _ => return false,
+        };
+
+        let source_expr = self.ctx.arena.skip_parenthesized(source_expr);
+        self.ctx
+            .arena
+            .get(source_expr)
+            .is_some_and(|expr| expr.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+    }
+
     fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
             return false;
@@ -512,6 +561,8 @@ impl<'a> CheckerState<'a> {
         let parent_type = self.evaluate_type_for_assignability(parent_type);
         let defer_property_not_found = self
             .should_defer_property_not_found_for_contextual_destructuring(pattern_idx, parent_type);
+        let suppress_missing_property_for_literal_default =
+            self.should_suppress_missing_property_for_literal_default(pattern_idx, element_data);
 
         // Array binding patterns use the element position.
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -666,6 +717,7 @@ impl<'a> CheckerState<'a> {
                 key_type,
                 element_data,
                 defer_property_not_found,
+                suppress_missing_property_for_literal_default,
             ) {
                 return property_type;
             }
@@ -779,11 +831,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 NodeIndex::NONE
             };
-            if element_data.initializer.is_none()
-                && let Some(ref prop_name_str) = property_name
+            if let Some(prop_name_str) = property_name.as_deref() {
+                if !defer_property_not_found && !suppress_missing_property_for_literal_default {
+                    self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                }
+            } else if element_data.initializer.is_none()
+                && !defer_property_not_found
+                && !suppress_missing_property_for_literal_default
             {
-                self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
-            } else if element_data.initializer.is_none() {
                 self.error_at_node(
                     error_node,
                     "Object is of type 'unknown'.",
@@ -845,7 +900,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         NodeIndex::NONE
                     };
-                    if element_data.initializer.is_none() && !defer_property_not_found {
+                    if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                         // In tsc, destructuring from `object` uses the apparent type `{}`
                         // in error messages (getApparentType(object) = {}).
                         if parent_type == TypeId::OBJECT {
@@ -865,6 +920,16 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    if !defer_property_not_found && !suppress_missing_property_for_literal_default {
+                        let error_node = if element_data.property_name.is_some() {
+                            element_data.property_name
+                        } else if element_data.name.is_some() {
+                            element_data.name
+                        } else {
+                            NodeIndex::NONE
+                        };
+                        self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                    }
                     property_type.unwrap_or(TypeId::ANY)
                 }
                 PropertyAccessResult::IsUnknown => TypeId::ANY,
@@ -880,6 +945,7 @@ impl<'a> CheckerState<'a> {
         key_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
         defer_property_not_found: bool,
+        suppress_missing_property_for_literal_default: bool,
     ) -> Option<TypeId> {
         let (string_keys, number_keys) = self.get_literal_key_union_from_type(key_type)?;
 
@@ -895,6 +961,7 @@ impl<'a> CheckerState<'a> {
                     member,
                     element_data,
                     defer_property_not_found,
+                    suppress_missing_property_for_literal_default,
                 ) {
                     member_types.push(member_type);
                 }
@@ -916,6 +983,7 @@ impl<'a> CheckerState<'a> {
             parent_type,
             element_data,
             defer_property_not_found,
+            suppress_missing_property_for_literal_default,
         )
     }
 
@@ -927,6 +995,7 @@ impl<'a> CheckerState<'a> {
         error_parent_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
         defer_property_not_found: bool,
+        suppress_missing_property_for_literal_default: bool,
     ) -> Option<TypeId> {
         let mut key_types = Vec::with_capacity(
             usize::from(!string_keys.is_empty()) + usize::from(!number_keys.is_empty()),
@@ -945,7 +1014,7 @@ impl<'a> CheckerState<'a> {
             if let Some(result_type) = keys_result.result_type {
                 key_types.push(result_type);
             }
-            if element_data.initializer.is_none() && !defer_property_not_found {
+            if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                 for key in keys_result.missing_keys {
                     self.error_property_not_exist_at(&key, error_parent_type, error_node);
                 }
