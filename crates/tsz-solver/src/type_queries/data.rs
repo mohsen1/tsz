@@ -36,7 +36,44 @@ pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 /// Delegates to `visitor_predicates::contains_type_matching` with an `Infer`-only
 /// predicate.
 pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(db, type_id, |key| matches!(key, TypeData::Infer(_)))
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::Infer(_) => true,
+        TypeData::TypeParameter(tp) => {
+            let name = db.resolve_atom(tp.name);
+            name.starts_with("__infer_") || name.starts_with("__infer_src_")
+        }
+        _ => false,
+    })
+}
+
+/// Check if a type contains unresolved type parameters other than tsz's internal
+/// `__infer_*` placeholders.
+///
+/// This is useful when a structural contextual type like `[__infer_0, __infer_1]`
+/// should still be allowed to guide recontextualization, while real generic
+/// type parameters (`T`, `U`, `this`, bound params) should still block it.
+pub fn contains_non_infer_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| match key {
+        TypeData::TypeParameter(tp) => {
+            let name = db.resolve_atom(tp.name);
+            !(name.starts_with("__infer_") || name.starts_with("__infer_src_"))
+        }
+        TypeData::Infer(_) | TypeData::ThisType | TypeData::BoundParameter(_) => true,
+        _ => false,
+    })
+}
+
+/// Check whether a type is itself a bare unresolved infer placeholder, not a
+/// larger structural type that merely contains placeholders.
+pub fn is_bare_infer_placeholder_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Infer(_)) => true,
+        Some(TypeData::TypeParameter(tp)) => {
+            let name = db.resolve_atom(tp.name);
+            name.starts_with("__infer_") || name.starts_with("__infer_src_")
+        }
+        _ => false,
+    }
 }
 
 /// Check if a type contains the error type.

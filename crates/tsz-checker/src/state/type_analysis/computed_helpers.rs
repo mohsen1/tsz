@@ -462,6 +462,13 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         for sym_id in type_alias_syms {
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if symbol.flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE) != 0 {
+                continue;
+            }
+
             // Skip if already detected as circular during compute_type_of_symbol.
             if self.ctx.circular_type_aliases.contains(&sym_id) {
                 continue;
@@ -1956,15 +1963,12 @@ impl<'a> CheckerState<'a> {
         if !param.type_annotation.is_some() {
             return None;
         }
-
         let ann_type = self.get_type_from_type_node(param.type_annotation);
         if ann_type == TypeId::ANY || ann_type == TypeId::UNKNOWN || ann_type == TypeId::ERROR {
             return None;
         }
-
         // Evaluate to resolve Lazy/Application types
         let ann_type = self.evaluate_type_for_assignability(ann_type);
-
         if is_obj {
             let prop_name_str = if be_data.property_name.is_some() {
                 self.get_identifier_text_from_idx(be_data.property_name)
@@ -1991,7 +1995,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Array binding patterns are rare for function params; skip for now
-
         None
     }
 }

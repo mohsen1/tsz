@@ -8,7 +8,7 @@ use crate::contextual::extractors::{
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
     RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
     TupleElementExtractor, collect_from_intersection, collect_single_or_union,
-    collect_single_or_union_no_reduce,
+    collect_single_or_union_no_reduce, extract_param_type_at_for_call,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -324,13 +324,23 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Application explicitly.
-        // Evaluate first to keep type-argument substitution in contextual extraction.
+        // Preserve application-instantiated signatures. Unwrapping to the base type
+        // discards instantiated parameter types like `Iterable<readonly [K, V]>`,
+        // which in turn breaks nested generic call contextual typing.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
-            if evaluated != expected {
-                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                return ctx.get_parameter_type_for_call(index, arg_count);
+            if let Some(shape) = crate::get_contextual_signature_for_arity_with_compat_checker(
+                self.interner,
+                expected,
+                arg_count,
+            ) {
+                return extract_param_type_at_for_call(
+                    self.interner,
+                    &shape.params,
+                    index,
+                    arg_count,
+                );
             }
+
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_parameter_type_for_call(index, arg_count);
@@ -573,6 +583,11 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Handle Application explicitly - unwrap to base type
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            if let Some(shape) =
+                crate::get_contextual_signature_with_compat_checker(self.interner, expected)
+            {
+                return Some(shape.return_type);
+            }
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_return_type();

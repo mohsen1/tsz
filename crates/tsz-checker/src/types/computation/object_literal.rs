@@ -116,7 +116,12 @@ impl<'a> CheckerState<'a> {
             if property_types.is_empty() {
                 None
             } else {
-                Some(this.ctx.types.factory().union(property_types))
+                Some(
+                    this.ctx
+                        .types
+                        .factory()
+                        .union_preserve_members(property_types),
+                )
             }
         };
         let original_contextual_type = contextual_type;
@@ -427,6 +432,7 @@ impl<'a> CheckerState<'a> {
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
+                    let had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type.or(property_context_type),
                     );
@@ -504,7 +510,11 @@ impl<'a> CheckerState<'a> {
                         // produces `{ x: string }`.  Only preserve literals when:
                         // - A const assertion is active (`as const`)
                         // - A contextual type narrows the property to a literal
-                        if !self.ctx.in_const_assertion && property_context_type.is_none() {
+                        if !self.ctx.in_const_assertion
+                            && !self.ctx.preserve_literal_types
+                            && property_context_type.is_none()
+                            && !had_object_context
+                        {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type
@@ -667,6 +677,7 @@ impl<'a> CheckerState<'a> {
 
                     // Set contextual type for shorthand property value
                     let prev_context = self.ctx.contextual_type;
+                    let had_object_context = prev_context.is_some();
                     self.ctx.contextual_type =
                         self.contextual_type_option_for_expression(property_context_type);
 
@@ -769,12 +780,15 @@ impl<'a> CheckerState<'a> {
                     );
 
                     // Widen literal types for shorthand properties (same as named properties)
-                    let value_type =
-                        if !self.ctx.in_const_assertion && property_context_type.is_none() {
-                            self.widen_literal_type(value_type)
-                        } else {
-                            value_type
-                        };
+                    let value_type = if !self.ctx.in_const_assertion
+                        && !self.ctx.preserve_literal_types
+                        && property_context_type.is_none()
+                        && !had_object_context
+                    {
+                        self.widen_literal_type(value_type)
+                    } else {
+                        value_type
+                    };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
                     // tsc only emits TS7008 for class properties, property signatures,
