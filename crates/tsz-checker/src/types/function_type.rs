@@ -187,7 +187,12 @@ impl<'a> CheckerState<'a> {
         } else if self.is_js_file() && is_function_declaration {
             // For function declarations in JS files with @type {FunctionType},
             // use the function type as contextual type for parameter typing.
-            if let Some(func_type) = self.jsdoc_type_annotation_for_node(idx) {
+            if self
+                .get_jsdoc_for_function(idx)
+                .as_ref()
+                .is_some_and(|jsdoc| Self::jsdoc_type_tag_declares_callable(jsdoc))
+                && let Some(func_type) = self.jsdoc_type_annotation_for_node(idx)
+            {
                 let evaluated_type = self.evaluate_contextual_type(func_type);
                 contextual_signature_type_params =
                     self.contextual_type_params_from_expected(evaluated_type);
@@ -506,7 +511,7 @@ impl<'a> CheckerState<'a> {
                             contextual_index,
                         );
                         Self::jsdoc_has_param_type(jsdoc, &pname)
-                            || Self::jsdoc_has_type_tag(jsdoc)
+                            || Self::jsdoc_type_tag_declares_callable(jsdoc)
                             || self.ctx.arena.get(param.name).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                                     || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN

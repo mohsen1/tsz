@@ -570,6 +570,30 @@ impl<'a> CheckerState<'a> {
 
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
+                if let Some(sf) = checker.ctx.arena.source_files.first()
+                    && let Some(jsdoc) = checker.find_jsdoc_for_function(decl_idx)
+                    && CheckerState::jsdoc_type_tag_function_missing_return(&jsdoc)
+                    && let Some((_, comment_pos)) = checker.try_jsdoc_with_ancestor_walk_and_pos(
+                        decl_idx,
+                        &sf.comments,
+                        &sf.text,
+                    )
+                    && let Some(function_pos) =
+                        CheckerState::jsdoc_type_tag_function_keyword_pos_in_source(
+                            &sf.text,
+                            comment_pos,
+                        )
+                {
+                    checker.ctx.error(
+                        function_pos,
+                        "function".len() as u32,
+                        crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                            &["any"],
+                        ),
+                        crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                    );
+                }
                 if var_decl.initializer.is_some() {
                     // Evaluate the declared type to resolve conditionals before using as context.
                     // This ensures types like `type C = string extends string ? "yes" : "no"`
@@ -584,7 +608,24 @@ impl<'a> CheckerState<'a> {
 
                     // Set contextual type for the initializer (but not for 'any')
                     let prev_context = checker.ctx.contextual_type;
-                    if evaluated_type != TypeId::ANY {
+                    let initializer_is_function = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .is_some_and(|init_node| {
+                            matches!(
+                                init_node.kind,
+                                syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::ARROW_FUNCTION
+                            )
+                        });
+                    let jsdoc_blocks_callable_context = initializer_is_function
+                        && var_decl.type_annotation.is_none()
+                        && checker
+                            .find_jsdoc_for_function(decl_idx)
+                            .as_ref()
+                            .is_some_and(|jsdoc| !CheckerState::jsdoc_type_tag_declares_callable(jsdoc));
+                    if evaluated_type != TypeId::ANY && !jsdoc_blocks_callable_context {
                         checker.ctx.contextual_type = Some(evaluated_type);
                         // Clear cached type to force recomputation with contextual type
                         // This is necessary because the expression (especially arrow functions)
@@ -631,6 +672,31 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     checker.ctx.contextual_type = prev_context;
+
+                    let function_initializer_body_has_error = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .and_then(|init_node| {
+                            if !matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                            ) {
+                                return None;
+                            }
+                            let func = checker.ctx.arena.get_function(init_node)?;
+                            let body_node = checker.ctx.arena.get(func.body)?;
+                            Some(
+                                checker.ctx.diagnostics[diag_len_before_init..]
+                                    .iter()
+                                    .any(|diag| {
+                                        diag.start >= body_node.pos
+                                            && diag.start < body_node.end
+                                            && matches!(diag.code, 2322 | 2339)
+                                    }),
+                            )
+                        })
+                        .unwrap_or(false);
 
                     // Check assignability (skip for 'any' since anything is assignable to any,
                     // and skip for TypeId::ERROR since the type annotation failed to resolve).
@@ -688,6 +754,10 @@ impl<'a> CheckerState<'a> {
                                 if elaborated_elements {
                                     // Elaboration emitted per-element TS2322 errors on the specific
                                     // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else if function_initializer_body_has_error {
+                                    // The function initializer already produced the canonical body
+                                    // diagnostic (for example on an expression-bodied arrow). Skip
+                                    // the redundant outer assignment TS2322.
                                 } else {
                                     // Run excess property check first for object literal
                                     // initializers. In tsc, TS2353 (excess property) takes
@@ -715,22 +785,25 @@ impl<'a> CheckerState<'a> {
                                                     == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                                             });
                                         if is_object_literal_initializer
-                                    && !checker.is_assignable_to(checked_init_type, declared_type)
-                                    && checker.try_elaborate_object_literal_properties_for_var_init(
-                                        var_decl.initializer,
-                                        declared_type,
-                                    )
-                                {
-                                    // Elaboration emitted per-property TS2322 errors.
-                                    // Skip the generic TS2322 on the outer assignment.
-                                } else {
-                                    // No elaboration possible — fall back to generic TS2322
-                                    let _ = checker.check_assignable_or_report_at(
-                                        checked_init_type,
-                                        declared_type,
-                                        var_decl.initializer,
-                                        decl_idx,
-                                    );
+                                            && !checker.is_assignable_to(
+                                                checked_init_type,
+                                                declared_type,
+                                            )
+                                            && checker.try_elaborate_object_literal_properties_for_var_init(
+                                                var_decl.initializer,
+                                                declared_type,
+                                            )
+                                        {
+                                            // Elaboration emitted per-property TS2322 errors.
+                                            // Skip the generic TS2322 on the outer assignment.
+                                        } else {
+                                            // No elaboration possible — fall back to generic TS2322
+                                            let _ = checker.check_assignable_or_report_at(
+                                                checked_init_type,
+                                                declared_type,
+                                                var_decl.initializer,
+                                                decl_idx,
+                                            );
                                         }
                                     }
                                 }

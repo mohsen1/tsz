@@ -312,6 +312,11 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Bare JSDoc `?` behaves like `any`.
+        if type_expr == "?" {
+            return Some(TypeId::ANY);
+        }
+
         // Handle JSDoc nullable prefix: "?Type" → Type | null
         if let Some(inner) = type_expr.strip_prefix('?') {
             let inner = inner.trim();
@@ -590,7 +595,12 @@ impl<'a> CheckerState<'a> {
 
                 // Narrow support for Closure Compiler function type syntax:
                 //   @type {function(string, number): void}
-                if let Some(rest) = type_expr.strip_prefix("function(") {
+                if let Some(rest) = type_expr.strip_prefix("function") {
+                    let rest = rest.trim_start();
+                    if !rest.starts_with('(') {
+                        return None;
+                    }
+                    let rest = &rest[1..];
                     // Find the matching close paren, handling nested parens
                     let mut depth = 1u32;
                     let mut close_idx = None;

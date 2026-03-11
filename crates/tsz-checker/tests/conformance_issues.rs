@@ -493,6 +493,71 @@ function g(callback) {
 }
 
 #[test]
+fn test_jsdoc_function_object_type_does_not_suppress_implicit_any_parameter() {
+    let source = r#"
+// @ts-check
+/** @type {Function} */
+const x = (a) => a + 1;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 for broad JSDoc Function type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_function_return_mismatch_reports_inner_body_error_only() {
+    let source = r#"
+// @ts-check
+/** @type {function (number): string} */
+const x = (a) => a + 1;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the inner body TS2322 for JSDoc function return mismatch. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0].contains("Type 'number' is not assignable to type 'string'."),
+        "Expected inner return-type mismatch message. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_assignment_preserves_numeric_literal_source_display() {
     let source = r#"
 enum E {

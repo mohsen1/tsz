@@ -1378,24 +1378,84 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a `JSDoc` comment has a `@type {expr}` tag.
-    ///
-    /// When `@type` declares a full function type (e.g., `@type {function((string)): string}`),
-    /// all parameters are typed and TS7006 should be suppressed.
-    pub(crate) fn jsdoc_has_type_tag(jsdoc: &str) -> bool {
-        for line in jsdoc.lines() {
-            let trimmed = line.trim();
+    pub(crate) fn jsdoc_type_tag_declares_callable(jsdoc: &str) -> bool {
+        let Some(expr) = Self::jsdoc_extract_type_tag_expr_braceless(jsdoc) else {
+            return false;
+        };
+        let expr = expr.trim();
+        if expr.eq_ignore_ascii_case("function") || expr.eq_ignore_ascii_case("Function") {
+            return false;
+        }
+        expr.contains("=>")
+            || expr
+                .strip_prefix("function")
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+    }
+
+    pub(crate) fn jsdoc_type_tag_function_missing_return(jsdoc: &str) -> bool {
+        let Some(expr) = Self::jsdoc_extract_type_tag_expr_braceless(jsdoc) else {
+            return false;
+        };
+        let expr = expr.trim();
+        let Some(rest) = expr.strip_prefix("function") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        if !rest.starts_with('(') {
+            return false;
+        }
+        let rest = &rest[1..];
+        let mut depth = 1u32;
+        let mut close_idx = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(close_idx) = close_idx else {
+            return false;
+        };
+        !rest[close_idx + 1..].trim_start().starts_with(':')
+    }
+
+    pub(crate) fn jsdoc_type_tag_function_keyword_pos_in_source(
+        source_text: &str,
+        comment_pos: u32,
+    ) -> Option<u32> {
+        let comment_start = comment_pos as usize;
+        let comment_text = &source_text[comment_start..];
+        let comment_end = comment_text.find("*/")?;
+        let comment_text = &comment_text[..comment_end];
+        let tag_pos = comment_text.find("@type")?;
+        let rest = &comment_text[tag_pos + "@type".len()..];
+        let fn_rel = rest.find("function")?;
+        Some(comment_pos + (tag_pos + "@type".len() + fn_rel) as u32)
+    }
+
+    pub(crate) fn jsdoc_extract_type_tag_expr_braceless(jsdoc: &str) -> Option<String> {
+        for raw_line in jsdoc.lines() {
+            let trimmed = raw_line.trim().trim_start_matches('*').trim();
             if let Some(rest) = trimmed.strip_prefix("@type") {
                 let rest = rest.trim();
-                // Accept both braced `@type {T}` and braceless `@type T` forms.
-                // The braceless form is used in tsc for inline function types like
-                // `@type (arg: string) => string`.
-                if rest.starts_with('{') || (!rest.is_empty() && !rest.starts_with('@')) {
-                    return true;
+                if rest.starts_with('{')
+                    && let Some(end) = rest[1..].find('}')
+                {
+                    return Some(rest[1..1 + end].trim().to_string());
+                }
+                if !rest.is_empty() && !rest.starts_with('@') {
+                    return Some(rest.to_string());
                 }
             }
         }
-        false
+        None
     }
 
     /// Extract the type expression from a `@type {X}` JSDoc tag.
