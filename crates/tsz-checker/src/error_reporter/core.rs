@@ -854,6 +854,13 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn has_diagnostic_code_within_span(&self, start: u32, end: u32, code: u32) -> bool {
+        self.ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == code && diag.start >= start && diag.start < end)
+    }
+
     pub(crate) fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
         if let Some(collapsed) = self.format_union_with_collapsed_enum_display(ty) {
             return collapsed;

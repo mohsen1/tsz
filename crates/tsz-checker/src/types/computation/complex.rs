@@ -997,6 +997,18 @@ impl<'a> CheckerState<'a> {
                 actual,
                 fallback_return,
             } => {
+                if let Some((new_start, new_end)) = self.get_node_span(idx)
+                    && self.has_diagnostic_code_within_span(
+                        new_start,
+                        new_end,
+                        diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                    )
+                {
+                    if fallback_return != TypeId::ERROR {
+                        return fallback_return;
+                    }
+                    return TypeId::ERROR;
+                }
                 if index < args.len() {
                     let arg_idx = args[index];
                     // Check if this is a weak union violation or excess property case

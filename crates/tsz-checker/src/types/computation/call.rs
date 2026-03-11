@@ -1763,6 +1763,19 @@ impl<'a> CheckerState<'a> {
                 actual,
                 fallback_return,
             } => {
+                if let Some((call_start, call_end)) = self.get_node_span(call_idx)
+                    && self.has_diagnostic_code_within_span(
+                        call_start,
+                        call_end,
+                        diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                    )
+                {
+                    return if fallback_return != TypeId::ERROR {
+                        fallback_return
+                    } else {
+                        TypeId::ERROR
+                    };
+                }
                 if self.should_defer_contextual_argument_mismatch(actual, expected) {
                     return TypeId::ERROR;
                 }
