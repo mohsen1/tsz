@@ -288,10 +288,16 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
+        let return_display_type = if func.type_annotation.is_some() {
+            shape.return_type
+        } else {
+            tsz_solver::widen_literal_type(self.ctx.types, shape.return_type)
+        };
+
         Some(format!(
             "({}) => {}",
             rendered.join(", "),
-            self.format_type_for_assignability_message(shape.return_type)
+            self.format_type_for_assignability_message(return_display_type)
         ))
     }
 
