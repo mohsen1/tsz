@@ -9329,3 +9329,41 @@ class C {
         "Expected TS2564 for non-canonical computed property name [+s].\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_this_in_enum_member_initializer_reports_ts2332() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+enum TopLevelEnum {
+    ThisWasAllowedButShouldNotBe = this
+}
+
+namespace ModuleEnum {
+    enum EnumInModule {
+        WasADifferentError = this
+    }
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_implicit_this: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2332 = diagnostics.iter().filter(|(code, _)| *code == 2332).count();
+    let ts2683 = diagnostics.iter().filter(|(code, _)| *code == 2683).count();
+    assert_eq!(
+        ts2332, 2,
+        "Expected TS2332 for both enum member initializer `this` uses.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2683, 2,
+        "Expected TS2683 companion diagnostics for both enum member initializer `this` uses.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2331),
+        "Did not expect TS2331 for `this` inside enum member initializers.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

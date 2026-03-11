@@ -482,6 +482,57 @@ impl<'a> CheckerState<'a> {
     // Namespace Context Detection
     // =========================================================================
 
+    /// Check if a `this` expression appears inside an enum member initializer where
+    /// TypeScript reports TS2332 ("current location").
+    ///
+    /// Walks up the AST from the `this` node:
+    /// - Arrow functions are transparent because they capture the outer `this`
+    /// - Regular functions/methods/constructors create a new `this` binding and stop
+    ///   the search
+    /// - Reaching an enum member before a function boundary means `this` is invalid
+    ///   in the enum initializer
+    pub(crate) fn is_this_in_enum_member_initializer(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, ENUM_MEMBER, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR,
+        };
+
+        let mut current = idx;
+        let mut iterations = 0;
+
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                k if k == ARROW_FUNCTION => continue,
+                k if k == FUNCTION_DECLARATION
+                    || k == FUNCTION_EXPRESSION
+                    || k == METHOD_DECLARATION
+                    || k == CONSTRUCTOR
+                    || k == GET_ACCESSOR
+                    || k == SET_ACCESSOR =>
+                {
+                    return false;
+                }
+                k if k == ENUM_MEMBER => return true,
+                _ => continue,
+            }
+        }
+    }
+
     /// Check if a `this` expression is in a module/namespace body context
     /// where it cannot be referenced (TS2331).
     ///
