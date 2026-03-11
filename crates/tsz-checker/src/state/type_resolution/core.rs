@@ -1903,8 +1903,11 @@ impl<'a> CheckerState<'a> {
                 // Use merged interface lowering for multi-arena declarations
                 let has_multi_arenas = has_declaration_arenas;
                 let interface_type = if has_multi_arenas {
-                    let (ty, _merged_params) =
-                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                    let (ty, _merged_params) = lowering
+                        .lower_merged_interface_declarations_with_symbol(
+                            &decls_with_arenas,
+                            Some(sym_id),
+                        );
                     ty
                 } else {
                     lowering.lower_interface_declarations_with_symbol(&symbol.declarations, sym_id)

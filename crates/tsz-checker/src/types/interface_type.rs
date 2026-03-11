@@ -66,6 +66,7 @@ impl<'a> CheckerState<'a> {
         let Some(interface) = self.ctx.arena.get_interface(node) else {
             return TypeId::ERROR; // Missing interface data - propagate error
         };
+        let interface_symbol = self.ctx.binder.get_node_symbol(idx);
 
         let (_interface_type_params, interface_type_param_updates) =
             self.push_type_parameters(&interface.type_parameters);
@@ -340,7 +341,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
-                symbol: None,
+                symbol: interface_symbol,
                 is_abstract: false,
             };
             factory.callable(shape)
@@ -350,10 +351,10 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
-                symbol: None,
+                symbol: interface_symbol,
             })
         } else if !properties.is_empty() {
-            factory.object(properties)
+            factory.object_with_flags_and_symbol(properties, ObjectFlags::empty(), interface_symbol)
         } else {
             TypeId::ANY
         };
