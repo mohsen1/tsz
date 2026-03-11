@@ -876,6 +876,27 @@ namespace A {
 }
 
 #[test]
+fn test_type_literal_computed_name_from_enum_object_reports_ts2464() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+export namespace Foo {
+  export enum Enum {
+    A = "a",
+    B = "b",
+  }
+}
+
+export type Type = { x?: { [Foo.Enum]: 0 } };
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2464),
+        "Expected TS2464 for a computed type-literal property named by an enum object.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
     let source = r#"
 enum Colors {
