@@ -369,11 +369,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     }
                     if yield_star_return_type
                         .is_none_or(|ty| ty == TypeId::UNKNOWN || ty == TypeId::ANY)
-                    {
-                        if let Some(ctx_return) = contextual_yield_star_return {
+                        && let Some(ctx_return) = contextual_yield_star_return {
                             yield_star_return_type = Some(ctx_return);
                         }
-                    }
                     // Collect yield* element type for unannotated generators when resolvable
                     // (skip when async iterator info is None/fallback ANY)
                     if self.checker.ctx.current_yield_type().is_none() && async_info.is_some() {
@@ -1273,11 +1271,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .check_type_for_parameter_properties(assertion.type_node);
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
-                        // Set contextual type before checking expression for both
-                        // type assertions and `satisfies`. This enables contextual typing
-                        // for lambdas, object literals, etc. inside `<T>(expr)` / `expr as T` / `expr satisfies T`.
+                        // Set contextual type before checking the operand only when the
+                        // operand actually benefits from contextual typing (lambdas,
+                        // object literals, arrays, etc.). Applying the asserted type
+                        // to arbitrary expressions like `target ?? component` can
+                        // manufacture spurious TS2322s inside an `as` assertion.
                         let prev_contextual_type = self.checker.ctx.contextual_type;
-                        if !is_const_assertion {
+                        if !is_const_assertion
+                            && self.checker.argument_needs_contextual_type(
+                                self.checker
+                                    .ctx
+                                    .arena
+                                    .skip_parenthesized_and_assertions(assertion.expression),
+                            )
+                        {
                             self.checker.ctx.contextual_type = Some(asserted_type);
                         }
                         // Always type-check the expression for side effects / diagnostics.

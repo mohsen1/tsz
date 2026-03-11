@@ -1122,8 +1122,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 self.ctx.types,
                                 key_type,
                             );
-                        if !is_valid_index_type {
-                            if let Some(pnode) = self.ctx.arena.get(param_idx) {
+                        if !is_valid_index_type
+                            && let Some(pnode) = self.ctx.arena.get(param_idx) {
                                 self.ctx.error(
                                     pnode.pos,
                                     pnode.end - pnode.pos,
@@ -1131,7 +1131,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     1268,
                                 );
                             }
-                        }
                     }
                 }
 
@@ -1453,7 +1452,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return None;
         }
 
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+        // Prefer lexical scope resolution so local type parameters shadow outer
+        // file-level aliases/types with the same name.
+        if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             if (symbol.flags
                 & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
@@ -1463,10 +1464,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        // Scope-based fallback: when a type name isn't at file level (e.g., it's
-        // inside a namespace), use the binder's scope-based resolution to find it.
-        // This handles cases like `Component` referenced within `namespace React`.
-        if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx) {
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             if (symbol.flags
                 & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
@@ -1897,9 +1895,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         // Type references: check if they resolve to type parameters
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
-                if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+                && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 {
                     // Check the type parameter scope (covers generic type params from
@@ -1912,8 +1910,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return true;
                     }
                 }
-            }
-        }
 
         false
     }

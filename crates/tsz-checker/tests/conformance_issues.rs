@@ -302,6 +302,26 @@ function partial(x: Basic) {
 }
 
 #[test]
+fn test_const_annotated_union_initializer_reduces_for_property_reads() {
+    let source = r#"
+type AOrArrA<T> = T | T[];
+const arr: AOrArrA<{ x?: "ok" }> = [{ x: "ok" }];
+const xs: { x?: "ok" }[] = arr;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected const annotated union initializer to reduce to the array member for downstream reads. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_switch_case_dispatch_excludes_prior_matching_cases() {
     let source = r#"
 function assertNever(x: never) { return x; }
@@ -10434,5 +10454,33 @@ const unexpectedlyFailingExample: Mapped = {
     assert!(
         diagnostics.is_empty(),
         "Did not expect a false TS2322 when a mapped callback returns the exact contextual literal type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Component = { name?: string } | ((props: {}) => void);
+type WithInstallPlugin = { _prefix?: string };
+
+export function withInstall<C extends Component, T extends WithInstallPlugin>(
+  component: C | C[],
+  target?: T,
+): string {
+  const componentWithInstall = (target ?? component) as T;
+  return "";
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Did not expect TS2322 inside a plain `as T` assertion operand.\nActual diagnostics: {diagnostics:#?}"
     );
 }
