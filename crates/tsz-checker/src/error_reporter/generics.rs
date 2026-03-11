@@ -6,8 +6,10 @@ use crate::query_boundaries::assignability::{
 };
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::{CallSignature, CallableShape, TypeSubstitution, instantiate_type};
 
 impl<'a> CheckerState<'a> {
     fn widen_function_like_assertion_source(&self, type_id: TypeId) -> TypeId {
@@ -74,6 +76,208 @@ impl<'a> CheckerState<'a> {
         }
 
         type_id
+    }
+
+    fn instantiate_call_signature_for_display(
+        &self,
+        sig: &CallSignature,
+        type_args: &[TypeId],
+    ) -> Option<CallSignature> {
+        if sig.type_params.len() != type_args.len() {
+            return None;
+        }
+        let subst = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
+        Some(CallSignature {
+            type_params: Vec::new(),
+            params: sig
+                .params
+                .iter()
+                .map(|param| tsz_solver::ParamInfo {
+                    name: param.name,
+                    type_id: instantiate_type(self.ctx.types, param.type_id, &subst),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            this_type: sig
+                .this_type
+                .map(|this_type| instantiate_type(self.ctx.types, this_type, &subst)),
+            return_type: instantiate_type(self.ctx.types, sig.return_type, &subst),
+            type_predicate: sig.type_predicate.clone(),
+            is_method: sig.is_method,
+        })
+    }
+
+    fn symbol_type_parameter_count(&self, sym_id: SymbolId) -> usize {
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
+            return type_params.len();
+        }
+
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|symbol| {
+                symbol.declarations.iter().find_map(|decl| {
+                    let node = self.ctx.arena.get(*decl)?;
+                    let class = self.ctx.arena.get_class(node)?;
+                    Some(class.type_parameters.as_ref().map_or(0, |p| p.nodes.len()))
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    fn try_format_type_query_instantiation_overlap_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<String> {
+        let app = tsz_solver::type_queries::get_type_application(self.ctx.types, type_id)?;
+        let sym = tsz_solver::type_query_symbol(self.ctx.types, app.base)?;
+        let symbol_type = self.get_type_of_symbol(SymbolId(sym.0));
+        let shape = tsz_solver::type_queries::get_callable_shape(self.ctx.types, symbol_type)?;
+        let call_sig = shape
+            .call_signatures
+            .iter()
+            .find_map(|sig| self.instantiate_call_signature_for_display(sig, &app.args))?;
+        let prototype_prop = shape
+            .properties
+            .iter()
+            .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "prototype")?;
+        let prototype_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, prototype_prop.type_id)?;
+        let prototype_sym_id = prototype_shape.symbol?;
+        let prototype_symbol = self.ctx.binder.get_symbol(prototype_sym_id)?;
+        let type_param_count = self.symbol_type_parameter_count(prototype_sym_id);
+        if type_param_count != 1 {
+            return None;
+        }
+
+        let prototype_symbol_name = prototype_symbol.escaped_name.as_str();
+        let prototype_display = format!("{prototype_symbol_name}<any>");
+        let call_return_type = call_sig.return_type;
+        let call_display =
+            self.format_type_for_assignability_message(self.ctx.types.callable(CallableShape {
+                call_signatures: vec![call_sig],
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            }));
+        let construct_display = format!(
+            "{prototype_symbol_name}<{}>",
+            self.format_type_for_assignability_message(call_return_type)
+        );
+        Some(format!(
+            "{{ new (): {construct_display}; prototype: {prototype_display}; }} & ({call_display})"
+        ))
+    }
+
+    fn try_format_constructor_call_intersection_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<String> {
+        if let Some(display) = self.try_format_type_query_instantiation_overlap_display(type_id) {
+            return Some(display);
+        }
+        let shape_id = tsz_solver::callable_shape_id(self.ctx.types, type_id)?;
+        let shape = self.ctx.types.callable_shape(shape_id);
+        if shape.call_signatures.len() != 1
+            || !shape.construct_signatures.is_empty()
+            || shape.string_index.is_some()
+            || shape.number_index.is_some()
+        {
+            return None;
+        }
+
+        let prototype_prop = shape
+            .properties
+            .iter()
+            .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == "prototype")?;
+        let prototype_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, prototype_prop.type_id)?;
+        let sym_id = prototype_shape.symbol?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let type_param_count = self.symbol_type_parameter_count(sym_id);
+        if type_param_count != 1 {
+            return None;
+        }
+
+        let symbol_name = symbol.escaped_name.as_str();
+        let call_sig = &shape.call_signatures[0];
+        let call_display = self.format_type_for_assignability_message(self.ctx.types.callable(
+            tsz_solver::CallableShape {
+                call_signatures: vec![call_sig.clone()],
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            },
+        ));
+        let call_return_display = self.format_type_for_assignability_message(call_sig.return_type);
+        let prototype_display = format!("{symbol_name}<any>");
+        let construct_display = format!("{symbol_name}<{call_return_display}>");
+        Some(format!(
+            "{{ new (): {construct_display}; prototype: {prototype_display}; }} & ({call_display})"
+        ))
+    }
+
+    fn try_format_type_assertion_overlap_special_display(
+        &mut self,
+        type_id: TypeId,
+        widen_source: bool,
+    ) -> Option<String> {
+        let type_id = if widen_source {
+            self.widen_function_like_assertion_source(type_id)
+        } else {
+            type_id
+        };
+        let evaluated = self.evaluate_type_with_env(type_id);
+        self.try_format_constructor_call_intersection_display(evaluated)
+    }
+
+    fn format_type_assertion_overlap_display(
+        &mut self,
+        type_id: TypeId,
+        widen_source: bool,
+    ) -> String {
+        if let Some(display) =
+            self.try_format_type_assertion_overlap_special_display(type_id, widen_source)
+        {
+            return display;
+        }
+        let type_id = if widen_source {
+            self.widen_function_like_assertion_source(type_id)
+        } else {
+            type_id
+        };
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if tsz_solver::type_queries::get_type_application(self.ctx.types, type_id).is_some() {
+            return self.format_type_for_assignability_message(type_id);
+        }
+        self.format_type_for_assignability_message(evaluated)
+    }
+
+    fn assertion_declared_type_texts(&self, idx: NodeIndex) -> Option<(String, String)> {
+        fn sanitize_type_text(text: String) -> Option<String> {
+            let mut text = text.trim().trim_start_matches(':').trim().to_string();
+            while matches!(text.chars().last(), Some(',') | Some(';')) {
+                text.pop();
+                text = text.trim_end().to_string();
+            }
+            (!text.is_empty()).then_some(text)
+        }
+
+        let node = self.ctx.arena.get(idx)?;
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        let source = self.declared_type_annotation_text_for_expression(assertion.expression)?;
+        let target = self
+            .node_text(assertion.type_node)
+            .and_then(sanitize_type_text)?;
+        Some((source, target))
     }
 
     // =========================================================================
@@ -192,9 +396,23 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         idx: NodeIndex,
     ) {
-        let source_type = self.widen_function_like_assertion_source(source_type);
-        let source_str = self.format_type_for_assignability_message(source_type);
-        let target_str = self.format_type_for_assignability_message(target_type);
+        let source_special =
+            self.try_format_type_assertion_overlap_special_display(source_type, true);
+        let target_special =
+            self.try_format_type_assertion_overlap_special_display(target_type, false);
+        let source_str = self.format_type_assertion_overlap_display(source_type, true);
+        let target_str = self.format_type_assertion_overlap_display(target_type, false);
+        let (source_str, target_str) = if source_special.is_some() || target_special.is_some() {
+            (source_str, target_str)
+        } else if let Some((declared_source, declared_target)) =
+            self.assertion_declared_type_texts(idx)
+        {
+            (declared_source, declared_target)
+        } else {
+            (source_str, target_str)
+        };
+        let source_str = source_str.trim_end_matches(';').to_string();
+        let target_str = target_str.trim_end_matches(';').to_string();
         self.error_at_node_msg(
             idx,
             diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,

@@ -592,8 +592,44 @@ impl<'a> CheckerState<'a> {
                         // (e.g., during symbol binding or early AST traversal)
                         checker.clear_type_cache_recursive(var_decl.initializer);
                     }
+                    let conditional_branch_ranges = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .filter(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+                        .and_then(|node| checker.ctx.arena.get_conditional_expr(node))
+                        .map(|cond| {
+                            let when_true = checker
+                                .ctx
+                                .arena
+                                .get(cond.when_true)
+                                .map(|node| (node.pos, node.end));
+                            let when_false = checker
+                                .ctx
+                                .arena
+                                .get(cond.when_false)
+                                .map(|node| (node.pos, node.end));
+                            [when_true, when_false]
+                        });
+                    let diag_len_before_init = checker.ctx.diagnostics.len();
                     let init_type = checker.get_type_of_node(var_decl.initializer);
                     let init_type_for_relation = checker.resolve_lazy_type(init_type);
+                    if let Some(branch_ranges) = conditional_branch_ranges {
+                        // Preserve non-assignability diagnostics from the branch expressions
+                        // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
+                        // contextually typing the individual branches. The outer variable
+                        // declaration check should report the canonical whole-expression error.
+                        let recent = checker.ctx.diagnostics.split_off(diag_len_before_init);
+                        for diag in recent {
+                            let in_branch = branch_ranges
+                                .iter()
+                                .flatten()
+                                .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                            if !(in_branch && diag.code == 2322) {
+                                checker.ctx.diagnostics.push(diag);
+                            }
+                        }
+                    }
                     checker.ctx.contextual_type = prev_context;
 
                     // Check assignability (skip for 'any' since anything is assignable to any,
