@@ -1710,46 +1710,54 @@ impl ParserState {
         // Parse module specifier
         let module_specifier = if import_clause.is_none() {
             self.parse_string_literal()
-        } else if import_clause_had_errors && self.is_token(SyntaxKind::FromKeyword) {
+        } else if import_clause_had_errors
+            && self.is_token(SyntaxKind::FromKeyword)
+            && !self.last_named_imports_consumed_closing_brace
+        {
             // The import clause had errors but we still see `from` — this happens
-            // when errors are inside `{ ... }` (e.g. `import { 0n } from "mod"`)
-            // or after recovery like `import { type as as as as } from "mod"`.
-            // Consume `from` and the module specifier normally.
+            // when a named import list failed to consume its closing `}` and we
+            // recovered directly into the module clause. Consume `from` and the
+            // module specifier normally.
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
         } else if import_clause_had_errors {
-            // The import clause had errors AND we're NOT at `from`.  This happens
-            // with malformed namespace imports like `import * from Zero from "./0"`
-            // where the parser consumed `from` as the namespace name and leftover
-            // tokens remain.  Absorb residual identifier-like tokens on the same
-            // line into the import statement to prevent them from being parsed as
-            // standalone statements (which would generate cascading TS1434
-            // diagnostics).  Stop at delimiters (`}`, `{`) which belong to
-            // legitimate syntax (e.g. `import { 0n as foo } from "./foo"`).
-            self.parse_expected(SyntaxKind::FromKeyword);
-            while !self.scanner.has_preceding_line_break()
-                && !self.is_token(SyntaxKind::SemicolonToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-                && !self.is_token(SyntaxKind::CloseBraceToken)
-                && !self.is_token(SyntaxKind::OpenBraceToken)
+            if self.is_token(SyntaxKind::FromKeyword) || self.is_token(SyntaxKind::CloseBraceToken)
             {
-                if self.is_token(SyntaxKind::StringLiteral)
-                    || self.is_token(SyntaxKind::FromKeyword)
-                {
-                    break;
-                }
-                self.next_token();
-            }
-            // If we reached `from STRING`, emit `;` expected at the leftover
-            // `from` position (matching tsc's recovery) then consume the specifier.
-            if self.is_token(SyntaxKind::FromKeyword) {
-                self.error_token_expected(";");
-                self.next_token();
-            }
-            if self.is_token(SyntaxKind::StringLiteral) {
-                self.parse_string_literal()
-            } else {
                 NodeIndex::NONE
+            } else {
+                // The import clause had errors AND we're NOT at `from`.  This happens
+                // with malformed namespace imports like `import * from Zero from "./0"`
+                // where the parser consumed `from` as the namespace name and leftover
+                // tokens remain.  Absorb residual identifier-like tokens on the same
+                // line into the import statement to prevent them from being parsed as
+                // standalone statements (which would generate cascading TS1434
+                // diagnostics).  Stop at delimiters (`}`, `{`) which belong to
+                // legitimate syntax (e.g. `import { 0n as foo } from "./foo"`).
+                self.parse_expected(SyntaxKind::FromKeyword);
+                while !self.scanner.has_preceding_line_break()
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::OpenBraceToken)
+                {
+                    if self.is_token(SyntaxKind::StringLiteral)
+                        || self.is_token(SyntaxKind::FromKeyword)
+                    {
+                        break;
+                    }
+                    self.next_token();
+                }
+                // If we reached `from STRING`, emit `;` expected at the leftover
+                // `from` position (matching tsc's recovery) then consume the specifier.
+                if self.is_token(SyntaxKind::FromKeyword) {
+                    self.error_token_expected(";");
+                    self.next_token();
+                }
+                if self.is_token(SyntaxKind::StringLiteral) {
+                    self.parse_string_literal()
+                } else {
+                    NodeIndex::NONE
+                }
             }
         } else {
             self.parse_expected(SyntaxKind::FromKeyword);
@@ -1758,8 +1766,15 @@ impl ParserState {
 
         // Parse optional import attributes: with { ... } or assert { ... }
         let attributes = self.parse_import_attributes();
-
-        self.parse_semicolon();
+        let recover_as_statement_boundary = import_clause_had_errors
+            && module_specifier.is_none()
+            && matches!(
+                self.token(),
+                SyntaxKind::CloseBraceToken | SyntaxKind::FromKeyword
+            );
+        if !recover_as_statement_boundary {
+            self.parse_semicolon();
+        }
         let end_pos = self.token_end();
 
         self.arena.add_import_decl(
@@ -1848,6 +1863,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         let mut is_type_only = false;
         let mut is_deferred = false;
+        self.last_named_imports_consumed_closing_brace = false;
 
         // Check for "type" keyword modifier (import type { ... } / import type X from ...)
         // Disambiguation: `import type` can mean either:
@@ -2018,9 +2034,11 @@ impl ParserState {
     /// Parse named imports: { x, y as z }
     pub(crate) fn parse_named_imports(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.last_named_imports_consumed_closing_brace = false;
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut elements = Vec::new();
+        let mut leave_closing_brace_for_statement_recovery = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2033,8 +2051,31 @@ impl ParserState {
             }
 
             let element_start = self.token_pos();
+            let diagnostics_before = self.parse_diagnostics.len();
             let spec = self.parse_import_specifier();
             elements.push(spec);
+            let spec_had_errors = self.parse_diagnostics.len() > diagnostics_before;
+
+            if spec_had_errors
+                && !self.is_token(SyntaxKind::CommaToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::FromKeyword)
+            {
+                while !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::CommaToken)
+                    && !self.is_token(SyntaxKind::FromKeyword)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.next_token();
+                }
+                if self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::FromKeyword)
+                {
+                    leave_closing_brace_for_statement_recovery =
+                        self.is_token(SyntaxKind::CloseBraceToken);
+                    break;
+                }
+            }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 if self.is_token(SyntaxKind::CloseBraceToken) {
@@ -2059,7 +2100,12 @@ impl ParserState {
             }
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        self.last_named_imports_consumed_closing_brace =
+            if leave_closing_brace_for_statement_recovery {
+                false
+            } else {
+                self.parse_expected(SyntaxKind::CloseBraceToken)
+            };
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
