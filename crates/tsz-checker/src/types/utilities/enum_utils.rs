@@ -3,6 +3,7 @@
 use crate::query_boundaries::dispatch::is_type_parameter_like;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
+use rustc_hash::FxHashMap;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -28,7 +29,49 @@ enum SimpleOverlapType {
     BooleanLiteral(bool),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum EnumCompatValue {
+    Number(f64),
+    String(String),
+}
+
 impl<'a> CheckerState<'a> {
+    pub(crate) fn enum_assignability_override(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<bool> {
+        let source_sym = self.enum_symbol_from_full_enum_type(source)?;
+        let target_sym = self.enum_symbol_from_full_enum_type(target)?;
+
+        if source_sym == target_sym {
+            return None;
+        }
+
+        let source_name = self.ctx.binder.get_symbol(source_sym)?.escaped_name.clone();
+        let target_name = self.ctx.binder.get_symbol(target_sym)?.escaped_name.clone();
+        if source_name != target_name {
+            return Some(false);
+        }
+
+        if self.is_const_enum_symbol(source_sym) || self.is_const_enum_symbol(target_sym) {
+            return Some(false);
+        }
+
+        if self.enum_kind(source_sym) != Some(EnumKind::Numeric)
+            || self.enum_kind(target_sym) != Some(EnumKind::Numeric)
+        {
+            return None;
+        }
+
+        let source_members = self.enum_member_compat_map(source_sym)?;
+        let target_members = self.enum_member_compat_map(target_sym)?;
+        let is_subset = source_members
+            .iter()
+            .all(|(name, value)| target_members.get(name) == Some(value));
+        Some(is_subset)
+    }
+
     /// Get the enum symbol from a type reference.
     ///
     /// Returns the symbol ID if the type refers to an enum, None otherwise.
@@ -40,6 +83,106 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(sym_id)
+    }
+
+    pub(crate) fn enum_symbol_from_full_enum_type(&self, type_id: TypeId) -> Option<SymbolId> {
+        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        ((symbol.flags & symbol_flags::ENUM) != 0
+            && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0)
+            .then_some(sym_id)
+    }
+
+    pub(crate) fn enum_symbol_from_enumish_type(&self, type_id: TypeId) -> Option<SymbolId> {
+        let def_id = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+            return Some(symbol.parent);
+        }
+        ((symbol.flags & symbol_flags::ENUM) != 0).then_some(sym_id)
+    }
+
+    pub(crate) fn apparent_enum_instance_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let enum_type =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)
+                .filter(|constraint| {
+                    tsz_solver::type_queries::get_enum_def_id(self.ctx.types, *constraint).is_some()
+                })
+                .unwrap_or(type_id);
+        let sym_id = self.enum_symbol_from_enumish_type(enum_type)?;
+        match self.enum_kind(sym_id)? {
+            EnumKind::Numeric => Some(TypeId::NUMBER),
+            EnumKind::String => Some(TypeId::STRING),
+            EnumKind::Mixed => Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![TypeId::NUMBER, TypeId::STRING]),
+            ),
+        }
+    }
+
+    fn is_const_enum_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+        })
+    }
+
+    fn enum_member_compat_map(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<FxHashMap<String, EnumCompatValue>> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
+        let mut result = FxHashMap::default();
+        let mut next_numeric_value = 0.0;
+
+        for &member_idx in &enum_decl.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            let member = self.ctx.arena.get_enum_member(member_node)?;
+            let member_name = self.get_property_name(member.name)?;
+
+            let value = if member.initializer.is_some() {
+                let init_node = self.ctx.arena.get(member.initializer)?;
+                match init_node.kind {
+                    k if k == SyntaxKind::StringLiteral as u16 => {
+                        let lit = self.ctx.arena.get_literal(init_node)?;
+                        EnumCompatValue::String(lit.text.clone())
+                    }
+                    _ => {
+                        let value = self.evaluate_constant_expression(member.initializer)?;
+                        next_numeric_value = value + 1.0;
+                        EnumCompatValue::Number(value)
+                    }
+                }
+            } else {
+                let value = EnumCompatValue::Number(next_numeric_value);
+                next_numeric_value += 1.0;
+                value
+            };
+
+            result.insert(member_name, value);
+        }
+
+        Some(result)
     }
 
     /// Determine the kind of enum (string, numeric, or mixed).

@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
             {
                 let src_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                let tgt_str = self.format_type_for_assignability_message(target);
+                let tgt_str = self.format_assignability_type_for_message(target, source);
                 let prop_list: Vec<String> = missing_props
                     .iter()
                     .take(4)
@@ -327,7 +327,7 @@ impl<'a> CheckerState<'a> {
 
             let src_str =
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-            let tgt_str = self.format_type_for_assignability_message(target);
+            let tgt_str = self.format_assignability_type_for_message(target, source);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
@@ -775,7 +775,7 @@ impl<'a> CheckerState<'a> {
             } => {
                 if depth == 0 {
                     let source_str = self.format_type_for_assignability_message(source);
-                    let target_str = self.format_type_for_assignability_message(target);
+                    let target_str = self.format_assignability_type_for_message(target, source);
                     let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
@@ -1151,7 +1151,7 @@ impl<'a> CheckerState<'a> {
                     self.format_type_diagnostic(*source_type)
                 };
                 let target_str = if use_assignment_source_display {
-                    self.format_type_for_assignability_message(target)
+                    self.format_assignability_type_for_message(target, source)
                 } else {
                     self.format_type_diagnostic(target)
                 };

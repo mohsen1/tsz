@@ -575,9 +575,17 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeId::ERROR;
             }
-            if self.is_namespace_value_type(object_type)
-                && !self.is_enum_instance_property_access(object_type, access.expression)
-            {
+            let enum_instance_like_access = self
+                .is_enum_instance_property_access(object_type, access.expression)
+                || tsz_solver::type_queries::get_type_parameter_constraint(
+                    self.ctx.types,
+                    object_type,
+                )
+                .is_some_and(|constraint| {
+                    tsz_solver::type_queries::get_enum_def_id(self.ctx.types, constraint).is_some()
+                });
+
+            if self.is_namespace_value_type(object_type) && !enum_instance_like_access {
                 if !access.question_dot_token
                     && !property_name.starts_with('#')
                     && !accessibility_error_emitted
@@ -593,7 +601,12 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
-            let object_type_for_access = self.resolve_type_for_property_access(object_type);
+            let object_type_for_access = if enum_instance_like_access {
+                self.apparent_enum_instance_type(object_type)
+                    .unwrap_or_else(|| self.resolve_type_for_property_access(object_type))
+            } else {
+                self.resolve_type_for_property_access(object_type)
+            };
             if object_type_for_access == TypeId::ANY {
                 return TypeId::ANY;
             }
@@ -823,11 +836,53 @@ impl<'a> CheckerState<'a> {
                         // Use display_object_type to preserve literal types in error messages
                         // while maintaining nominal identity (e.g., D<string>)
                         // Report at the property name node, not the full expression (matches tsc behavior)
-                        self.error_property_not_exist_at(
-                            property_name,
-                            display_object_type,
-                            access.name_or_argument,
-                        );
+                        if enum_instance_like_access {
+                            let enum_display: Option<String> =
+                                tsz_solver::type_queries::get_type_parameter_constraint(
+                                    self.ctx.types,
+                                    display_object_type,
+                                )
+                                .filter(|constraint| {
+                                    tsz_solver::type_queries::get_enum_def_id(
+                                        self.ctx.types,
+                                        *constraint,
+                                    )
+                                    .is_some()
+                                })
+                                .map(|constraint| {
+                                    self.format_type_for_assignability_message(constraint)
+                                })
+                                .or_else(|| {
+                                    tsz_solver::type_queries::get_enum_def_id(
+                                        self.ctx.types,
+                                        display_object_type,
+                                    )
+                                    .map(|_| {
+                                        self.format_type_for_assignability_message(
+                                            display_object_type,
+                                        )
+                                    })
+                                });
+                            if let Some(enum_display) = enum_display {
+                                self.error_property_not_exist_with_apparent_type(
+                                    property_name,
+                                    &enum_display,
+                                    access.name_or_argument,
+                                );
+                            } else {
+                                self.error_property_not_exist_at(
+                                    property_name,
+                                    display_object_type,
+                                    access.name_or_argument,
+                                );
+                            }
+                        } else {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                display_object_type,
+                                access.name_or_argument,
+                            );
+                        }
                     }
                     TypeId::ERROR
                 }
