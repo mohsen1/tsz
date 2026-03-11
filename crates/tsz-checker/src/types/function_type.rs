@@ -1288,7 +1288,10 @@ impl<'a> CheckerState<'a> {
                         && self.ctx.arena.get(body).is_some_and(|body_node| {
                             body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
                         });
-                    if suppress_contextual_return_check {
+                    if contextual_void_return_exception {
+                        // Contextual `() => void` callbacks may return a value.
+                        // Don't report a direct body-vs-void mismatch here.
+                    } else if suppress_contextual_return_check {
                         // Leave callback return inference to the generic/reverse-mapped
                         // inference pass when the expected return still contains
                         // unresolved placeholders.

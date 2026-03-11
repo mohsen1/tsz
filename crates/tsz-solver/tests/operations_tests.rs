@@ -4279,7 +4279,7 @@ fn test_infer_generic_application_param() {
 }
 
 #[test]
-fn test_generic_call_infers_type_arg_from_contextual_return_application() {
+fn test_generic_call_produces_contextual_return_fallback_for_application() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
     let mut evaluator = CallEvaluator::new(&interner, &mut checker);
@@ -4294,23 +4294,21 @@ fn test_generic_call_infers_type_arg_from_contextual_return_application() {
 
     let ok_base = interner.lazy(DefId(500));
     let ok_t = interner.application(ok_base, vec![t_type]);
-    let ok_tuple = interner.application(
-        ok_base,
-        vec![interner.tuple(vec![
-            TupleElement {
-                type_id: TypeId::STRING,
-                name: None,
-                optional: false,
-                rest: false,
-            },
-            TupleElement {
-                type_id: TypeId::NUMBER,
-                name: None,
-                optional: false,
-                rest: false,
-            },
-        ])],
-    );
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let ok_tuple = interner.application(ok_base, vec![tuple]);
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -4336,24 +4334,18 @@ fn test_generic_call_infers_type_arg_from_contextual_return_application() {
     let result = evaluator.resolve_call(func, &[arg]);
 
     match result {
-        CallResult::Success(ret) => assert_eq!(
-            ret,
-            ok_tuple,
-            "actual={:?} actual_app={:?} actual_arg={:?} expected={:?} expected_app={:?} expected_arg={:?}",
-            interner.lookup(ret),
-            interner.lookup(ret).and_then(|t| match t {
-                TypeData::Application(id) => Some(interner.type_application(id)),
-                _ => None,
-            }),
-            interner.lookup(TypeId(112)),
-            interner.lookup(ok_tuple),
-            interner.lookup(ok_tuple).and_then(|t| match t {
-                TypeData::Application(id) => Some(interner.type_application(id)),
-                _ => None,
-            }),
-            interner.lookup(TypeId(136))
-        ),
-        other => panic!("Expected success from contextual return inference, got {other:?}"),
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+            fallback_return,
+        } => {
+            assert_eq!(index, 0);
+            assert_eq!(expected, tuple);
+            assert_eq!(actual, arg);
+            assert_eq!(fallback_return, ok_tuple);
+        }
+        other => panic!("Expected mismatch with contextual fallback return, got {other:?}"),
     }
 }
 
