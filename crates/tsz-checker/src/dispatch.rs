@@ -247,7 +247,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // so wrap the contextual type in Array<T> to contextually type array elements.
             let prev_contextual = self.checker.ctx.contextual_type;
             let mut contextual_yield_star_return = None;
-            if let Some(yield_ctx) = self.checker.ctx.current_yield_type() {
+            if let Some(yield_ctx) = self
+                .checker
+                .ctx
+                .current_yield_type()
+                .or_else(|| self.get_expected_yield_type(idx))
+            {
                 if yield_expr.asterisk_token {
                     let contextual_operand_type =
                         self.checker
@@ -304,6 +309,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 } else {
                     self.checker.ctx.contextual_type = Some(yield_ctx);
                 }
+                self.checker.clear_type_cache_recursive(yield_expr.expression);
             }
             let expression_type = self.checker.get_type_of_node(yield_expr.expression);
             self.checker.ctx.contextual_type = prev_contextual;
