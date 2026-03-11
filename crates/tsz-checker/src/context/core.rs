@@ -345,7 +345,11 @@ impl<'a> CheckerContext<'a> {
     /// - TS2536 uses the same scheme so nested indexed-access failures can report
     ///   multiple distinct messages at the same indexed-access start.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
-        if code == 2304
+        // TS2304 ("Cannot find name") and TS2552 ("Cannot find name ... Did you mean?")
+        // are suppressed when TS2301 already exists at the same position, since TS2301
+        // ("Initializer of instance member cannot reference identifier declared in constructor")
+        // already explains the problem.
+        if (code == 2304 || code == 2552)
             && self
                 .diagnostics
                 .iter()
@@ -355,8 +359,9 @@ impl<'a> CheckerContext<'a> {
         }
         if code == 2301 {
             self.diagnostics
-                .retain(|diag| !(diag.start == start && diag.code == 2304));
+                .retain(|diag| !(diag.start == start && (diag.code == 2304 || diag.code == 2552)));
             self.emitted_diagnostics.remove(&(start, 2304));
+            self.emitted_diagnostics.remove(&(start, 2552));
         }
 
         // Check if we've already emitted this diagnostic
