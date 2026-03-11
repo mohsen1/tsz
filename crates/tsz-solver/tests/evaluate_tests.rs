@@ -19777,6 +19777,87 @@ fn test_constructor_parameters_callable_construct_signature() {
     }
 }
 
+#[test]
+fn test_constructor_parameters_callable_with_properties() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("P");
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_ctor = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: infer_p,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: true,
+        is_method: false,
+    });
+
+    let static_name = interner.intern_string("displayName");
+    let callable_with_ctor_and_props = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature {
+            type_params: Vec::new(),
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::OBJECT,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![PropertyInfo {
+            name: static_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }],
+        string_index: None,
+        number_index: None,
+    });
+
+    let cond = ConditionalType {
+        check_type: callable_with_ctor_and_props,
+        extends_type: extends_ctor,
+        true_type: infer_p,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(elems)) => {
+            let elems = interner.tuple_list(elems);
+            assert_eq!(elems.len(), 1);
+            assert_eq!(elems[0].type_id, TypeId::STRING);
+        }
+        _ => panic!("Expected tuple, got {result:?}"),
+    }
+}
+
 /// Test `ReturnType` with union of function types (distributive).
 /// `ReturnType`<(() => string) | (() => number)> should be string | number
 #[test]
