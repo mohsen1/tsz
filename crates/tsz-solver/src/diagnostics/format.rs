@@ -1058,7 +1058,7 @@ impl<'a> TypeFormatter<'a> {
                 };
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
-                    format!("{name}{optional}: {rest}{type_str}")
+                    format!("{rest}{name}{optional}: {type_str}")
                 } else {
                     format!("{rest}{type_str}{optional}")
                 }

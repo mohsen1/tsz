@@ -564,10 +564,11 @@ impl<'a> CheckerState<'a> {
                             Self::jsdoc_param_is_rest(jsdoc, &pname)
                         }));
 
-                // Under strictNullChecks, optional parameters (with `?`) get
-                // `undefined` added to their type.  Parameters with a default
-                // value but no `?` do NOT — the default guarantees a value.
-                let effective_type = if param.question_token
+                // Body type includes `| undefined` for optional params;
+                // ParamInfo.type_id uses declared type (no `| undefined`)
+                // to match tsc error messages. Solver handles optionality
+                // via the `optional` flag in call_args.
+                let body_effective_type = if param.question_token
                     && self.ctx.strict_null_checks()
                     && type_id != TypeId::ANY
                     && type_id != TypeId::ERROR
@@ -596,11 +597,11 @@ impl<'a> CheckerState<'a> {
 
                 params.push(ParamInfo {
                     name,
-                    type_id: effective_type,
+                    type_id,
                     optional,
                     rest,
                 });
-                param_types.push(Some(effective_type));
+                param_types.push(Some(body_effective_type));
                 destructuring_context_param_types.push(Some(effective_binding_context_type));
                 contextual_index += 1;
             }

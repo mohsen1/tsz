@@ -340,11 +340,13 @@ rest("e", ...mixed);
         .map(|d| d.message_text.as_str())
         .filter(|msg| msg.contains("string | number"))
         .collect();
+    // tsc displays the declared parameter type (without `| undefined`) for
+    // optional params in error messages.  Verify we match that behavior.
     assert!(
         optional_tail_messages
             .iter()
-            .all(|msg| msg.contains("number | undefined")),
-        "Expected spread mismatches into optional tail params to mention `number | undefined`, got: {optional_tail_messages:?}"
+            .all(|msg| msg.contains("parameter of type 'number'")),
+        "Expected spread mismatches into optional tail params to mention `number` (without `| undefined`), got: {optional_tail_messages:?}"
     );
 }
 

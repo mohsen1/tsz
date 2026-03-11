@@ -361,33 +361,24 @@ impl<'a> CheckerState<'a> {
                 || (self.is_js_file() && param.type_annotation.is_none());
             let rest = param.dot_dot_dot_token;
 
-            let effective_type = if param.question_token
-                && self.ctx.strict_null_checks()
-                && type_id != TypeId::ANY
-                && type_id != TypeId::ERROR
-                && type_id != TypeId::UNDEFINED
-            {
-                self.ctx
-                    .types
-                    .factory()
-                    .union(vec![type_id, TypeId::UNDEFINED])
-            } else {
-                type_id
-            };
+            // Do NOT bake `| undefined` into optional parameter types.
+            // tsc stores the declared type and handles optionality implicitly
+            // via the `optional` flag during assignability checks.  Baking it
+            // in causes `| undefined` to leak into TS2345 error messages.
 
             // Check for "this" parameter by name
             if let Some(name_atom) = name
                 && name_atom == this_atom
             {
                 if this_type.is_none() {
-                    this_type = Some(effective_type);
+                    this_type = Some(type_id);
                 }
                 continue;
             }
 
             params.push(ParamInfo {
                 name,
-                type_id: effective_type,
+                type_id,
                 optional,
                 rest,
             });
