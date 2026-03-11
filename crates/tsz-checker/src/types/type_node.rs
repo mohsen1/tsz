@@ -1095,25 +1095,44 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     TypeId::ANY
                 };
 
-                // TS1268: An index signature parameter type must be 'string', 'number',
-                // 'symbol', or a template literal type.
+                // TS1337 / TS1268: Validate index signature parameter type.
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
-                let is_valid_index_type = key_type == TypeId::STRING
-                    || key_type == TypeId::NUMBER
-                    || key_type == TypeId::SYMBOL
-                    || tsz_solver::visitor::is_template_literal_type(self.ctx.types, key_type);
-                if !is_valid_index_type
-                    && !has_param_grammar_error
-                    && let Some(pnode) = self.ctx.arena.get(param_idx)
-                {
-                    self.ctx.error(
-                            pnode.pos,
-                            pnode.end - pnode.pos,
-                            "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.".to_string(),
-                            1268,
-                        );
+                if !has_param_grammar_error && param_data.type_annotation.is_some() {
+                    // Check AST node kind to detect type parameters and literals (TS1337)
+                    // before the resolved-type check. Type params like `T extends string`
+                    // resolve to STRING but are still invalid as index sig param types.
+                    let is_generic_or_literal =
+                        self.is_type_param_or_literal_in_index_sig(param_data.type_annotation);
+                    if is_generic_or_literal {
+                        if let Some(pnode) = self.ctx.arena.get(param_idx) {
+                            self.ctx.error(
+                                pnode.pos,
+                                pnode.end - pnode.pos,
+                                "An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead.".to_string(),
+                                1337,
+                            );
+                        }
+                    } else {
+                        let is_valid_index_type = key_type == TypeId::STRING
+                            || key_type == TypeId::NUMBER
+                            || key_type == TypeId::SYMBOL
+                            || tsz_solver::visitor::is_template_literal_type(
+                                self.ctx.types,
+                                key_type,
+                            );
+                        if !is_valid_index_type {
+                            if let Some(pnode) = self.ctx.arena.get(param_idx) {
+                                self.ctx.error(
+                                    pnode.pos,
+                                    pnode.end - pnode.pos,
+                                    "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.".to_string(),
+                                    1268,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 let value_type = if index_sig.type_annotation.is_some() {
@@ -1860,6 +1879,45 @@ fn collect_names_in_type(
 }
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    /// Check if an index signature parameter type annotation refers to a type parameter
+    /// or literal type (TS1337) rather than a plain invalid type (TS1268).
+    fn is_type_param_or_literal_in_index_sig(&self, type_annotation_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation_idx) else {
+            return false;
+        };
+
+        // Literal types: string/number/boolean literals
+        if type_node.kind == syntax_kind_ext::LITERAL_TYPE
+            || type_node.kind == SyntaxKind::StringLiteral as u16
+            || type_node.kind == SyntaxKind::NumericLiteral as u16
+            || type_node.kind == SyntaxKind::TrueKeyword as u16
+            || type_node.kind == SyntaxKind::FalseKeyword as u16
+        {
+            return true;
+        }
+
+        // Type references: check if they resolve to type parameters
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    // Check the type parameter scope (covers generic type params from
+                    // type aliases, functions, classes, etc.)
+                    if self
+                        .ctx
+                        .type_parameter_scope
+                        .contains_key(ident.escaped_text.as_str())
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
     /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
     /// type parameter spreads. Only concrete array/tuple rest elements are subject to
