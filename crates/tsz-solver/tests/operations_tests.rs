@@ -4279,7 +4279,7 @@ fn test_infer_generic_application_param() {
 }
 
 #[test]
-fn test_generic_call_produces_contextual_return_fallback_for_application() {
+fn test_generic_call_uses_contextual_return_inference_for_application() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
     let mut evaluator = CallEvaluator::new(&interner, &mut checker);
@@ -4334,18 +4334,32 @@ fn test_generic_call_produces_contextual_return_fallback_for_application() {
     let result = evaluator.resolve_call(func, &[arg]);
 
     match result {
-        CallResult::ArgumentTypeMismatch {
-            index,
-            expected,
-            actual,
-            fallback_return,
-        } => {
-            assert_eq!(index, 0);
-            assert_eq!(expected, tuple);
-            assert_eq!(actual, arg);
-            assert_eq!(fallback_return, ok_tuple);
+        CallResult::Success(ret) => {
+            let Some(TypeData::Application(app_id)) = interner.lookup(ret) else {
+                panic!(
+                    "Expected application return type, got {:?}",
+                    interner.lookup(ret)
+                );
+            };
+            let app = interner.type_application(app_id);
+            assert_eq!(app.base, ok_base);
+            assert_eq!(app.args.len(), 1);
+            let Some(TypeData::Array(elem)) = interner.lookup(app.args[0]) else {
+                panic!(
+                    "Expected array type argument, got {:?}",
+                    interner.lookup(app.args[0])
+                );
+            };
+            let Some(TypeData::Union(list_id)) = interner.lookup(elem) else {
+                panic!(
+                    "Expected union element type, got {:?}",
+                    interner.lookup(elem)
+                );
+            };
+            let members = interner.type_list(list_id);
+            assert_eq!(members.len(), 2);
         }
-        other => panic!("Expected mismatch with contextual fallback return, got {other:?}"),
+        other => panic!("Expected contextual return inference success, got {other:?}"),
     }
 }
 

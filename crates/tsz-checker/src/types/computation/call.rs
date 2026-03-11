@@ -647,7 +647,8 @@ impl<'a> CheckerState<'a> {
                 let suppress_generic_return_context = args
                     .iter()
                     .copied()
-                    .any(|arg| self.suppress_generic_return_context_for_arg(arg));
+                    .any(|arg| self.suppress_generic_return_context_for_arg(arg))
+                    || self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args);
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
@@ -1597,6 +1598,11 @@ impl<'a> CheckerState<'a> {
         } else {
             (arg_types.clone(), false)
         };
+        let call_resolution_contextual_type = if is_generic_call {
+            None
+        } else {
+            self.ctx.contextual_type
+        };
 
         let (mut result, mut instantiated_predicate, mut generic_instantiated_params) =
             if is_super_call {
@@ -1605,7 +1611,7 @@ impl<'a> CheckerState<'a> {
                         callee_type_for_call,
                         &generic_inference_arg_types,
                         force_bivariant_callbacks,
-                        self.ctx.contextual_type,
+                        call_resolution_contextual_type,
                     ),
                     None,
                     None,
@@ -1615,7 +1621,7 @@ impl<'a> CheckerState<'a> {
                     callee_type_for_call,
                     &generic_inference_arg_types,
                     force_bivariant_callbacks,
-                    self.ctx.contextual_type,
+                    call_resolution_contextual_type,
                     actual_this_type,
                 )
             };
@@ -1658,12 +1664,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let should_retry_generic_call = if let Some(ctx_type) = self.ctx.contextual_type {
-            match &result {
-                CallResult::Success(ret) => {
-                    !assign_query::is_fresh_subtype_of(self.ctx.types, *ret, ctx_type)
+        let should_retry_generic_call = if is_generic_call
+            && args
+                .iter()
+                .copied()
+                .any(|arg_idx| self.argument_needs_contextual_type(arg_idx))
+        {
+            if let Some(ctx_type) = self.ctx.contextual_type {
+                match &result {
+                    CallResult::Success(ret) => {
+                        !assign_query::is_fresh_subtype_of(self.ctx.types, *ret, ctx_type)
+                    }
+                    _ => true,
                 }
-                _ => true,
+            } else {
+                false
             }
         } else {
             false

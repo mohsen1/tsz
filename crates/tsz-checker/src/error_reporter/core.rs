@@ -1,6 +1,7 @@
 //! Core error emission helpers and type formatting utilities.
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes, format_message};
+use crate::query_boundaries::diagnostics as query;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -46,76 +47,67 @@ impl<'a> CheckerState<'a> {
 
     fn normalize_excess_display_type(&self, ty: TypeId) -> TypeId {
         let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
-        match self.ctx.types.lookup(ty) {
-            Some(tsz_solver::TypeData::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                let args: Vec<_> = app
-                    .args
-                    .iter()
-                    .map(|&arg| self.normalize_excess_display_type(arg))
-                    .collect();
-                if args == app.args {
-                    ty
-                } else {
-                    self.ctx.types.factory().application(app.base, args)
-                }
+        if let Some(app) = query::type_application(self.ctx.types, ty) {
+            let args: Vec<_> = app
+                .args
+                .iter()
+                .map(|&arg| self.normalize_excess_display_type(arg))
+                .collect();
+            if args == app.args {
+                ty
+            } else {
+                self.ctx.types.factory().application(app.base, args)
             }
-            Some(tsz_solver::TypeData::Function(shape_id)) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                let params: Vec<_> = shape
-                    .params
-                    .iter()
-                    .map(|param| tsz_solver::ParamInfo {
-                        type_id: self.normalize_excess_display_type(param.type_id),
-                        ..param.clone()
+        } else if let Some(shape) = query::function_shape(self.ctx.types, ty) {
+            let params: Vec<_> = shape
+                .params
+                .iter()
+                .map(|param| tsz_solver::ParamInfo {
+                    type_id: self.normalize_excess_display_type(param.type_id),
+                    ..param.clone()
+                })
+                .collect();
+            let return_type = self.normalize_excess_display_type(shape.return_type);
+            if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
+                && return_type == shape.return_type
+            {
+                ty
+            } else {
+                self.ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape {
+                        type_params: shape.type_params.clone(),
+                        params,
+                        this_type: shape.this_type,
+                        return_type,
+                        type_predicate: shape.type_predicate.clone(),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
                     })
-                    .collect();
-                let return_type = self.normalize_excess_display_type(shape.return_type);
-                if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
-                    && return_type == shape.return_type
-                {
-                    ty
-                } else {
-                    self.ctx
-                        .types
-                        .factory()
-                        .function(tsz_solver::FunctionShape {
-                            type_params: shape.type_params.clone(),
-                            params,
-                            this_type: shape.this_type,
-                            return_type,
-                            type_predicate: shape.type_predicate.clone(),
-                            is_constructor: shape.is_constructor,
-                            is_method: shape.is_method,
-                        })
-                }
             }
-            Some(tsz_solver::TypeData::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                self.ctx.types.factory().union_preserve_members(
-                    members
-                        .iter()
-                        .map(|&member| self.normalize_excess_display_type(member))
-                        .collect(),
-                )
-            }
-            Some(tsz_solver::TypeData::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                self.ctx.types.factory().intersection(
-                    members
-                        .iter()
-                        .map(|&member| self.normalize_excess_display_type(member))
-                        .collect(),
-                )
-            }
-            _ => ty,
+        } else if let Some(members) = query::union_members(self.ctx.types, ty) {
+            self.ctx.types.factory().union_preserve_members(
+                members
+                    .iter()
+                    .map(|&member| self.normalize_excess_display_type(member))
+                    .collect(),
+            )
+        } else if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            self.ctx.types.factory().intersection(
+                members
+                    .iter()
+                    .map(|&member| self.normalize_excess_display_type(member))
+                    .collect(),
+            )
+        } else {
+            ty
         }
     }
 
     fn split_optional_object_for_excess_display(&self, ty: TypeId) -> TypeId {
         let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
-        if let Some(tsz_solver::TypeData::Union(list_id)) = self.ctx.types.lookup(ty) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
             let non_undefined: Vec<_> = members
                 .iter()
                 .copied()
@@ -167,77 +159,73 @@ impl<'a> CheckerState<'a> {
     }
 
     fn materialize_finite_mapped_type_for_display(&mut self, ty: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(ty) {
-            Some(tsz_solver::TypeData::Mapped(mapped_id)) => {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                let names = tsz_solver::type_queries::collect_finite_mapped_property_names(
+        if let Some((mapped_id, mapped)) = query::mapped_type(self.ctx.types, ty) {
+            let names =
+                crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
                     self.ctx.types,
                     mapped_id,
                 )?;
-                let mut names: Vec<_> = names.into_iter().collect();
-                names.sort_by(|a, b| {
-                    self.ctx
-                        .types
-                        .resolve_atom_ref(*a)
-                        .cmp(&self.ctx.types.resolve_atom_ref(*b))
-                });
+            let mut names: Vec<_> = names.into_iter().collect();
+            names.sort_by(|a, b| {
+                self.ctx
+                    .types
+                    .resolve_atom_ref(*a)
+                    .cmp(&self.ctx.types.resolve_atom_ref(*b))
+            });
 
-                let mut properties = Vec::with_capacity(names.len());
-                for name in names {
-                    let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
-                    let type_id = tsz_solver::type_queries::get_finite_mapped_property_type(
+            let mut properties = Vec::with_capacity(names.len());
+            for name in names {
+                let property_name = self.ctx.types.resolve_atom_ref(name).to_string();
+                let type_id =
+                    crate::query_boundaries::state::checking::get_finite_mapped_property_type(
                         self.ctx.types,
                         mapped_id,
                         &property_name,
                     )?;
-                    let type_id = self.normalize_excess_display_type(type_id);
-                    let mut property = tsz_solver::PropertyInfo::new(name, type_id);
-                    property.optional =
-                        mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
-                    property.readonly =
-                        mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
-                    properties.push(property);
-                }
+                let type_id = self.normalize_excess_display_type(type_id);
+                let mut property = tsz_solver::PropertyInfo::new(name, type_id);
+                property.optional =
+                    mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
+                property.readonly =
+                    mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+                properties.push(property);
+            }
 
-                Some(self.ctx.types.factory().object(properties))
-            }
-            Some(tsz_solver::TypeData::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                let mut changed = false;
-                let remapped: Vec<_> = members
-                    .iter()
-                    .map(|&member| {
-                        if let Some(materialized) =
-                            self.materialize_finite_mapped_type_for_display(member)
-                        {
-                            changed = true;
-                            materialized
-                        } else {
-                            member
-                        }
-                    })
-                    .collect();
-                changed.then(|| self.ctx.types.factory().intersection(remapped))
-            }
-            Some(tsz_solver::TypeData::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                let mut changed = false;
-                let remapped: Vec<_> = members
-                    .iter()
-                    .map(|&member| {
-                        if let Some(materialized) =
-                            self.materialize_finite_mapped_type_for_display(member)
-                        {
-                            changed = true;
-                            materialized
-                        } else {
-                            member
-                        }
-                    })
-                    .collect();
-                changed.then(|| self.ctx.types.factory().union(remapped))
-            }
-            _ => None,
+            Some(self.ctx.types.factory().object(properties))
+        } else if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            let mut changed = false;
+            let remapped: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    if let Some(materialized) =
+                        self.materialize_finite_mapped_type_for_display(member)
+                    {
+                        changed = true;
+                        materialized
+                    } else {
+                        member
+                    }
+                })
+                .collect();
+            changed.then(|| self.ctx.types.factory().intersection(remapped))
+        } else if let Some(members) = query::union_members(self.ctx.types, ty) {
+            let mut changed = false;
+            let remapped: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    if let Some(materialized) =
+                        self.materialize_finite_mapped_type_for_display(member)
+                    {
+                        changed = true;
+                        materialized
+                    } else {
+                        member
+                    }
+                })
+                .collect();
+            changed.then(|| self.ctx.types.factory().union(remapped))
+        } else {
+            None
         }
     }
 
@@ -246,8 +234,7 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        if let Some(tsz_solver::TypeData::Intersection(list_id)) = self.ctx.types.lookup(ty) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
             let mut changed = false;
             let parts: Vec<String> = members
                 .iter()

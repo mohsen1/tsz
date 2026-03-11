@@ -1000,6 +1000,32 @@ pub fn get_mapped_type(
     }
 }
 
+/// Get the mapped type id together with the mapped type info.
+///
+/// Returns None if the type is not a Mapped type.
+pub fn get_mapped_type_with_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(
+    crate::types::MappedTypeId,
+    std::sync::Arc<crate::types::MappedType>,
+)> {
+    match db.lookup(type_id) {
+        Some(TypeData::Mapped(mapped_id)) => Some((mapped_id, db.mapped_type(mapped_id))),
+        _ => None,
+    }
+}
+
+/// Get the default type for a type-parameter-like type.
+///
+/// Returns None if the type is not a `TypeParameter` or `Infer`, or if it has no default.
+pub fn get_type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.default,
+        _ => None,
+    }
+}
+
 /// Get the type application info for a generic application type.
 ///
 /// Returns None if the type is not an Application.

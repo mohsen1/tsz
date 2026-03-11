@@ -7,6 +7,7 @@ use crate::query_boundaries::checkers::call::{
     resolve_new, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{
@@ -106,6 +107,116 @@ impl<'a> CheckerState<'a> {
             && is_contextually_sensitive(self, idx)
     }
 
+    pub(crate) fn suppress_generic_return_context_for_direct_arg_overlap(
+        &self,
+        shape: &tsz_solver::FunctionShape,
+        args: &[NodeIndex],
+    ) -> bool {
+        let return_type_params: FxHashSet<_> =
+            tsz_solver::collect_referenced_types(self.ctx.types, shape.return_type)
+                .into_iter()
+                .filter_map(|ty| {
+                    tsz_solver::type_param_info(self.ctx.types, ty).map(|info| info.name)
+                })
+                .collect();
+
+        if return_type_params.is_empty() {
+            return false;
+        }
+
+        for (i, &arg_idx) in args.iter().enumerate() {
+            if is_contextually_sensitive(self, arg_idx) {
+                continue;
+            }
+
+            let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                shape
+                    .params
+                    .last()
+                    .and_then(|p| p.rest.then_some(p.type_id))
+            }) else {
+                break;
+            };
+
+            let param_type_params =
+                tsz_solver::collect_referenced_types(self.ctx.types, param_type);
+            if param_type_params.into_iter().any(|ty| {
+                tsz_solver::type_param_info(self.ctx.types, ty)
+                    .is_some_and(|info| return_type_params.contains(&info.name))
+            }) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn suppress_initializer_contextual_type_for_generic_call(
+        &mut self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+
+        let mut callee_idx = call.expression;
+        while let Some(callee_node) = self.ctx.arena.get(callee_idx) {
+            if callee_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(callee_node)
+            {
+                callee_idx = paren.expression;
+                continue;
+            }
+            break;
+        }
+        if let Some(callee_node) = self.ctx.arena.get(callee_idx)
+            && (callee_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || callee_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+        {
+            return false;
+        }
+
+        if call.type_arguments.is_some() {
+            return false;
+        }
+
+        let callee_type = self.get_type_of_node(call.expression);
+        if matches!(
+            callee_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return false;
+        }
+
+        let callee_type_for_context = self.evaluate_application_type(callee_type);
+        let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
+        let args = match call.arguments.as_ref() {
+            Some(args) => args.nodes.as_slice(),
+            None => &[],
+        };
+        let Some(shape) =
+            crate::query_boundaries::checkers::call::get_contextual_signature_for_arity(
+                self.ctx.types,
+                callee_type_for_context,
+                args.len(),
+            )
+        else {
+            return false;
+        };
+
+        !shape.type_params.is_empty()
+            && self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args)
+    }
+
     /// Whether an argument node needs contextual typing from the callee signature.
     ///
     /// Literal expressions need contextual typing to preserve literal types when
@@ -138,19 +249,23 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        matches!(
-            node.kind,
+        match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                is_contextually_sensitive(self, idx)
+            }
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                || k == syntax_kind_ext::CALL_EXPRESSION
-                || k == syntax_kind_ext::NEW_EXPRESSION
                 || k == syntax_kind_ext::YIELD_EXPRESSION
-                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
-        )
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+            {
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Const object/array literal bindings do not benefit from flow narrowing at

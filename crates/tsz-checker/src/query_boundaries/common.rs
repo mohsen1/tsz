@@ -63,6 +63,10 @@ pub(crate) fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::type_queries::has_construct_signatures(db, type_id)
 }
 
+pub(crate) fn type_parameter_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_type_parameter_default(db, type_id)
+}
+
 pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
