@@ -515,6 +515,17 @@ impl<'a> CheckerState<'a> {
                         );
 
                     if !found_via_reexport {
+                        if self
+                            .resolve_direct_commonjs_assignment_export_type(
+                                module_name,
+                                import_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                            .is_some()
+                        {
+                            continue;
+                        }
+
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
                         let (exists_locally, exported_as) =
@@ -617,6 +628,17 @@ impl<'a> CheckerState<'a> {
                         );
 
                     if !found_via_reexport {
+                        if self
+                            .resolve_direct_commonjs_assignment_export_type(
+                                module_name,
+                                import_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                            .is_some()
+                        {
+                            continue;
+                        }
+
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
                         let (exists_locally, exported_as) =

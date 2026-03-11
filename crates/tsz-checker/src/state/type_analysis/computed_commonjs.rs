@@ -439,6 +439,47 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn resolve_direct_commonjs_assignment_export_type(
+        &mut self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let source_file = target_arena.source_files.first()?;
+        let mut pending_props: FxHashMap<String, NodeIndex> = FxHashMap::default();
+        let mut ordered_names: Vec<String> = Vec::new();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            self.collect_direct_commonjs_assignment_exports(
+                target_arena,
+                stmt.expression,
+                &mut pending_props,
+                &mut ordered_names,
+            );
+        }
+
+        let rhs_expr = pending_props.get(export_name).copied()?;
+        let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+        (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
+    }
+
     pub(super) fn resolve_define_property_descriptor_object_literal(
         &self,
         target_file_idx: usize,
