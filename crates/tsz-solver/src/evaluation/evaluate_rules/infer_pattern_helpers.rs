@@ -88,7 +88,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let source_param_type = if source_param.optional && strip_nullish_optionals {
                 crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
             } else if source_param.optional {
-                self.interner().union2(source_param.type_id, TypeId::UNDEFINED)
+                self.interner()
+                    .union2(source_param.type_id, TypeId::UNDEFINED)
             } else {
                 source_param.type_id
             };
@@ -120,7 +121,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let source_param_type = if source_param.optional && strip_nullish_optionals {
                         crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
                     } else if source_param.optional {
-                        self.interner().union2(source_param.type_id, TypeId::UNDEFINED)
+                        self.interner()
+                            .union2(source_param.type_id, TypeId::UNDEFINED)
                     } else {
                         source_param.type_id
                     };

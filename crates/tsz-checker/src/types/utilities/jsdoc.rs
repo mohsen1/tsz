@@ -80,7 +80,8 @@ impl<'a> CheckerState<'a> {
             if let Some(ty) =
                 checker.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
             {
-                for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
+                for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter()
+                {
                     self.ctx
                         .cross_file_symbol_targets
                         .borrow_mut()
