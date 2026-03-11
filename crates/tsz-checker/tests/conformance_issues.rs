@@ -9468,6 +9468,10 @@ test4({
         })
         .count();
 
+    assert_eq!(
+        bar_errors, 2,
+        "Expected the two invalid callback-return literal mismatches from test4, matching the TypeScript baseline.\nActual diagnostics: {diagnostics:#?}"
+    );
     assert!(
         bar_errors >= 1,
         "Expected at least one invalid callback-return literal mismatch.\nActual diagnostics: {diagnostics:#?}"

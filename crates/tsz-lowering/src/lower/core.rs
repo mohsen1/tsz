@@ -26,6 +26,7 @@ pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 
 pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
+pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 
 /// Type lowering context.
@@ -54,6 +55,9 @@ pub struct TypeLowering<'a> {
     /// expressions (e.g., `[k]` where k is a unique symbol) to property name atoms.
     /// Used when the lowering can't determine the name from AST alone.
     pub(super) computed_name_resolver: Option<&'a NodeIndexResolver<'a, Atom>>,
+    /// Optional resolver for lazy type parameter metadata. This is used when
+    /// a lowered lazy reference omits type arguments but all parameters have defaults.
+    pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
     pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
     /// Operation counter to prevent infinite loops
@@ -261,6 +265,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: None,
             value_resolver: None,
             computed_name_resolver: None,
+            lazy_type_params_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -282,6 +287,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: None,
             value_resolver: Some(resolver),
             computed_name_resolver: None,
+            lazy_type_params_resolver: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -303,6 +309,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: None,
             value_resolver: Some(value_resolver),
             computed_name_resolver: None,
+            lazy_type_params_resolver: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -328,6 +335,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
             computed_name_resolver: None,
+            lazy_type_params_resolver: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -353,6 +361,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
             computed_name_resolver: None,
+            lazy_type_params_resolver: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -373,6 +382,7 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
             computed_name_resolver: self.computed_name_resolver,
+            lazy_type_params_resolver: self.lazy_type_params_resolver,
             name_def_id_resolver: self.name_def_id_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
@@ -575,6 +585,16 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(NodeIndex) -> Option<Atom>,
     ) -> Self {
         self.computed_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Set the lazy type parameter resolver for applying omitted defaulted type arguments
+    /// when lowering lazy references from interface members.
+    pub fn with_lazy_type_params_resolver(
+        mut self,
+        resolver: &'a dyn Fn(DefId) -> Option<Vec<TypeParamInfo>>,
+    ) -> Self {
+        self.lazy_type_params_resolver = Some(resolver);
         self
     }
 

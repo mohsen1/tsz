@@ -1282,6 +1282,39 @@ impl<'a> CheckerState<'a> {
             }
 
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                let should_refresh_cached_defaulted_reference =
+                    self.ctx.arena.get_type_ref(node).is_some_and(|type_ref| {
+                        let has_type_args = type_ref
+                            .type_arguments
+                            .as_ref()
+                            .is_some_and(|args| !args.nodes.is_empty());
+                        if has_type_args {
+                            return false;
+                        }
+
+                        let sym_id = match self
+                            .resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                        {
+                            crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) => {
+                                Some(sym_id)
+                            }
+                            _ => match self
+                                .resolve_qualified_symbol_in_type_position(type_ref.type_name)
+                            {
+                                crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) => {
+                                    Some(sym_id)
+                                }
+                                _ => None,
+                            },
+                        };
+
+                        sym_id.is_some_and(|sym_id| {
+                            self.get_type_params_for_symbol(sym_id)
+                                .iter()
+                                .any(|param| param.default.is_some())
+                        })
+                    });
+
                 // Recovery path: a type reference can appear where an expression statement is expected
                 // (e.g. malformed `this.x: any;` parses through a labeled statement).
                 // In value position, primitive type keywords should emit TS2693.
@@ -1329,12 +1362,16 @@ impl<'a> CheckerState<'a> {
                 // are in scope, since the ERROR may have been cached when type params
                 // weren't available yet (non-deterministic symbol processing order).
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                    if cached != TypeId::ERROR
+                        && self.ctx.type_parameter_scope.is_empty()
+                        && !should_refresh_cached_defaulted_reference
+                    {
                         return cached;
                     }
                     if cached == TypeId::ERROR
                         && self.ctx.type_parameter_scope.is_empty()
                         && !self.ctx.node_resolution_set.contains(&idx)
+                        && !should_refresh_cached_defaulted_reference
                     {
                         return cached;
                     }
