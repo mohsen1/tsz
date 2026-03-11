@@ -897,6 +897,40 @@ o.y;
 }
 
 #[test]
+fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+function C() {
+    this.p = 1;
+    this.q = void 0;
+}
+var c = new C();
+c.p + c.q;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2339 = diagnostic_message(&diagnostics, 2339)
+        .expect("expected TS2339 for missing constructor property");
+
+    assert!(
+        ts2339.contains("Property 'q' does not exist on type 'C'."),
+        "Expected constructor instance missing-property display to use C. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2339.contains("typeof c"),
+        "Did not expect constructor instance missing-property display to use typeof c. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_merged_declarations_non_exported_namespace_members_stay_hidden() {
     let source = r#"
 namespace M {
