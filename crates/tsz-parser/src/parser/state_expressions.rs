@@ -1327,6 +1327,7 @@ impl ParserState {
 
             match self.token() {
                 SyntaxKind::DotToken => {
+                    let missing_name_pos = self.token_end();
                     if let Some(node) = self.arena.get(expr)
                         && node.kind
                             == crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
@@ -1363,13 +1364,23 @@ impl ParserState {
                         if self.scanner.has_preceding_line_break()
                             && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
                         {
-                            self.error_identifier_expected();
+                            self.parse_error_at(
+                                missing_name_pos,
+                                0,
+                                "Identifier expected.",
+                                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                            );
                             NodeIndex::NONE
                         } else {
                             self.parse_identifier_name()
                         }
                     } else {
-                        self.error_identifier_expected();
+                        self.parse_error_at(
+                            missing_name_pos,
+                            0,
+                            "Identifier expected.",
+                            tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                        );
                         NodeIndex::NONE
                     };
                     let end_pos = self.token_end();

@@ -34,7 +34,7 @@ pub(crate) fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) 
 /// Returns `true` for:
 /// - "`NaN`", "Infinity", "-Infinity"
 /// - Numeric strings that round-trip correctly through JavaScript's number-to-string conversion
-pub(crate) fn is_numeric_literal_name(name: &str) -> bool {
+pub fn is_numeric_literal_name(name: &str) -> bool {
     if name == "NaN" || name == "Infinity" || name == "-Infinity" {
         return true;
     }
