@@ -9731,3 +9731,60 @@ const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
         "Expected direct JSDoc cast type in TS2322 message, got: {ts2322_messages:?}"
     );
 }
+
+#[test]
+fn test_enum_member_references_in_conditions_report_ts2845() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+enum Nums {
+    Zero = 0,
+    One = 1,
+}
+
+const a = Nums.Zero ? "a" : "b";
+const b = Nums.One ? "a" : "b";
+
+if (Nums.Zero) {}
+if (Nums.One) {}
+
+enum Strs {
+    Empty = "",
+    A = "A",
+}
+
+const c = Strs.Empty ? "a" : "b";
+const d = Strs.A ? "a" : "b";
+
+if (Strs.Empty) {}
+if (Strs.A) {}
+"#,
+    );
+
+    let ts2845_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2845)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2845_messages.len(),
+        8,
+        "Expected eight TS2845 diagnostics, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2845_messages
+            .iter()
+            .filter(|message| message.contains("'false'"))
+            .count(),
+        4,
+        "Expected four always-false enum condition diagnostics, got: {ts2845_messages:#?}"
+    );
+    assert_eq!(
+        ts2845_messages
+            .iter()
+            .filter(|message| message.contains("'true'"))
+            .count(),
+        4,
+        "Expected four always-true enum condition diagnostics, got: {ts2845_messages:#?}"
+    );
+}
