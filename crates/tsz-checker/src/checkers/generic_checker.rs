@@ -485,9 +485,7 @@ impl<'a> CheckerState<'a> {
                                 is_satisfied = self.is_function_constraint(original_constraint)
                                     && tsz_solver::type_queries::is_callable_type(db, base);
                             }
-                            if !is_satisfied
-                                && let Some(&arg_idx) = type_args_list.nodes.get(i)
-                            {
+                            if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                                 self.error_type_constraint_not_satisfied(
                                     type_arg,
                                     inst_constraint,

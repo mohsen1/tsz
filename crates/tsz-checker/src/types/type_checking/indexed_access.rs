@@ -1160,12 +1160,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                            emitted_any |= self.try_emit_concrete_index_access_error(
-                                error_anchor,
-                                concrete_object_type,
-                                member,
-                                object_is_type_parameter_ref,
-                            );
+                emitted_any |= self.try_emit_concrete_index_access_error(
+                    error_anchor,
+                    concrete_object_type,
+                    member,
+                    object_is_type_parameter_ref,
+                );
             }
             return emitted_any;
         }
