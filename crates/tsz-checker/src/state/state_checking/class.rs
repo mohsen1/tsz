@@ -507,6 +507,12 @@ impl<'a> CheckerState<'a> {
             .map(|(name, _, _)| name.clone())
             .collect();
 
+        // Check heritage clauses for primitive type keywords (TS2863/TS2864).
+        // Uses the lightweight check to avoid triggering constructor accessibility (TS2675)
+        // side effects that the full check_heritage_clauses_for_unresolved_names would cause
+        // via get_type_of_node on extends expressions (e.g., nested class extending private ctor).
+        self.check_heritage_clauses_for_primitive_types(&class.heritage_clauses);
+
         let class_name = self.get_class_name_from_decl(class_idx);
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
 
