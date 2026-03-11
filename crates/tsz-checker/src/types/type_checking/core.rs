@@ -10,6 +10,44 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn check_conditional_return_branches_against_type(
+        &mut self,
+        expr_idx: NodeIndex,
+        expected_type: TypeId,
+        unwrap_async_branch_promises: bool,
+    ) {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+        let Some(cond) = self.ctx.arena.get_conditional_expr(node) else {
+            return;
+        };
+
+        let prev_context = self.ctx.contextual_type;
+
+        for branch_idx in [cond.when_true, cond.when_false] {
+            self.ctx.contextual_type = Some(expected_type);
+            self.clear_type_cache_recursive(branch_idx);
+            let mut branch_type = self.get_type_of_node(branch_idx);
+            self.ctx.contextual_type = prev_context;
+
+            if unwrap_async_branch_promises {
+                branch_type = self.unwrap_promise_type(branch_type).unwrap_or(branch_type);
+            }
+
+            if branch_type == TypeId::ANY || branch_type == TypeId::ERROR {
+                continue;
+            }
+
+            let _ = self.check_assignable_or_report_at(
+                branch_type,
+                expected_type,
+                branch_idx,
+                branch_idx,
+            );
+        }
+    }
+
     // --- AST Traversal Helpers ---
 
     /// Get modifiers from a declaration node.
@@ -1040,14 +1078,22 @@ impl<'a> CheckerState<'a> {
             && expected_type != TypeId::UNKNOWN
             && !self.type_contains_error(expected_type)
             && return_data.expression.is_some()
-            && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
-            && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
-            self.check_object_literal_excess_properties(
-                return_type,
-                expected_type,
-                return_data.expression,
-            );
+            if let Some(expr_node) = self.ctx.arena.get(return_data.expression) {
+                if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    self.check_object_literal_excess_properties(
+                        return_type,
+                        expected_type,
+                        return_data.expression,
+                    );
+                } else if expr_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+                    self.check_conditional_return_branches_against_type(
+                        return_data.expression,
+                        expected_type,
+                        self.ctx.in_async_context(),
+                    );
+                }
+            }
         }
     }
 

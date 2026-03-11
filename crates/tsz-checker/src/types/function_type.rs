@@ -1245,7 +1245,18 @@ impl<'a> CheckerState<'a> {
                     } else {
                         actual_return
                     };
-                    self.check_assignable_or_report(actual_return, expected_return_type, body);
+                    let assignability_ok =
+                        self.check_assignable_or_report(actual_return, expected_return_type, body);
+                    if assignability_ok
+                        && let Some(body_node) = self.ctx.arena.get(body)
+                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                    {
+                        self.check_conditional_return_branches_against_type(
+                            body,
+                            expected_return_type,
+                            is_async_for_context,
+                        );
+                    }
                 }
             }
             // Skip body checking for function declarations — they are checked via
