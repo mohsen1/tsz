@@ -7982,6 +7982,38 @@ const return5 = (x: string): string => x.startsWith("a") ? getAny() : 1;
 }
 
 #[test]
+fn test_chained_assignment_diagnostics_use_terminal_rhs_source() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+var a: string;
+var b: number;
+var c: boolean;
+var d: Date;
+var e: RegExp;
+
+a = b = c = d = e = null;
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2322_messages.iter().all(|message| message.contains("Type 'null'")),
+        "Expected chained assignment diagnostics to report the terminal RHS source type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_non_generic_conditional_type_alias_resolves_before_assignability() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

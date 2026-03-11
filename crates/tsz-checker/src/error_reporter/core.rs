@@ -8,6 +8,33 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
+        let mut current = expr_idx;
+        let mut guard = 0;
+
+        loop {
+            guard += 1;
+            if guard > 256 {
+                return current;
+            }
+
+            let expr = self.ctx.arena.skip_parenthesized_and_assertions(current);
+            let Some(node) = self.ctx.arena.get(expr) else {
+                return current;
+            };
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return expr;
+            }
+            let Some(bin) = self.ctx.arena.get_binary_expr(node) else {
+                return expr;
+            };
+            if !self.is_assignment_operator(bin.operator_token) {
+                return expr;
+            }
+            current = bin.right;
+        }
+    }
+
     fn format_extract_keyof_string_type(&mut self, ty: TypeId) -> Option<String> {
         let members = tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, ty)?;
         if members.len() != 2 || !members.contains(&TypeId::STRING) {
@@ -182,7 +209,7 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                     let bin = self.ctx.arena.get_binary_expr(node)?;
                     if self.is_assignment_operator(bin.operator_token) {
-                        return Some(bin.right);
+                        return Some(self.terminal_assignment_source_expression(bin.right));
                     }
                 }
                 k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
@@ -191,11 +218,14 @@ impl<'a> CheckerState<'a> {
                     let bin = self.ctx.arena.get_binary_expr(expr)?;
                     return self
                         .is_assignment_operator(bin.operator_token)
-                        .then_some(bin.right);
+                        .then_some(self.terminal_assignment_source_expression(bin.right));
                 }
                 k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                     let decl = self.ctx.arena.get_variable_declaration(node)?;
-                    return decl.initializer.is_some().then_some(decl.initializer);
+                    return decl
+                        .initializer
+                        .is_some()
+                        .then_some(self.terminal_assignment_source_expression(decl.initializer));
                 }
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     let prop = self.ctx.arena.get_property_assignment(node)?;
@@ -338,6 +368,14 @@ impl<'a> CheckerState<'a> {
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
             return Some(expr_idx);
         };
+
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
+            && self.is_assignment_operator(bin.operator_token)
+            && bin.left == expr_idx
+        {
+            return None;
+        }
 
         if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
             && let Some(prop) = self.ctx.arena.get_property_assignment(parent_node)
