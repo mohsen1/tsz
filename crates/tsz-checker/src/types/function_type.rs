@@ -1248,7 +1248,21 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types,
                                         expected_return_type,
                                     ) && expected_return_type != TypeId::SYMBOL)
-                                    || expected_return_type == TypeId::NEVER;
+                                    || expected_return_type == TypeId::NEVER
+                                    || tsz_solver::union_list_id(
+                                        self.ctx.types,
+                                        expected_return_type,
+                                    )
+                                    .is_some_and(|list_id| {
+                                        self.ctx.types.type_list(list_id).iter().any(|&member| {
+                                            tsz_solver::is_literal_type(self.ctx.types, member)
+                                                || tsz_solver::type_queries::get_enum_def_id(
+                                                    self.ctx.types,
+                                                    member,
+                                                )
+                                                .is_some()
+                                        })
+                                    });
                             let concrete_return_context = expected_return_type != TypeId::ANY
                                 && expected_return_type != TypeId::UNKNOWN
                                 && !tsz_solver::type_queries::contains_type_parameters_db(

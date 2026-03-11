@@ -201,6 +201,25 @@ namespace A {
 }
 
 #[test]
+fn arrow_expression_body_literal_union_return_no_false_ts2322() {
+    // Concise arrow `() => "bar"` assigned to a variable with type `() => "foo" | "bar"`
+    // should NOT emit TS2322 — "bar" is a member of the union "foo" | "bar".
+    let diags = check_source_diagnostics(
+        r#"
+type FnType = () => "foo" | "bar";
+const f2: FnType = () => "bar";
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 for literal arrow return assignable to union, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn dotted_namespace_class_merge_same_file_no_ts2351() {
     // Dotted namespace `X.Y` with class+namespace merge in same file.
     let diags = check_source_diagnostics(
