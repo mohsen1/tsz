@@ -209,6 +209,8 @@ pub struct BindResult {
     pub module_exports: FxHashMap<String, SymbolTable>,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Export visibility of namespace/module declaration nodes after binder rules.
+    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
@@ -293,6 +295,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                     declared_modules: binder.declared_modules,
                     module_exports: binder.module_exports,
                     node_symbols: binder.node_symbols,
+                    module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
                     symbol_arenas: binder.symbol_arenas,
                     declaration_arenas: binder.declaration_arenas,
                     scopes: binder.scopes,
@@ -337,6 +340,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 declared_modules: binder.declared_modules,
                 module_exports: binder.module_exports,
                 node_symbols: binder.node_symbols,
+                module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
                 symbol_arenas: binder.symbol_arenas,
                 declaration_arenas: binder.declaration_arenas,
                 scopes: binder.scopes,
@@ -383,6 +387,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         declared_modules: binder.declared_modules,
         module_exports: binder.module_exports,
         node_symbols: binder.node_symbols,
+        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
         symbol_arenas: binder.symbol_arenas,
         declaration_arenas: binder.declaration_arenas,
         scopes: binder.scopes,
@@ -713,6 +718,7 @@ fn bind_file_with_libs(
             declared_modules: binder.declared_modules,
             module_exports: binder.module_exports,
             node_symbols: binder.node_symbols,
+            module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
             symbol_arenas: binder.symbol_arenas,
             declaration_arenas: binder.declaration_arenas,
             scopes: binder.scopes,
@@ -769,6 +775,7 @@ fn bind_file_with_libs(
         declared_modules: binder.declared_modules,
         module_exports: binder.module_exports,
         node_symbols: binder.node_symbols,
+        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
         symbol_arenas: binder.symbol_arenas,
         declaration_arenas: binder.declaration_arenas,
         scopes: binder.scopes,
@@ -807,6 +814,8 @@ pub struct BoundFile {
     pub arena: Arc<NodeArena>,
     /// Node-to-symbol mapping (symbol IDs are global after merge)
     pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Export visibility of namespace/module declaration nodes after binder rules.
+    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Persistent scopes (symbol IDs are global after merge)
     pub scopes: Vec<Scope>,
     /// Map from AST node to scope ID
@@ -2073,6 +2082,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             source_file: result.source_file,
             arena: Arc::clone(&result.arena),
             node_symbols: remapped_node_symbols,
+            module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
             scopes: remapped_scopes,
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
@@ -2572,6 +2582,7 @@ pub fn create_binder_from_bound_file(
             global_augmentations: merged_global_augmentations,
             module_augmentations: merged_module_augmentations,
             module_exports: program.module_exports.clone(),
+            module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),

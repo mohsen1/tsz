@@ -6,6 +6,8 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
@@ -29,6 +31,103 @@ impl<'a> CheckerState<'a> {
     /// Shared loop for class+namespace and function+namespace merging.
     /// When `check_prototype` is true, also treats `"prototype"` as a collision
     /// (classes have an implicit static `prototype` property).
+    fn namespace_member_visible_on_exported_surface(
+        &self,
+        sym_id: SymbolId,
+        member_sym_id: SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let parent_name = symbol.escaped_name.as_str();
+        let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id) else {
+            return false;
+        };
+
+        let mut saw_matching_namespace_decl = false;
+        for &decl_idx in &member_symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+
+            let mut current = decl_idx;
+            while let Some(ext) = self.ctx.arena.get_extended(current) {
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && self.module_name_matches(parent_idx, parent_name)
+                {
+                    saw_matching_namespace_decl = true;
+                    if self.namespace_declaration_exports_member_publicly(parent_idx) {
+                        return true;
+                    }
+                    break;
+                }
+                current = parent_idx;
+            }
+        }
+
+        !saw_matching_namespace_decl
+    }
+
+    fn module_name_matches(&self, module_idx: NodeIndex, expected_name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(module_idx) else {
+            return false;
+        };
+        let Some(module) = self.ctx.arena.get_module(node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(module.name) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == expected_name)
+    }
+
+    fn namespace_declaration_exports_member_publicly(&self, decl_idx: NodeIndex) -> bool {
+        if self
+            .ctx
+            .binder
+            .module_declaration_exports_publicly
+            .get(&decl_idx.0)
+            .copied()
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(module) = self.ctx.arena.get_module(node) else {
+            return false;
+        };
+
+        if self
+            .ctx
+            .arena
+            .has_modifier_ref(module.modifiers.as_ref(), SyntaxKind::DeclareKeyword)
+        {
+            return true;
+        }
+
+        if let Some(name_node) = self.ctx.arena.get(module.name)
+            && (name_node.kind == SyntaxKind::StringLiteral as u16
+                || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+        {
+            return true;
+        }
+
+        false
+    }
+
     fn merge_exports_into_props(
         &mut self,
         sym_id: SymbolId,
@@ -47,6 +146,9 @@ impl<'a> CheckerState<'a> {
 
         for (name, member_id) in exports.iter() {
             if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue;
+            }
+            if !self.namespace_member_visible_on_exported_surface(sym_id, *member_id) {
                 continue;
             }
 
@@ -525,6 +627,9 @@ impl<'a> CheckerState<'a> {
             // Skip if this member is already being resolved (prevents infinite recursion)
             if self.ctx.symbol_resolution_set.contains(member_id) {
                 continue; // Skip circular references
+            }
+            if !self.namespace_member_visible_on_exported_surface(sym_id, *member_id) {
+                continue;
             }
 
             let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id) else {

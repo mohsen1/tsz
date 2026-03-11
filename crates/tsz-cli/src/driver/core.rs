@@ -1738,6 +1738,7 @@ fn build_program_with_cache(
                     declared_modules: Default::default(),
                     module_exports: Default::default(),
                     node_symbols: Default::default(),
+                    module_declaration_exports_publicly: Default::default(),
                     symbol_arenas: Default::default(),
                     declaration_arenas: Default::default(),
                     scopes: Vec::new(),

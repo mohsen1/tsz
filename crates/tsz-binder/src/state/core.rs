@@ -59,6 +59,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols: FxHashMap::default(),
+            module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
@@ -120,6 +121,7 @@ impl BinderState {
         self.scope_chain.clear();
         self.current_scope_idx = 0;
         self.node_symbols.clear();
+        self.module_declaration_exports_publicly.clear();
         self.symbol_arenas.clear();
         self.declaration_arenas.clear();
         self.cross_file_node_symbols.clear();
@@ -247,6 +249,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
+            module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
@@ -326,6 +329,7 @@ impl BinderState {
             global_augmentations,
             module_augmentations,
             module_exports,
+            module_declaration_exports_publicly,
             reexports,
             wildcard_reexports,
             wildcard_reexports_type_only,
@@ -363,6 +367,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
+            module_declaration_exports_publicly,
             symbol_arenas,
             declaration_arenas,
             cross_file_node_symbols,
