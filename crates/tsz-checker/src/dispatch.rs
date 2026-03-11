@@ -1935,6 +1935,28 @@ function f<T>() {
     }
 
     #[test]
+    fn ts2345_never_parameter_uses_non_contextual_object_literal_display() {
+        let diags = check_source_diagnostics(
+            r#"
+declare function fn(x: never): void;
+fn({ a: 1, b: 2 });
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+        assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
+
+        let msg = &matching[0].message_text;
+        assert!(
+            msg.contains("Argument of type '{ a: number; b: number; }'"),
+            "Expected non-contextual object literal display, got: {msg}"
+        );
+        assert!(
+            msg.contains("parameter of type 'never'"),
+            "Expected never parameter display, got: {msg}"
+        );
+    }
+
+    #[test]
     fn type_params_in_object_literal_methods_no_ts2304() {
         // Type parameters in object literal method shorthands must be in scope
         // for parameter types, return types, and body type references.

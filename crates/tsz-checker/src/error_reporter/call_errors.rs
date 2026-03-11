@@ -196,7 +196,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_type = if param_type == TypeId::NEVER {
-            let direct_arg_type = self.get_type_of_node(arg_idx);
+            let direct_arg_type = self.elaboration_source_expression_type(arg_idx);
             if direct_arg_type == TypeId::ERROR || direct_arg_type == arg_type {
                 arg_type
             } else {
