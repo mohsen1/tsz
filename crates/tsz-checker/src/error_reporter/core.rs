@@ -374,6 +374,50 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn object_literal_source_type_display(&mut self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        let mut parts = Vec::new();
+        for child_idx in literal.elements.nodes.iter().copied() {
+            let child = self.ctx.arena.get(child_idx)?;
+            let prop = self.ctx.arena.get_property_assignment(child)?;
+            let name_node = self.ctx.arena.get(prop.name)?;
+            let name = match name_node.kind {
+                k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
+                    .ctx
+                    .arena
+                    .get_identifier(name_node)?
+                    .escaped_text
+                    .clone(),
+                k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                {
+                    let lit = self.ctx.arena.get_literal(name_node)?;
+                    format!("\"{}\"", lit.text)
+                }
+                k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+                    self.ctx.arena.get_literal(name_node)?.text.clone()
+                }
+                _ => return None,
+            };
+            let value_type = self.get_type_of_node(prop.initializer);
+            if value_type == TypeId::ERROR {
+                return None;
+            }
+            parts.push(format!(
+                "{name}: {}",
+                self.format_type_for_assignability_message(self.widen_literal_type(value_type))
+            ));
+        }
+
+        Some(format!("{{ {}; }}", parts.join("; ")))
+    }
+
     pub(super) fn format_assignment_source_type_for_diagnostic(
         &mut self,
         source: TypeId,
@@ -394,6 +438,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
 
@@ -425,6 +473,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
 

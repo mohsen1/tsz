@@ -7711,6 +7711,23 @@ function f<T extends { [key: string]: number }>(c: T, k: keyof T) {
 }
 
 #[test]
+fn test_object_literal_source_display_preserves_quoted_numeric_property_names() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+const so2: string = { "0": 1 };
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '{ \"0\": number; }' is not assignable to type 'string'")
+        }),
+        "Expected object-literal source display to preserve quoted numeric property names.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2538_for_any_index() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
