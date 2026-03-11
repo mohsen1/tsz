@@ -991,7 +991,7 @@ impl<'a> CheckerState<'a> {
             if !is_expando_write {
                 self.error_no_index_signature_at(
                     index_type,
-                    object_type,
+                    object_type_for_access,
                     idx,
                     access.name_or_argument,
                 );
