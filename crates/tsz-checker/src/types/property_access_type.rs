@@ -838,6 +838,19 @@ impl<'a> CheckerState<'a> {
                         // Use display_object_type to preserve literal types in error messages
                         // while maintaining nominal identity (e.g., D<string>)
                         // Report at the property name node, not the full expression (matches tsc behavior)
+                        if let Some(sym_id) = self.resolve_qualified_symbol(access.expression)
+                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+                            && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
+                        {
+                            self.error_property_not_exist_with_apparent_type(
+                                property_name,
+                                &format!("typeof {}", symbol.escaped_name),
+                                access.name_or_argument,
+                            );
+                            return TypeId::ERROR;
+                        }
+
                         if enum_instance_like_access {
                             let enum_display: Option<String> =
                                 tsz_solver::type_queries::get_type_parameter_constraint(

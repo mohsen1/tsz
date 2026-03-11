@@ -146,43 +146,45 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<FxHashMap<String, EnumCompatValue>> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
-        let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
         let mut result = FxHashMap::default();
         let mut next_numeric_value = 0.0;
+        let mut saw_enum_decl = false;
 
-        for &member_idx in &enum_decl.members.nodes {
-            let member_node = self.ctx.arena.get(member_idx)?;
-            let member = self.ctx.arena.get_enum_member(member_node)?;
-            let member_name = self.get_property_name(member.name)?;
-
-            let value = if member.initializer.is_some() {
-                let init_node = self.ctx.arena.get(member.initializer)?;
-                match init_node.kind {
-                    k if k == SyntaxKind::StringLiteral as u16 => {
-                        let lit = self.ctx.arena.get_literal(init_node)?;
-                        EnumCompatValue::String(lit.text.clone())
-                    }
-                    _ => {
-                        let value = self.evaluate_constant_expression(member.initializer)?;
-                        next_numeric_value = value + 1.0;
-                        EnumCompatValue::Number(value)
-                    }
-                }
-            } else {
-                let value = EnumCompatValue::Number(next_numeric_value);
-                next_numeric_value += 1.0;
-                value
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
+                continue;
             };
+            saw_enum_decl = true;
 
-            result.insert(member_name, value);
+            for &member_idx in &enum_decl.members.nodes {
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let member = self.ctx.arena.get_enum_member(member_node)?;
+                let member_name = self.get_property_name(member.name)?;
+
+                let value = if member.initializer.is_some() {
+                    let init_node = self.ctx.arena.get(member.initializer)?;
+                    match init_node.kind {
+                        k if k == SyntaxKind::StringLiteral as u16 => {
+                            let lit = self.ctx.arena.get_literal(init_node)?;
+                            EnumCompatValue::String(lit.text.clone())
+                        }
+                        _ => {
+                            let value = self.evaluate_constant_expression(member.initializer)?;
+                            next_numeric_value = value + 1.0;
+                            EnumCompatValue::Number(value)
+                        }
+                    }
+                } else {
+                    let value = EnumCompatValue::Number(next_numeric_value);
+                    next_numeric_value += 1.0;
+                    value
+                };
+
+                result.insert(member_name, value);
+            }
         }
 
-        Some(result)
+        saw_enum_decl.then_some(result)
     }
 
     /// Determine the kind of enum (string, numeric, or mixed).
@@ -194,32 +196,30 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
-        let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
-
         let mut saw_string = false;
         let mut saw_numeric = false;
 
-        for &member_idx in &enum_decl.members.nodes {
-            let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) else {
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
                 continue;
             };
-
-            if member.initializer.is_some() {
-                let Some(init_node) = self.ctx.arena.get(member.initializer) else {
+            for &member_idx in &enum_decl.members.nodes {
+                let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) else {
                     continue;
                 };
-                match init_node.kind {
-                    k if k == SyntaxKind::StringLiteral as u16 => saw_string = true,
-                    k if k == SyntaxKind::NumericLiteral as u16 => saw_numeric = true,
-                    _ => {}
+
+                if member.initializer.is_some() {
+                    let Some(init_node) = self.ctx.arena.get(member.initializer) else {
+                        continue;
+                    };
+                    match init_node.kind {
+                        k if k == SyntaxKind::StringLiteral as u16 => saw_string = true,
+                        k if k == SyntaxKind::NumericLiteral as u16 => saw_numeric = true,
+                        _ => {}
+                    }
+                } else {
+                    saw_numeric = true;
                 }
-            } else {
-                saw_numeric = true;
             }
         }
 
