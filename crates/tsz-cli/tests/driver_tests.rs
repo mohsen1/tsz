@@ -6875,10 +6875,7 @@ fn ts2552_emitted_for_type_only_export_typo() {
     let ts2552_diags: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| {
-            d.code
-                == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
-        })
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
         .collect();
     assert!(
         !ts2552_diags.is_empty(),
@@ -6896,8 +6893,7 @@ fn ts2552_emitted_for_type_only_export_typo() {
         .diagnostics
         .iter()
         .filter(|d| {
-            d.code == diagnostic_codes::CANNOT_FIND_NAME
-                && d.message_text.contains("RoomInterface")
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("RoomInterface")
         })
         .collect();
     assert!(
