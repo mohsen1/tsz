@@ -4,6 +4,45 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn is_property_like_access_kind(kind: u16) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
+    fn access_matches_function_prototype(&self, access_idx: NodeIndex, func_name: &str) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(access_node) = self.ctx.arena.get(access_idx) else {
+            return false;
+        };
+        if !Self::is_property_like_access_kind(access_node.kind) {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(access_node) else {
+            return false;
+        };
+        let Some(base_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if base_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
+            return false;
+        };
+        if base_ident.escaped_text != func_name {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        name_ident.escaped_text == "prototype"
+    }
+
     /// Scan sibling statements for `FuncName.prototype.X = rhs` patterns.
     /// Returns two sets:
     /// - Prototype method bindings (`method_name` -> `method_type`) to be added as instance properties
@@ -17,12 +56,14 @@ impl<'a> CheckerState<'a> {
     ) -> (
         Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
         Vec<(tsz_common::interner::Atom, tsz_solver::PropertyInfo)>,
+        bool,
     ) {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
         let mut method_bindings = Vec::new();
         let mut this_props = Vec::new();
+        let mut has_prototype_evidence = false;
 
         let parent_idx = self
             .ctx
@@ -30,7 +71,7 @@ impl<'a> CheckerState<'a> {
             .get_extended(func_decl_idx)
             .map_or(NodeIndex::NONE, |e| e.parent);
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return (method_bindings, this_props);
+            return (method_bindings, this_props, has_prototype_evidence);
         };
 
         let siblings: Vec<NodeIndex> = if let Some(block) = self.ctx.arena.get_block(parent_node) {
@@ -38,7 +79,7 @@ impl<'a> CheckerState<'a> {
         } else if let Some(source) = self.ctx.arena.get_source_file(parent_node) {
             source.statements.nodes.clone()
         } else {
-            return (method_bindings, this_props);
+            return (method_bindings, this_props, has_prototype_evidence);
         };
 
         for &stmt_idx in &siblings {
@@ -54,6 +95,18 @@ impl<'a> CheckerState<'a> {
             let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
                 continue;
             };
+            if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call_expr) = self.ctx.arena.get_call_expr(expr_node)
+                && let Some(arguments) = call_expr.arguments.as_ref()
+                && self.is_object_define_property_on_function_prototype(
+                    call_expr.expression,
+                    &arguments.nodes,
+                    func_name,
+                )
+            {
+                has_prototype_evidence = true;
+                continue;
+            }
             if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
                 continue;
             }
@@ -67,71 +120,109 @@ impl<'a> CheckerState<'a> {
             let Some(lhs_node) = self.ctx.arena.get(binary.left) else {
                 continue;
             };
-            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if !Self::is_property_like_access_kind(lhs_node.kind) {
                 continue;
             }
             let Some(lhs_access) = self.ctx.arena.get_access_expr(lhs_node) else {
                 continue;
             };
 
+            if self.access_matches_function_prototype(binary.left, func_name) {
+                has_prototype_evidence = true;
+                if let Some(rhs_node) = self.ctx.arena.get(binary.right)
+                    && rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                {
+                    let Some(obj) = self.ctx.arena.get_literal_expr(rhs_node) else {
+                        continue;
+                    };
+                    for &elem_idx in &obj.elements.nodes {
+                        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                            continue;
+                        };
+                        let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                            continue;
+                        };
+                        let is_computed_name = self
+                            .ctx
+                            .arena
+                            .get(prop.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+                        if is_computed_name {
+                            continue;
+                        }
+                        let Some(prop_name_str) = self.get_property_name_resolved(prop.name) else {
+                            continue;
+                        };
+                        let prop_name_atom = self.ctx.types.intern_string(&prop_name_str);
+                        let rhs_type = self.get_type_of_node(prop.initializer);
+                        method_bindings.push((
+                            prop_name_atom,
+                            tsz_solver::PropertyInfo {
+                                name: prop_name_atom,
+                                type_id: rhs_type,
+                                write_type: rhs_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                is_class_prototype: false,
+                                visibility: tsz_solver::Visibility::Public,
+                                parent_id: Some(parent_sym),
+                                declaration_order: 0,
+                            },
+                        ));
+                    }
+                }
+                continue;
+            }
+
             let Some(proto_node) = self.ctx.arena.get(lhs_access.expression) else {
                 continue;
             };
-            if proto_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if !Self::is_property_like_access_kind(proto_node.kind) {
                 continue;
             }
-            let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node) else {
+            if !self.access_matches_function_prototype(lhs_access.expression, func_name) {
                 continue;
-            };
+            }
+            has_prototype_evidence = true;
 
-            let Some(base_node) = self.ctx.arena.get(proto_access.expression) else {
-                continue;
-            };
-            if base_node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
-                continue;
-            };
-            if base_ident.escaped_text != func_name {
+            if lhs_access.name_or_argument.is_none() {
                 continue;
             }
 
-            let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument) else {
-                continue;
-            };
-            let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node) else {
-                continue;
-            };
-            if proto_ident.escaped_text != "prototype" {
-                continue;
+            let is_computed_name = lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || self
+                    .ctx
+                    .arena
+                    .get(lhs_access.name_or_argument)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            if let Some(method_name_str) =
+                self.get_property_name_resolved(lhs_access.name_or_argument)
+                && !is_computed_name
+            {
+                let method_name_atom = self.ctx.types.intern_string(&method_name_str);
+                let rhs_type = self.get_type_of_node(binary.right);
+                let is_method_like = self
+                    .ctx
+                    .arena
+                    .get(binary.right)
+                    .is_some_and(|rhs| rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+                method_bindings.push((
+                    method_name_atom,
+                    tsz_solver::PropertyInfo {
+                        name: method_name_atom,
+                        type_id: rhs_type,
+                        write_type: rhs_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: is_method_like,
+                        is_class_prototype: false,
+                        visibility: tsz_solver::Visibility::Public,
+                        parent_id: Some(parent_sym),
+                        declaration_order: 0,
+                    },
+                ));
             }
-
-            let Some(method_name_node) = self.ctx.arena.get(lhs_access.name_or_argument) else {
-                continue;
-            };
-            let Some(method_ident) = self.ctx.arena.get_identifier(method_name_node) else {
-                continue;
-            };
-            let method_name_str = method_ident.escaped_text.clone();
-            let method_name_atom = self.ctx.types.intern_string(&method_name_str);
-
-            let rhs_type = self.get_type_of_node(binary.right);
-            method_bindings.push((
-                method_name_atom,
-                tsz_solver::PropertyInfo {
-                    name: method_name_atom,
-                    type_id: rhs_type,
-                    write_type: rhs_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: true,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: Some(parent_sym),
-                    declaration_order: 0,
-                },
-            ));
 
             let Some(rhs_node) = self.ctx.arena.get(binary.right) else {
                 continue;
@@ -162,7 +253,81 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        (method_bindings, this_props)
+        (method_bindings, this_props, has_prototype_evidence)
+    }
+
+    fn is_object_define_property_on_function_prototype(
+        &self,
+        callee_idx: NodeIndex,
+        arg_nodes: &[NodeIndex],
+        func_name: &str,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        if arg_nodes.len() < 3 {
+            return false;
+        }
+
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(callee_access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(object_node) = self.ctx.arena.get(callee_access.expression) else {
+            return false;
+        };
+        if object_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(object_ident) = self.ctx.arena.get_identifier(object_node) else {
+            return false;
+        };
+        if object_ident.escaped_text != "Object" {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(callee_access.name_or_argument) else {
+            return false;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if name_ident.escaped_text != "defineProperty" {
+            return false;
+        }
+
+        let Some(target_node) = self.ctx.arena.get(arg_nodes[0]) else {
+            return false;
+        };
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(target_access) = self.ctx.arena.get_access_expr(target_node) else {
+            return false;
+        };
+        let Some(base_node) = self.ctx.arena.get(target_access.expression) else {
+            return false;
+        };
+        if base_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(base_ident) = self.ctx.arena.get_identifier(base_node) else {
+            return false;
+        };
+        if base_ident.escaped_text != func_name {
+            return false;
+        }
+        let Some(proto_name_node) = self.ctx.arena.get(target_access.name_or_argument) else {
+            return false;
+        };
+        let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node) else {
+            return false;
+        };
+        proto_ident.escaped_text == "prototype"
     }
 
     /// Resolve a self-referencing class constructor in a static initializer.
