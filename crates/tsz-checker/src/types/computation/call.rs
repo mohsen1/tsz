@@ -14,7 +14,6 @@ use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallResult, ContextualTypeContext, TypeId};
 
 use super::call_inference::should_preserve_contextual_application_shape;
@@ -22,33 +21,6 @@ use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn refreshed_generic_call_arg_type(
-        &mut self,
-        arg_idx: NodeIndex,
-        cached_arg_type: TypeId,
-    ) -> TypeId {
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return cached_arg_type;
-        };
-
-        match arg_node.kind {
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                || k == syntax_kind_ext::ARROW_FUNCTION =>
-            {
-                // Use the already-cached type from Round 2 inference.
-                // Previously this cleared the entire subtree cache and recomputed,
-                // but that destroys contextual typing for nested closures
-                // (arrow functions/function expressions inside object literal properties),
-                // causing false TS7006 when the recomputation happens without
-                // contextual type information.
-                self.get_type_of_node(arg_idx)
-            }
-            _ => cached_arg_type,
-        }
-    }
-
     /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
     ///
     /// Computes the return type of function/method calls.
@@ -598,7 +570,7 @@ impl<'a> CheckerState<'a> {
                         this.evaluate_type_with_env(param_type)
                     };
                 if helper.is_rest_parameter_position(index, arg_count) {
-                    tsz_solver::rest_argument_element_type(this.ctx.types, evaluated)
+                    this.contextual_rest_argument_element_type(evaluated)
                 } else {
                     evaluated
                 }
@@ -741,6 +713,32 @@ impl<'a> CheckerState<'a> {
                             round1_arg_types[i] = partial;
                         }
                     }
+                    for (i, arg_type) in round1_arg_types.iter_mut().enumerate() {
+                        if !sensitive_args.get(i).copied().unwrap_or(false) {
+                            continue;
+                        }
+                        let Some(arg_node) = self.ctx.arena.get(args[i]) else {
+                            continue;
+                        };
+                        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                        {
+                            continue;
+                        }
+                        let Some(param_type) =
+                            shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                let last = shape.params.last()?;
+                                last.rest.then_some(last.type_id)
+                            })
+                        else {
+                            continue;
+                        };
+                        if self.sensitive_callback_placeholder_should_skip_round1_inference(
+                            &shape, param_type,
+                        ) {
+                            *arg_type = TypeId::UNKNOWN;
+                        }
+                    }
                     // Nested calls whose outer contextual type was intentionally skipped in
                     // Round 1 should not poison outer inference with provisional `error` or
                     // `__infer_*` results. Leave them for Round 2 unless they resolved cleanly.
@@ -821,6 +819,51 @@ impl<'a> CheckerState<'a> {
                             generic_inference_contextual_type,
                         )
                     };
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if !sensitive_args.get(i).copied().unwrap_or(false) {
+                            continue;
+                        }
+                        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                            continue;
+                        };
+                        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                        {
+                            continue;
+                        }
+                        let Some(param_type) =
+                            shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                let last = shape.params.last()?;
+                                last.rest.then_some(last.type_id)
+                            })
+                        else {
+                            continue;
+                        };
+
+                        let names_to_strip: Vec<_> = shape
+                            .type_params
+                            .iter()
+                            .filter_map(|tp| {
+                                substitution.get(tp.name).and_then(|inferred| {
+                                    self.should_strip_sensitive_placeholder_substitution(
+                                        &shape, param_type, tp.name, inferred,
+                                    )
+                                    .then_some(tp.name)
+                                })
+                            })
+                            .collect();
+                        if !names_to_strip.is_empty() {
+                            let names_to_strip: rustc_hash::FxHashSet<_> =
+                                names_to_strip.into_iter().collect();
+                            let mut filtered = tsz_solver::TypeSubstitution::new();
+                            for (&name, &type_id) in substitution.map() {
+                                if !names_to_strip.contains(&name) {
+                                    filtered.insert(name, type_id);
+                                }
+                            }
+                            substitution = filtered;
+                        }
+                    }
                     let inferred_type_params_by_name: Vec<_> = shape
                         .type_params
                         .iter()
@@ -836,6 +879,8 @@ impl<'a> CheckerState<'a> {
                     );
                     let mut round2_substitution = substitution.clone();
                     if let Some(ctx_type) = generic_inference_contextual_type {
+                        let tracked_type_params: FxHashSet<_> =
+                            shape.type_params.iter().map(|tp| tp.name).collect();
                         let return_context_substitution = self
                             .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
                         trace!(
@@ -871,9 +916,9 @@ impl<'a> CheckerState<'a> {
                         for (&name, &ty) in return_context_substitution.map().iter() {
                             if ty == TypeId::UNKNOWN
                                 || ty == TypeId::ERROR
-                                || tsz_solver::type_queries::contains_non_infer_type_parameters_db(
-                                    self.ctx.types,
+                                || self.target_contains_blocking_return_context_type_params(
                                     ty,
+                                    &tracked_type_params,
                                 )
                             {
                                 continue;
@@ -885,6 +930,7 @@ impl<'a> CheckerState<'a> {
                                 Some(existing) => {
                                     let mut visited = FxHashSet::default();
                                     existing == TypeId::UNKNOWN
+                                        || existing == TypeId::ERROR
                                         || self.inference_type_is_anyish(existing, &mut visited)
                                         || tsz_solver::type_queries::contains_type_parameters_db(
                                             self.ctx.types,
@@ -1117,6 +1163,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             if sensitive_args.get(i).copied().unwrap_or(false) {
+                                self.clear_contextual_resolution_cache();
                                 self.clear_type_cache_recursive(arg_idx);
                             }
                             let round2_contextual_types = self.compute_round2_contextual_types(
@@ -1188,9 +1235,9 @@ impl<'a> CheckerState<'a> {
                                     };
                                     if ty == TypeId::UNKNOWN
                                         || ty == TypeId::ERROR
-                                        || tsz_solver::type_queries::contains_non_infer_type_parameters_db(
-                                            self.ctx.types,
+                                        || self.target_contains_blocking_return_context_type_params(
                                             ty,
+                                            &tracked_type_params,
                                         )
                                     {
                                         continue;
@@ -1401,6 +1448,7 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.contextual_type,
                             );
                         if !return_context_substitution.is_empty() {
+                            self.clear_contextual_resolution_cache();
                             for &arg_idx in args {
                                 if self.argument_needs_contextual_type(arg_idx) {
                                     self.clear_type_cache_recursive(arg_idx);
@@ -1421,10 +1469,7 @@ impl<'a> CheckerState<'a> {
                                         &return_context_substitution,
                                     );
                                     let param_type = if param.1 {
-                                        tsz_solver::rest_argument_element_type(
-                                            self.ctx.types,
-                                            instantiated,
-                                        )
+                                        self.contextual_rest_argument_element_type(instantiated)
                                     } else {
                                         instantiated
                                     };
@@ -1461,6 +1506,7 @@ impl<'a> CheckerState<'a> {
                             )
                             .2
                         {
+                            self.clear_contextual_resolution_cache();
                             for &arg_idx in args {
                                 if self.argument_needs_contextual_type(arg_idx) {
                                     self.clear_type_cache_recursive(arg_idx);
@@ -1478,8 +1524,7 @@ impl<'a> CheckerState<'a> {
                                             let evaluated =
                                                 self.evaluate_type_with_env(param.type_id);
                                             let param_type = if param.rest {
-                                                tsz_solver::rest_argument_element_type(
-                                                    self.ctx.types,
+                                                self.contextual_rest_argument_element_type(
                                                     evaluated,
                                                 )
                                             } else {
@@ -1716,6 +1761,7 @@ impl<'a> CheckerState<'a> {
             && should_retry_generic_call
             && let Some(instantiated_params) = generic_instantiated_params.as_ref()
         {
+            self.clear_contextual_resolution_cache();
             for &arg_idx in args {
                 if self.argument_needs_contextual_type(arg_idx) {
                     self.clear_type_cache_recursive(arg_idx);
@@ -1732,7 +1778,7 @@ impl<'a> CheckerState<'a> {
                         .map(|param| {
                             let evaluated = self.evaluate_type_with_env(param.type_id);
                             let param_type = if param.rest {
-                                tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+                                self.contextual_rest_argument_element_type(evaluated)
                             } else {
                                 evaluated
                             };
@@ -1816,6 +1862,13 @@ impl<'a> CheckerState<'a> {
         // subtype cache entries from inference. When we have instantiated params and
         // a fresh assignability check passes, treat the call as successful and perform
         // EPC instead of reporting TS2345.
+        if let Some(ref instantiated_params) = generic_instantiated_params {
+            self.propagate_generic_constructor_display_defs(
+                callee_type_for_call,
+                args.len(),
+                instantiated_params,
+            );
+        }
         let (result, did_post_epc) = if let Some(ref instantiated_params) =
             generic_instantiated_params
         {
@@ -1836,13 +1889,19 @@ impl<'a> CheckerState<'a> {
                     // a fresh structural check on the evaluated instantiated param.
                     if let Some(param) = instantiated_params.get(*index) {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let expected_param = if param.rest {
+                            self.contextual_rest_argument_element_type(evaluated_param)
+                        } else {
+                            evaluated_param
+                        };
                         let arg_type = args
                             .get(*index)
                             .copied()
                             .map(|arg_idx| {
-                                self.refreshed_generic_call_arg_type(
+                                self.refreshed_generic_call_arg_type_with_context(
                                     arg_idx,
                                     arg_types.get(*index).copied().unwrap_or(TypeId::UNKNOWN),
+                                    Some(expected_param),
                                 )
                             })
                             .unwrap_or(TypeId::UNKNOWN);
@@ -1865,10 +1924,16 @@ impl<'a> CheckerState<'a> {
                         && param.type_id != TypeId::UNKNOWN
                     {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let expected_param = if param.rest {
+                            self.contextual_rest_argument_element_type(evaluated_param)
+                        } else {
+                            evaluated_param
+                        };
                         if !is_type_parameter_type(self.ctx.types, evaluated_param) {
-                            let arg_type = self.refreshed_generic_call_arg_type(
+                            let arg_type = self.refreshed_generic_call_arg_type_with_context(
                                 arg_idx,
                                 arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
+                                Some(expected_param),
                             );
                             self.check_object_literal_excess_properties(
                                 arg_type,
@@ -1917,42 +1982,6 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = Some(original_ctx);
         }
         self.handle_call_result(result, call_context)
-    }
-}
-
-impl<'a> CheckerState<'a> {
-    fn object_literal_has_computed_property_names(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return false;
-        }
-        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
-            return false;
-        };
-
-        obj.elements.nodes.iter().any(|&elem_idx| {
-            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                return false;
-            };
-            let name_idx = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                Some(prop.name)
-            } else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                Some(method.name)
-            } else {
-                self.ctx
-                    .arena
-                    .get_accessor(elem_node)
-                    .map(|accessor| accessor.name)
-            };
-
-            name_idx
-                .and_then(|name_idx| self.ctx.arena.get(name_idx))
-                .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-        })
     }
 }
 

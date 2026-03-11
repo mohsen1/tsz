@@ -503,8 +503,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
             None => {
-                // A truly empty source (no properties at all) vacuously satisfies
-                // the numeric index signature. tsc: `{} -> { [n: number]: T }`.
+                // TypeScript only synthesizes an implicit numeric index signature
+                // for anonymous object types. Named interface/class instance types
+                // must declare a real number/string index signature to satisfy
+                // arbitrary numeric indexing.
+                if source.symbol.is_some() {
+                    return SubtypeResult::False;
+                }
+
+                // A truly empty anonymous source vacuously satisfies the numeric
+                // index signature. tsc accepts `{}`-like object literal types here.
                 if source.properties.is_empty() {
                     return SubtypeResult::True;
                 }
@@ -546,12 +554,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     SubtypeResult::True
                 } else {
                     // TypeScript treats number index signatures as constraining only
-                    // numerically named members. If the source has no numeric members,
-                    // the numeric index constraint is vacuously satisfied.
-                    //
-                    // Examples accepted by tsc:
-                    //   { one: number } <: { [n: number]: number }
-                    //   { length: number } <: ArrayLike<T>
+                    // numerically named members for anonymous object types. If the
+                    // source has no numeric members, the numeric index constraint is
+                    // vacuously satisfied.
                     SubtypeResult::True
                 }
             }
@@ -853,15 +858,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
-        // First check named properties match
-        // Create temporary ObjectShape for source to enable nominal check
-        let source_shape = ObjectShape {
-            flags: ObjectFlags::empty(),
-            properties: source.to_vec(),
-            string_index: None,
-            number_index: None,
-            symbol: None, // Source doesn't have a symbol (just properties)
-        };
+        // Preserve the original shape identity when available. Named interface/class
+        // types follow different index-signature rules than anonymous object types,
+        // and rebuilding them as anonymous shapes loses that distinction.
+        let source_shape = source_shape_id
+            .map(|id| self.interner.object_shape(id))
+            .unwrap_or_else(|| {
+                ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties: source.to_vec(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                }
+                .into()
+            });
         if !self
             .check_object_subtype(&source_shape, source_shape_id, target)
             .is_true()

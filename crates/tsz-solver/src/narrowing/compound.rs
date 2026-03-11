@@ -33,11 +33,7 @@ impl<'a> NarrowingContext<'a> {
     /// This is the negation of `narrow_by_typeof`.
     /// For example, narrowing `string | number` with `typeof "string"` (sense=false)
     /// yields `number`.
-    pub(crate) fn narrow_by_typeof_negation(
-        &self,
-        source_type: TypeId,
-        typeof_result: &str,
-    ) -> TypeId {
+    pub fn narrow_by_typeof_negation(&self, source_type: TypeId, typeof_result: &str) -> TypeId {
         // For each typeof result, we exclude matching types
         let excluded = match typeof_result {
             "string" => TypeId::STRING,
@@ -69,8 +65,12 @@ impl<'a> NarrowingContext<'a> {
     /// Keeps primitives, undefined, void, and function types.
     /// Excludes object types (objects, arrays, tuples, class instances).
     /// Note: null should already be excluded before calling this.
-    fn narrow_excluding_typeof_object(&self, source_type: TypeId) -> TypeId {
+    pub(crate) fn narrow_excluding_typeof_object(&self, source_type: TypeId) -> TypeId {
         let resolved = self.resolve_type(source_type);
+
+        if let Some(narrowed) = self.narrow_type_param_excluding_typeof_object(resolved) {
+            return narrowed;
+        }
 
         // For non-union types, check if it's an object type
         let Some(members) = union_list_id(self.db, resolved) else {
@@ -129,16 +129,24 @@ impl<'a> NarrowingContext<'a> {
 
         // Check type data for structural types
         if let Some(data) = self.db.lookup(type_id) {
-            // Object, intersection, mapped, tuple, array: typeof === "object"
-            matches!(
-                data,
+            match data {
+                TypeData::Intersection(list_id) => {
+                    let members = self.db.type_list(list_id);
+                    // Intersections like `L & { tag: string }` are still functions at runtime
+                    // when any member contributes call signatures, so `typeof` is "function",
+                    // not "object".
+                    !members
+                        .iter()
+                        .copied()
+                        .any(|member| crate::type_queries::is_invokable_type(self.db, member))
+                }
                 TypeData::Object(_)
-                    | TypeData::ObjectWithIndex(_)
-                    | TypeData::Intersection(_)
-                    | TypeData::Mapped(_)
-                    | TypeData::Tuple(_)
-                    | TypeData::Array(_)
-            )
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Mapped(_)
+                | TypeData::Tuple(_)
+                | TypeData::Array(_) => true,
+                _ => false,
+            }
         } else {
             false
         }

@@ -564,7 +564,12 @@ impl BinderState {
                         sym.declarations.push(export.export_clause);
                         sym.is_umd_export = is_umd;
 
-                        if export.module_specifier.is_some()
+                        if is_umd {
+                            // `export as namespace Foo` creates a global alias to the
+                            // current file's external-module export surface.
+                            sym.import_module = Some(self.debugger.current_file.clone());
+                            sym.import_name = Some("*".to_string());
+                        } else if export.module_specifier.is_some()
                             && let Some(spec_node) = arena.get(export.module_specifier)
                             && let Some(lit) = arena.get_literal(spec_node)
                         {
@@ -574,10 +579,14 @@ impl BinderState {
                         }
                     }
 
-                    // Don't overwrite current_scope when a TYPE_ALIAS already exists.
-                    // This preserves the TYPE_ALIAS in file_locals (for type reference resolution)
-                    // while the ALIAS goes to module_exports (for value/namespace resolution).
-                    // Record the partnership in alias_partners for the checker.
+                    // `export * as ns from "./mod"` creates an exported name but does NOT create
+                    // a same-file lexical binding for `ns`. Keep it out of current_scope so local
+                    // references still resolve like tsc, while cross-file consumers use
+                    // `module_exports`. UMD `export as namespace Foo` is different: it does create
+                    // a global binding, so keep the old current_scope/file_locals behavior there.
+                    //
+                    // If a TYPE_ALIAS already exists, preserve it as the local/type binding and
+                    // record the ALIAS partner for value/namespace resolution.
                     let existing_type_alias_id = self.current_scope.get(name).filter(|id| {
                         self.symbols
                             .get(*id)
@@ -585,7 +594,7 @@ impl BinderState {
                     });
                     if let Some(type_alias_id) = existing_type_alias_id {
                         self.alias_partners.insert(type_alias_id, sym_id);
-                    } else {
+                    } else if is_umd {
                         self.current_scope.set(name.to_string(), sym_id);
                     }
                     self.node_symbols.insert(export.export_clause.0, sym_id);

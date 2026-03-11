@@ -999,11 +999,7 @@ impl<'a> TypeInstantiator<'a> {
                 // (which has a proper TypeResolver) handle the full expansion.
                 let has_lazy_application =
                     template_has_lazy_application_in_composite(self.interner, new_template);
-                if self.preserve_meta_types
-                    || new_name_type.is_some()
-                    || has_lazy_extends
-                    || has_lazy_application
-                {
+                if self.preserve_meta_types || has_lazy_extends || has_lazy_application {
                     mapped_type
                 } else if crate::visitor::contains_type_parameters(self.interner, new_constraint) {
                     // Don't eagerly evaluate when the constraint still contains type
@@ -1071,6 +1067,17 @@ impl<'a> TypeInstantiator<'a> {
                     return self.interner.keyof(inst_operand);
                 }
                 if self.preserve_meta_types {
+                    return self.interner.keyof(inst_operand);
+                }
+                if matches!(
+                    self.interner.lookup(inst_operand),
+                    Some(
+                        TypeData::TypeQuery(_)
+                            | TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::IndexAccess(_, _)
+                    )
+                ) {
                     return self.interner.keyof(inst_operand);
                 }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
@@ -1184,15 +1191,24 @@ pub fn instantiate_type(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
+    instantiate_type_with_depth_status(interner, type_id, substitution).0
+}
+
+/// Instantiate a type and report whether instantiation depth overflowed.
+pub fn instantiate_type_with_depth_status(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> (TypeId, bool) {
     if substitution.is_empty() || substitution.is_identity(interner) {
-        return type_id;
+        return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     let result = instantiator.instantiate(type_id);
     if instantiator.depth_exceeded {
-        TypeId::ERROR
+        (TypeId::ERROR, true)
     } else {
-        result
+        (result, false)
     }
 }
 

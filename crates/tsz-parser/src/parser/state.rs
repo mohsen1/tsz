@@ -130,6 +130,26 @@ pub struct ParserState {
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
     /// Whether a top-level import/export has been seen in the current file.
     pub(crate) seen_module_indicator: bool,
+    /// Whether the most recently parsed named import list consumed its closing brace.
+    pub(crate) last_named_imports_consumed_closing_brace: bool,
+    /// When recovery consumes a malformed arrow-body `}` directly, keep a small
+    /// number of following module-closing braces in the token stream so outer
+    /// list recovery can report them as stray braces.
+    pub(crate) deferred_module_close_braces: u32,
+    /// When malformed import-attribute recovery breaks a type constituent,
+    /// stop consuming `&`-continued intersections so the tail falls back to
+    /// statement-level recovery like TypeScript.
+    pub(crate) abort_intersection_continuation: bool,
+    /// After malformed import-attribute recovery inside an intersection type,
+    /// parse the next `import()` options object with generic expression
+    /// grammar so its diagnostics degrade like TypeScript's fallback path.
+    pub(crate) fallback_import_type_options_once: bool,
+    /// Parse `import()` options using type-import attribute grammar instead of
+    /// generic object-literal expression grammar.
+    pub(crate) in_import_type_options_context: bool,
+    /// Malformed type-import attribute recovery consumed the import call tail
+    /// through `).Name`, so `parse_import_expression` must not expect `)` again.
+    pub(crate) import_attribute_tail_recovered: bool,
 }
 
 impl ParserState {
@@ -166,6 +186,12 @@ impl ParserState {
             last_error_pos: 0,
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
+            last_named_imports_consumed_closing_brace: false,
+            deferred_module_close_braces: 0,
+            abort_intersection_continuation: false,
+            fallback_import_type_options_once: false,
+            in_import_type_options_context: false,
+            import_attribute_tail_recovered: false,
         }
     }
 
@@ -182,6 +208,12 @@ impl ParserState {
         self.label_scopes.clear();
         self.label_scopes.push(FxHashMap::default());
         self.seen_module_indicator = false;
+        self.last_named_imports_consumed_closing_brace = false;
+        self.deferred_module_close_braces = 0;
+        self.abort_intersection_continuation = false;
+        self.fallback_import_type_options_once = false;
+        self.in_import_type_options_context = false;
+        self.import_attribute_tail_recovered = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -391,6 +423,18 @@ impl ParserState {
         self.next_token();
         let result = !self.scanner.has_preceding_line_break()
             && self.current_token == SyntaxKind::OpenBraceToken;
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
+    /// Check if the next token (after the current one) is `[` on the same line.
+    pub(crate) fn next_token_is_open_bracket(&mut self) -> bool {
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && self.current_token == SyntaxKind::OpenBracketToken;
         self.scanner.restore_state(saved_state);
         self.current_token = saved_token;
         result
@@ -1672,7 +1716,7 @@ impl ParserState {
             } else {
                 false
             };
-            if !expr_had_error {
+            if !expr_had_error || self.is_token(SyntaxKind::ColonToken) {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
             return;
@@ -1690,6 +1734,15 @@ impl ParserState {
         }
 
         if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
+            if suggestion == "this" && self.is_token(SyntaxKind::DotToken) {
+                self.parse_error_at(
+                    pos,
+                    len,
+                    diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+                return;
+            }
             if !self.should_suppress_type_or_keyword_suggestion_for_missing_semicolon(
                 suggestion.as_str(),
                 pos,
@@ -1702,14 +1755,6 @@ impl ParserState {
                 );
             }
 
-            // tsc reports the spelling suggestion on the misspelled token and a
-            // follow-up TS1005 on the identifier that trails it:
-            //   "clasd MyClass {}" -> TS1435 on "clasd", then "';' expected" on "MyClass".
-            // Without this, the parser later falls through to TS1434 on the
-            // follow-up identifier, which is the current CI regression.
-            if self.is_token(SyntaxKind::Identifier) && self.should_report_error() {
-                self.error_token_expected(";");
-            }
             return;
         }
 

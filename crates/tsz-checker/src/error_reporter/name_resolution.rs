@@ -146,6 +146,46 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::TYPE_OPERATOR
                     | syntax_kind_ext::TYPE_QUERY
                     | syntax_kind_ext::INFER_TYPE => return true,
+                    syntax_kind_ext::IMPORT_CLAUSE => {
+                        if self
+                            .ctx
+                            .arena
+                            .get_import_clause(node)
+                            .is_some_and(|clause| clause.is_type_only)
+                        {
+                            return true;
+                        }
+                    }
+                    syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                        if self
+                            .ctx
+                            .arena
+                            .get_import_decl(node)
+                            .is_some_and(|decl| decl.is_type_only)
+                        {
+                            return true;
+                        }
+                    }
+                    syntax_kind_ext::IMPORT_SPECIFIER | syntax_kind_ext::EXPORT_SPECIFIER => {
+                        if self
+                            .ctx
+                            .arena
+                            .get_specifier(node)
+                            .is_some_and(|specifier| specifier.is_type_only)
+                        {
+                            return true;
+                        }
+                    }
+                    syntax_kind_ext::EXPORT_DECLARATION => {
+                        if self
+                            .ctx
+                            .arena
+                            .get_export_decl(node)
+                            .is_some_and(|decl| decl.is_type_only)
+                        {
+                            return true;
+                        }
+                    }
                     // Stop at expression/statement boundaries
                     syntax_kind_ext::FUNCTION_DECLARATION
                     | syntax_kind_ext::FUNCTION_EXPRESSION
@@ -595,6 +635,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check if this is a known jQuery global → TS2592
+        if is_known_jquery_global(name) {
+            self.error_cannot_find_name_install_jquery_types(name, idx);
+            return;
+        }
+
         // Check if this is a known Node.js global → TS2591
         // Skip for "module" when there are parse errors — the parser likely failed to
         // parse a module declaration and recovered `module` as an identifier.
@@ -761,6 +807,16 @@ impl<'a> CheckerState<'a> {
         self.error_at_node_msg(
             idx,
             diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+            &[name],
+        );
+    }
+
+    /// Report TS2592: Cannot find name 'X' - suggest installing @types/jquery
+    /// and adding 'jquery' to the types field in tsconfig.
+    pub fn error_cannot_find_name_install_jquery_types(&mut self, name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2,
             &[name],
         );
     }
@@ -1023,6 +1079,11 @@ pub(crate) fn is_known_node_global(name: &str) -> bool {
         name,
         "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
     )
+}
+
+/// Check if a name is a known jQuery global that requires @types/jquery (TS2592).
+pub(crate) fn is_known_jquery_global(name: &str) -> bool {
+    matches!(name, "$" | "jQuery")
 }
 
 /// Check if a name is a known test runner global that requires @types/jest or @types/mocha (TS2582).

@@ -19,6 +19,31 @@ use crate::visitor::{
 use crate::visitors::visitor_predicates::is_primitive_type;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+        match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                let def_id = self.resolver.symbol_to_def_id(sym_ref)?;
+                matches!(
+                    self.resolver.get_def_kind(def_id),
+                    Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+                )
+                .then_some(def_id)
+            }
+            _ => None,
+        }
+    }
+
+    fn shared_application_base_def_id(
+        &self,
+        source_base: TypeId,
+        target_base: TypeId,
+    ) -> Option<DefId> {
+        let source_def = self.application_base_def_id(source_base)?;
+        let target_def = self.application_base_def_id(target_base)?;
+        (source_def == target_def).then_some(source_def)
+    }
+
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
     ///
     /// Handles the common pattern of:
@@ -211,6 +236,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
+        let same_arity = s_app.args.len() == t_app.args.len();
+        let shared_base_def = self.shared_application_base_def_id(s_app.base, t_app.base);
+        let same_application_family =
+            same_arity && (s_app.base == t_app.base || shared_base_def.is_some());
+        let variance_def_id = if s_app.base == t_app.base {
+            self.application_base_def_id(s_app.base)
+        } else {
+            shared_base_def
+        };
 
         // =======================================================================
         // VARIANCE-AWARE FAST PATH: Same base type with variance checking
@@ -219,9 +253,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // variance annotations to check type arguments without expanding the
         // entire structure. This is critical for O(1) performance.
         // =======================================================================
-        if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+        if same_application_family {
             // Try to resolve DefId from the base to query variance
-            let def_id = lazy_def_id(self.interner, s_app.base);
+            let def_id = variance_def_id;
 
             if let Some(def_id) = def_id {
                 // Try to get variance from query_db first (if available).
@@ -308,8 +342,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // leads to false negatives. We detect cycles by tracking (source_base_DefId,
         // target_base_DefId) pairs — coinductive semantics assume the relation holds.
         // =======================================================================
-        let s_base_def = lazy_def_id(self.interner, s_app.base);
-        let t_base_def = lazy_def_id(self.interner, t_app.base);
+        let s_base_def = self.application_base_def_id(s_app.base);
+        let t_base_def = self.application_base_def_id(t_app.base);
 
         let app_def_pair = match (s_base_def, t_base_def) {
             (Some(s_def), Some(t_def)) => Some((s_def, t_def)),
@@ -364,7 +398,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //
                 // This mirrors common TS behavior for readonly/out-position generic uses and
                 // avoids broad false-positive assignability failures from an expansion miss.
-                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                if same_application_family {
                     let mut all_ok = true;
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         if !self.check_subtype(*s_arg, *t_arg).is_true() {
@@ -428,7 +462,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let app = self.interner.type_application(app_id);
 
-        let def_id = lazy_def_id(self.interner, app.base)?;
+        let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
         let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
         let effective_body = if matches!(
@@ -929,7 +963,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let app = self.interner.type_application(app_id);
 
-        let def_id = lazy_def_id(self.interner, app.base)?;
+        let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
         let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
         let effective_body = if matches!(

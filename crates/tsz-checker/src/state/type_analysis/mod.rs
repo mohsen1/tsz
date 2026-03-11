@@ -9,3 +9,4 @@ mod computed_helpers_binding;
 mod computed_loops;
 mod core;
 pub(crate) mod cross_file;
+mod symbol_type_helpers;

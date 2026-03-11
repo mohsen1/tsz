@@ -34,6 +34,64 @@ namespace M {
 }
 
 #[test]
+fn export_namespace_wrapper_marks_inner_module_as_publicly_exported() {
+    let source = r"
+namespace M {
+    export namespace foo {
+        export var y = 1;
+    }
+    namespace foo {
+        export var z = 1;
+    }
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let source_file = arena
+        .get_source_file_at(root)
+        .expect("expected source file");
+    let outer_ns_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("expected outer namespace");
+    let outer_ns = arena
+        .get_module_at(outer_ns_idx)
+        .expect("expected outer namespace declaration");
+    let body = arena
+        .get_module_block_at(outer_ns.body)
+        .expect("expected outer namespace body");
+    let statements = body.statements.as_ref().expect("expected inner statements");
+
+    let exported_stmt_idx = statements.nodes[0];
+    let exported_stmt = arena
+        .get_export_decl_at(exported_stmt_idx)
+        .expect("expected export declaration wrapper");
+    let exported_foo_idx = exported_stmt.export_clause;
+    let plain_foo_idx = statements.nodes[1];
+
+    assert_eq!(
+        binder
+            .module_declaration_exports_publicly
+            .get(&exported_foo_idx.0),
+        Some(&true),
+        "export namespace foo should be recorded as publicly exported"
+    );
+    assert_eq!(
+        binder
+            .module_declaration_exports_publicly
+            .get(&plain_foo_idx.0),
+        Some(&false),
+        "plain namespace foo should remain non-exported"
+    );
+}
+
+#[test]
 fn records_import_metadata_for_exported_reexports() {
     let source = r"
 export { A, B as C } from './a';
@@ -80,6 +138,108 @@ export type { D as E } from './b';
     assert_eq!(e_symbol.import_module.as_deref(), Some("./b"));
     assert_eq!(e_symbol.import_name.as_deref(), Some("D"));
     assert!(e_symbol.is_type_only);
+}
+
+#[test]
+fn export_as_namespace_records_current_file_namespace_metadata() {
+    let source = r"
+export var x: number;
+export interface Thing { n: typeof x }
+export as namespace Foo;
+";
+    let mut parser = ParserState::new("foo.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let foo_sym_id = binder
+        .file_locals
+        .get("Foo")
+        .expect("expected UMD namespace alias symbol");
+    let foo_symbol = binder
+        .symbols
+        .get(foo_sym_id)
+        .expect("expected symbol data for Foo");
+
+    assert_ne!(foo_symbol.flags & symbol_flags::ALIAS, 0);
+    assert!(foo_symbol.is_umd_export);
+    assert_eq!(foo_symbol.import_module.as_deref(), Some("foo.d.ts"));
+    assert_eq!(foo_symbol.import_name.as_deref(), Some("*"));
+}
+
+#[test]
+fn namespace_reexport_does_not_create_local_binding() {
+    let source = r"
+export * as ns from './mod';
+ns.a;
+let ns = { a: 1 };
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let local_ns_id = binder
+        .file_locals
+        .get("ns")
+        .expect("expected local let ns in file_locals");
+    let local_ns = binder
+        .symbols
+        .get(local_ns_id)
+        .expect("expected symbol data for local ns");
+    assert_ne!(local_ns.flags & symbol_flags::BLOCK_SCOPED_VARIABLE, 0);
+    assert_eq!(local_ns.flags & symbol_flags::ALIAS, 0);
+
+    let export_ns_id = binder
+        .module_exports
+        .get("test.ts")
+        .and_then(|exports| exports.get("ns"))
+        .expect("expected namespace re-export in module_exports");
+    let export_ns = binder
+        .symbols
+        .get(export_ns_id)
+        .expect("expected symbol data for exported ns");
+
+    assert_ne!(export_ns.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(export_ns.import_module.as_deref(), Some("./mod"));
+    assert_eq!(export_ns.import_name.as_deref(), Some("*"));
+    assert_ne!(export_ns_id, local_ns_id);
+}
+
+#[test]
+fn type_alias_after_namespace_reexport_keeps_alias_partner() {
+    let source = r"
+export * as Foo from './mod';
+export type Foo = { x: number };
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let foo_sym_id = binder
+        .file_locals
+        .get("Foo")
+        .expect("expected exported type alias in file_locals");
+    let foo_symbol = binder
+        .symbols
+        .get(foo_sym_id)
+        .expect("expected symbol data for Foo");
+    assert_ne!(foo_symbol.flags & symbol_flags::TYPE_ALIAS, 0);
+
+    let alias_id = *binder
+        .alias_partners
+        .get(&foo_sym_id)
+        .expect("expected namespace export alias partner for Foo");
+    let alias_symbol = binder
+        .symbols
+        .get(alias_id)
+        .expect("expected alias partner symbol data");
+    assert_ne!(alias_symbol.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(alias_symbol.import_module.as_deref(), Some("./mod"));
+    assert_eq!(alias_symbol.import_name.as_deref(), Some("*"));
+
+    let export_foo_id = binder
+        .module_exports
+        .get("test.ts")
+        .and_then(|exports| exports.get("Foo"))
+        .expect("expected Foo export in module_exports");
+    assert_eq!(export_foo_id, foo_sym_id);
 }
 
 #[test]
@@ -249,6 +409,36 @@ declare module "b" {
     assert!(
         module_exports.has("a"),
         "expected export-import alias a in cached module exports"
+    );
+}
+
+#[test]
+fn export_equals_default_property_does_not_create_default_module_export() {
+    let source = r#"
+var x = {
+    default: 42,
+    answer: 1
+};
+
+export = x;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let module_exports = binder
+        .module_exports
+        .get("test.ts")
+        .expect("expected cached module exports for file");
+    assert!(
+        module_exports.has("export="),
+        "expected explicit export= target to stay cached"
+    );
+    assert!(
+        !module_exports.has("default"),
+        "default-valued export= members must not masquerade as real default exports"
     );
 }
 
@@ -1459,6 +1649,23 @@ x = 1;
 }
 
 #[test]
+fn assignment_in_class_computed_property_does_not_create_flow_assignment() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+let x: number;
+class A { [(x = 1, "_")]() {} }
+x;
+"#,
+    );
+
+    let assignment_count = count_flow_nodes_with_flags(&binder, flow_flags::ASSIGNMENT);
+    assert_eq!(
+        assignment_count, 0,
+        "assignments evaluated inside class computed property names should not create ASSIGNMENT flow nodes"
+    );
+}
+
+#[test]
 fn switch_creates_switch_clause_flow() {
     // Switch statements should create SWITCH_CLAUSE flow nodes.
     let (binder, _parser) = parse_and_bind(
@@ -2540,6 +2747,37 @@ foo.baz = 'hello';
     }
     // Note: expando tracking may not work for all patterns in all cases,
     // so we don't assert that the map is non-empty unconditionally.
+}
+
+#[test]
+fn void_zero_expando_assignments_are_skipped() {
+    let source = r#"
+exports.k = void 0;
+var o = {};
+o.y = void 0;
+"#;
+
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        !binder
+            .expando_properties
+            .get("exports")
+            .is_some_and(|props| props.contains("k")),
+        "unexpected exports expando tracking: {:?}",
+        binder.expando_properties
+    );
+    assert!(
+        !binder
+            .expando_properties
+            .get("o")
+            .is_some_and(|props| props.contains("y")),
+        "unexpected object expando tracking: {:?}",
+        binder.expando_properties
+    );
 }
 
 // =============================================================================

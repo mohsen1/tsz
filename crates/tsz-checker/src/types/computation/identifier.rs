@@ -933,11 +933,17 @@ impl<'a> CheckerState<'a> {
             }
             // In CommonJS module mode, these globals are implicitly available
             if self.ctx.compiler_options.module.is_commonjs() {
+                if name == "exports" {
+                    return self.current_file_commonjs_namespace_type();
+                }
                 return TypeId::ANY;
             }
             // JS files implicitly have CommonJS globals (require, exports, module, etc.)
             // tsc never emits TS2580 for JS files — they're treated as CommonJS by default
             if self.is_js_file() {
+                if name == "exports" {
+                    return self.current_file_commonjs_namespace_type();
+                }
                 return TypeId::ANY;
             }
             // Otherwise, emit TS2591 suggesting @types/node installation
@@ -1129,6 +1135,9 @@ impl<'a> CheckerState<'a> {
         if self.is_unresolved_import_symbol(idx) {
             return TypeId::ANY;
         }
+        if self.is_root_identifier_of_js_prototype_assignment(idx) {
+            return TypeId::ANY;
+        }
         // Check known globals that might be missing
         if self.is_known_global_value_name(name) {
             return self.emit_global_not_found_error(idx, name);
@@ -1159,6 +1168,89 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, idx);
         TypeId::ERROR
+    }
+
+    fn is_root_identifier_of_js_prototype_assignment(&self, idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let mut current = idx;
+        let Some(first_parent_ext) = self.ctx.arena.get_extended(current) else {
+            return false;
+        };
+        let first_parent = first_parent_ext.parent;
+        let Some(first_parent_node) = self.ctx.arena.get(first_parent) else {
+            return false;
+        };
+        if first_parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && first_parent_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(first_access) = self.ctx.arena.get_access_expr(first_parent_node) else {
+            return false;
+        };
+        if first_access.expression != current
+            || !self.access_member_is_named(first_access.name_or_argument, "prototype")
+        {
+            return false;
+        }
+        current = first_parent;
+
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+
+            if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                && access.expression == current
+            {
+                current = parent;
+                continue;
+            }
+
+            return parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_binary_expr(parent_node)
+                    .is_some_and(|binary| {
+                        binary.left == current && self.is_assignment_operator(binary.operator_token)
+                    });
+        }
+    }
+
+    fn access_member_is_named(&self, idx: NodeIndex, expected: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == expected;
+        }
+
+        if let Some(lit) = self.ctx.arena.get_literal(node) {
+            return lit.text == expected;
+        }
+
+        false
     }
 
     fn source_file_has_value_import_binding_named(&self, idx: NodeIndex, name: &str) -> bool {

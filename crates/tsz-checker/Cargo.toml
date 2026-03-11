@@ -100,6 +100,10 @@ name = "conformance_issues"
 path = "tests/conformance_issues.rs"
 
 [[test]]
+name = "binding_pattern_inference_tests"
+path = "tests/binding_pattern_inference_tests.rs"
+
+[[test]]
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 

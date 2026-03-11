@@ -1,0 +1,391 @@
+//! Helper functions and secondary impl blocks for type node checking.
+//!
+//! Extracted from `type_node.rs` to keep module size manageable.
+
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+use super::type_node::{TypeLiteralSignatureScopeUpdates, TypeNodeChecker};
+
+/// Extract the string literal text from a type-level index (e.g., `'y'` from `T['y']`).
+/// In type position, the index is a `LiteralType` node wrapping a string literal.
+pub(super) fn get_string_literal_from_type_index(
+    arena: &tsz_parser::parser::NodeArena,
+    idx: NodeIndex,
+) -> Option<String> {
+    let node = arena.get(idx)?;
+    // Try direct literal first (for expression-like contexts)
+    if let Some(lit) = arena.get_literal(node) {
+        return Some(lit.text.to_string());
+    }
+    // In type position, the index is a LiteralType wrapping an inner literal
+    if let Some(lit_type) = arena.get_literal_type(node) {
+        let inner = arena.get(lit_type.literal)?;
+        let lit = arena.get_literal(inner)?;
+        return Some(lit.text.to_string());
+    }
+    None
+}
+
+/// Check if a type node is `typeof globalThis`, possibly wrapped in parentheses.
+/// Used to detect `(typeof globalThis)['key']` patterns in indexed access types.
+pub(super) fn is_typeof_global_this_type_node(
+    arena: &tsz_parser::parser::NodeArena,
+    mut node_idx: NodeIndex,
+) -> bool {
+    // Unwrap parenthesized types: (typeof globalThis) → typeof globalThis
+    loop {
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            if let Some(wrapped) = arena.get_wrapped_type(node) {
+                node_idx = wrapped.type_node;
+                continue;
+            }
+            return false;
+        }
+        // Check if we reached a TYPE_QUERY with "globalThis" as expr_name
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(tq) = arena.get_type_query(node)
+            && let Some(ident_node) = arena.get(tq.expr_name)
+            && let Some(ident) = arena.get_identifier(ident_node)
+        {
+            return ident.escaped_text == "globalThis";
+        }
+        return false;
+    }
+}
+
+// Check duplicate parameters from a TypeNodeChecker context.
+pub(crate) fn check_duplicate_parameters_in_type(
+    ctx: &mut crate::CheckerContext,
+    parameters: &tsz_parser::parser::NodeList,
+) {
+    let mut seen_names = rustc_hash::FxHashSet::default();
+    for &param_idx in &parameters.nodes {
+        if let Some(param_node) = ctx.arena.get(param_idx)
+            && let Some(param) = ctx.arena.get_parameter(param_node)
+        {
+            collect_names_in_type(ctx, param.name, &mut seen_names);
+        }
+    }
+}
+
+fn collect_names_in_type(
+    ctx: &mut crate::CheckerContext,
+    name_idx: tsz_parser::parser::NodeIndex,
+    seen: &mut rustc_hash::FxHashSet<String>,
+) {
+    use tsz_scanner::SyntaxKind;
+    let Some(node) = ctx.arena.get(name_idx) else {
+        return;
+    };
+    if node.kind == SyntaxKind::Identifier as u16 {
+        if let Some(name) = ctx
+            .arena
+            .get_identifier(node)
+            .map(|i| i.escaped_text.clone())
+            && !seen.insert(name.clone())
+        {
+            let msg = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
+                &[&name],
+            );
+            ctx.error(
+                node.pos,
+                node.end - node.pos,
+                msg,
+                crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+        }
+    } else if (node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+        || node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        && let Some(pattern) = ctx.arena.get_binding_pattern(node)
+    {
+        for &elem_idx in &pattern.elements.nodes {
+            if let Some(elem_node) = ctx.arena.get(elem_idx) {
+                if elem_node.kind == tsz_parser::parser::syntax_kind_ext::OMITTED_EXPRESSION {
+                    continue;
+                }
+                if let Some(elem) = ctx.arena.get_binding_element(elem_node) {
+                    if elem.property_name.is_some()
+                        && let Some(prop_node) = ctx.arena.get(elem.property_name)
+                        && prop_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(name_node) = ctx.arena.get(elem.name)
+                        && name_node.kind == SyntaxKind::Identifier as u16
+                    {
+                        let prop_name = ctx
+                            .arena
+                            .get_identifier(prop_node)
+                            .map(|i| i.escaped_text.trim_end_matches(":").trim().to_string())
+                            .unwrap_or_default();
+                        let name_str = ctx
+                            .arena
+                            .get_identifier(name_node)
+                            .map(|i| i.escaped_text.clone())
+                            .unwrap_or_default();
+                        let msg = crate::diagnostics::format_message(crate::diagnostics::diagnostic_messages::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION, &[&name_str, &prop_name]);
+                        ctx.error(name_node.pos, name_node.end - name_node.pos, msg, crate::diagnostics::diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION);
+                    }
+                    collect_names_in_type(ctx, elem.name, seen);
+                }
+            }
+        }
+    }
+}
+
+impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    pub(super) fn push_type_parameters_for_type_literal_signature(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> (
+        Vec<tsz_solver::TypeParamInfo>,
+        TypeLiteralSignatureScopeUpdates,
+    ) {
+        let Some(list) = type_parameters else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let factory = self.ctx.types.factory();
+        let mut params = Vec::with_capacity(list.nodes.len());
+        let mut updates = Vec::with_capacity(list.nodes.len());
+
+        // First pass: seed names so later constraints can reference earlier
+        // or self-recursive type parameters.
+        for &param_idx in &list.nodes {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .ctx
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+            let atom = self.ctx.types.intern_string(&name);
+            let type_id = factory.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint: None,
+                default: None,
+                is_const: false,
+            });
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name, previous));
+        }
+
+        // Second pass: refine the visible type-parameter entries with their
+        // constraints/defaults and return the final metadata for the signature.
+        for &param_idx in &list.nodes {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+            let name = self
+                .ctx
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+            let atom = self.ctx.types.intern_string(&name);
+            let constraint =
+                (data.constraint != NodeIndex::NONE).then(|| self.check(data.constraint));
+            let default = if data.default != NodeIndex::NONE {
+                let default_type = self.check(data.default);
+                (default_type != TypeId::ERROR).then_some(default_type)
+            } else {
+                None
+            };
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+            let info = tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default,
+                is_const,
+            };
+            let type_id = factory.type_param(info.clone());
+            self.ctx.type_parameter_scope.insert(name, type_id);
+            params.push(info);
+        }
+
+        (params, updates)
+    }
+
+    pub(super) fn pop_type_parameters_for_type_literal_signature(
+        &mut self,
+        updates: Vec<(String, Option<TypeId>)>,
+    ) {
+        for (name, previous) in updates.into_iter().rev() {
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+    }
+
+    /// Check if an index signature parameter type annotation refers to a type parameter
+    /// or literal type (TS1337) rather than a plain invalid type (TS1268).
+    pub(super) fn is_type_param_or_literal_in_index_sig(
+        &self,
+        type_annotation_idx: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation_idx) else {
+            return false;
+        };
+
+        // Literal types: string/number/boolean literals
+        if type_node.kind == syntax_kind_ext::LITERAL_TYPE
+            || type_node.kind == SyntaxKind::StringLiteral as u16
+            || type_node.kind == SyntaxKind::NumericLiteral as u16
+            || type_node.kind == SyntaxKind::TrueKeyword as u16
+            || type_node.kind == SyntaxKind::FalseKeyword as u16
+        {
+            return true;
+        }
+
+        // Type references: check if they resolve to type parameters
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            // Check the type parameter scope (covers generic type params from
+            // type aliases, functions, classes, etc.)
+            if self
+                .ctx
+                .type_parameter_scope
+                .contains_key(ident.escaped_text.as_str())
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a resolved type is an array or tuple type (concrete, not a type parameter).
+    /// Used by TS1265/TS1266 checks to distinguish concrete rest elements from variadic
+    /// type parameter spreads. Only concrete array/tuple rest elements are subject to
+    /// the "rest after rest" and "optional after rest" restrictions.
+    pub(super) fn is_array_or_tuple_type(&self, type_id: tsz_solver::TypeId) -> bool {
+        tsz_solver::is_array_type(self.ctx.types, type_id)
+            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+    }
+
+    pub(super) fn is_this_type_allowed(
+        &self,
+        this_node_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut child_idx = this_node_idx;
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(this_node_idx)
+            .map(|ext| ext.parent);
+
+        while let Some(parent_idx) = current {
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            match node.kind {
+                // Nodes that PROVIDE a 'this' type context
+                syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+                | syntax_kind_ext::INTERFACE_DECLARATION => {
+                    return true;
+                }
+
+                // Class/Interface members
+                syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::PROPERTY_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::INDEX_SIGNATURE
+                | syntax_kind_ext::PROPERTY_SIGNATURE
+                | syntax_kind_ext::METHOD_SIGNATURE => {
+                    // If it's static, 'this' type is not allowed
+                    let is_static = (node.flags & tsz_parser::modifier_flags::STATIC as u16) != 0;
+                    if is_static {
+                        return false;
+                    }
+                    // Otherwise, it's an instance member, so 'this' type is allowed.
+                    // We continue walking up, we will eventually hit the class/interface declaration.
+                }
+
+                // Nodes that BLOCK 'this' type context
+                syntax_kind_ext::CONSTRUCTOR => {
+                    // 'this' type not allowed in constructor parameters or return type,
+                    // but it IS allowed in the constructor body.
+                    if let Some(c) = self.ctx.arena.get_constructor(node)
+                        && child_idx == c.body
+                    {
+                        return true; // The body provides a 'this' context
+                    }
+                    return false;
+                }
+
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::TYPE_LITERAL
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                    return false;
+                }
+
+                // Everything else (ARROW_FUNCTION, MAPPED_TYPE, BLOCK, RETURN_STATEMENT, etc.)
+                // just passes through to the parent.
+                _ => {}
+            }
+
+            child_idx = parent_idx;
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+
+        false
+    }
+}
+
+pub(crate) fn check_parameter_initializers_in_type(
+    ctx: &mut crate::CheckerContext,
+    parameters: &tsz_parser::parser::NodeList,
+) {
+    for &param_idx in &parameters.nodes {
+        if let Some(param_node) = ctx.arena.get(param_idx)
+            && let Some(param) = ctx.arena.get_parameter(param_node)
+            && param.initializer.is_some()
+        {
+            // TSC anchors the error at the parameter name, not the initializer
+            let name_node = ctx.arena.get(param.name).unwrap_or(param_node);
+            ctx.error(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                "A parameter initializer is only allowed in a function or constructor implementation."
+                    .to_string(),
+                2371,
+            );
+        }
+    }
+}

@@ -1,6 +1,7 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common as common_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -448,11 +449,74 @@ impl<'a> CheckerState<'a> {
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
                     if !is_bare_type_param {
                         // Composite type with type parameters (e.g., `T[K]`, `GetProps<C>`,
-                        // `Parameters<Target[K]>`). Defer constraint checking to
-                        // instantiation time — the type parameters are not yet resolved
-                        // and cannot be reliably checked against the constraint.
-                        // This avoids false positive TS2344 in conditional type narrowing
-                        // contexts where the true branch narrows the type parameter.
+                        // `Parameters<Target[K]>`). Prefer checking against its resolved
+                        // base constraint when one exists; otherwise defer to instantiation
+                        // time. This matches tsc for generic indexed-access cases like
+                        // `ReturnType<DataFetchFns[T][F]>` while still avoiding false
+                        // positives for unconstrained composite generics.
+                        if let Some(base) = base_constraint_type
+                            && base != TypeId::UNKNOWN
+                            && base != type_arg
+                        {
+                            let base_still_unresolved =
+                                query::contains_type_parameters(self.ctx.types, base);
+                            let defer_composite_check = if base_still_unresolved {
+                                if let Some((base_object, _)) = query::index_access_components(
+                                    self.ctx.types.as_type_database(),
+                                    base,
+                                ) {
+                                    let resolved_object =
+                                        self.evaluate_type_for_assignability(base_object);
+                                    common_query::is_mapped_type(self.ctx.types, resolved_object)
+                                        || query::is_bare_type_parameter(
+                                            self.ctx.types.as_type_database(),
+                                            base_object,
+                                        )
+                                } else {
+                                    true
+                                }
+                            } else {
+                                false
+                            };
+                            if defer_composite_check {
+                                continue;
+                            }
+                            let constraint_resolved = self.resolve_lazy_type(constraint);
+                            let mut subst = tsz_solver::TypeSubstitution::new();
+                            for (j, p) in type_params.iter().enumerate() {
+                                if let Some(&arg) = type_args.get(j) {
+                                    subst.insert(p.name, arg);
+                                }
+                            }
+                            let inst_constraint = if subst.is_empty() {
+                                constraint_resolved
+                            } else {
+                                tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    constraint_resolved,
+                                    &subst,
+                                )
+                            };
+                            if query::contains_type_parameters(self.ctx.types, inst_constraint) {
+                                continue;
+                            }
+
+                            let db = self.ctx.types.as_type_database();
+                            let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
+                            let mut is_satisfied = self.is_assignable_to(base, inst_constraint)
+                                || self.satisfies_array_like_constraint(base, inst_constraint);
+                            if !is_satisfied {
+                                is_satisfied = self.is_function_constraint(original_constraint)
+                                    && tsz_solver::type_queries::is_callable_type(db, base);
+                            }
+                            if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                                self.error_type_constraint_not_satisfied(
+                                    type_arg,
+                                    inst_constraint,
+                                    arg_idx,
+                                );
+                            }
+                        }
                         continue;
                     }
                     if is_bare_type_param && let Some(base) = base_constraint_type {
@@ -631,19 +695,126 @@ impl<'a> CheckerState<'a> {
             return self.evaluate_type_for_assignability(base);
         }
         if let Some((object_type, index_type)) = query::index_access_components(db, type_id) {
+            let constrained_object_type =
+                if query::is_bare_type_parameter(self.ctx.types.as_type_database(), object_type) {
+                    self.constraint_check_base_type(object_type)
+                } else {
+                    object_type
+                };
             let constrained_index_type = self.constraint_check_base_type(index_type);
-            if constrained_index_type == TypeId::UNKNOWN || constrained_index_type == index_type {
+            let resolved_object_type = if constrained_object_type == TypeId::UNKNOWN {
+                object_type
+            } else {
+                constrained_object_type
+            };
+            let resolved_index_type = if constrained_index_type == TypeId::UNKNOWN {
+                index_type
+            } else {
+                constrained_index_type
+            };
+            if let Some(indexed_value_type) = self.constraint_check_indexed_access_value_type(
+                resolved_object_type,
+                resolved_index_type,
+            ) {
+                return self.evaluate_type_for_assignability(indexed_value_type);
+            }
+            if resolved_object_type == object_type && resolved_index_type == index_type {
                 type_id
             } else {
                 let constrained_access = self
                     .ctx
                     .types
-                    .index_access(object_type, constrained_index_type);
+                    .index_access(resolved_object_type, resolved_index_type);
                 self.evaluate_type_for_assignability(constrained_access)
             }
         } else {
             type_id
         }
+    }
+
+    fn constraint_check_indexed_access_value_type(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        use tsz_solver::type_queries::IndexKeyKind;
+
+        fn key_matches_string_index(
+            db: &dyn tsz_solver::TypeDatabase,
+            key_type: TypeId,
+            kind: &IndexKeyKind,
+        ) -> bool {
+            match kind {
+                IndexKeyKind::String
+                | IndexKeyKind::Number
+                | IndexKeyKind::StringLiteral
+                | IndexKeyKind::NumberLiteral
+                | IndexKeyKind::NumericStringLike
+                | IndexKeyKind::TemplateLiteralString => true,
+                IndexKeyKind::Union(members) => members.iter().all(|&member| {
+                    let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
+                    key_matches_string_index(db, member, &member_kind)
+                }),
+                IndexKeyKind::Other => {
+                    tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
+                        || tsz_solver::type_queries::is_keyof_type(db, key_type)
+                }
+            }
+        }
+
+        fn key_matches_number_index(
+            db: &dyn tsz_solver::TypeDatabase,
+            key_type: TypeId,
+            kind: &IndexKeyKind,
+        ) -> bool {
+            match kind {
+                IndexKeyKind::Number
+                | IndexKeyKind::NumberLiteral
+                | IndexKeyKind::NumericStringLike => true,
+                IndexKeyKind::Union(members) => members.iter().all(|&member| {
+                    let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
+                    key_matches_number_index(db, member, &member_kind)
+                }),
+                IndexKeyKind::Other => {
+                    tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
+                        || tsz_solver::type_queries::is_keyof_type(db, key_type)
+                }
+                _ => false,
+            }
+        }
+
+        let db = self.ctx.types.as_type_database();
+        let object_type = self.evaluate_type_for_assignability(object_type);
+        let key_type = self.evaluate_type_for_assignability(index_type);
+        let key_kind = tsz_solver::type_queries::classify_index_key(db, key_type);
+
+        if let Some(shape) = common_query::object_shape_for_type(db, object_type) {
+            if let Some(index) = &shape.string_index
+                && key_matches_string_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+            if let Some(index) = &shape.number_index
+                && key_matches_number_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+        }
+
+        if let Some(shape) = common_query::callable_shape_for_type(db, object_type) {
+            if let Some(index) = &shape.string_index
+                && key_matches_string_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+            if let Some(index) = &shape.number_index
+                && key_matches_number_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+        }
+
+        None
     }
 
     /// Check if a type represents the global `Function` interface from lib.d.ts.

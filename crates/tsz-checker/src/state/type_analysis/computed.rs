@@ -8,25 +8,36 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 impl<'a> CheckerState<'a> {
+    pub(crate) fn commonjs_namespace_type_for_file(
+        &mut self,
+        target_file_idx: usize,
+    ) -> Option<TypeId> {
+        let mut props = Vec::new();
+        self.augment_namespace_props_with_commonjs_exports_for_file(target_file_idx, &mut props);
+        if props.is_empty() {
+            return None;
+        }
+        let namespace_type = self.ctx.types.factory().object(props);
+        if let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32)) {
+            self.ctx
+                .namespace_module_names
+                .insert(namespace_type, specifier.clone());
+        }
+        Some(namespace_type)
+    }
+
     pub(crate) fn commonjs_define_property_namespace_type(
         &mut self,
         module_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
-        let mut props = Vec::new();
-        self.augment_namespace_props_with_define_property_exports(
-            module_name,
-            source_file_idx,
-            &mut props,
-        );
-        if props.is_empty() {
-            return None;
-        }
-        let namespace_type = self.ctx.types.factory().object(props);
-        self.ctx
-            .namespace_module_names
-            .insert(namespace_type, module_name.to_string());
-        Some(namespace_type)
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        self.commonjs_namespace_type_for_file(target_file_idx)
     }
 
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
@@ -1615,9 +1626,10 @@ impl<'a> CheckerState<'a> {
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
-                        self.ctx
-                            .namespace_module_names
-                            .insert(namespace_type, module_name.to_string());
+                        self.ctx.namespace_module_names.insert(
+                            namespace_type,
+                            self.imported_namespace_display_module_name(module_name),
+                        );
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
@@ -1707,6 +1719,14 @@ impl<'a> CheckerState<'a> {
                     let mut result = self.get_type_of_symbol(export_sym_id);
                     result = self.apply_module_augmentations(module_name, export_name, result);
                     self.ctx.symbol_types.insert(export_sym_id, result);
+                    return (result, Vec::new());
+                }
+
+                if let Some(result) = self.resolve_direct_commonjs_assignment_export_type(
+                    module_name,
+                    export_name,
+                    Some(self.ctx.current_file_idx),
+                ) {
                     return (result, Vec::new());
                 }
 
@@ -1815,10 +1835,20 @@ impl<'a> CheckerState<'a> {
                             if let Some(prop_type) = found_via_export_equals_type {
                                 return (prop_type, Vec::new());
                             }
+                            let import_specifier_decl = declarations.iter().copied().find(|&decl| {
+                                self.ctx.arena.get(decl).is_some_and(|node| {
+                                    node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
+                                })
+                            });
+                            if self.ctx.arena.get(value_decl).is_some_and(|node| {
+                                node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
+                            }) {
+                                return (TypeId::ERROR, Vec::new());
+                            }
                             self.emit_no_exported_member_error(
                                 module_name,
                                 export_name,
-                                value_decl,
+                                import_specifier_decl.unwrap_or(value_decl),
                             );
                         }
                     }

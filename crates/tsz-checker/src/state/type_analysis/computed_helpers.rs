@@ -1267,11 +1267,14 @@ impl<'a> CheckerState<'a> {
         name_idx: NodeIndex,
         property_name: &str,
         object_type: TypeId,
+        object_expr: NodeIndex,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let class_name = self
-            .get_declaring_class_name_for_private_member(object_type, property_name)
-            .unwrap_or_else(|| "the class".to_string());
+        let class_name = self.get_private_identifier_declaring_class_name(
+            object_type,
+            object_expr,
+            property_name,
+        );
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
             &[property_name, &class_name],
@@ -1291,8 +1294,8 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let type_string = self
-            .get_class_name_from_type(object_type)
-            .unwrap_or_else(|| "the type".to_string());
+            .get_class_display_name_from_type(object_type)
+            .unwrap_or_else(|| self.format_type_diagnostic(object_type));
         let message = format_message(
             diagnostic_messages::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED,
             &[property_name, &type_string],
@@ -1464,6 +1467,7 @@ impl<'a> CheckerState<'a> {
                         name_idx,
                         &property_name,
                         original_object_type,
+                        access.expression,
                     );
                 } else {
                     // TS2339: Property does not exist
@@ -1492,6 +1496,7 @@ impl<'a> CheckerState<'a> {
                         name_idx,
                         &property_name,
                         original_object_type,
+                        access.expression,
                     );
                 }
                 return TypeId::ERROR;

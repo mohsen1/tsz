@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                     || self.jsdoc_has_readonly_tag(member_idx);
-                let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
                 prescan_props.push(PropertyInfo {
                     name: name_atom,
                     type_id: declared_type,
@@ -349,7 +349,7 @@ impl<'a> CheckerState<'a> {
                     };
                     self.ctx.node_types.insert(member_idx.0, type_id);
 
-                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
 
                     properties.insert(
                         name_atom,
@@ -414,7 +414,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
+                    let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
                     deferred_accessors.push(DeferredAccessor {
                         member_idx,
                         accessor,
@@ -691,7 +691,7 @@ impl<'a> CheckerState<'a> {
                 {
                     signature.return_type = self.ctx.types.this_type();
                 }
-                let visibility = self.get_visibility_from_modifiers(&method.modifiers);
+                let visibility = self.get_member_visibility(&method.modifiers, method.name);
                 let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                     overload_signatures: Vec::new(),
                     impl_signatures: Vec::new(),
@@ -1496,7 +1496,7 @@ impl<'a> CheckerState<'a> {
         let this_aliases = self.collect_this_aliases(&stmts);
 
         for &stmt_idx in &stmts {
-            let Some((prop_name, rhs_idx, is_private)) =
+            let Some((prop_name, rhs_idx, is_private, report_idx)) =
                 self.extract_this_property_assignment(stmt_idx, &this_aliases)
             else {
                 continue;
@@ -1529,6 +1529,22 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypeId::ANY
             };
+
+            if type_id == TypeId::UNDEFINED {
+                if let Some(parent_sym) = parent_sym
+                    && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                {
+                    self.error_at_node(
+                        report_idx,
+                        &format!(
+                            "Property '{prop_name}' does not exist on type '{}'.",
+                            symbol.escaped_name
+                        ),
+                        crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+                continue;
+            }
 
             properties.insert(
                 name_atom,
@@ -1598,12 +1614,12 @@ impl<'a> CheckerState<'a> {
     /// `this[computed] = rhs`, or `alias[computed] = rhs` pattern
     /// from an expression statement. The `this_aliases` parameter contains
     /// names of variables known to alias `this` (e.g., `var self = this`).
-    /// Returns `(property_name, rhs_node_index, is_private)` if matched.
+    /// Returns `(property_name, rhs_node_index, is_private, report_node_index)` if matched.
     fn extract_this_property_assignment(
         &mut self,
         stmt_idx: NodeIndex,
         this_aliases: &[String],
-    ) -> Option<(String, NodeIndex, bool)> {
+    ) -> Option<(String, NodeIndex, bool, NodeIndex)> {
         let stmt_node = self.ctx.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
@@ -1659,12 +1675,17 @@ impl<'a> CheckerState<'a> {
                     key_type,
                 )
                 .map(|atom| self.ctx.types.resolve_atom(atom))?;
-            Some((prop_name, binary.right, false))
+            Some((prop_name, binary.right, false, access.name_or_argument))
         } else {
             let name_node = self.ctx.arena.get(access.name_or_argument)?;
             let ident = self.ctx.arena.get_identifier(name_node)?;
             let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
-            Some((ident.escaped_text.clone(), binary.right, is_private))
+            Some((
+                ident.escaped_text.clone(),
+                binary.right,
+                is_private,
+                access.name_or_argument,
+            ))
         }
     }
 }

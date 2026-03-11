@@ -4,10 +4,14 @@
 //! These functions abstract away the internal `TypeData` representation and provide
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
+use super::traversal::collect_property_name_atoms_for_diagnostics;
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, LiteralValue, MappedModifier, PropertyInfo, TypeData, TypeId};
+use crate::types::{
+    CallableShape, ConditionalType, FunctionShape, IntrinsicKind, LiteralValue, MappedModifier,
+    MappedType, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypePredicate,
+};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
@@ -238,6 +242,15 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         Some(TypeData::Array(element_type)) => Some(element_type),
         // `readonly T[]` wraps the array in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_array_element_type(db, inner),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .and_then(|constraint| get_array_element_type(db, constraint)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            (evaluated != type_id)
+                .then(|| get_array_element_type(db, evaluated))
+                .flatten()
+        }
         _ => None,
     }
 }
@@ -257,6 +270,15 @@ pub fn get_tuple_elements(
         }
         // `readonly [A, B]` is wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_tuple_elements(db, inner),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+            .constraint
+            .and_then(|constraint| get_tuple_elements(db, constraint)),
+        Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            (evaluated != type_id)
+                .then(|| get_tuple_elements(db, evaluated))
+                .flatten()
+        }
         // Intersection of tuples: pick the tuple member with the most specific elements.
         // e.g., `[any] & [1]` should provide tuple context from `[1]` (more specific).
         // If multiple tuple members exist, prefer the one whose elements are not `any`.
@@ -365,15 +387,18 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
 /// This is the type-computation portion of `keyof T` when T is an object.
 pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     let shape = get_object_shape(db, type_id)?;
-    if shape.properties.is_empty() {
-        return Some(TypeId::NEVER);
-    }
     let key_types: Vec<TypeId> = shape
         .properties
         .iter()
-        .filter(|p| p.visibility == crate::Visibility::Public)
+        .filter(|p| {
+            p.visibility == crate::Visibility::Public
+                && !db.resolve_atom_ref(p.name).starts_with("__private_brand_")
+        })
         .map(|p| db.literal_string_atom(p.name))
         .collect();
+    if key_types.is_empty() {
+        return Some(TypeId::NEVER);
+    }
     Some(crate::utils::union_or_single(db, key_types))
 }
 
@@ -1099,6 +1124,472 @@ pub fn instantiate_mapped_template_for_property(
     instantiate_type(db, template, &subst)
 }
 
+#[allow(dead_code)]
+fn substitute_mapped_bound_parameter_for_property(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+    key_literal: TypeId,
+) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeData::BoundParameter(index)) if index == depth => key_literal,
+        Some(
+            TypeData::BoundParameter(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::ThisType
+            | TypeData::Error,
+        )
+        | None => type_id,
+        Some(TypeData::Array(element)) => {
+            let next =
+                substitute_mapped_bound_parameter_for_property(db, element, depth, key_literal);
+            if next == element {
+                type_id
+            } else {
+                db.array(next)
+            }
+        }
+        Some(TypeData::Tuple(list_id)) => {
+            let elements = db.tuple_list(list_id);
+            let next: Vec<TupleElement> = elements
+                .iter()
+                .map(|element| TupleElement {
+                    type_id: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        element.type_id,
+                        depth,
+                        key_literal,
+                    ),
+                    ..*element
+                })
+                .collect();
+            if next.iter().eq(elements.iter()) {
+                type_id
+            } else {
+                db.tuple(next)
+            }
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let next: Vec<TypeId> = members
+                .iter()
+                .map(|&member| {
+                    substitute_mapped_bound_parameter_for_property(db, member, depth, key_literal)
+                })
+                .collect();
+            if next.iter().eq(members.iter()) {
+                type_id
+            } else {
+                db.union_preserve_members(next)
+            }
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            let next: Vec<TypeId> = members
+                .iter()
+                .map(|&member| {
+                    substitute_mapped_bound_parameter_for_property(db, member, depth, key_literal)
+                })
+                .collect();
+            if next.iter().eq(members.iter()) {
+                type_id
+            } else {
+                db.intersection(next)
+            }
+        }
+        Some(TypeData::Object(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let next_props: Vec<PropertyInfo> = shape
+                .properties
+                .iter()
+                .map(|prop| PropertyInfo {
+                    type_id: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        prop.type_id,
+                        depth,
+                        key_literal,
+                    ),
+                    write_type: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        prop.write_type,
+                        depth,
+                        key_literal,
+                    ),
+                    ..prop.clone()
+                })
+                .collect();
+            if next_props.iter().eq(shape.properties.iter()) {
+                type_id
+            } else {
+                db.object(next_props)
+            }
+        }
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let mut next_shape = shape.as_ref().clone();
+            next_shape.properties = shape
+                .properties
+                .iter()
+                .map(|prop| PropertyInfo {
+                    type_id: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        prop.type_id,
+                        depth,
+                        key_literal,
+                    ),
+                    write_type: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        prop.write_type,
+                        depth,
+                        key_literal,
+                    ),
+                    ..prop.clone()
+                })
+                .collect();
+            if let Some(ref idx) = shape.string_index {
+                next_shape.string_index = Some(crate::types::IndexSignature {
+                    value_type: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        idx.value_type,
+                        depth,
+                        key_literal,
+                    ),
+                    ..idx.clone()
+                });
+            }
+            if let Some(ref idx) = shape.number_index {
+                next_shape.number_index = Some(crate::types::IndexSignature {
+                    value_type: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        idx.value_type,
+                        depth,
+                        key_literal,
+                    ),
+                    ..idx.clone()
+                });
+            }
+            if next_shape == shape.as_ref().clone() {
+                type_id
+            } else {
+                db.object_with_index(next_shape)
+            }
+        }
+        Some(TypeData::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            let next_depth = depth + shape.type_params.len() as u32;
+            let params: Vec<ParamInfo> = shape
+                .params
+                .iter()
+                .map(|param| ParamInfo {
+                    type_id: substitute_mapped_bound_parameter_for_property(
+                        db,
+                        param.type_id,
+                        next_depth,
+                        key_literal,
+                    ),
+                    ..param.clone()
+                })
+                .collect();
+            let this_type = shape.this_type.map(|ty| {
+                substitute_mapped_bound_parameter_for_property(db, ty, next_depth, key_literal)
+            });
+            let return_type = substitute_mapped_bound_parameter_for_property(
+                db,
+                shape.return_type,
+                next_depth,
+                key_literal,
+            );
+            let type_predicate = shape.type_predicate.clone().map(|pred| TypePredicate {
+                type_id: pred.type_id.map(|ty| {
+                    substitute_mapped_bound_parameter_for_property(db, ty, next_depth, key_literal)
+                }),
+                ..pred
+            });
+            let next_shape = FunctionShape {
+                params,
+                this_type,
+                return_type,
+                type_predicate,
+                ..shape.as_ref().clone()
+            };
+            if next_shape == shape.as_ref().clone() {
+                type_id
+            } else {
+                db.function(next_shape)
+            }
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            let rewrite_signature =
+                |sig: &crate::types::CallSignature| -> crate::types::CallSignature {
+                    let next_depth = depth + sig.type_params.len() as u32;
+                    crate::types::CallSignature {
+                        params: sig
+                            .params
+                            .iter()
+                            .map(|param| ParamInfo {
+                                type_id: substitute_mapped_bound_parameter_for_property(
+                                    db,
+                                    param.type_id,
+                                    next_depth,
+                                    key_literal,
+                                ),
+                                ..param.clone()
+                            })
+                            .collect(),
+                        this_type: sig.this_type.map(|ty| {
+                            substitute_mapped_bound_parameter_for_property(
+                                db,
+                                ty,
+                                next_depth,
+                                key_literal,
+                            )
+                        }),
+                        return_type: substitute_mapped_bound_parameter_for_property(
+                            db,
+                            sig.return_type,
+                            next_depth,
+                            key_literal,
+                        ),
+                        type_predicate: sig.type_predicate.clone().map(|pred| TypePredicate {
+                            type_id: pred.type_id.map(|ty| {
+                                substitute_mapped_bound_parameter_for_property(
+                                    db,
+                                    ty,
+                                    next_depth,
+                                    key_literal,
+                                )
+                            }),
+                            ..pred
+                        }),
+                        ..sig.clone()
+                    }
+                };
+            let next_shape =
+                CallableShape {
+                    call_signatures: shape
+                        .call_signatures
+                        .iter()
+                        .map(rewrite_signature)
+                        .collect(),
+                    construct_signatures: shape
+                        .construct_signatures
+                        .iter()
+                        .map(rewrite_signature)
+                        .collect(),
+                    properties: shape
+                        .properties
+                        .iter()
+                        .map(|prop| PropertyInfo {
+                            type_id: substitute_mapped_bound_parameter_for_property(
+                                db,
+                                prop.type_id,
+                                depth,
+                                key_literal,
+                            ),
+                            write_type: substitute_mapped_bound_parameter_for_property(
+                                db,
+                                prop.write_type,
+                                depth,
+                                key_literal,
+                            ),
+                            ..prop.clone()
+                        })
+                        .collect(),
+                    string_index: shape.string_index.as_ref().map(|idx| {
+                        crate::types::IndexSignature {
+                            value_type: substitute_mapped_bound_parameter_for_property(
+                                db,
+                                idx.value_type,
+                                depth,
+                                key_literal,
+                            ),
+                            ..idx.clone()
+                        }
+                    }),
+                    number_index: shape.number_index.as_ref().map(|idx| {
+                        crate::types::IndexSignature {
+                            value_type: substitute_mapped_bound_parameter_for_property(
+                                db,
+                                idx.value_type,
+                                depth,
+                                key_literal,
+                            ),
+                            ..idx.clone()
+                        }
+                    }),
+                    ..shape.as_ref().clone()
+                };
+            if next_shape == shape.as_ref().clone() {
+                type_id
+            } else {
+                db.callable(next_shape)
+            }
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            let base =
+                substitute_mapped_bound_parameter_for_property(db, app.base, depth, key_literal);
+            let args: Vec<TypeId> = app
+                .args
+                .iter()
+                .map(|&arg| {
+                    substitute_mapped_bound_parameter_for_property(db, arg, depth, key_literal)
+                })
+                .collect();
+            if base == app.base && args == app.args {
+                type_id
+            } else {
+                db.application(base, args)
+            }
+        }
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = db.conditional_type(cond_id);
+            let next = ConditionalType {
+                check_type: substitute_mapped_bound_parameter_for_property(
+                    db,
+                    cond.check_type,
+                    depth,
+                    key_literal,
+                ),
+                extends_type: substitute_mapped_bound_parameter_for_property(
+                    db,
+                    cond.extends_type,
+                    depth,
+                    key_literal,
+                ),
+                true_type: substitute_mapped_bound_parameter_for_property(
+                    db,
+                    cond.true_type,
+                    depth,
+                    key_literal,
+                ),
+                false_type: substitute_mapped_bound_parameter_for_property(
+                    db,
+                    cond.false_type,
+                    depth,
+                    key_literal,
+                ),
+                ..cond.as_ref().clone()
+            };
+            if next == cond.as_ref().clone() {
+                type_id
+            } else {
+                db.conditional(next)
+            }
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.mapped_type(mapped_id);
+            let next = MappedType {
+                constraint: substitute_mapped_bound_parameter_for_property(
+                    db,
+                    mapped.constraint,
+                    depth,
+                    key_literal,
+                ),
+                name_type: mapped.name_type.map(|ty| {
+                    substitute_mapped_bound_parameter_for_property(db, ty, depth + 1, key_literal)
+                }),
+                template: substitute_mapped_bound_parameter_for_property(
+                    db,
+                    mapped.template,
+                    depth + 1,
+                    key_literal,
+                ),
+                ..mapped.as_ref().clone()
+            };
+            if next == mapped.as_ref().clone() {
+                type_id
+            } else {
+                db.mapped(next)
+            }
+        }
+        Some(TypeData::IndexAccess(object_type, key_type)) => {
+            let next_object =
+                substitute_mapped_bound_parameter_for_property(db, object_type, depth, key_literal);
+            let next_key =
+                substitute_mapped_bound_parameter_for_property(db, key_type, depth, key_literal);
+            if next_object == object_type && next_key == key_type {
+                type_id
+            } else {
+                db.index_access(next_object, next_key)
+            }
+        }
+        Some(TypeData::TemplateLiteral(template_id)) => {
+            let spans = db.template_list(template_id);
+            let next: Vec<_> = spans
+                .iter()
+                .map(|span| match span {
+                    crate::types::TemplateSpan::Text(atom) => {
+                        crate::types::TemplateSpan::Text(*atom)
+                    }
+                    crate::types::TemplateSpan::Type(ty) => crate::types::TemplateSpan::Type(
+                        substitute_mapped_bound_parameter_for_property(db, *ty, depth, key_literal),
+                    ),
+                })
+                .collect();
+            if next.iter().eq(spans.iter()) {
+                type_id
+            } else {
+                db.template_literal(next)
+            }
+        }
+        Some(TypeData::Enum(def_id, member_type)) => {
+            let next =
+                substitute_mapped_bound_parameter_for_property(db, member_type, depth, key_literal);
+            if next == member_type {
+                type_id
+            } else {
+                db.enum_type(def_id, next)
+            }
+        }
+        Some(TypeData::KeyOf(inner)) => {
+            let next =
+                substitute_mapped_bound_parameter_for_property(db, inner, depth, key_literal);
+            if next == inner {
+                type_id
+            } else {
+                db.keyof(next)
+            }
+        }
+        Some(TypeData::ReadonlyType(inner)) => {
+            let next =
+                substitute_mapped_bound_parameter_for_property(db, inner, depth, key_literal);
+            if next == inner {
+                type_id
+            } else {
+                db.readonly_type(next)
+            }
+        }
+        Some(TypeData::NoInfer(inner)) => {
+            let next =
+                substitute_mapped_bound_parameter_for_property(db, inner, depth, key_literal);
+            if next == inner {
+                type_id
+            } else {
+                db.no_infer(next)
+            }
+        }
+        Some(TypeData::StringIntrinsic { kind, type_arg }) => {
+            let next =
+                substitute_mapped_bound_parameter_for_property(db, type_arg, depth, key_literal);
+            if next == type_arg {
+                type_id
+            } else {
+                db.string_intrinsic(kind, next)
+            }
+        }
+    }
+}
+
 fn collect_exact_literal_property_keys_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1123,6 +1614,11 @@ fn collect_exact_literal_property_keys_inner(
             let atom = db.intern_string(
                 &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
             );
+            keys.insert(atom);
+            Some(())
+        }
+        Some(TypeData::UniqueSymbol(sym)) => {
+            let atom = db.intern_string(&format!("__unique_{}", sym.0));
             keys.insert(atom);
             Some(())
         }
@@ -1154,6 +1650,9 @@ fn collect_exact_literal_property_keys_inner(
             let branch = resolve_concrete_conditional_branch(db, &cond)?;
             collect_exact_literal_property_keys_inner(db, branch, keys, visited)
         }
+        Some(TypeData::KeyOf(operand)) => {
+            collect_exact_literal_property_keys_from_keyof_operand(db, operand, keys, visited)
+        }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.and_then(|constraint| {
                 collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
@@ -1175,6 +1674,84 @@ fn collect_exact_literal_property_keys(
     let mut visited = FxHashSet::default();
     collect_exact_literal_property_keys_inner(db, type_id, &mut keys, &mut visited)?;
     Some(keys)
+}
+
+fn collect_exact_literal_property_keys_from_keyof_operand(
+    db: &dyn TypeDatabase,
+    operand: TypeId,
+    keys: &mut FxHashSet<Atom>,
+    visited: &mut FxHashSet<TypeId>,
+) -> Option<()> {
+    let evaluated_operand = crate::evaluation::evaluate::evaluate_type(db, operand);
+    let operand = if evaluated_operand != operand {
+        evaluated_operand
+    } else {
+        operand
+    };
+
+    match db.lookup(operand) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return None;
+            }
+            for prop in &shape.properties {
+                keys.insert(prop.name);
+            }
+            Some(())
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                return None;
+            }
+            for prop in &shape.properties {
+                keys.insert(prop.name);
+            }
+            Some(())
+        }
+        Some(TypeData::Union(members)) => {
+            for &member in db.type_list(members).iter() {
+                collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)?;
+            }
+            Some(())
+        }
+        Some(TypeData::Intersection(members)) => {
+            let mut saw_precise_member = false;
+            for &member in db.type_list(members).iter() {
+                if collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)
+                    .is_some()
+                {
+                    saw_precise_member = true;
+                    continue;
+                }
+                if intersection_member_preserves_literal_keys(db, member) {
+                    continue;
+                }
+                return None;
+            }
+            saw_precise_member.then_some(())
+        }
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            info.constraint.and_then(|constraint| {
+                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+            })
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            collect_exact_literal_property_keys_from_keyof_operand(db, inner, keys, visited)
+        }
+        _ => {
+            let atoms = collect_property_name_atoms_for_diagnostics(db, operand, 8);
+            if atoms.is_empty() {
+                None
+            } else {
+                for atom in atoms {
+                    keys.insert(atom);
+                }
+                Some(())
+            }
+        }
+    }
 }
 
 fn intersection_member_preserves_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1266,11 +1843,11 @@ fn remap_mapped_property_key(
     mapped: &crate::types::MappedType,
     source_key: TypeId,
 ) -> TypeId {
-    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-
     let Some(name_type) = mapped.name_type else {
         return source_key;
     };
+
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
     let mut subst = TypeSubstitution::new();
     subst.insert(mapped.type_param.name, source_key);
@@ -1410,7 +1987,7 @@ fn collect_mapped_property_names_from_source_keys(
     let mut property_names = FxHashSet::default();
 
     for source_key in source_keys {
-        let key_literal = db.literal_string(db.resolve_atom(source_key).as_ref());
+        let key_literal = property_key_atom_to_type(db, source_key);
         let mapped_key = remap_mapped_property_key(db, mapped, key_literal);
         let mapped_names = collect_exact_literal_property_keys(db, mapped_key)?;
         property_names.extend(mapped_names);
@@ -1443,7 +2020,7 @@ pub fn get_finite_mapped_property_type(
     let mut matches = Vec::new();
 
     for source_key in source_keys {
-        let key_literal = db.literal_string(db.resolve_atom(source_key).as_ref());
+        let key_literal = property_key_atom_to_type(db, source_key);
         let remapped = remap_mapped_property_key(db, &mapped, key_literal);
         let remapped_keys = collect_exact_literal_property_keys(db, remapped)?;
         if !remapped_keys.contains(&target_atom) {
@@ -1471,6 +2048,16 @@ pub fn get_finite_mapped_property_type(
         1 => Some(matches[0]),
         _ => Some(db.union_preserve_members(matches)),
     }
+}
+
+fn property_key_atom_to_type(db: &dyn TypeDatabase, key: Atom) -> TypeId {
+    let key_str = db.resolve_atom(key);
+    if let Some(symbol_ref) = key_str.strip_prefix("__unique_")
+        && let Ok(id) = symbol_ref.parse::<u32>()
+    {
+        return db.unique_symbol(crate::types::SymbolRef(id));
+    }
+    db.literal_string(key_str.as_ref())
 }
 
 /// Backward-compatible alias for callers that only used this on deferred/remapped mapped types.

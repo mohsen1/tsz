@@ -124,10 +124,20 @@ pub(super) fn classify_binary_file(bytes: &[u8]) -> Option<bool> {
         })
         .count();
     if control_count >= 4 {
-        return Some(false);
+        return Some(soft_control_binary_should_suppress(bytes));
     }
 
     None
+}
+
+fn soft_control_binary_should_suppress(bytes: &[u8]) -> bool {
+    let payload = bytes
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(bytes, |idx| &bytes[idx + 1..]);
+    let printable_ascii_count = payload.iter().filter(|&&b| b.is_ascii_graphic()).count();
+
+    printable_ascii_count < 2
 }
 
 #[derive(Debug, Clone)]
@@ -393,11 +403,23 @@ pub(super) fn collect_type_root_files(
         let has_wildcard = types.iter().any(|t| t == "*" || t.trim().is_empty());
         if !has_wildcard {
             let mut unresolved = Vec::new();
+            let synthetic_from_file = base_dir.join("__types__.ts");
             for name in types {
                 if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
                     files.insert(entry);
                 } else {
                     unresolved.push(name.clone());
+                    if let Some(entry) =
+                        crate::driver::resolution::resolve_type_reference_from_node_modules(
+                            name,
+                            &synthetic_from_file,
+                            base_dir,
+                            None,
+                            options,
+                        )
+                    {
+                        files.insert(entry);
+                    }
                 }
             }
             return (files.into_iter().collect(), unresolved);

@@ -203,6 +203,7 @@ fn test_try_expand_application_self_reference_returns_none() {
 struct MockVarianceResolver<'a> {
     env: &'a TypeEnvironment,
     def_id: DefId,
+    symbol: Option<SymbolRef>,
     variances: Arc<[Variance]>,
 }
 
@@ -213,6 +214,10 @@ impl TypeResolver for MockVarianceResolver<'_> {
 
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.env.resolve_lazy(def_id, interner)
+    }
+
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
+        (self.symbol == Some(symbol)).then_some(self.def_id)
     }
 
     fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
@@ -259,6 +264,7 @@ fn test_non_interface_invariant_application_fastpath_rejects_without_structural_
     let resolver = MockVarianceResolver {
         env: &env,
         def_id: invariant_arg,
+        symbol: None,
         variances: Arc::from(vec![Variance::COVARIANT | Variance::CONTRAVARIANT]),
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
@@ -351,6 +357,7 @@ fn test_type_alias_with_failed_variance_check_still_uses_structural_expansion() 
     let resolver = MockVarianceResolver {
         env: &env,
         def_id: t_def,
+        symbol: None,
         variances: Arc::from(vec![Variance::COVARIANT | Variance::CONTRAVARIANT]),
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
@@ -418,6 +425,7 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
     let resolver = MockVarianceResolver {
         env: &env,
         def_id: mapped_def,
+        symbol: None,
         variances: Arc::from(vec![variance]),
     };
 
@@ -429,6 +437,117 @@ fn test_mapped_generic_parameter_with_indexed_access_is_covariant() {
             .check_application_to_application_subtype(source_app, target_app)
             .is_true()
     );
+}
+
+#[test]
+fn test_application_subtype_canonicalizes_lazy_and_typequery_bases() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let promise_def = DefId(4040);
+    let promise_symbol = SymbolRef(4040);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let promise_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_type,
+    )]);
+    env.insert_def_with_params(promise_def, promise_body, vec![t_param]);
+    env.insert_def_kind(promise_def, DefKind::Interface);
+
+    let source = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let target = interner.application(
+        interner.intern(TypeData::TypeQuery(promise_symbol)),
+        vec![TypeId::NUMBER],
+    );
+    let mismatch = interner.application(
+        interner.intern(TypeData::TypeQuery(promise_symbol)),
+        vec![TypeId::STRING],
+    );
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: promise_def,
+        symbol: Some(promise_symbol),
+        variances: Arc::from(vec![Variance::COVARIANT]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    assert!(checker.is_subtype_of(source, target));
+    assert!(!checker.is_subtype_of(source, mismatch));
+}
+
+#[test]
+fn test_function_subtype_accepts_canonicalized_application_return_types() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let promise_def = DefId(4041);
+    let promise_symbol = SymbolRef(4041);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let promise_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_type,
+    )]);
+    env.insert_def_with_params(promise_def, promise_body, vec![t_param]);
+    env.insert_def_kind(promise_def, DefKind::Interface);
+
+    let source_return = interner.application(
+        interner.intern(TypeData::TypeQuery(promise_symbol)),
+        vec![TypeId::NUMBER],
+    );
+    let target_return = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let mismatch_return = interner.application(interner.lazy(promise_def), vec![TypeId::STRING]);
+
+    let source_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: source_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: target_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mismatch_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: mismatch_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: promise_def,
+        symbol: Some(promise_symbol),
+        variances: Arc::from(vec![Variance::COVARIANT]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    assert!(checker.is_subtype_of(source_fn, target_fn));
+    assert!(!checker.is_subtype_of(source_fn, mismatch_fn));
 }
 
 #[test]

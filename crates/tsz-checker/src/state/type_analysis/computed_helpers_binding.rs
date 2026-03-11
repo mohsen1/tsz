@@ -6,6 +6,19 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn imported_namespace_display_module_name(&self, module_name: &str) -> String {
+        let trimmed = module_name.strip_prefix("./").unwrap_or(module_name);
+        for ext in &[
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
+            ".mjs", ".cjs",
+        ] {
+            if let Some(stripped) = trimmed.strip_suffix(ext) {
+                return stripped.to_string();
+            }
+        }
+        trimmed.to_string()
+    }
+
     /// Resolve the display module name for namespace `typeof import("...")`.
     pub(crate) fn resolve_namespace_display_module_name(
         &self,
@@ -24,12 +37,14 @@ impl<'a> CheckerState<'a> {
                 let is_ns_import =
                     sym.import_name.is_none() || sym.import_name.as_deref() == Some("*");
                 if is_ns_import {
-                    sym.import_module.clone()
+                    sym.import_module
+                        .as_deref()
+                        .map(|module_name| self.imported_namespace_display_module_name(module_name))
                 } else {
                     None
                 }
             })
-            .unwrap_or_else(|| fallback.to_string())
+            .unwrap_or_else(|| self.imported_namespace_display_module_name(fallback))
     }
 
     /// Resolve binding element type from annotated destructured function parameter.

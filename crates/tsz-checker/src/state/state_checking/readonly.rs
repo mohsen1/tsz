@@ -8,6 +8,93 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn check_readonly_assignment_pattern(&mut self, pattern_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let pattern_idx = self.ctx.arena.skip_parenthesized(pattern_idx);
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return false;
+        };
+
+        match pattern_node.kind {
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let Some(obj) = self.ctx.arena.get_literal_expr(pattern_node) else {
+                    return false;
+                };
+
+                let mut emitted = false;
+                for &elem_idx in &obj.elements.nodes {
+                    let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                        continue;
+                    };
+
+                    if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                        emitted |= self.check_readonly_assignment_pattern_target(prop.initializer);
+                    } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                        if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
+                            emitted |=
+                                self.check_readonly_assignment_pattern_target(shorthand.name);
+                        }
+                    } else if elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                        && let Some(spread) = self.ctx.arena.get_spread(elem_node)
+                    {
+                        emitted |= self.check_readonly_assignment_pattern_target(spread.expression);
+                    }
+                }
+
+                emitted
+            }
+            syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                let Some(array_lit) = self.ctx.arena.get_literal_expr(pattern_node) else {
+                    return false;
+                };
+
+                let mut emitted = false;
+                for &elem_idx in &array_lit.elements.nodes {
+                    let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        continue;
+                    }
+
+                    let target_idx = if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                        self.ctx
+                            .arena
+                            .get_spread(elem_node)
+                            .map(|spread| spread.expression)
+                    } else {
+                        Some(elem_idx)
+                    };
+
+                    if let Some(target_idx) = target_idx {
+                        emitted |= self.check_readonly_assignment_pattern_target(target_idx);
+                    }
+                }
+
+                emitted
+            }
+            _ => self.check_readonly_assignment(pattern_idx, NodeIndex::NONE),
+        }
+    }
+
+    fn check_readonly_assignment_pattern_target(&mut self, target_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+
+        if let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.check_readonly_assignment_pattern_target(bin.left);
+        }
+
+        self.check_readonly_assignment(target_idx, NodeIndex::NONE)
+    }
+
     /// Check if a delete target is a readonly property.
     /// Reports TS2704 for readonly named properties and TS2542 for readonly index signatures.
     /// Returns `true` if a readonly delete diagnostic was emitted.
@@ -211,6 +298,10 @@ impl<'a> CheckerState<'a> {
         };
 
         match target_node.kind {
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                return self.check_readonly_assignment_pattern(target_idx);
+            }
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {}
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.ctx.arena.get_access_expr(target_node) {
@@ -831,7 +922,23 @@ impl<'a> CheckerState<'a> {
 
     /// Get the class name from an expression, if it's a class instance.
     pub(crate) fn get_class_name_from_expression(&mut self, expr_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
         let node = self.ctx.arena.get(expr_idx)?;
+
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            let call = self.ctx.arena.get_call_expr(node)?;
+            let decl_idx = self.function_like_decl_from_callee(call.expression)?;
+            let decl_node = self.ctx.arena.get(decl_idx)?;
+
+            if let Some(func) = self.ctx.arena.get_function(decl_node) {
+                return self.returned_class_name_from_body(func.body);
+            }
+
+            if let Some(method) = self.ctx.arena.get_method_decl(decl_node) {
+                return self.returned_class_name_from_body(method.body);
+            }
+        }
 
         // If it's a simple identifier, look up its type from the binder
         if self.ctx.arena.get_identifier(node).is_some()
@@ -935,5 +1042,77 @@ impl<'a> CheckerState<'a> {
             return is_mapped_type_with_readonly_modifier(self.ctx.types, resolved);
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerOptions, ScriptTarget};
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::node::NodeArena;
+    use tsz_solver::TypeInterner;
+
+    fn find_node_by_text_and_kind(
+        arena: &NodeArena,
+        source: &str,
+        kind: u16,
+        text: &str,
+    ) -> Option<NodeIndex> {
+        (0..arena.len()).find_map(|i| {
+            let idx = NodeIndex(i as u32);
+            let node = arena.get(idx)?;
+            (node.kind == kind && &source[node.pos as usize..node.end as usize] == text)
+                .then_some(idx)
+        })
+    }
+
+    #[test]
+    fn get_class_name_from_expression_resolves_named_class_expression_return() {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let source = r#"
+const C = class D {
+    static #field = D.#method();
+    static #method() { return 42; }
+    static getClass() { return D; }
+};
+
+C.getClass().#method;
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+
+        checker.check_source_file(root);
+
+        let call_idx = find_node_by_text_and_kind(
+            parser.get_arena(),
+            source,
+            syntax_kind_ext::CALL_EXPRESSION,
+            "C.getClass()",
+        )
+        .expect("expected to find `C.getClass()` call expression");
+
+        assert_eq!(
+            checker.get_class_name_from_expression(call_idx),
+            Some("D".to_string())
+        );
     }
 }

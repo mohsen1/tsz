@@ -30,28 +30,38 @@ pub struct ContextualTypeContext<'a> {
 /// For tuple rest params, this returns the trailing rest element type when present.
 /// Otherwise, it returns the original type unchanged.
 pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
-    match db.lookup(type_id) {
-        Some(TypeData::Array(elem)) => elem,
-        Some(TypeData::Tuple(elements_id)) => {
-            let elements = db.tuple_list(elements_id);
-            if let Some(last) = elements.last() {
-                if last.rest {
-                    match db.lookup(last.type_id) {
-                        Some(TypeData::Array(elem)) => elem,
-                        _ => last.type_id,
-                    }
-                } else {
-                    last.type_id
-                }
-            } else {
-                type_id
-            }
-        }
-        _ => type_id,
+    if let Some(elem) = crate::type_queries::get_array_element_type(db, type_id) {
+        return elem;
     }
+
+    if let Some(elements) = crate::type_queries::get_tuple_elements(db, type_id)
+        && let Some(last) = elements.last()
+    {
+        if last.rest {
+            return crate::type_queries::get_array_element_type(db, last.type_id)
+                .unwrap_or(last.type_id);
+        }
+        return last.type_id;
+    }
+
+    type_id
 }
 
 impl<'a> ContextualTypeContext<'a> {
+    fn contextual_return_type(&self, type_id: TypeId) -> TypeId {
+        crate::type_queries::get_type_parameter_constraint(self.interner, type_id)
+            .unwrap_or(type_id)
+    }
+
+    fn property_name_to_key_type(&self, name: &str) -> TypeId {
+        if let Some(symbol_ref) = name.strip_prefix("__unique_")
+            && let Ok(id) = symbol_ref.parse::<u32>()
+        {
+            return self.interner.unique_symbol(crate::types::SymbolRef(id));
+        }
+        self.interner.literal_string(name)
+    }
+
     /// Create a new contextual type context.
     /// Defaults to `no_implicit_any: false` for compatibility.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -161,13 +171,15 @@ impl<'a> ContextualTypeContext<'a> {
                 return None;
             }
             // When all callable union members agree on the parameter type, return it directly.
-            // When they disagree, tsc creates a union of the parameter types (e.g., `string | number`)
-            // rather than giving up. This prevents false TS7006 for overloaded/union callbacks.
+            // When they disagree, a direct union of callable types does not provide a
+            // contextual parameter type. This matches conformance cases like
+            // `IWithCallSignatures | IWithCallSignatures3`, where the callback
+            // parameter should remain implicit-any and report TS7006.
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
                 return Some(first);
             }
-            return Some(crate::utils::union_or_single(self.interner, param_types));
+            return None;
         }
 
         // Handle Application explicitly.
@@ -288,7 +300,110 @@ impl<'a> ContextualTypeContext<'a> {
             return Some(TypeId::ANY);
         }
 
-        // Use visitor for Function/Callable types
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let rest_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        member,
+                        self.no_implicit_any,
+                    );
+                    ctx.get_rest_parameter_type(index)
+                })
+                .collect();
+            return collect_single_or_union_no_reduce(self.interner, rest_types);
+        }
+
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    evaluated,
+                    self.no_implicit_any,
+                );
+                return ctx.get_rest_parameter_type(index);
+            }
+
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected_and_options(
+                self.interner,
+                app.base,
+                self.no_implicit_any,
+            );
+            return ctx.get_rest_parameter_type(index);
+        }
+
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let rest_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        member,
+                        self.no_implicit_any,
+                    );
+                    ctx.get_rest_parameter_type(index)
+                })
+                .collect();
+            return collect_from_intersection(self.interner, rest_types, |db, tys| db.union(tys));
+        }
+
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected_and_options(
+                self.interner,
+                constraint,
+                self.no_implicit_any,
+            );
+            return ctx.get_rest_parameter_type(index);
+        }
+
+        if let Some(
+            TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::Lazy(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
+        {
+            if let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(expected) {
+                let cond = self.interner.conditional_type(cond_id);
+                let mut branch_rest_types = Vec::new();
+                for branch in [cond.true_type, cond.false_type] {
+                    if branch == expected {
+                        continue;
+                    }
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        branch,
+                        self.no_implicit_any,
+                    );
+                    if let Some(ty) = ctx.get_rest_parameter_type(index) {
+                        branch_rest_types.push(ty);
+                    }
+                }
+                if let Some(resolved) =
+                    collect_single_or_union_no_reduce(self.interner, branch_rest_types)
+                {
+                    return Some(resolved);
+                }
+            }
+
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    evaluated,
+                    self.no_implicit_any,
+                );
+                return ctx.get_rest_parameter_type(index);
+            }
+        }
+
         let mut extractor = RestParameterExtractor::new(self.interner, index);
         extractor.extract(expected)
     }
@@ -586,16 +701,27 @@ impl<'a> ContextualTypeContext<'a> {
             if let Some(shape) =
                 crate::get_contextual_signature_with_compat_checker(self.interner, expected)
             {
-                return Some(shape.return_type);
+                return Some(self.contextual_return_type(shape.return_type));
             }
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_return_type();
         }
 
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.get_return_type();
+        }
+
         // Handle Lazy, Mapped, and Conditional types by evaluating first
-        if let Some(TypeData::Lazy(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) =
-            self.interner.lookup(expected)
+        if let Some(
+            TypeData::Lazy(_)
+            | TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _),
+        ) = self.interner.lookup(expected)
         {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
@@ -606,7 +732,9 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Use visitor for Function/Callable types
         let mut extractor = ReturnTypeExtractor::new(self.interner);
-        extractor.extract(expected)
+        extractor
+            .extract(expected)
+            .map(|return_type| self.contextual_return_type(return_type))
     }
 
     /// Get the contextual element type for an array.
@@ -890,11 +1018,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Mapped(mapped_id)) => {
-                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
-                if evaluated != expected {
-                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                    return ctx.get_property_type(name);
-                }
+                let mapped = self.interner.mapped_type(mapped_id);
                 if let Some(prop) = crate::type_queries::get_finite_mapped_property_type(
                     self.interner,
                     mapped_id,
@@ -902,10 +1026,48 @@ impl<'a> ContextualTypeContext<'a> {
                 ) {
                     return Some(prop);
                 }
+                // For remapped keys (`as ...`) that depend on value lookups like `T[P]`,
+                // if the finite lookup fails then this property is absent from the mapped
+                // result and must not acquire ghost context from the source constraint.
+                // Key-only remaps like `K extends Uppercase<string> ? K : never` still
+                // benefit from broader fallback contextual typing in tsc.
+                if mapped.name_type.is_some_and(|name_type| {
+                    crate::visitor::contains_type_matching(self.interner, name_type, |key| {
+                        matches!(key, TypeData::IndexAccess(_, _))
+                    })
+                }) {
+                    return None;
+                }
+
+                if mapped.name_type.is_some() {
+                    let key_literal = self
+                        .interner
+                        .literal_string_atom(self.interner.intern_string(name));
+                    let instantiated =
+                        crate::type_queries::instantiate_mapped_template_for_property(
+                            self.interner,
+                            mapped.template,
+                            mapped.type_param.name,
+                            key_literal,
+                        );
+                    let evaluated =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
+                    if evaluated != TypeId::ANY
+                        && evaluated != TypeId::ERROR
+                        && evaluated != TypeId::NEVER
+                    {
+                        return Some(evaluated);
+                    }
+                }
+
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
                 // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
                 // parameter), use the mapped type's template as the contextual property type
                 // IF the template doesn't reference the mapped type's bound parameter.
-                let mapped = self.interner.mapped_type(mapped_id);
                 if mapped.template != TypeId::ANY
                     && mapped.template != TypeId::ERROR
                     && mapped.template != TypeId::NEVER
@@ -937,7 +1099,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Application(app_id)) => {
-                let prop_key = self.interner.literal_string(name);
+                let prop_key = self.property_name_to_key_type(name);
                 let indexed = self.interner.index_access(expected, prop_key);
                 let indexed_evaluated =
                     crate::evaluation::evaluate::evaluate_type(self.interner, indexed);

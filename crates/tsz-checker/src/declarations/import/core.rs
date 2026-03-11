@@ -127,6 +127,9 @@ impl<'a> CheckerState<'a> {
         let Some(export_equals_sym) = exports_table.get("export=") else {
             return false;
         };
+        if import_name == "default" {
+            return export_equals_sym.is_some();
+        }
 
         let lib_binders: Vec<_> = self
             .ctx
@@ -250,6 +253,9 @@ impl<'a> CheckerState<'a> {
         let Some(export_equals_sym) = exports_table.get("export=") else {
             return false;
         };
+        if import_name == "default" {
+            return true;
+        }
 
         let export_type = self.get_type_of_symbol(export_equals_sym);
         if export_type == tsz_solver::TypeId::ERROR || export_type == tsz_solver::TypeId::ANY {
@@ -427,7 +433,7 @@ impl<'a> CheckerState<'a> {
         if has_default_import && !has_named_default_binding {
             let is_source_file = self.is_source_file_import(module_name);
             if let Some(ref table) = exports_table {
-                if !table.has("default") {
+                if !table.has("default") && !table.has("export=") {
                     self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
             } else if self
@@ -515,6 +521,17 @@ impl<'a> CheckerState<'a> {
                         );
 
                     if !found_via_reexport {
+                        if self
+                            .resolve_direct_commonjs_assignment_export_type(
+                                module_name,
+                                import_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                            .is_some()
+                        {
+                            continue;
+                        }
+
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
                         let (exists_locally, exported_as) =
@@ -617,6 +634,17 @@ impl<'a> CheckerState<'a> {
                         );
 
                     if !found_via_reexport {
+                        if self
+                            .resolve_direct_commonjs_assignment_export_type(
+                                module_name,
+                                import_name,
+                                Some(self.ctx.current_file_idx),
+                            )
+                            .is_some()
+                        {
+                            continue;
+                        }
+
                         // Check if the symbol exists locally in the target module
                         // to distinguish between TS2459, TS2460, and TS2305
                         let (exists_locally, exported_as) =

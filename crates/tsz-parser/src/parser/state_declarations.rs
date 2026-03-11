@@ -1289,6 +1289,23 @@ impl ParserState {
                 let modifiers = self.make_node_list(vec![declare_modifier]);
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
+            SyntaxKind::ImportKeyword => {
+                use tsz_common::diagnostics::diagnostic_codes;
+
+                self.parse_error_at(
+                    declare_start,
+                    declare_end - declare_start,
+                    "A 'declare' modifier cannot be used with an import declaration.",
+                    diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION,
+                );
+
+                let modifiers = Some(self.make_node_list(all_modifiers));
+                if self.look_ahead_is_import_equals() {
+                    self.parse_import_equals_declaration_with_modifiers(start_pos, modifiers)
+                } else {
+                    self.parse_import_declaration_with_modifiers(start_pos, modifiers)
+                }
+            }
             SyntaxKind::AwaitKeyword => {
                 // declare await using
                 let modifiers = self.make_node_list(vec![declare_modifier]);
@@ -1663,8 +1680,15 @@ impl ParserState {
         // Restore context flags
         self.context_flags = saved_flags;
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-        let end_pos = self.token_end();
+        let end_pos = if self.deferred_module_close_braces > 0
+            && self.is_token(SyntaxKind::CloseBraceToken)
+        {
+            self.deferred_module_close_braces -= 1;
+            self.token_pos()
+        } else {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            self.token_end()
+        };
 
         self.arena.add_module_block(
             syntax_kind_ext::MODULE_BLOCK,
@@ -1687,6 +1711,14 @@ impl ParserState {
     /// import "mod";
     pub(crate) fn parse_import_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.parse_import_declaration_with_modifiers(start_pos, None)
+    }
+
+    pub(crate) fn parse_import_declaration_with_modifiers(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
         self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ImportKeyword);
 
@@ -1701,48 +1733,78 @@ impl ParserState {
             self.parse_diagnostics.len() > diagnostics_before_import_clause;
 
         // Parse module specifier
-        let module_specifier = if import_clause.is_none() {
+        let recovered_trailing_comma_before_from =
+            !import_clause_had_errors && self.is_token(SyntaxKind::CommaToken);
+        if recovered_trailing_comma_before_from {
+            self.parse_error_at_current_token(
+                "'from' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token();
+            if self.is_token(SyntaxKind::FromKeyword) {
+                self.next_token();
+                if self.is_token(SyntaxKind::StringLiteral) {
+                    self.parse_error_at_current_token(
+                        "';' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                    let _ = self.parse_string_literal();
+                }
+            }
+        }
+
+        let module_specifier = if recovered_trailing_comma_before_from {
+            NodeIndex::NONE
+        } else if import_clause.is_none() {
             self.parse_string_literal()
-        } else if import_clause_had_errors && self.is_token(SyntaxKind::FromKeyword) {
+        } else if import_clause_had_errors
+            && self.is_token(SyntaxKind::FromKeyword)
+            && !self.last_named_imports_consumed_closing_brace
+        {
             // The import clause had errors but we still see `from` — this happens
-            // when errors are inside `{ ... }` (e.g. `import { 0n } from "mod"`)
-            // or after recovery like `import { type as as as as } from "mod"`.
-            // Consume `from` and the module specifier normally.
+            // when a named import list failed to consume its closing `}` and we
+            // recovered directly into the module clause. Consume `from` and the
+            // module specifier normally.
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
         } else if import_clause_had_errors {
-            // The import clause had errors AND we're NOT at `from`.  This happens
-            // with malformed namespace imports like `import * from Zero from "./0"`
-            // where the parser consumed `from` as the namespace name and leftover
-            // tokens remain.  Absorb residual identifier-like tokens on the same
-            // line into the import statement to prevent them from being parsed as
-            // standalone statements (which would generate cascading TS1434
-            // diagnostics).  Stop at delimiters (`}`, `{`) which belong to
-            // legitimate syntax (e.g. `import { 0n as foo } from "./foo"`).
-            self.parse_expected(SyntaxKind::FromKeyword);
-            while !self.scanner.has_preceding_line_break()
-                && !self.is_token(SyntaxKind::SemicolonToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-                && !self.is_token(SyntaxKind::CloseBraceToken)
-                && !self.is_token(SyntaxKind::OpenBraceToken)
+            if self.is_token(SyntaxKind::FromKeyword) || self.is_token(SyntaxKind::CloseBraceToken)
             {
-                if self.is_token(SyntaxKind::StringLiteral)
-                    || self.is_token(SyntaxKind::FromKeyword)
-                {
-                    break;
-                }
-                self.next_token();
-            }
-            // If we reached `from STRING`, emit `;` expected at the leftover
-            // `from` position (matching tsc's recovery) then consume the specifier.
-            if self.is_token(SyntaxKind::FromKeyword) {
-                self.error_token_expected(";");
-                self.next_token();
-            }
-            if self.is_token(SyntaxKind::StringLiteral) {
-                self.parse_string_literal()
-            } else {
                 NodeIndex::NONE
+            } else {
+                // The import clause had errors AND we're NOT at `from`.  This happens
+                // with malformed namespace imports like `import * from Zero from "./0"`
+                // where the parser consumed `from` as the namespace name and leftover
+                // tokens remain.  Absorb residual identifier-like tokens on the same
+                // line into the import statement to prevent them from being parsed as
+                // standalone statements (which would generate cascading TS1434
+                // diagnostics).  Stop at delimiters (`}`, `{`) which belong to
+                // legitimate syntax (e.g. `import { 0n as foo } from "./foo"`).
+                self.parse_expected(SyntaxKind::FromKeyword);
+                while !self.scanner.has_preceding_line_break()
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::OpenBraceToken)
+                {
+                    if self.is_token(SyntaxKind::StringLiteral)
+                        || self.is_token(SyntaxKind::FromKeyword)
+                    {
+                        break;
+                    }
+                    self.next_token();
+                }
+                // If we reached `from STRING`, emit `;` expected at the leftover
+                // `from` position (matching tsc's recovery) then consume the specifier.
+                if self.is_token(SyntaxKind::FromKeyword) {
+                    self.error_token_expected(";");
+                    self.next_token();
+                }
+                if self.is_token(SyntaxKind::StringLiteral) {
+                    self.parse_string_literal()
+                } else {
+                    NodeIndex::NONE
+                }
             }
         } else {
             self.parse_expected(SyntaxKind::FromKeyword);
@@ -1751,8 +1813,16 @@ impl ParserState {
 
         // Parse optional import attributes: with { ... } or assert { ... }
         let attributes = self.parse_import_attributes();
-
-        self.parse_semicolon();
+        let recover_as_statement_boundary = import_clause_had_errors
+            && module_specifier.is_none()
+            && matches!(
+                self.token(),
+                SyntaxKind::CloseBraceToken | SyntaxKind::FromKeyword
+            )
+            || (recovered_trailing_comma_before_from && module_specifier.is_none());
+        if !recover_as_statement_boundary {
+            self.parse_semicolon();
+        }
         let end_pos = self.token_end();
 
         self.arena.add_import_decl(
@@ -1760,7 +1830,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ImportDeclData {
-                modifiers: None,
+                modifiers,
                 // For regular imports, type-only lives in ImportClauseData, not here.
                 is_type_only: false,
                 import_clause,
@@ -1841,6 +1911,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         let mut is_type_only = false;
         let mut is_deferred = false;
+        self.last_named_imports_consumed_closing_brace = false;
 
         // Check for "type" keyword modifier (import type { ... } / import type X from ...)
         // Disambiguation: `import type` can mean either:
@@ -1967,6 +2038,12 @@ impl ParserState {
                 self.parse_namespace_import()
             } else if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_named_imports()
+            } else if self.is_token(SyntaxKind::FromKeyword) {
+                self.parse_error_at_current_token(
+                    "'{' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
+                NodeIndex::NONE
             } else {
                 NodeIndex::NONE
             }
@@ -2011,9 +2088,12 @@ impl ParserState {
     /// Parse named imports: { x, y as z }
     pub(crate) fn parse_named_imports(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.last_named_imports_consumed_closing_brace = false;
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut elements = Vec::new();
+        let mut leave_closing_brace_for_statement_recovery = false;
+        let mut consumed_closing_brace = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2025,9 +2105,56 @@ impl ParserState {
                 break;
             }
 
+            if self.is_token(SyntaxKind::AsteriskToken) {
+                self.error_identifier_expected();
+                self.next_token();
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.parse_error_at_current_token(
+                        "Expression expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                    let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
+                    consumed_closing_brace = true;
+                    leave_closing_brace_for_statement_recovery = false;
+                    break;
+                }
+            }
+
             let element_start = self.token_pos();
+            let diagnostics_before = self.parse_diagnostics.len();
             let spec = self.parse_import_specifier();
             elements.push(spec);
+            let spec_had_errors = self.parse_diagnostics.len() > diagnostics_before;
+
+            if spec_had_errors && self.is_token(SyntaxKind::CloseBraceToken) {
+                // For malformed import specifiers like `{ 0n as foo }`, tsc
+                // ends the import clause before `}` and lets statement recovery
+                // surface the stray `}` / `from` follow-up diagnostics (TS1128/TS1434).
+                leave_closing_brace_for_statement_recovery = true;
+                break;
+            }
+
+            if spec_had_errors
+                && !self.is_token(SyntaxKind::CommaToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::FromKeyword)
+            {
+                while !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::CommaToken)
+                    && !self.is_token(SyntaxKind::FromKeyword)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.next_token();
+                }
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    leave_closing_brace_for_statement_recovery = true;
+                    break;
+                }
+                if self.is_token(SyntaxKind::FromKeyword) {
+                    leave_closing_brace_for_statement_recovery = false;
+                    break;
+                }
+            }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 if self.is_token(SyntaxKind::CloseBraceToken) {
@@ -2052,7 +2179,14 @@ impl ParserState {
             }
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        self.last_named_imports_consumed_closing_brace =
+            if leave_closing_brace_for_statement_recovery {
+                false
+            } else if consumed_closing_brace {
+                true
+            } else {
+                self.parse_expected(SyntaxKind::CloseBraceToken)
+            };
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(

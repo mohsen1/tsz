@@ -844,8 +844,17 @@ impl<'a> CheckerState<'a> {
             left_type = jsdoc_left_type;
         }
 
+        if is_function_assignment {
+            // TS2629/TS2628/TS2630 are terminal for simple assignment targets in tsc.
+            // Do not contextually type the RHS against the class/function/enum object
+            // type, or we can produce spurious follow-on errors like missing
+            // `prototype` on a function expression assigned to a class symbol.
+            return self.get_type_of_node(right_idx);
+        }
+
         let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY
+        if !is_destructuring
+            && left_type != TypeId::ANY
             && left_type != TypeId::NEVER
             && left_type != TypeId::UNKNOWN
             && !self.type_contains_error(left_type)
@@ -868,7 +877,21 @@ impl<'a> CheckerState<'a> {
                     || right_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     || right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     || right_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    || right_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION;
+                    || right_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                    || (right_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && self
+                            .ctx
+                            .arena
+                            .get_binary_expr(right_node)
+                            .is_some_and(|bin| {
+                                matches!(
+                                    bin.operator_token,
+                                    k if k == SyntaxKind::BarBarToken as u16
+                                        || k == SyntaxKind::AmpersandAmpersandToken as u16
+                                        || k == SyntaxKind::QuestionQuestionToken as u16
+                                        || k == SyntaxKind::CommaToken as u16
+                                )
+                            }));
                 if needs_fresh_contextual_check {
                     self.clear_type_cache_recursive(right_idx);
                 }
@@ -882,12 +905,6 @@ impl<'a> CheckerState<'a> {
         // No need to manually track freshness removal here.
 
         self.ctx.contextual_type = prev_context;
-
-        if is_function_assignment {
-            // TS2630 is terminal in TypeScript for simple assignment targets.
-            // Avoid cascading TS2322/other assignability diagnostics.
-            return right_type;
-        }
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
@@ -1264,7 +1281,8 @@ impl<'a> CheckerState<'a> {
         // Compound assignments also read the LHS value. For private setter-only
         // accessors, this triggers TS2806 ("Private accessor was defined without
         // a getter"). Evaluate in read context first.
-        let _ = self.get_type_of_node(left_idx);
+        let left_read_raw = self.get_type_of_node(left_idx);
+        let left_read_type = self.resolve_type_query_type(left_read_raw);
 
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
@@ -1315,25 +1333,32 @@ impl<'a> CheckerState<'a> {
             _ => "",
         };
 
-        if !op_str.is_empty() {
-            emitted_operator_error |= self.check_and_emit_nullish_binary_operands(
-                left_idx, right_idx, left_type, right_type, op_str,
-            );
-        }
+        let emitted_nullish_error = if !op_str.is_empty() {
+            self.check_and_emit_nullish_binary_operands(
+                left_idx,
+                right_idx,
+                left_read_type,
+                right_type,
+                op_str,
+            )
+        } else {
+            false
+        };
+        emitted_operator_error |= emitted_nullish_error;
 
         // TS2469: For += with symbol operands, emit when one side is symbol and the
         // other is string or any. Uses "+=" in the message (not "+").
         if operator == SyntaxKind::PlusEqualsToken as u16
-            && left_type != TypeId::ERROR
+            && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-            let left_is_symbol = evaluator.is_symbol_like(left_type);
+            let left_is_symbol = evaluator.is_symbol_like(left_read_type);
             let right_is_symbol = evaluator.is_symbol_like(right_type);
             if left_is_symbol || right_is_symbol {
-                let left_is_string_or_any = left_type == TypeId::ANY
-                    || left_type == TypeId::STRING
-                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_type);
+                let left_is_string_or_any = left_read_type == TypeId::ANY
+                    || left_read_type == TypeId::STRING
+                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_read_type);
                 let right_is_string_or_any = right_type == TypeId::ANY
                     || right_type == TypeId::STRING
                     || tsz_solver::type_queries::is_string_literal(self.ctx.types, right_type);
@@ -1368,14 +1393,14 @@ impl<'a> CheckerState<'a> {
         // was already emitted.
         if operator == SyntaxKind::PlusEqualsToken as u16
             && !emitted_operator_error
-            && left_type != TypeId::ERROR
+            && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
             // Evaluate types to resolve IndexAccess/Application types before checking.
             // e.g. `T[K]` where `T extends Record<K, number>` should resolve to `number`
             // so the += operator is correctly accepted.
-            let eval_left = self.evaluate_type_for_binary_ops(left_type);
+            let eval_left = self.evaluate_type_for_binary_ops(left_read_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
             let result = evaluator.evaluate(eval_left, eval_right, "+");
             if let tsz_solver::BinaryOpResult::TypeError { .. } = result {
@@ -1386,7 +1411,7 @@ impl<'a> CheckerState<'a> {
                 // "Operator '+=' cannot be applied to types 'boolean' and 'number'."
                 let left_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
                     self.ctx.types,
-                    left_type,
+                    left_read_type,
                 ));
                 let right_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
                     self.ctx.types,
@@ -1416,11 +1441,11 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::PercentEqualsToken as u16
                 || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
         );
-        if is_arithmetic_compound && !is_function_assignment {
+        if is_arithmetic_compound && !is_function_assignment && !emitted_nullish_error {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
-            if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+            if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 emitted_operator_error |=
-                    self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                    self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
             }
         }
 
@@ -1429,11 +1454,11 @@ impl<'a> CheckerState<'a> {
         if operator == SyntaxKind::AsteriskAsteriskEqualsToken as u16
             && (self.ctx.compiler_options.target as u32)
                 < (tsz_common::common::ScriptTarget::ES2016 as u32)
-            && left_type != TypeId::ANY
+            && left_read_type != TypeId::ANY
             && right_type != TypeId::ANY
-            && left_type != TypeId::UNKNOWN
+            && left_read_type != TypeId::UNKNOWN
             && right_type != TypeId::UNKNOWN
-            && self.is_subtype_of(left_type, TypeId::BIGINT)
+            && self.is_subtype_of(left_read_type, TypeId::BIGINT)
             && self.is_subtype_of(right_type, TypeId::BIGINT)
         {
             self.error_at_node_msg(
@@ -1457,10 +1482,10 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
                 || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
         );
-        if is_boolean_bitwise_compound && !is_function_assignment {
+        if is_boolean_bitwise_compound && !is_function_assignment && !emitted_nullish_error {
             // TS2447: For &=, |=, ^= with both boolean operands, emit special error
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-            let left_is_boolean = evaluator.is_boolean_like(left_type);
+            let left_is_boolean = evaluator.is_boolean_like(left_read_type);
             let right_is_boolean = evaluator.is_boolean_like(right_type);
             if left_is_boolean && right_is_boolean {
                 let (op_str, suggestion) = match operator {
@@ -1470,20 +1495,22 @@ impl<'a> CheckerState<'a> {
                 };
                 self.emit_boolean_operator_error(left_idx, op_str, suggestion);
                 emitted_operator_error = true;
-            } else if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+            } else if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 emitted_operator_error |=
-                    self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                    self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
             }
         } else if is_shift_compound
             && !is_function_assignment
-            && left_type != TypeId::ERROR
+            && !emitted_nullish_error
+            && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
             emitted_operator_error |=
-                self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+                self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
         }
 
-        let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
+        let result_type =
+            self.compound_assignment_result_type(left_read_type, right_type, operator);
         let is_logical_assignment = matches!(
             operator,
             k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
@@ -1661,315 +1688,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::context::CheckerOptions;
-    use crate::test_utils::check_source;
-
-    fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-        check_source(source, "test.ts", CheckerOptions::default())
-    }
-
-    #[test]
-    fn conditional_type_intersection_assignment_ts2322() {
-        // tsc emits TS2322 for both assignments because Something<A> contains
-        // a deferred conditional type in its intersection.
-        let source = r#"
-            type Something<T> = { test: string } & (T extends object ? {
-                arg: T
-            } : {
-                arg?: undefined
-            });
-
-            function testFunc2<A extends object>(a: A, sa: Something<A>) {
-                sa = { test: 'hi', arg: a };
-                sa = { test: 'bye', arg: a, arr: a };
-            }
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-        assert!(
-            ts2322_count >= 2,
-            "expected at least 2 TS2322 for assigning to intersection with deferred conditional, got {ts2322_count}. Diagnostics: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn constructor_accessibility_assignment_error_targets_lhs() {
-        let source = r#"
-            class Foo {
-                constructor(public x: number) {}
-            }
-            class Bar {
-                protected constructor(public x: number) {}
-            }
-            let a = Foo;
-            a = Bar;
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let diag = diagnostics
-            .iter()
-            .find(|d| d.code == 2322)
-            .expect("expected TS2322");
-
-        let expected_start = source.find("a = Bar").expect("expected assignment span") as u32;
-
-        assert_eq!(
-            diag.start, expected_start,
-            "TS2322 should be anchored to LHS"
-        );
-        assert_eq!(
-            diag.length, 1,
-            "TS2322 should target only the assignment target"
-        );
-    }
-
-    #[test]
-    fn non_distributive_conditional_with_any_evaluates_to_true_branch() {
-        // `[any] extends [number] ? 1 : 0` should evaluate to `1` (non-distributive).
-        // `any extends number ? 1 : 0` should evaluate to `0 | 1` (distributive, picks both).
-        // Assigning `0` to `U` (= 1) should emit TS2322, with message "...to type '1'",
-        // NOT "...to type '[any] extends [number] ? 1 : 0'".
-        let source = r#"
-            type T = any extends number ? 1 : 0;
-            let x: T;
-            x = 1;
-            x = 0;
-
-            type U = [any] extends [number] ? 1 : 0;
-            let y: U;
-            y = 1;
-            y = 0;
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        // `x = 0` should NOT error: T = 0 | 1, and 0 is assignable to 0 | 1
-        let x_errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                d.code == 2322
-                    && d.message_text.contains("'0'")
-                    && d.message_text.contains("'0 | 1'")
-            })
-            .collect();
-        assert!(
-            x_errors.is_empty(),
-            "x = 0 should not error since T = 0 | 1"
-        );
-
-        // `y = 0` should error: U = 1, and 0 is not assignable to 1
-        let y_errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                d.code == 2322 && d.message_text.contains("'0'") && d.message_text.contains("'1'")
-            })
-            .collect();
-        assert_eq!(
-            y_errors.len(),
-            1,
-            "y = 0 should emit TS2322 with type '1', got: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-
-        // The error message should reference the evaluated type '1', not the deferred conditional
-        assert!(
-            !y_errors[0].message_text.contains("extends"),
-            "Error message should use evaluated type '1', not deferred conditional. Got: {}",
-            y_errors[0].message_text
-        );
-    }
-
-    #[test]
-    fn union_keyed_index_write_type_is_intersection() {
-        // When writing to obj[k] where k is a union key, the write type is the
-        // intersection of all property types. For `{ a: string, b: number }` with
-        // key `'a' | 'b'`, write type = string & number = never.
-        // tsc emits TS2322: Type 'any' is not assignable to type 'never'.
-        let source = r#"
-            const x1 = { a: 'foo', b: 42 };
-            declare let k: 'a' | 'b';
-            x1[k] = 'bar' as any;
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-        assert_eq!(
-            ts2322_count,
-            1,
-            "expected 1 TS2322 for assigning any to never (intersection of string & number), got {ts2322_count}. Diagnostics: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn any_not_assignable_to_never() {
-        // tsc: Type 'any' is not assignable to type 'never'. (TS2322)
-        // `any` bypasses most type checks but cannot be assigned to `never`.
-        let source = r#"
-            declare let x: never;
-            x = 'bar' as any;
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-        assert_eq!(
-            ts2322_count,
-            1,
-            "expected 1 TS2322 for assigning any to never, got {ts2322_count}. Diagnostics: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn generic_conditional_type_alias_stays_deferred() {
-        // Generic type aliases should NOT be eagerly evaluated — they stay deferred
-        // until instantiated. This ensures we don't break generic conditional types.
-        let source = r#"
-            type IsString<T> = T extends string ? true : false;
-            let a: IsString<string> = true;
-            let b: IsString<number> = false;
-            let c: IsString<string> = false;
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        // `c = false` should error: IsString<string> = true, and false is not assignable to true
-        let errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
-        assert_eq!(
-            errors.len(),
-            1,
-            "expected 1 TS2322 for `c = false`, got: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn private_setter_only_no_false_ts2322() {
-        // A class with a set-only private accessor should not emit TS2322
-        // when assigning to it. The write type (setter param) is `number`,
-        // not the read type (`undefined`).
-        let source = r#"
-            class C {
-                set #foo(a: number) {}
-                bar() {
-                    let x = (this.#foo = 42 * 2);
-                }
-            }
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let ts2322 = diagnostics.iter().filter(|d| d.code == 2322).count();
-        assert_eq!(
-            ts2322,
-            0,
-            "setter-only private accessor should not produce TS2322, got: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn private_setter_only_read_emits_ts2806() {
-        // Reading from a private setter-only accessor should emit TS2806
-        // ("Private accessor was defined without a getter"), not cascade
-        // into TS2532/TS2488 from the `undefined` read type.
-        let source = r#"
-            class C {
-                set #foo(a: number) {}
-                bar() {
-                    console.log(this.#foo);
-                }
-            }
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let ts2806 = diagnostics.iter().filter(|d| d.code == 2806).count();
-        assert_eq!(
-            ts2806,
-            1,
-            "expected 1 TS2806 for reading setter-only private accessor, got: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-        // Should NOT produce cascading TS2532 (possibly undefined)
-        let ts2532 = diagnostics.iter().filter(|d| d.code == 2532).count();
-        assert_eq!(ts2532, 0, "should not cascade into TS2532");
-    }
-
-    #[test]
-    fn private_setter_only_compound_assignment_emits_ts2806() {
-        // Compound assignments (`+=`) read the LHS, so setter-only accessors
-        // should trigger TS2806 for the read part.
-        let source = r#"
-            class C {
-                set #val(a: number) {}
-                bar() {
-                    this.#val += 3;
-                }
-            }
-        "#;
-
-        let diagnostics = diagnostics_for(source);
-        let ts2806 = diagnostics.iter().filter(|d| d.code == 2806).count();
-        assert_eq!(
-            ts2806,
-            1,
-            "expected 1 TS2806 for compound assignment to setter-only private accessor, got: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn inner_assignment_in_variable_decl_anchors_at_assignment_target() {
-        let source = r#"interface A { x: number; }
-interface B { y: string; }
-declare let b: B;
-declare let a: A;
-const x = a = b;"#;
-
-        let diagnostics = diagnostics_for(source);
-
-        let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
-        assert!(
-            !ts2741.is_empty(),
-            "expected TS2741 for inner assignment in variable decl, got: {:?}",
-            diagnostics
-                .iter()
-                .map(|d| (d.code, d.start, &d.message_text))
-                .collect::<Vec<_>>()
-        );
-
-        // The diagnostic should anchor at `a` (the inner assignment target),
-        // NOT at `const` (the variable statement start).
-        let diag = ts2741[0];
-        let a_offset = source.find("const x = a = b;").unwrap() + "const x = ".len();
-        assert_eq!(
-            diag.start as usize, a_offset,
-            "TS2741 should point to inner assignment target 'a' (offset {}), not offset {}",
-            a_offset, diag.start
-        );
-    }
-}
+#[path = "assignment_checker_tests.rs"]
+mod tests;

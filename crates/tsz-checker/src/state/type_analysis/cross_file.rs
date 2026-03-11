@@ -664,6 +664,107 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn delegate_cross_arena_interface_member_simple_type(
+        &mut self,
+        interface_idx: NodeIndex,
+        member_idx: NodeIndex,
+        interface_arena: &tsz_parser::NodeArena,
+        type_args: Option<&[TypeId]>,
+    ) -> Option<TypeId> {
+        if std::ptr::eq(interface_arena, self.ctx.arena) {
+            return None;
+        }
+
+        let delegate_file_idx = self.ctx.all_arenas.as_ref().and_then(|arenas| {
+            arenas
+                .iter()
+                .position(|arena| std::ptr::eq(arena.as_ref(), interface_arena))
+        });
+        let delegate_binder = delegate_file_idx
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .unwrap_or(self.ctx.binder);
+
+        if !Self::enter_cross_arena_delegation() {
+            return None;
+        }
+        if !self.ctx.enter_recursion() {
+            Self::leave_cross_arena_delegation();
+            return None;
+        }
+
+        let delegate_file_name = interface_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            interface_arena,
+            delegate_binder,
+            self.ctx.types,
+            delegate_file_name,
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
+            *checker.ctx.cross_file_symbol_targets.borrow_mut() =
+                self.ctx.cross_file_symbol_targets.borrow().clone();
+        }
+        checker.ctx.all_arenas = self.ctx.all_arenas.clone();
+        checker.ctx.all_binders = self.ctx.all_binders.clone();
+        checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+        checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        {
+            let parent_d2s = self.ctx.def_to_symbol.borrow();
+            let mut child_d2s = checker.ctx.def_to_symbol.borrow_mut();
+            for (&def_id, &sym_id_val) in parent_d2s.iter() {
+                child_d2s.entry(def_id).or_insert(sym_id_val);
+            }
+        }
+        {
+            let parent_s2d = self.ctx.symbol_to_def.borrow();
+            let mut child_s2d = checker.ctx.symbol_to_def.borrow_mut();
+            for (&sym_id_val, &def_id) in parent_s2d.iter() {
+                child_s2d.entry(sym_id_val).or_insert(def_id);
+            }
+        }
+
+        let interface_type_params = checker
+            .ctx
+            .arena
+            .get(interface_idx)
+            .and_then(|node| checker.ctx.arena.get_interface(node))
+            .and_then(|iface| iface.type_parameters.clone());
+        let (interface_params, interface_updates) = interface_type_params
+            .as_ref()
+            .map(|type_parameters| checker.push_type_parameters(&Some(type_parameters.clone())))
+            .unwrap_or_default();
+        let mut result = checker.get_type_of_interface_member_simple(member_idx);
+        if let Some(type_args) = type_args
+            && !interface_params.is_empty()
+            && interface_params.len() == type_args.len()
+        {
+            let substitution = tsz_solver::TypeSubstitution::from_args(
+                checker.ctx.types,
+                &interface_params,
+                type_args,
+            );
+            result = tsz_solver::instantiate_type(checker.ctx.types, result, &substitution);
+        }
+        checker.pop_type_parameters(interface_updates);
+
+        self.ctx.leave_recursion();
+        Self::leave_cross_arena_delegation();
+
+        if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
     /// Detect and record cross-file `SymbolIds`.
     ///
     /// In multi-file mode, the driver copies target file's `module_exports` into

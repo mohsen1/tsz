@@ -1,0 +1,500 @@
+//! Cross-file interface member conflict checking and utility helpers.
+//!
+//! Extracted from `duplicate_identifiers.rs` to keep file sizes manageable.
+//! Contains:
+//! - Cross-file interface/global/module augmentation member conflict detection
+//! - Built-in global identifier conflict checking (TS2397)
+//! - Declaration utility helpers (`function_has_body`, `get_access_modifier`, `is_declaration_optional`)
+
+use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_parser::parser::NodeIndex;
+use tsz_scanner::SyntaxKind;
+
+const INTERFACE_MEMBER_KIND_PROPERTY: u8 = 1;
+const INTERFACE_MEMBER_KIND_METHOD: u8 = 1 << 1;
+const CROSS_FILE_INTERFACE_MEMBER_CONFLICT_LIMIT: usize = 8;
+
+impl<'a> CheckerState<'a> {
+    /// Check cross-file interface member conflicts (property vs method with same name).
+    ///
+    /// When the same interface is declared across files, and one file uses a property
+    /// signature while the other uses a method signature for the same member name,
+    /// tsc emits TS2300 "Duplicate identifier" on the local declarations.
+    pub(crate) fn check_cross_file_interface_member_conflicts(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        local_interface_decls: &[NodeIndex],
+        remote_interface_decls: &[NodeIndex],
+    ) {
+        let mut remote_members = FxHashMap::default();
+
+        for &decl_idx in remote_interface_decls {
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+            for remote_arena in arenas
+                .iter()
+                .filter(|arena| !std::ptr::eq(&***arena, self.ctx.arena))
+            {
+                self.collect_interface_member_kinds(remote_arena, decl_idx, &mut remote_members);
+            }
+        }
+
+        self.report_cross_file_interface_member_conflicts(local_interface_decls, &remote_members);
+    }
+
+    pub(crate) fn check_cross_file_global_augmentation_member_conflicts(&mut self) {
+        let Some(_arenas) = self.ctx.all_arenas.as_ref() else {
+            return;
+        };
+
+        let grouped_augmentations: Vec<
+            Vec<(
+                NodeIndex,
+                std::sync::Arc<tsz_parser::parser::node::NodeArena>,
+            )>,
+        > = self
+            .ctx
+            .binder
+            .global_augmentations
+            .values()
+            .map(|augmentations| {
+                augmentations
+                    .iter()
+                    .filter_map(|augmentation| {
+                        Some((augmentation.node, augmentation.arena.as_ref()?.clone()))
+                    })
+                    .collect()
+            })
+            .collect();
+
+        for augmentations in grouped_augmentations {
+            let mut local_interface_decls = Vec::new();
+            let mut remote_members = FxHashMap::default();
+
+            for (decl_idx, arena) in augmentations {
+                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                    local_interface_decls.push(decl_idx);
+                } else {
+                    self.collect_interface_member_kinds(
+                        arena.as_ref(),
+                        decl_idx,
+                        &mut remote_members,
+                    );
+                }
+            }
+
+            self.report_cross_file_interface_member_conflicts(
+                &local_interface_decls,
+                &remote_members,
+            );
+        }
+    }
+
+    pub(crate) fn check_cross_file_module_augmentation_member_conflicts(&mut self) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return;
+        };
+
+        let mut local_interface_decls_by_module = FxHashMap::default();
+        let mut remote_members_by_module = FxHashMap::default();
+
+        for arena in &*all_arenas {
+            let is_local = std::ptr::eq(arena.as_ref(), self.ctx.arena);
+            let Some(source_file) = arena.source_files.first() else {
+                continue;
+            };
+
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(module_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+                let Some(module_decl) = arena.get_module(module_node) else {
+                    continue;
+                };
+                if module_decl.body.is_none() {
+                    continue;
+                }
+
+                let Some(module_name_node) = arena.get(module_decl.name) else {
+                    continue;
+                };
+                if module_name_node.kind != SyntaxKind::StringLiteral as u16
+                    && module_name_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                {
+                    continue;
+                }
+                let Some(module_name_lit) = arena.get_literal(module_name_node) else {
+                    continue;
+                };
+                if module_name_lit.text.is_empty() {
+                    continue;
+                }
+                let module_spec = module_name_lit.text.clone();
+
+                let Some(body_node) = arena.get(module_decl.body) else {
+                    continue;
+                };
+                if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                    continue;
+                }
+                let Some(block) = arena.get_module_block(body_node) else {
+                    continue;
+                };
+                let Some(statements) = &block.statements else {
+                    continue;
+                };
+
+                for &inner_idx in &statements.nodes {
+                    let Some(stmt_node) = arena.get(inner_idx) else {
+                        continue;
+                    };
+                    let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        let Some(export_decl) = arena.get_export_decl(stmt_node) else {
+                            continue;
+                        };
+                        export_decl.export_clause
+                    } else {
+                        inner_idx
+                    };
+                    let Some(inner_node) = arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(iface) = arena.get_interface(inner_node) else {
+                        continue;
+                    };
+                    if !self.is_declaration_exported(arena, decl_idx) {
+                        continue;
+                    }
+                    let Some(interface_name) = arena
+                        .get_identifier_at(iface.name)
+                        .map(|ident| ident.escaped_text.clone())
+                    else {
+                        continue;
+                    };
+
+                    let key = (module_spec.clone(), interface_name);
+                    if is_local {
+                        local_interface_decls_by_module
+                            .entry(key)
+                            .or_insert_with(Vec::new)
+                            .push(decl_idx);
+                    } else {
+                        self.collect_interface_member_kinds(
+                            arena.as_ref(),
+                            decl_idx,
+                            remote_members_by_module.entry(key).or_default(),
+                        );
+                    }
+                }
+            }
+        }
+
+        for (key, local_interface_decls) in local_interface_decls_by_module {
+            let Some(remote_members) = remote_members_by_module.get(&key) else {
+                continue;
+            };
+            self.report_cross_file_interface_member_conflicts(
+                &local_interface_decls,
+                remote_members,
+            );
+        }
+    }
+
+    fn collect_interface_member_kinds(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+        members: &mut FxHashMap<String, u8>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = arena.get(decl_idx) else {
+            return;
+        };
+        let Some(iface) = arena.get_interface(node) else {
+            return;
+        };
+
+        for &member_idx in &iface.members.nodes {
+            let Some(member_node) = arena.get(member_idx) else {
+                continue;
+            };
+            let kind = match member_node.kind {
+                syntax_kind_ext::PROPERTY_SIGNATURE => INTERFACE_MEMBER_KIND_PROPERTY,
+                syntax_kind_ext::METHOD_SIGNATURE => INTERFACE_MEMBER_KIND_METHOD,
+                _ => continue,
+            };
+            let Some(sig) = arena.get_signature(member_node) else {
+                continue;
+            };
+            let Some(name) =
+                crate::types_domain::queries::core::get_literal_property_name(arena, sig.name)
+            else {
+                continue;
+            };
+            members
+                .entry(name)
+                .and_modify(|existing| *existing |= kind)
+                .or_insert(kind);
+        }
+    }
+
+    fn report_cross_file_interface_member_conflicts(
+        &mut self,
+        local_interface_decls: &[NodeIndex],
+        remote_members: &FxHashMap<String, u8>,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if local_interface_decls.is_empty() || remote_members.is_empty() {
+            return;
+        }
+
+        let mut conflict_names = Vec::new();
+        let mut seen_conflict_names = FxHashSet::default();
+        let mut conflict_name_nodes = Vec::new();
+        let mut anchor_nodes = Vec::new();
+        let mut seen_anchor_nodes = FxHashSet::default();
+
+        for &decl_idx in local_interface_decls {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(iface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+            let anchor_node = self.interface_member_conflict_anchor_node(decl_idx);
+            let mut decl_has_conflict = false;
+
+            for &member_idx in &iface.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let local_kind = match member_node.kind {
+                    syntax_kind_ext::PROPERTY_SIGNATURE => INTERFACE_MEMBER_KIND_PROPERTY,
+                    syntax_kind_ext::METHOD_SIGNATURE => INTERFACE_MEMBER_KIND_METHOD,
+                    _ => continue,
+                };
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name(sig.name) else {
+                    continue;
+                };
+                let Some(&remote_kinds) = remote_members.get(&name) else {
+                    continue;
+                };
+                let opposite_kind = if local_kind == INTERFACE_MEMBER_KIND_METHOD {
+                    INTERFACE_MEMBER_KIND_PROPERTY
+                } else {
+                    INTERFACE_MEMBER_KIND_METHOD
+                };
+                if (remote_kinds & opposite_kind) == 0 {
+                    continue;
+                }
+
+                decl_has_conflict = true;
+                if seen_conflict_names.insert(name.clone()) {
+                    conflict_names.push(name.clone());
+                }
+                conflict_name_nodes.push((name, sig.name));
+            }
+
+            if decl_has_conflict && seen_anchor_nodes.insert(anchor_node) {
+                anchor_nodes.push(anchor_node);
+            }
+        }
+
+        if conflict_name_nodes.is_empty() {
+            return;
+        }
+
+        if conflict_names.len() >= CROSS_FILE_INTERFACE_MEMBER_CONFLICT_LIMIT {
+            let list = conflict_names.join(", ");
+            let message = format_message(
+                diagnostic_messages::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
+                &[&list],
+            );
+            for anchor_node in anchor_nodes {
+                self.error_at_node(
+                    anchor_node,
+                    &message,
+                    diagnostic_codes::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
+                );
+            }
+            return;
+        }
+
+        for (name, node_idx) in conflict_name_nodes {
+            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+            self.error_at_node(node_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+        }
+    }
+
+    fn interface_member_conflict_anchor_node(&self, decl_idx: NodeIndex) -> NodeIndex {
+        let enclosing_namespace = self.get_enclosing_namespace(decl_idx);
+        if enclosing_namespace.is_none() {
+            decl_idx
+        } else {
+            enclosing_namespace
+        }
+    }
+
+    /// Check for declarations that conflict with built-in global identifiers (TS2397).
+    ///
+    /// TypeScript protects the built-in global names `undefined` and `globalThis`
+    /// from being redeclared:
+    /// - `var undefined = null;` → TS2397 (value declaration of `undefined`)
+    /// - `namespace globalThis {}` → TS2397 (in non-module/script files)
+    /// - `var globalThis;` → TS2397 (in non-module/script files)
+    ///
+    /// Type declarations (interfaces, type aliases, etc.) named `undefined` are
+    /// allowed — `checkTypeNameIsReserved` handles those separately.
+    pub(crate) fn check_built_in_global_identifier_conflicts(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let is_external_module = self
+            .ctx
+            .is_external_module_by_file
+            .as_ref()
+            .and_then(|m| m.get(&self.ctx.file_name))
+            .copied()
+            .unwrap_or_else(|| self.ctx.binder.is_external_module());
+
+        // Check `undefined` redeclaration.
+        // tsc checks if `undefined` exists in globals and emits TS2397 for each
+        // non-type declaration. We check the file-level locals.
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("undefined")
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            for &decl_idx in &symbol.declarations {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                // Skip type declarations (interfaces, type aliases)
+                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                {
+                    continue;
+                }
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &["undefined"],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
+            }
+        }
+
+        // Check `globalThis` redeclaration (only in non-module files).
+        // In module files (files with import/export), `globalThis` declarations
+        // are allowed because they don't conflict with the global scope.
+        if !is_external_module
+            && let Some(sym_id) = self.ctx.binder.file_locals.get("globalThis")
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            for &decl_idx in &symbol.declarations {
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &["globalThis"],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
+            }
+        }
+    }
+
+    /// Check if a function declaration has a body (is an implementation, not just a signature).
+    pub(crate) fn function_has_body(&self, decl_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        func.body.is_some()
+    }
+
+    /// Get the access modifier of a declaration: 0 = public (default), 1 = private, 2 = protected.
+    pub(crate) fn get_access_modifier(&self, decl_idx: NodeIndex) -> u8 {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return 0;
+        };
+        let modifiers = match node.kind {
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.as_ref()),
+            syntax_kind_ext::METHOD_SIGNATURE => self
+                .ctx
+                .arena
+                .get_signature(node)
+                .and_then(|s| s.modifiers.as_ref()),
+            _ => None,
+        };
+        let Some(mods) = modifiers else {
+            return 0;
+        };
+        if self
+            .ctx
+            .arena
+            .has_modifier_ref(Some(mods), SyntaxKind::PrivateKeyword)
+        {
+            1
+        } else if self
+            .ctx
+            .arena
+            .has_modifier_ref(Some(mods), SyntaxKind::ProtectedKeyword)
+        {
+            2
+        } else {
+            0
+        }
+    }
+
+    /// Check if a method declaration or signature is optional (has `question_token`).
+    pub(crate) fn is_declaration_optional(&self, decl_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|m| m.question_token),
+            syntax_kind_ext::METHOD_SIGNATURE => self
+                .ctx
+                .arena
+                .get_signature(node)
+                .is_some_and(|s| s.question_token),
+            _ => false,
+        }
+    }
+}

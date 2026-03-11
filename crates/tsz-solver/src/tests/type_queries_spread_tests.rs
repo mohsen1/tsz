@@ -9,8 +9,9 @@
 
 use super::*;
 use crate::intern::TypeInterner;
+use crate::objects::ObjectLiteralBuilder;
 use crate::type_queries::is_valid_spread_type;
-use crate::types::{StringIntrinsicKind, TemplateSpan, TypeParamInfo};
+use crate::types::{PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo, Visibility};
 
 // =============================================================================
 // Basic spreadable / non-spreadable types
@@ -213,6 +214,61 @@ fn spread_string_intrinsic_lowercase_is_invalid() {
     let db = TypeInterner::new();
     let lower = db.string_intrinsic(StringIntrinsicKind::Lowercase, TypeId::STRING);
     assert!(!is_valid_spread_type(&db, lower));
+}
+
+#[test]
+fn spread_properties_skip_non_public_and_prototype_members() {
+    let db = TypeInterner::new();
+    let obj = db.object(vec![
+        PropertyInfo {
+            name: db.intern_string("visible"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: true,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: db.intern_string("#hidden"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Private,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: db.intern_string("method"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: true,
+            is_class_prototype: true,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+    ]);
+
+    let props = ObjectLiteralBuilder::new(&db).collect_spread_properties(obj);
+    assert_eq!(
+        props.len(),
+        1,
+        "expected only public own properties in spread"
+    );
+    assert_eq!(db.resolve_atom_ref(props[0].name).as_ref(), "visible");
+    assert!(
+        !props[0].readonly,
+        "spread properties should be mutable copies"
+    );
 }
 
 #[test]

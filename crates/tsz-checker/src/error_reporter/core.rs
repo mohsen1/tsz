@@ -1,6 +1,6 @@
 //! Core error emission helpers and type formatting utilities.
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, format_message};
+use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as query;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::NodeIndex;
@@ -10,12 +10,38 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn widen_function_like_display_type(&mut self, type_id: TypeId) -> TypeId {
+        let constructor_display_def = self
+            .ctx
+            .definition_store
+            .find_def_for_type(type_id)
+            .and_then(|def_id| {
+                self.ctx
+                    .definition_store
+                    .get(def_id)
+                    .filter(|def| matches!(def.kind, tsz_solver::def::DefKind::ClassConstructor))
+                    .map(|_| def_id)
+            });
+
         let type_id = self.evaluate_type_with_env(type_id);
+        if tsz_solver::is_generic_application(self.ctx.types, type_id) {
+            let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+            if let Some(def_id) = constructor_display_def {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(widened, def_id);
+            }
+            return widened;
+        }
         let type_id = self.resolve_type_for_property_access(type_id);
         let type_id = self.resolve_lazy_type(type_id);
         let type_id = self.evaluate_application_type(type_id);
-
-        tsz_solver::operations::widening::widen_type(self.ctx.types, type_id)
+        let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+        if let Some(def_id) = constructor_display_def {
+            self.ctx
+                .definition_store
+                .register_type_to_def(widened, def_id);
+        }
+        widened
     }
 
     fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
@@ -633,11 +659,15 @@ impl<'a> CheckerState<'a> {
         Some(expr_idx)
     }
 
-    pub(crate) fn declared_type_annotation_text_for_expression(
+    fn declared_type_annotation_text_for_expression_with_options(
         &self,
         expr_idx: NodeIndex,
+        allow_object_shapes: bool,
     ) -> Option<String> {
-        fn sanitize_type_annotation_text(text: String) -> Option<String> {
+        fn sanitize_type_annotation_text(
+            text: String,
+            allow_object_shapes: bool,
+        ) -> Option<String> {
             let mut text = text.trim().trim_start_matches(':').trim().to_string();
             // If the extracted text contains a newline, take only the first line —
             // the node span may extend past the declaration.
@@ -663,7 +693,7 @@ impl<'a> CheckerState<'a> {
                 text.pop();
                 text = text.trim_end().to_string();
             }
-            if text.starts_with('{') || text.starts_with('[') {
+            if !allow_object_shapes && (text.starts_with('{') || text.starts_with('[')) {
                 return None;
             }
             let open_count = text.chars().filter(|&ch| ch == '(').count();
@@ -671,7 +701,58 @@ impl<'a> CheckerState<'a> {
             if open_count != close_count {
                 return None;
             }
-            (!text.is_empty()).then_some(text)
+            if text.is_empty() {
+                return None;
+            }
+            // TypeScript `&` binds tighter than `|`. Add precedence parentheses
+            // so annotation text like `A & B | C & D` becomes `(A & B) | (C & D)`.
+            if text.contains(" & ") && text.contains(" | ") {
+                text = parenthesize_intersection_in_union_text(&text);
+            }
+            Some(text)
+        }
+
+        /// Add parentheses around `&`-joined groups in a top-level `|` union.
+        fn parenthesize_intersection_in_union_text(text: &str) -> String {
+            let mut parts = Vec::new();
+            let mut current = String::new();
+            let mut depth = 0u32;
+
+            for (i, ch) in text.char_indices() {
+                match ch {
+                    '(' | '<' | '[' => {
+                        depth += 1;
+                        current.push(ch);
+                    }
+                    ')' | '>' | ']' => {
+                        depth = depth.saturating_sub(1);
+                        current.push(ch);
+                    }
+                    '|' if depth == 0
+                        && text.get(i.saturating_sub(1)..i) == Some(" ")
+                        && text.get(i + 1..i + 2) == Some(" ") =>
+                    {
+                        parts.push(current.trim().to_string());
+                        current = String::new();
+                    }
+                    _ => {
+                        current.push(ch);
+                    }
+                }
+            }
+            parts.push(current.trim().to_string());
+
+            let formatted: Vec<String> = parts
+                .into_iter()
+                .map(|part| {
+                    if part.contains(" & ") && !part.starts_with('(') {
+                        format!("({part})")
+                    } else {
+                        part
+                    }
+                })
+                .collect();
+            formatted.join(" | ")
         }
 
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
@@ -702,7 +783,7 @@ impl<'a> CheckerState<'a> {
             {
                 return self
                     .node_text(param.type_annotation)
-                    .and_then(sanitize_type_annotation_text);
+                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes));
             }
 
             if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
@@ -710,11 +791,107 @@ impl<'a> CheckerState<'a> {
             {
                 return self
                     .node_text(var_decl.type_annotation)
-                    .and_then(sanitize_type_annotation_text);
+                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes));
             }
         }
 
         None
+    }
+
+    pub(crate) fn declared_type_annotation_text_for_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        self.declared_type_annotation_text_for_expression_with_options(expr_idx, false)
+    }
+
+    fn declared_diagnostic_source_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        self.declared_type_annotation_text_for_expression_with_options(expr_idx, true)
+    }
+
+    fn should_prefer_declared_source_annotation_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        expr_type: TypeId,
+        annotation_text: &str,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let display_type =
+            self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
+        let formatted = self.format_type_for_assignability_message(display_type);
+        let resolved = self.resolve_type_for_property_access(display_type);
+        let evaluated = self.judge_evaluate(resolved);
+        let resolver =
+            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+        let has_index_signature = resolver.has_index_signature(
+            evaluated,
+            tsz_solver::objects::index_signatures::IndexKind::String,
+        ) || resolver.has_index_signature(
+            evaluated,
+            tsz_solver::objects::index_signatures::IndexKind::Number,
+        );
+        if !formatted.starts_with('{') && !has_index_signature {
+            return false;
+        }
+
+        let annotation = annotation_text.trim();
+        annotation.contains('&') || !annotation.starts_with('{')
+    }
+
+    fn format_declared_annotation_for_diagnostic(&self, annotation_text: &str) -> String {
+        let mut formatted = annotation_text.trim().to_string();
+        if formatted.contains(':') {
+            formatted = formatted.replace(" }", "; }");
+        }
+        formatted
+    }
+
+    pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        formatter.format(ty).into_owned()
+    }
+
+    fn synthesized_object_parent_display_name(&self, ty: TypeId) -> Option<String> {
+        use tsz_binder::symbol_flags;
+        use tsz_solver::type_queries::get_object_shape_id;
+
+        let shape_id = get_object_shape_id(self.ctx.types, ty)?;
+        let shape = self.ctx.types.object_shape(shape_id);
+        let mut parent_ids = shape.properties.iter().filter_map(|prop| prop.parent_id);
+        let parent_sym = parent_ids.next()?;
+        if parent_ids.any(|other| other != parent_sym) {
+            return None;
+        }
+
+        let symbol = self.ctx.binder.get_symbol(parent_sym)?;
+        if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0 {
+            return None;
+        }
+
+        Some(symbol.escaped_name.clone())
+    }
+
+    pub(crate) fn format_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
+        if let Some(name) = self.synthesized_object_parent_display_name(ty) {
+            return name;
+        }
+        if self.ctx.definition_store.find_def_for_type(ty).is_none()
+            && self
+                .ctx
+                .definition_store
+                .find_type_alias_by_body(ty)
+                .is_some()
+        {
+            return self.format_type_diagnostic_structural(ty);
+        }
+        self.format_type_diagnostic(ty)
     }
 
     fn jsdoc_annotated_expression_display(
@@ -726,6 +903,24 @@ impl<'a> CheckerState<'a> {
 
         let mut current = expr_idx;
         loop {
+            if self
+                .ctx
+                .arena
+                .node_info(current)
+                .and_then(|info| self.ctx.arena.get(info.parent))
+                .is_some_and(|parent| {
+                    matches!(
+                        parent.kind,
+                        syntax_kind_ext::PROPERTY_ASSIGNMENT
+                            | syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                            | syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::GET_ACCESSOR
+                            | syntax_kind_ext::SET_ACCESSOR
+                    )
+                })
+            {
+                return None;
+            }
             if let Some(type_id) = self.jsdoc_type_annotation_for_node_direct(current) {
                 let display_type = self.widen_function_like_display_type(type_id);
                 return Some(self.format_assignability_type_for_message(display_type, target));
@@ -791,6 +986,14 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if source == TypeId::UNDEFINED
+            && self.ctx.arena.get(anchor_idx).is_some_and(|node| {
+                node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            })
+        {
+            return self.format_assignability_type_for_message(source, target);
+        }
+
         if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
             return display;
         }
@@ -814,6 +1017,16 @@ impl<'a> CheckerState<'a> {
 
             let expr_type = self.get_type_of_node(expr_idx);
             if expr_type != TypeId::ERROR {
+                if let Some(annotation_text) =
+                    self.declared_diagnostic_source_annotation_text(expr_idx)
+                    && self.should_prefer_declared_source_annotation_display(
+                        expr_idx,
+                        expr_type,
+                        &annotation_text,
+                    )
+                {
+                    return self.format_declared_annotation_for_diagnostic(&annotation_text);
+                }
                 let display_type =
                     if self.should_widen_enum_member_assignment_source(expr_type, target) {
                         self.widen_enum_member_type(expr_type)
@@ -854,6 +1067,17 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
+            if expr_type != TypeId::ERROR
+                && let Some(annotation_text) =
+                    self.declared_diagnostic_source_annotation_text(expr_idx)
+                && self.should_prefer_declared_source_annotation_display(
+                    expr_idx,
+                    expr_type,
+                    &annotation_text,
+                )
+            {
+                return self.format_declared_annotation_for_diagnostic(&annotation_text);
+            }
             let display_type = if expr_type != TypeId::ERROR {
                 let widened_expr_type = self.widen_type_for_display(expr_type);
                 if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
@@ -1195,25 +1419,37 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(0)
                     };
                 if type_param_count > 0 && shape.properties.len() >= type_param_count {
-                    // Collect non-brand properties with their names for stable sorting.
-                    // FxHashMap iteration order is non-deterministic; adding __private_brand
-                    // can shift hash bucket positions and reorder other properties.
-                    // Sort alphabetically so that `ClassPrivate<T,U>` produces consistent
-                    // type args regardless of whether private brands are present.
-                    // Note: `__private_brand_` sorts before lowercase names (ASCII '_' < 'a').
-                    let mut candidates: Vec<(String, TypeId)> = shape
-                        .properties
-                        .iter()
-                        .filter_map(|prop| {
-                            let name = self.ctx.types.resolve_atom_ref(prop.name).to_string();
-                            if name.starts_with("__private_brand_") {
-                                None
-                            } else {
-                                Some((name, prop.type_id))
-                            }
-                        })
-                        .collect();
-                    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                    // Recover instantiation args from actual value-carrying members first.
+                    // Methods tend to encode `T` as `() => T`, which produces noisy
+                    // displays like `C<() => string>` instead of `C<string>`.
+                    let build_candidates = |predicate: fn(&tsz_solver::PropertyInfo) -> bool| {
+                        let mut candidates: Vec<(String, TypeId)> = shape
+                            .properties
+                            .iter()
+                            .filter(|prop| predicate(prop))
+                            .filter_map(|prop| {
+                                let name = self.ctx.types.resolve_atom_ref(prop.name).to_string();
+                                if name.starts_with("__private_brand_") {
+                                    None
+                                } else {
+                                    Some((name, prop.type_id))
+                                }
+                            })
+                            .collect();
+                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                        candidates
+                    };
+                    let mut candidates =
+                        build_candidates(|prop| !prop.is_method && !prop.is_class_prototype);
+                    if candidates.len() < type_param_count {
+                        candidates = build_candidates(|prop| !prop.is_method);
+                    }
+                    if candidates.len() < type_param_count {
+                        candidates = build_candidates(|prop| !prop.is_class_prototype);
+                    }
+                    if candidates.len() < type_param_count {
+                        candidates = build_candidates(|_| true);
+                    }
                     let args: Vec<String> = candidates
                         .iter()
                         .take(type_param_count)
@@ -1750,88 +1986,5 @@ impl<'a> CheckerState<'a> {
             return vd_idx;
         }
         idx
-    }
-
-    // =========================================================================
-    // Fundamental Error Emitters
-    // =========================================================================
-
-    /// Report an error at a specific node.
-    pub(crate) fn error_at_node(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
-        if let Some((start, end)) = self.get_node_span(node_idx) {
-            let length = end.saturating_sub(start);
-            // Use the error() function which has deduplication by (start, code)
-            self.error(start, length, message.to_string(), code);
-        }
-    }
-
-    /// Emit a generator-related error (TS1221/TS1222) at the `*` asterisk token.
-    ///
-    /// TSC's `grammarErrorOnNode(node.asteriskToken!, ...)` anchors these errors
-    /// at the asterisk, not the function/method node. Since our AST stores
-    /// `asterisk_token` as a `bool` (not a node), we scan backward from the
-    /// name node's position in source text to locate the `*`.
-    pub(crate) fn emit_generator_error_at_asterisk(
-        &mut self,
-        name_idx: NodeIndex,
-        fallback_idx: NodeIndex,
-        message: &str,
-        code: u32,
-    ) {
-        // Try to find the `*` by scanning backward from the name node's start position
-        if let Some(name_node) = self.ctx.arena.get(name_idx)
-            && let Some(sf) = self.ctx.arena.source_files.first()
-        {
-            let text = sf.text.as_bytes();
-            let name_pos = name_node.pos as usize;
-            // Scan backward from the name position to find `*`
-            for i in (0..name_pos).rev() {
-                match text.get(i) {
-                    Some(b'*') => {
-                        self.error_at_position(i as u32, 1, message, code);
-                        return;
-                    }
-                    Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') => continue,
-                    _ => break, // Hit a non-whitespace, non-asterisk char — give up
-                }
-            }
-        }
-        // Fallback: error at the entire node
-        self.error_at_node(fallback_idx, message, code);
-    }
-
-    /// Emit a templated diagnostic error at a node.
-    ///
-    /// Looks up the message template for `code` via `get_message_template`,
-    /// formats it with `args`, and emits the error at `node_idx`.
-    /// Panics in debug mode if the code has no registered template.
-    pub(crate) fn error_at_node_msg(&mut self, node_idx: NodeIndex, code: u32, args: &[&str]) {
-        use tsz_common::diagnostics::get_message_template;
-        let template = get_message_template(code).unwrap_or("Unexpected checker diagnostic code.");
-        let message = format_message(template, args);
-        self.error_at_node(node_idx, &message, code);
-    }
-
-    /// Report an error at a specific position.
-    pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            start,
-            length,
-            message.to_string(),
-            code,
-        ));
-    }
-
-    /// Report an error at the current node being processed (from resolution stack).
-    /// Falls back to the start of the file if no node is in the stack.
-    pub(crate) fn error_at_current_node(&mut self, message: &str, code: u32) {
-        // Try to use the last node in the resolution stack
-        if let Some(&node_idx) = self.ctx.node_resolution_stack.last() {
-            self.error_at_node(node_idx, message, code);
-        } else {
-            // No current node - emit at start of file
-            self.error_at_position(0, 0, message, code);
-        }
     }
 }

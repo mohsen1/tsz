@@ -55,6 +55,96 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
+    fn match_signature_params_for_infer(
+        &self,
+        source_params: &[ParamInfo],
+        pattern_params: &[ParamInfo],
+        strip_nullish_optionals: bool,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let trailing_rest_param = pattern_params.last().filter(|param| param.rest);
+        let fixed_param_count = if trailing_rest_param.is_some() {
+            pattern_params.len().saturating_sub(1)
+        } else {
+            pattern_params.len()
+        };
+
+        if source_params.len() < fixed_param_count {
+            return false;
+        }
+
+        let mut local_visited = FxHashSet::default();
+        for (source_param, pattern_param) in source_params
+            .iter()
+            .take(fixed_param_count)
+            .zip(pattern_params.iter().take(fixed_param_count))
+        {
+            if source_param.rest != pattern_param.rest {
+                return false;
+            }
+            let allow_optional_source_match =
+                strip_nullish_optionals && source_param.optional && !pattern_param.optional;
+            if !allow_optional_source_match && source_param.optional != pattern_param.optional {
+                return false;
+            }
+            let source_param_type = if allow_optional_source_match {
+                crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
+            } else if source_param.optional {
+                self.interner()
+                    .union2(source_param.type_id, TypeId::UNDEFINED)
+            } else {
+                source_param.type_id
+            };
+            if !self.match_infer_pattern(
+                source_param_type,
+                pattern_param.type_id,
+                bindings,
+                &mut local_visited,
+                checker,
+            ) {
+                return false;
+            }
+        }
+
+        if let Some(rest_param) = trailing_rest_param {
+            let remaining_params = &source_params[fixed_param_count..];
+            if self.type_contains_infer(rest_param.type_id) {
+                if !self.match_rest_infer_tuple(
+                    remaining_params,
+                    rest_param.type_id,
+                    bindings,
+                    checker,
+                ) {
+                    return false;
+                }
+            } else {
+                let mut local_visited = FxHashSet::default();
+                for source_param in remaining_params {
+                    let source_param_type = if source_param.optional && strip_nullish_optionals {
+                        crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
+                    } else if source_param.optional {
+                        self.interner()
+                            .union2(source_param.type_id, TypeId::UNDEFINED)
+                    } else {
+                        source_param.type_id
+                    };
+                    if !self.match_infer_pattern(
+                        source_param_type,
+                        rest_param.type_id,
+                        bindings,
+                        &mut local_visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
     pub(crate) fn match_infer_function_pattern(
         &self,
         source: TypeId,
@@ -90,11 +180,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) {
                         return false;
                     }
-                } else if !self.match_signature_params(
+                } else if !self.match_signature_params_for_infer(
                     source_params,
                     &pattern_fn.params,
+                    true,
                     bindings,
-                    &mut local_visited,
                     checker,
                 ) {
                     return false;
@@ -352,38 +442,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker,
                     );
                 }
-                if source_fn.params.len() != pattern_fn.params.len() {
-                    return false;
-                }
-                let mut local_visited = FxHashSet::default();
-                for (source_param, pattern_param) in
-                    source_fn.params.iter().zip(pattern_fn.params.iter())
-                {
-                    if source_param.optional != pattern_param.optional
-                        || source_param.rest != pattern_param.rest
-                    {
-                        return false;
-                    }
-                    let source_param_type = if source_param.optional {
-                        self.interner()
-                            .union2(source_param.type_id, TypeId::UNDEFINED)
-                    } else {
-                        source_param.type_id
-                    };
-                    if !self.match_infer_pattern(
-                        source_param_type,
-                        pattern_param.type_id,
-                        bindings,
-                        &mut local_visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
-                }
-                // For param-only inference, parameter matching is sufficient.
-                // Skipping the final subtype check avoids issues with optional
-                // param widening (undefined added twice).
-                true
+                self.match_signature_params_for_infer(
+                    &source_fn.params,
+                    &pattern_fn.params,
+                    true,
+                    bindings,
+                    checker,
+                )
             };
 
             return match self.interner().lookup(source) {
@@ -405,34 +470,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         );
                     }
-                    // Allow source to have more params than pattern (structural subtyping)
-                    if source_sig.params.len() < pattern_fn.params.len() {
-                        return false;
-                    }
-                    let mut local_visited = FxHashSet::default();
-                    // Only match the first N params where N = pattern param count
-                    for (source_param, pattern_param) in
-                        source_sig.params.iter().zip(pattern_fn.params.iter())
-                    {
-                        // For optional params, strip undefined/null from the source type.
-                        // Optional callback params like `onfulfilled?: ((value: T) => ...) | undefined | null`
-                        // should match against `(value: infer V) => any` by stripping the nullish parts.
-                        let source_param_type = if source_param.optional {
-                            crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
-                        } else {
-                            source_param.type_id
-                        };
-                        if !self.match_infer_pattern(
-                            source_param_type,
-                            pattern_param.type_id,
-                            bindings,
-                            &mut local_visited,
-                            checker,
-                        ) {
-                            return false;
-                        }
-                    }
-                    true
+                    self.match_signature_params_for_infer(
+                        &source_sig.params,
+                        &pattern_fn.params,
+                        true,
+                        bindings,
+                        checker,
+                    )
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
@@ -841,11 +885,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) {
                         return false;
                     }
-                } else if !self.match_signature_params(
+                } else if !self.match_signature_params_for_infer(
                     source_params,
                     &pattern_sig.params,
+                    true,
                     bindings,
-                    &mut local_visited,
                     checker,
                 ) {
                     return false;
@@ -873,15 +917,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         &source_shape.call_signatures
                     };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty()
-                        || !other_sigs.is_empty()
-                        || !source_shape.properties.is_empty()
-                    {
+                    if source_sigs.is_empty() {
                         return false;
                     }
                     let Some(source_sig) = source_sigs.last() else {
@@ -920,15 +956,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 } else {
                                     &source_shape.call_signatures
                                 };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty()
-                                    || !other_sigs.is_empty()
-                                    || !source_shape.properties.is_empty()
-                                {
+                                if source_sigs.is_empty() {
                                     return false;
                                 }
                                 let Some(source_sig) = source_sigs.last() else {
@@ -985,15 +1013,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         );
                     }
-                    let mut local_visited = FxHashSet::default();
                     // Match params and infer types. Skip subtype check since pattern matching
                     // success implies compatibility. The subtype check can fail for optional
                     // params due to contravariance issues with undefined.
-                    self.match_signature_params(
+                    self.match_signature_params_for_infer(
                         source_params,
                         &pattern_sig.params,
+                        true,
                         bindings,
-                        &mut local_visited,
                         checker,
                     )
                 };
@@ -1006,15 +1033,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         &source_shape.call_signatures
                     };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty()
-                        || !other_sigs.is_empty()
-                        || !source_shape.properties.is_empty()
-                    {
+                    if source_sigs.is_empty() {
                         return false;
                     }
                     let Some(source_sig) = source_sigs.last() else {
@@ -1042,15 +1061,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 } else {
                                     &source_shape.call_signatures
                                 };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty()
-                                    || !other_sigs.is_empty()
-                                    || !source_shape.properties.is_empty()
-                                {
+                                if source_sigs.is_empty() {
                                     return false;
                                 }
                                 let Some(source_sig) = source_sigs.last() else {

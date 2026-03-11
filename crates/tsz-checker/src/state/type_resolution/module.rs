@@ -100,7 +100,10 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn resolve_named_import_module_for_local_name(&self, local_name: &str) -> Option<String> {
+    pub(crate) fn resolve_named_import_module_for_local_name(
+        &self,
+        local_name: &str,
+    ) -> Option<String> {
         let source_file = self.ctx.arena.source_files.first()?;
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -634,7 +637,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(symbol_exports) = export_equals_symbol.exports.as_ref() {
             for (name, sym_id) in symbol_exports.iter() {
-                if !combined.has(name) {
+                if name != "default" && !combined.has(name) {
                     combined.set(name.to_string(), *sym_id);
                 }
             }
@@ -642,7 +645,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(symbol_members) = export_equals_symbol.members.as_ref() {
             for (name, sym_id) in symbol_members.iter() {
-                if !combined.has(name) {
+                if name != "default" && !combined.has(name) {
                     combined.set(name.to_string(), *sym_id);
                 }
             }
@@ -1184,6 +1187,9 @@ impl<'a> CheckerState<'a> {
         let resolve_from_exports =
             |exports: &tsz_binder::SymbolTable| -> Option<tsz_binder::SymbolId> {
                 let export_equals_sym = exports.get("export=")?;
+                if export_name == "default" {
+                    return Some(export_equals_sym);
+                }
                 let export_equals_symbol = lookup_symbol(export_equals_sym)?;
 
                 if let Some(sym_id) = symbol_export_named_member(export_equals_symbol, export_name)

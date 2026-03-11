@@ -1028,6 +1028,7 @@ pub(super) fn create_binder_from_bound_file(
             global_augmentations: merged_global_augmentations,
             module_augmentations: merged_module_augmentations,
             module_exports: program.module_exports.clone(),
+            module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),

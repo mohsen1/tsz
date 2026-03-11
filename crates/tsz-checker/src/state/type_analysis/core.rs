@@ -17,6 +17,122 @@ type TypeParamPushResult = (
 );
 
 impl<'a> CheckerState<'a> {
+    // Nested generic declarations can be re-evaluated out of context (for example during
+    // application-type expansion), so recover the nearest enclosing generic scope when the
+    // current type-parameter list is missing its outer captures.
+    fn maybe_push_enclosing_type_parameters(
+        &mut self,
+        type_parameters: &tsz_parser::parser::NodeList,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        let Some(&first_param_idx) = type_parameters.nodes.first() else {
+            return Vec::new();
+        };
+
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(first_param_idx)
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
+
+        let mut depth = 0;
+        while current.is_some() && depth < 64 {
+            depth += 1;
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if !current.is_some() {
+                break;
+            }
+
+            let maybe_enclosing_type_params =
+                self.ctx
+                    .arena
+                    .get(current)
+                    .and_then(|parent| match parent.kind {
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_interface(parent)
+                            .and_then(|iface| iface.type_parameters.clone()),
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_type_alias(parent)
+                            .and_then(|type_alias| type_alias.type_parameters.clone()),
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || k == syntax_kind_ext::ARROW_FUNCTION =>
+                        {
+                            self.ctx
+                                .arena
+                                .get_function(parent)
+                                .and_then(|func| func.type_parameters.clone())
+                        }
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(parent)
+                            .and_then(|method| method.type_parameters.clone()),
+                        k if k == syntax_kind_ext::METHOD_SIGNATURE
+                            || k == syntax_kind_ext::CALL_SIGNATURE
+                            || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                        {
+                            self.ctx
+                                .arena
+                                .get_signature(parent)
+                                .and_then(|sig| sig.type_parameters.clone())
+                        }
+                        k if k == syntax_kind_ext::FUNCTION_TYPE
+                            || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+                        {
+                            self.ctx
+                                .arena
+                                .get_function_type(parent)
+                                .and_then(|func| func.type_parameters.clone())
+                        }
+                        _ => None,
+                    });
+
+            let Some(enclosing_type_params) = maybe_enclosing_type_params else {
+                continue;
+            };
+
+            let mut any_missing = false;
+            let mut any_present = false;
+            for &param_idx in &enclosing_type_params.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(param.name) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                if self
+                    .ctx
+                    .type_parameter_scope
+                    .contains_key(ident.escaped_text.as_str())
+                {
+                    any_present = true;
+                } else {
+                    any_missing = true;
+                }
+            }
+
+            if any_missing && !any_present {
+                let (_, updates) = self.push_type_parameters(&Some(enclosing_type_params));
+                return updates;
+            }
+        }
+
+        Vec::new()
+    }
+
     /// Resolve a qualified name (A.B.C) to its type.
     ///
     /// This function handles qualified type names like `Namespace.SubType`, `Module.Interface`,
@@ -738,6 +854,25 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn resolve_type_query_import_type_symbol(&self, idx: NodeIndex) -> Option<u32> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let local_sym_id = self.resolve_identifier_symbol(idx)?;
+        if !self.alias_resolves_to_type_only(local_sym_id) {
+            return None;
+        }
+
+        match self.resolve_identifier_symbol_in_type_position_without_tracking(idx) {
+            TypeSymbolResolution::Type(sym_id) | TypeSymbolResolution::ValueOnly(sym_id) => {
+                Some(sym_id.0)
+            }
+            TypeSymbolResolution::NotFound => Some(local_sym_id.0),
+        }
+    }
+
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::SymbolRef;
         trace!(idx = idx.0, "ENTER get_type_from_type_query");
@@ -995,8 +1130,9 @@ impl<'a> CheckerState<'a> {
             let typequery_type = factory.type_query(SymbolRef(sym_id));
             trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
             typequery_type
-        } else if let Some(type_sym_id) =
-            self.resolve_type_symbol_for_lowering(type_query.expr_name)
+        } else if let Some(type_sym_id) = self
+            .resolve_type_symbol_for_lowering(type_query.expr_name)
+            .or_else(|| self.resolve_type_query_import_type_symbol(type_query.expr_name))
         {
             // Check if this is a type-only import (import type { A }).
             // tsc allows `typeof A` on type-only imports in type annotations
@@ -1089,19 +1225,44 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_import_type_query(&self, expr_name: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(expr_name) else {
-            return false;
-        };
-        if node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
-            return false;
+        let mut current = expr_name;
+
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
+                    let Some(call_expr) = self.ctx.arena.get_call_expr(node) else {
+                        return false;
+                    };
+                    let Some(callee) = self.ctx.arena.get(call_expr.expression) else {
+                        return false;
+                    };
+                    return callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16;
+                }
+                tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                        return false;
+                    };
+                    current = access.expression;
+                }
+                tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME => {
+                    let Some(name) = self.ctx.arena.get_qualified_name(node) else {
+                        return false;
+                    };
+                    current = name.left;
+                }
+                tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                        return false;
+                    };
+                    current = paren.expression;
+                }
+                _ => return false,
+            }
         }
-        let Some(call_expr) = self.ctx.arena.get_call_expr(node) else {
-            return false;
-        };
-        let Some(callee) = self.ctx.arena.get(call_expr.expression) else {
-            return false;
-        };
-        callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
     }
 
     /// Push type parameters into scope for generic type resolution.
@@ -1173,8 +1334,8 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), Vec::new());
         }
 
+        let mut updates = self.maybe_push_enclosing_type_parameters(list);
         let mut params = Vec::new();
-        let mut updates = Vec::new();
         let mut param_indices = Vec::new();
         let mut seen_names = FxHashSet::default();
 
@@ -1365,129 +1526,6 @@ impl<'a> CheckerState<'a> {
     /// For each type parameter, if its constraint is another type parameter in the same
     /// list, follow the chain. If we reach the original parameter, emit TS2313.
     /// Direct self-references (T extends T) are already caught in the second pass.
-    fn check_indirect_circular_constraints(
-        &mut self,
-        params: &[tsz_solver::TypeParamInfo],
-        param_indices: &[NodeIndex],
-    ) {
-        // Build a map: param name (Atom) -> index in params list
-        let mut name_to_idx: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
-        let param_names: Vec<String> = params
-            .iter()
-            .map(|p| self.ctx.types.resolve_atom(p.name))
-            .collect();
-        for (i, name) in param_names.iter().enumerate() {
-            name_to_idx.insert(name.clone(), i);
-        }
-
-        // For each param, check if its constraint forms an indirect cycle
-        for (i, param) in params.iter().enumerate() {
-            let Some(constraint_type) = param.constraint else {
-                continue;
-            };
-
-            // Get the name of the constraint if it's a type parameter
-            let constraint_info =
-                tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type);
-            let Some(constraint_info) = constraint_info else {
-                continue;
-            };
-            let constraint_name = self
-                .ctx
-                .types
-                .resolve_atom(constraint_info.name)
-                .to_string();
-
-            // Skip direct self-references (already caught)
-            if constraint_name == param_names[i] {
-                continue;
-            }
-
-            // Only follow if constraint is another param in the same list
-            let Some(&next_idx) = name_to_idx.get(&constraint_name) else {
-                continue;
-            };
-
-            // Follow the chain to detect if it cycles back to param i.
-            // Only report if the chain leads back to the starting parameter itself,
-            // not if it merely reaches some other cycle.
-            let mut current = next_idx;
-            let mut steps = 0;
-            let max_steps = params.len();
-
-            let is_in_cycle = loop {
-                if current == i {
-                    break true;
-                }
-                steps += 1;
-                if steps > max_steps {
-                    break false;
-                }
-
-                // Follow the constraint of the current param
-                let Some(next_constraint) = params[current].constraint else {
-                    break false;
-                };
-                let next_info = tsz_solver::type_queries::get_type_parameter_info(
-                    self.ctx.types,
-                    next_constraint,
-                );
-                let Some(next_info) = next_info else {
-                    break false;
-                };
-                let next_name = self.ctx.types.resolve_atom(next_info.name).to_string();
-                let Some(&next) = name_to_idx.get(&next_name) else {
-                    break false;
-                };
-                current = next;
-            };
-
-            if is_in_cycle {
-                let node_idx = param_indices[i];
-                if let Some(node) = self.ctx.arena.get(node_idx)
-                    && let Some(data) = self.ctx.arena.get_type_parameter(node)
-                    && data.constraint != NodeIndex::NONE
-                {
-                    self.error_at_node_msg(
-                        data.constraint,
-                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_CONSTRAINT,
-                        &[&param_names[i]],
-                    );
-                }
-            }
-        }
-    }
-
-    /// Check if a constraint type is the same as a type parameter (circular constraint).
-    ///
-    /// This detects cases like `T extends T` where the type parameter references itself
-    /// in its own constraint.
-    pub(crate) fn is_same_type_parameter(
-        &self,
-        constraint_type: TypeId,
-        param_type_id: TypeId,
-        param_name: &str,
-    ) -> bool {
-        // Direct match
-        if constraint_type == param_type_id {
-            return true;
-        }
-
-        // Check if constraint is a TypeParameter with the same name
-        if let Some(info) =
-            tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type)
-        {
-            // Check if the type parameter name matches
-            let name_str = self.ctx.types.resolve_atom(info.name);
-            if name_str == param_name {
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Get type of a symbol with caching and circular reference detection.
     ///
     /// This is the main entry point for resolving the type of symbols (variables,
@@ -1867,127 +1905,5 @@ impl<'a> CheckerState<'a> {
         }
 
         result
-    }
-
-    fn provisional_circular_function_symbol_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
-        use tsz_solver::{CallableShape, FunctionShape};
-
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::FUNCTION == 0 || symbol.flags & symbol_flags::INTERFACE != 0
-        {
-            return None;
-        }
-
-        let declarations = symbol.declarations.clone();
-        let factory = self.ctx.types.factory();
-        let mut overloads = Vec::new();
-        let mut implementation_sig = None;
-
-        for decl_idx in declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = self.ctx.arena.get_function(node) else {
-                continue;
-            };
-
-            let sig = self.call_signature_from_function(func, decl_idx);
-            if func.body.is_none() {
-                overloads.push(sig);
-            } else if implementation_sig.is_none() {
-                implementation_sig = Some(sig);
-            }
-        }
-
-        if !overloads.is_empty() {
-            return Some(factory.callable(CallableShape {
-                call_signatures: overloads,
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            }));
-        }
-
-        let sig = implementation_sig?;
-        Some(factory.function(FunctionShape {
-            type_params: sig.type_params,
-            params: sig.params,
-            this_type: sig.this_type,
-            return_type: sig.return_type,
-            type_predicate: sig.type_predicate,
-            is_constructor: false,
-            is_method: false,
-        }))
-    }
-
-    /// Check if a symbol is a numeric enum and register it in the `TypeEnvironment`.
-    ///
-    /// This is used for Rule #7 (Open Numeric Enums) where number types are
-    /// assignable to/from numeric enums.
-    fn maybe_register_numeric_enum(
-        &self,
-        env: &mut tsz_solver::TypeEnvironment,
-        sym_id: SymbolId,
-        def_id: tsz_solver::def::DefId,
-    ) {
-        // Check if the symbol is an enum
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return;
-        };
-        if symbol.flags & symbol_flags::ENUM == 0 {
-            return;
-        }
-
-        // Get the enum declaration to check if it's numeric
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            match symbol.declarations.first() {
-                Some(&idx) => idx,
-                None => return,
-            }
-        };
-
-        let Some(node) = self.ctx.arena.get(decl_idx) else {
-            return;
-        };
-        let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
-            return;
-        };
-
-        // Check enum members to determine if it's numeric
-        let mut saw_string = false;
-        let mut saw_numeric = false;
-
-        for &member_idx in &enum_decl.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
-                continue;
-            };
-
-            if member.initializer.is_some() {
-                let Some(init_node) = self.ctx.arena.get(member.initializer) else {
-                    continue;
-                };
-                match init_node.kind {
-                    k if k == SyntaxKind::StringLiteral as u16 => saw_string = true,
-                    k if k == SyntaxKind::NumericLiteral as u16 => saw_numeric = true,
-                    _ => {}
-                }
-            } else {
-                // Members without initializers are auto-incremented numbers
-                saw_numeric = true;
-            }
-        }
-
-        // Register as numeric enum if it's numeric (not string-only)
-        if saw_numeric && !saw_string {
-            env.register_numeric_enum(def_id);
-        }
     }
 }

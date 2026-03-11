@@ -718,6 +718,14 @@ impl<'a> CheckerState<'a> {
                     t = factory.union(vec![t, TypeId::UNDEFINED]);
                 }
                 Some(t)
+            } else if self
+                .parameter_initializer_has_explicit_jsdoc_type(param_idx, param.name, param_pos)
+            {
+                self.parameter_symbol_ids(param_idx, param.name)
+                    .into_iter()
+                    .flatten()
+                    .find_map(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN && t != TypeId::ERROR)
             } else {
                 None
             };
@@ -745,6 +753,71 @@ impl<'a> CheckerState<'a> {
                 let _ = self.check_assignable_or_report(init_type, declared_type, param_idx);
             }
         }
+    }
+
+    fn parameter_initializer_has_explicit_jsdoc_type(
+        &mut self,
+        param_idx: NodeIndex,
+        param_name: NodeIndex,
+        param_pos: usize,
+    ) -> bool {
+        if !self.is_js_file() || self.param_has_inline_jsdoc_type(param_idx) {
+            return self.is_js_file() && self.param_has_inline_jsdoc_type(param_idx);
+        }
+
+        let Some(func_idx) = self.enclosing_function_like_for_parameter(param_idx) else {
+            return false;
+        };
+        let Some(jsdoc) = self.get_jsdoc_for_function(func_idx) else {
+            return false;
+        };
+
+        let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(&jsdoc)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let pname = self.effective_jsdoc_param_name(param_name, &jsdoc_param_names, param_pos);
+        if Self::jsdoc_has_param_type(&jsdoc, &pname)
+            || Self::jsdoc_type_tag_declares_callable(&jsdoc)
+        {
+            return true;
+        }
+
+        if self.ctx.arena.get(param_name).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN
+        }) && Self::jsdoc_has_type_annotations(&jsdoc)
+        {
+            return true;
+        }
+
+        self.jsdoc_type_annotation_for_node(func_idx)
+            .is_some_and(|ty| tsz_solver::type_queries::is_callable_type(self.ctx.types, ty))
+    }
+
+    fn enclosing_function_like_for_parameter(&self, param_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = param_idx;
+        for _ in 0..8 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if matches!(
+                parent_node.kind,
+                tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                    | tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                    | tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                    | tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION
+                    | tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR
+                    | tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
+                    | tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR
+            ) {
+                return Some(parent);
+            }
+            current = parent;
+        }
+        None
     }
 
     // =========================================================================

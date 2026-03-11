@@ -1,6 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
 fn test_index_signature_with_modifier_emits_ts1071() {
@@ -52,6 +53,229 @@ const fn = (a: number, b: string)
     assert!(
         ts1005_count <= 1,
         "Expected at most 1 TS1005 error, got {ts1005_count}",
+    );
+}
+
+#[test]
+fn test_missing_arrow_with_typed_parameters_prefers_arrow_recovery() {
+    let source = r"
+namespace N {
+    var d = (x: number, y: string);
+    var e = (x: number, y: string): void;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+
+    assert_eq!(
+        ts1005_count, 2,
+        "Expected one missing-arrow TS1005 per declaration, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1109_count, 0,
+        "Typed parameter heads without => should not fall back to expression recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_missing_arrow_statement_body_consumes_synthetic_close_brace() {
+    let source = r"
+namespace N {
+    var c = (x) => var k = 10;};
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1128_count = diagnostics.iter().filter(|d| d.code == 1128).count();
+
+    assert_eq!(
+        ts1005_count, 1,
+        "Expected only the missing-block TS1005 for recovered arrow body, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1128_count, 0,
+        "Recovered statement-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_missing_arrow_expression_body_consumes_synthetic_close_brace() {
+    let source = r"
+namespace N {
+    namespace Inner {
+        var c = (x) => };
+    }
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+    let ts1128_count = diagnostics.iter().filter(|d| d.code == 1128).count();
+
+    assert_eq!(
+        ts1109_count, 1,
+        "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1128_count, 0,
+        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_object_literal_after_arrow_is_not_treated_as_missing_arrow() {
+    let source = r"
+/** @template T @param {T|undefined} value @returns {T} */
+const cloneObjectGood = value => /** @type {T} */({ ...value });
+";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "Parenthesized object literal bodies after arrows should not trigger missing-arrow recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_destructuring_assignment_is_not_treated_as_missing_arrow() {
+    let source = r#"
+class C {
+    constructor() {
+        ({ x, y: y1, "y": y1 } = this);
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.message.contains("'=>' expected"))),
+        "Parenthesized destructuring assignments should not trigger missing-arrow recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_conditional_expression_is_not_treated_as_missing_arrow() {
+    let source = r#"
+var x: boolean = (true ? 1 : "");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.message.contains("';' expected"))),
+        "Parenthesized ternaries should not trigger typed-arrow recovery: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.message.contains("',' expected"))),
+        "Parenthesized ternaries should not trigger comma recovery from typed-arrow parsing: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_conditional_comma_expression_is_not_treated_as_missing_arrow() {
+    let source = r#"
+let xx: any;
+xx = (xx ? 3 : 4, 10);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Conditional comma expressions should parse without missing-arrow recovery: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_missing_arrow() {
+    let source = r#"
+var value = (Math.random() ? {} : null);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Conditional branches with object literals should not trigger missing-arrow recovery: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_named_tuple_member_rest_type_after_colon_does_not_emit_ts1005() {
+    let source = r#"
+type T = [first: string, rest: ...string[]?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code != 1005),
+        "Named tuple rest types after ':' should defer to later tuple diagnostics without TS1005: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_named_tuple_member_optional_type_after_colon_does_not_emit_ts1005() {
+    let source = r#"
+type T = [element: string?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code != 1005),
+        "Named tuple members with a trailing '?' after the type should defer to later tuple diagnostics without TS1005: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_empty_element_access_reports_after_open_bracket() {
+    let source = r#"
+class Z {
+ public x = "";
+}
+
+var a6: Z[][] = new   Z     [      ]   [  ];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts1011_starts: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1011)
+        .map(|d| d.start)
+        .collect();
+
+    assert_eq!(
+        ts1011_starts,
+        vec![59, 70],
+        "Empty element-access diagnostics should anchor immediately after '[' even with inner whitespace: {:?}",
+        parser.get_diagnostics()
     );
 }
 
@@ -821,6 +1045,27 @@ export const a: import("./test1").T<typeof import("./test2").theme> = null as an
         parse_errors,
         0,
         "Expected no parser errors for import type with generics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_import_type_with_invalid_import_attribute_key_reports_ts1478() {
+    let source = r#"
+const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_OR_STRING_LITERAL_EXPECTED),
+        "Expected TS1478 for invalid import-attribute key, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected tail recovery to surface TS1128 diagnostics, got {:?}",
         parser.get_diagnostics()
     );
 }

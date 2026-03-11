@@ -2,7 +2,9 @@
 //! - Constructor/method/function implementation finders
 
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
@@ -208,16 +210,27 @@ impl<'a> CheckerState<'a> {
         }
 
         for (sym_id, name) in symbols_to_check {
-            // Skip if already referenced
-            if self.ctx.referenced_symbols.borrow().contains(&sym_id) {
-                continue;
-            }
-
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
 
             let flags = symbol.flags;
+            let decl_idx = if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else if let Some(&first) = symbol.declarations.first() {
+                first
+            } else {
+                continue;
+            };
+
+            let is_param_decl = self.is_parameter_declaration(decl_idx);
+            let referenced = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+            if referenced
+                && !self.is_self_reference_only_symbol_use(&name, decl_idx, flags)
+                && !(is_param_decl && self.is_parameter_only_type_referenced(&name, decl_idx))
+            {
+                continue;
+            }
 
             // Skip exported symbols — they may be used externally
             if symbol.is_exported || (flags & symbol_flags::EXPORT_VALUE) != 0 {
@@ -241,7 +254,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // Skip type parameters — they are handled separately (not in binder scope)
-            if (flags & symbol_flags::TYPE_PARAMETER) != 0 {
+            if (flags & symbol_flags::TYPE_PARAMETER) != 0
+                && !self.is_parameter_declaration(decl_idx)
+            {
                 continue;
             }
 
@@ -282,22 +297,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Get the declaration node for position info
-            let decl_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&first) = symbol.declarations.first() {
-                first
-            } else {
-                continue;
-            };
-
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
 
             // Ambient declarations (`declare ...` or declarations nested in ambient
             // contexts) are not checked by noUnusedLocals.
-            if self.is_ambient_declaration(decl_idx) {
+            if self.should_skip_unused_for_ambient_declaration(decl_idx) {
                 continue;
             }
 
@@ -867,6 +873,414 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
         }
+        false
+    }
+
+    /// Return true when the symbol is only referenced within its own
+    /// declaration subtree, which tsc still treats as unused.
+    fn is_self_reference_only_symbol_use(
+        &self,
+        name: &str,
+        decl_idx: NodeIndex,
+        flags: u32,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_scanner::SyntaxKind;
+
+        let can_ignore_self_refs = (flags
+            & (symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::TYPE_ALIAS
+                | symbol_flags::REGULAR_ENUM
+                | symbol_flags::CONST_ENUM
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE
+                | symbol_flags::METHOD
+                | symbol_flags::PROPERTY
+                | symbol_flags::GET_ACCESSOR
+                | symbol_flags::SET_ACCESSOR))
+            != 0;
+        if !can_ignore_self_refs {
+            return false;
+        }
+
+        let decl_root = self
+            .ctx
+            .arena
+            .get(decl_idx)
+            .filter(|node| node.kind != SyntaxKind::Identifier as u16)
+            .map(|_| decl_idx)
+            .or_else(|| self.ctx.arena.node_info(decl_idx).map(|info| info.parent))
+            .unwrap_or(decl_idx);
+        let decl_name_idx = self
+            .get_declaration_name_node(decl_root)
+            .or_else(|| self.get_declaration_name_node(decl_idx))
+            .unwrap_or(decl_idx);
+        let Some(target_sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(decl_name_idx)
+            .or_else(|| self.resolve_identifier_reference_without_tracking(decl_name_idx))
+        else {
+            return false;
+        };
+        let mut saw_same_name_reference = false;
+
+        for i in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(i as u32);
+            if idx == decl_name_idx {
+                continue;
+            }
+
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.ctx.arena.get_identifier(node) else {
+                continue;
+            };
+            if ident.escaped_text != name {
+                continue;
+            }
+
+            let resolved_sym = self.resolve_identifier_reference_without_tracking(idx);
+            if resolved_sym == Some(target_sym_id) {
+                if !self.node_is_within_declaration(idx, decl_root)
+                    && (self.is_declaration_name_position(idx)
+                        || self.node_is_shadowed_by_same_name_type_parameter(idx, name))
+                {
+                    continue;
+                }
+                if !self.node_is_within_declaration(idx, decl_root) {
+                    return false;
+                }
+                saw_same_name_reference = true;
+                continue;
+            }
+
+            if self.node_is_within_declaration(idx, decl_root)
+                && !self.is_declaration_name_of_other_symbol(idx, target_sym_id)
+            {
+                saw_same_name_reference = true;
+            }
+        }
+
+        saw_same_name_reference
+    }
+
+    fn node_is_within_declaration(&self, idx: NodeIndex, decl_idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..50 {
+            if current == decl_idx {
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    fn node_is_in_type_context(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.is_type_node()
+                || parent_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn is_parameter_only_type_referenced(&self, name: &str, decl_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let param_root = self
+            .ctx
+            .arena
+            .get(decl_idx)
+            .filter(|node| node.kind != SyntaxKind::Identifier as u16)
+            .map(|_| decl_idx)
+            .or_else(|| self.ctx.arena.node_info(decl_idx).map(|info| info.parent))
+            .unwrap_or(decl_idx);
+        let decl_name_idx = self
+            .get_declaration_name_node(param_root)
+            .or_else(|| self.get_declaration_name_node(decl_idx))
+            .unwrap_or(decl_idx);
+        let Some(target_sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(decl_name_idx)
+            .or_else(|| self.resolve_identifier_reference_without_tracking(decl_name_idx))
+        else {
+            return false;
+        };
+        let mut saw_same_name_reference = false;
+
+        for i in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(i as u32);
+            if idx == decl_name_idx {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.ctx.arena.get_identifier(node) else {
+                continue;
+            };
+            if ident.escaped_text != name {
+                continue;
+            }
+
+            let in_benign_context = self.node_is_within_declaration(idx, param_root)
+                || self.node_is_in_type_context(idx);
+            let resolved_sym = self.resolve_identifier_reference_without_tracking(idx);
+            if resolved_sym == Some(target_sym_id) {
+                if !in_benign_context && self.is_declaration_name_position(idx) {
+                    continue;
+                }
+                if in_benign_context {
+                    saw_same_name_reference = true;
+                    continue;
+                }
+                return false;
+            }
+
+            if in_benign_context && !self.is_declaration_name_of_other_symbol(idx, target_sym_id) {
+                saw_same_name_reference = true;
+                continue;
+            }
+        }
+
+        saw_same_name_reference
+    }
+
+    fn resolve_identifier_reference_without_tracking(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        if self.node_is_in_type_context(idx) {
+            match self.resolve_identifier_symbol_in_type_position_without_tracking(idx) {
+                TypeSymbolResolution::Type(sym_id) | TypeSymbolResolution::ValueOnly(sym_id) => {
+                    Some(sym_id)
+                }
+                TypeSymbolResolution::NotFound => {
+                    self.resolve_identifier_symbol_without_tracking(idx)
+                }
+            }
+        } else {
+            self.resolve_identifier_symbol_without_tracking(idx)
+        }
+    }
+
+    fn is_declaration_name_of_other_symbol(
+        &self,
+        idx: NodeIndex,
+        target_sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx
+            .binder
+            .get_node_symbol(idx)
+            .is_some_and(|sym_id| sym_id != target_sym_id)
+    }
+
+    fn is_declaration_name_position(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+
+        if self.get_declaration_name_node(parent) == Some(idx) {
+            return true;
+        }
+
+        if parent_node.kind == syntax_kind_ext::TYPE_PARAMETER {
+            return self
+                .ctx
+                .arena
+                .get_type_parameter(parent_node)
+                .is_some_and(|param| param.name == idx);
+        }
+
+        if parent_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            || parent_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+        {
+            return self
+                .ctx
+                .arena
+                .get_signature(parent_node)
+                .is_some_and(|sig| sig.name == idx);
+        }
+
+        false
+    }
+
+    fn should_skip_unused_for_ambient_declaration(&self, decl_idx: NodeIndex) -> bool {
+        if self.ctx.is_declaration_file() {
+            return true;
+        }
+
+        if !self.ctx.arena.is_in_ambient_context(decl_idx) {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return true;
+        };
+
+        let has_explicit_declare = match node.kind {
+            syntax_kind_ext::INTERFACE_DECLARATION => self
+                .ctx
+                .arena
+                .get_interface(node)
+                .is_some_and(|decl| self.has_declare_modifier(&decl.modifiers)),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                .ctx
+                .arena
+                .get_type_alias(node)
+                .is_some_and(|decl| self.has_declare_modifier(&decl.modifiers)),
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .is_some_and(|decl| self.has_declare_modifier(&decl.modifiers)),
+            syntax_kind_ext::CLASS_DECLARATION => self
+                .ctx
+                .arena
+                .get_class(node)
+                .is_some_and(|decl| self.has_declare_modifier(&decl.modifiers)),
+            syntax_kind_ext::ENUM_DECLARATION => self
+                .ctx
+                .arena
+                .get_enum(node)
+                .is_some_and(|decl| self.has_declare_modifier(&decl.modifiers)),
+            syntax_kind_ext::MODULE_DECLARATION => self
+                .ctx
+                .arena
+                .get_module(node)
+                .is_some_and(|decl| self.has_declare_modifier(&decl.modifiers)),
+            _ => false,
+        };
+        if has_explicit_declare {
+            return true;
+        }
+
+        let mut current = decl_idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            if self.ctx.arena.is_in_ambient_context(parent) {
+                return true;
+            }
+            current = parent;
+        }
+
+        false
+    }
+
+    fn node_is_shadowed_by_same_name_type_parameter(&self, idx: NodeIndex, name: &str) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            let type_params = match parent_node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_function(parent_node)
+                    .and_then(|decl| decl.type_parameters.clone()),
+                syntax_kind_ext::CLASS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_class(parent_node)
+                    .and_then(|decl| decl.type_parameters.clone()),
+                syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(parent_node)
+                    .and_then(|decl| decl.type_parameters.clone()),
+                syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(parent_node)
+                    .and_then(|decl| decl.type_parameters.clone()),
+                syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(parent_node)
+                    .and_then(|decl| decl.type_parameters.clone()),
+                syntax_kind_ext::METHOD_SIGNATURE
+                | syntax_kind_ext::PROPERTY_SIGNATURE
+                | syntax_kind_ext::CALL_SIGNATURE
+                | syntax_kind_ext::CONSTRUCT_SIGNATURE => self
+                    .ctx
+                    .arena
+                    .get_signature(parent_node)
+                    .and_then(|decl| decl.type_parameters.clone()),
+                _ => None,
+            };
+
+            if let Some(type_params) = type_params {
+                for &param_idx in &type_params.nodes {
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                        continue;
+                    };
+                    if param.name == idx {
+                        continue;
+                    }
+                    let Some(param_name) = self.ctx.arena.get_identifier_at(param.name) else {
+                        continue;
+                    };
+                    if param_name.escaped_text == name {
+                        return true;
+                    }
+                }
+            }
+
+            current = parent;
+        }
+
         false
     }
 

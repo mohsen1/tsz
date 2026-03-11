@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::{TypeSubstitution, instantiate_type};
+        use tsz_solver::{TypeSubstitution, instantiate_type, instantiate_type_with_depth_status};
 
         let Some((base, args)) = query::application_info(self.ctx.types, type_id) else {
             return type_id;
@@ -408,6 +408,12 @@ impl<'a> CheckerState<'a> {
                     optional_modifier: mapped.optional_modifier,
                 };
                 let mapped_type_id = self.ctx.types.mapped(inst_mapped);
+                if (tsz_solver::is_union_type(self.ctx.types, evaluated_arg)
+                    || tsz_solver::is_intersection_type(self.ctx.types, evaluated_arg))
+                    && self.contains_type_parameters_cached(evaluated_arg)
+                {
+                    return mapped_type_id;
+                }
                 return self.evaluate_type_with_env(mapped_type_id);
             }
         }
@@ -431,7 +437,11 @@ impl<'a> CheckerState<'a> {
         // Create substitution and instantiate
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
-        let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+        let (instantiated, depth_exceeded) =
+            instantiate_type_with_depth_status(self.ctx.types, body_type, &substitution);
+        if depth_exceeded {
+            *self.ctx.depth_exceeded.borrow_mut() = true;
+        }
         // Recursively evaluate in case the result contains more applications
         let result = self.evaluate_application_type(instantiated);
 
@@ -633,7 +643,7 @@ impl<'a> CheckerState<'a> {
             // Create the key literal type
             let key_literal = self.ctx.types.literal_string_atom(key_name);
 
-            // Substitute the type parameter with the key
+            // Instantiate the template without recursively expanding nested applications.
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
 
@@ -1565,6 +1575,80 @@ impl<'a> CheckerState<'a> {
     /// Check if a type name is a built-in mapped type utility.
     /// These are standard TypeScript utility types that transform other types.
     /// When used with type arguments, they should not cause "cannot find type" errors.
+    fn augment_js_global_value_type_with_expandos(
+        &mut self,
+        root_name: &str,
+        sym_id: SymbolId,
+        base_type: TypeId,
+    ) -> TypeId {
+        use rustc_hash::FxHashSet;
+        use tsz_solver::{ObjectShape, PropertyInfo};
+
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return base_type;
+        }
+
+        let mut expando_props: FxHashSet<String> = FxHashSet::default();
+
+        if let Some(props) = self.ctx.binder.expando_properties.get(root_name) {
+            expando_props.extend(props.iter().cloned());
+        }
+
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if let Some(props) = binder.expando_properties.get(root_name) {
+                    expando_props.extend(props.iter().cloned());
+                }
+            }
+        }
+
+        if expando_props.is_empty() {
+            return base_type;
+        }
+
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
+        else {
+            return base_type;
+        };
+
+        let mut properties = shape.properties.clone();
+        let mut changed = false;
+
+        for prop_name in expando_props {
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+            if properties.iter().any(|prop| prop.name == prop_atom) {
+                continue;
+            }
+
+            properties.push(PropertyInfo {
+                name: prop_atom,
+                type_id: TypeId::ANY,
+                write_type: TypeId::ANY,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: Some(sym_id),
+                declaration_order: properties.len() as u32,
+            });
+            changed = true;
+        }
+
+        if !changed {
+            return base_type;
+        }
+
+        self.ctx.types.factory().object_with_index(ObjectShape {
+            flags: shape.flags,
+            properties,
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+            symbol: shape.symbol.or(Some(sym_id)),
+        })
+    }
+
     pub(crate) fn resolve_global_this_property_type(
         &mut self,
         name: &str,
@@ -1590,7 +1674,8 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            return self.get_type_of_symbol(sym_id);
+            let base_type = self.get_type_of_symbol(sym_id);
+            return self.augment_js_global_value_type_with_expandos(name, sym_id, base_type);
         }
 
         // Self-reference: `globalThis.globalThis` resolves to `typeof globalThis`.

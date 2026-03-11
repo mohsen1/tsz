@@ -149,6 +149,12 @@ pub struct TypeCache {
     pub namespace_module_names: FxHashMap<TypeId, String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct EnvEvalCacheEntry {
+    pub result: TypeId,
+    pub depth_exceeded: bool,
+}
+
 /// Info about a symbol that came from destructuring a union type.
 /// Info about a symbol that came from destructuring a union type.
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
@@ -359,7 +365,10 @@ pub struct CheckerContext<'a> {
     /// Avoids re-evaluating the same `TypeId` through recursive mapped/conditional
     /// types on every call (e.g., `DeepPartial<Normalize<T>>` accessed 11k+ times
     /// in optional-chain-heavy benchmarks). Analogous to `node_types` for nodes.
-    pub env_eval_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    ///
+    /// The cache also preserves whether evaluation exceeded the solver recursion
+    /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
+    pub env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
@@ -705,6 +714,14 @@ pub struct CheckerContext<'a> {
     /// This is separate from `lib_contexts.len()` because `lib_contexts` may also include
     /// user file contexts for cross-file type resolution in multi-file tests.
     pub actual_lib_file_count: usize,
+
+    /// Whether the driver loaded a project-local `@typescript/lib-dom` replacement package.
+    /// Used to report plain unresolved-name errors for omitted DOM globals like `window`.
+    pub typescript_dom_replacement_loaded: bool,
+    /// Whether the loaded replacement package explicitly declares a global `window` value.
+    pub typescript_dom_replacement_has_window: bool,
+    /// Whether the loaded replacement package explicitly declares a global `self` value.
+    pub typescript_dom_replacement_has_self: bool,
 
     /// Control flow graph for definite assignment analysis and type narrowing.
     /// This is built during the binding phase and used by the checker.

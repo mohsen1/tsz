@@ -11,6 +11,81 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn report_unknown_empty_binding_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) {
+        if parent_type != TypeId::UNKNOWN {
+            return;
+        }
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        if !pattern_data.elements.nodes.is_empty() {
+            return;
+        }
+
+        self.error_at_node(
+            pattern_idx,
+            "Object is of type 'unknown'.",
+            crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+        );
+    }
+
+    fn should_suppress_missing_property_for_literal_default(
+        &self,
+        pattern_idx: NodeIndex,
+        element_data: &tsz_parser::parser::node::BindingElementData,
+    ) -> bool {
+        if element_data.initializer.is_none() {
+            return false;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        let source_expr = match parent_node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let Some(decl) = self.ctx.arena.get_variable_declaration(parent_node) else {
+                    return false;
+                };
+                if decl.name != pattern_idx || decl.type_annotation.is_some() {
+                    return false;
+                }
+                decl.initializer
+            }
+            syntax_kind_ext::PARAMETER => {
+                let Some(param) = self.ctx.arena.get_parameter(parent_node) else {
+                    return false;
+                };
+                if param.name != pattern_idx
+                    || param.type_annotation.is_some()
+                    || self.ctx.contextual_type.is_some()
+                {
+                    return false;
+                }
+                param.initializer
+            }
+            _ => return false,
+        };
+
+        let source_expr = self.ctx.arena.skip_parenthesized(source_expr);
+        self.ctx
+            .arena
+            .get(source_expr)
+            .is_some_and(|expr| expr.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+    }
+
     fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
             return false;
@@ -112,6 +187,8 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) {
+        self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
+
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -484,6 +561,8 @@ impl<'a> CheckerState<'a> {
         let parent_type = self.evaluate_type_for_assignability(parent_type);
         let defer_property_not_found = self
             .should_defer_property_not_found_for_contextual_destructuring(pattern_idx, parent_type);
+        let suppress_missing_property_for_literal_default =
+            self.should_suppress_missing_property_for_literal_default(pattern_idx, element_data);
 
         // Array binding patterns use the element position.
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -638,6 +717,7 @@ impl<'a> CheckerState<'a> {
                 key_type,
                 element_data,
                 defer_property_not_found,
+                suppress_missing_property_for_literal_default,
             ) {
                 return property_type;
             }
@@ -744,17 +824,26 @@ impl<'a> CheckerState<'a> {
         }
 
         if parent_type == TypeId::UNKNOWN {
+            let error_node = if element_data.property_name.is_some() {
+                element_data.property_name
+            } else if element_data.name.is_some() {
+                element_data.name
+            } else {
+                NodeIndex::NONE
+            };
             if let Some(prop_name_str) = property_name.as_deref() {
-                let error_node = if element_data.property_name.is_some() {
-                    element_data.property_name
-                } else if element_data.name.is_some() {
-                    element_data.name
-                } else {
-                    NodeIndex::NONE
-                };
-                if element_data.initializer.is_none() {
+                if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                     self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
                 }
+            } else if element_data.initializer.is_none()
+                && !defer_property_not_found
+                && !suppress_missing_property_for_literal_default
+            {
+                self.error_at_node(
+                    error_node,
+                    "Object is of type 'unknown'.",
+                    crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                );
             }
             return TypeId::UNKNOWN;
         }
@@ -811,7 +900,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         NodeIndex::NONE
                     };
-                    if element_data.initializer.is_none() && !defer_property_not_found {
+                    if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                         // In tsc, destructuring from `object` uses the apparent type `{}`
                         // in error messages (getApparentType(object) = {}).
                         if parent_type == TypeId::OBJECT {
@@ -831,6 +920,16 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    if !defer_property_not_found && !suppress_missing_property_for_literal_default {
+                        let error_node = if element_data.property_name.is_some() {
+                            element_data.property_name
+                        } else if element_data.name.is_some() {
+                            element_data.name
+                        } else {
+                            NodeIndex::NONE
+                        };
+                        self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                    }
                     property_type.unwrap_or(TypeId::ANY)
                 }
                 PropertyAccessResult::IsUnknown => TypeId::ANY,
@@ -846,6 +945,7 @@ impl<'a> CheckerState<'a> {
         key_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
         defer_property_not_found: bool,
+        suppress_missing_property_for_literal_default: bool,
     ) -> Option<TypeId> {
         let (string_keys, number_keys) = self.get_literal_key_union_from_type(key_type)?;
 
@@ -861,6 +961,7 @@ impl<'a> CheckerState<'a> {
                     member,
                     element_data,
                     defer_property_not_found,
+                    suppress_missing_property_for_literal_default,
                 ) {
                     member_types.push(member_type);
                 }
@@ -882,6 +983,7 @@ impl<'a> CheckerState<'a> {
             parent_type,
             element_data,
             defer_property_not_found,
+            suppress_missing_property_for_literal_default,
         )
     }
 
@@ -893,6 +995,7 @@ impl<'a> CheckerState<'a> {
         error_parent_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
         defer_property_not_found: bool,
+        suppress_missing_property_for_literal_default: bool,
     ) -> Option<TypeId> {
         let mut key_types = Vec::with_capacity(
             usize::from(!string_keys.is_empty()) + usize::from(!number_keys.is_empty()),
@@ -911,7 +1014,7 @@ impl<'a> CheckerState<'a> {
             if let Some(result_type) = keys_result.result_type {
                 key_types.push(result_type);
             }
-            if element_data.initializer.is_none() && !defer_property_not_found {
+            if !defer_property_not_found && !suppress_missing_property_for_literal_default {
                 for key in keys_result.missing_keys {
                     self.error_property_not_exist_at(&key, error_parent_type, error_node);
                 }
@@ -1130,12 +1233,9 @@ impl<'a> CheckerState<'a> {
     /// The rest type is the parent type with all statically-named non-rest properties
     /// excluded (like `Omit<T, 'a' | 'b'>`). For union parent types, compute the rest
     /// for each member and union the results.
-    fn compute_object_rest_type(&self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
+    fn compute_object_rest_type(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
         // Collect the names of all non-rest sibling properties in this binding pattern.
         let excluded = self.collect_non_rest_property_names(pattern_idx);
-        if excluded.is_empty() {
-            return parent_type;
-        }
 
         // For union types, compute rest type for each member and union them.
         if let Some(members) = query::union_members(self.ctx.types, parent_type) {
@@ -1219,21 +1319,33 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Create a new object type from `type_id` with the given property names excluded.
-    fn omit_properties_from_type(&self, type_id: TypeId, excluded: &[String]) -> TypeId {
+    fn omit_properties_from_type(&mut self, type_id: TypeId, excluded: &[String]) -> TypeId {
+        if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return type_id;
+        }
+
+        let constraint = query::type_parameter_constraint(self.ctx.types, type_id);
         let shape = query::object_shape(self.ctx.types, type_id).or_else(|| {
             // For type parameters, use the constraint's shape so that
             // `{ a, ...rest } = obj` where `obj: T extends { a, b }` produces
             // rest without the excluded properties.  Without this, `rest` would
             // keep all of T's constraint properties and trigger false TS2783.
-            let constraint = query::type_parameter_constraint(self.ctx.types, type_id)?;
+            let constraint = constraint?;
             query::object_shape(self.ctx.types, constraint)
         });
-        let Some(shape) = shape else {
-            return type_id;
-        };
 
-        let remaining_props: Vec<_> = shape
-            .properties
+        // Object rest follows the same property-collection rules as object spread:
+        // drop readonly, prototype members, private/protected members, and
+        // compiler-only private-brand properties before excluding named siblings.
+        let mut remaining_props = self.collect_object_spread_properties(type_id);
+        if remaining_props.is_empty()
+            && query::object_shape(self.ctx.types, type_id).is_none()
+            && let Some(constraint) = constraint
+        {
+            remaining_props = self.collect_object_spread_properties(constraint);
+        }
+
+        let remaining_props: Vec<_> = remaining_props
             .iter()
             .filter(|prop| {
                 let name = self.ctx.types.resolve_atom_ref(prop.name);
@@ -1242,18 +1354,29 @@ impl<'a> CheckerState<'a> {
             .cloned()
             .collect();
 
-        // Preserve index signatures/flags/symbol for object-rest types.
-        // Dropping them causes false TS2339 on reads like `q.z` and suppresses
-        // downstream nullish diagnostics under noUncheckedIndexedAccess.
+        let Some(shape) = shape else {
+            return if !remaining_props.is_empty()
+                || query::is_object_like_type(self.ctx.types, type_id)
+            {
+                self.ctx.types.factory().object(remaining_props)
+            } else {
+                type_id
+            };
+        };
+
+        // Preserve index signatures and object flags for object-rest types.
+        // Rest results are structural copies, so they must not retain the
+        // source type's nominal symbol (e.g. class identity).
         if shape.string_index.is_some() || shape.number_index.is_some() {
             let mut rest_shape = shape.as_ref().clone();
             rest_shape.properties = remaining_props;
+            rest_shape.symbol = None;
             self.ctx.types.factory().object_with_index(rest_shape)
         } else {
             self.ctx.types.factory().object_with_flags_and_symbol(
                 remaining_props,
                 shape.flags,
-                shape.symbol,
+                None,
             )
         }
     }

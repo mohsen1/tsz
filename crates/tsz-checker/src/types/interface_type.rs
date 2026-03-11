@@ -11,6 +11,7 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
+use std::path::{Component, Path, PathBuf};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -66,6 +67,7 @@ impl<'a> CheckerState<'a> {
         let Some(interface) = self.ctx.arena.get_interface(node) else {
             return TypeId::ERROR; // Missing interface data - propagate error
         };
+        let interface_symbol = self.ctx.binder.get_node_symbol(idx);
 
         let (_interface_type_params, interface_type_param_updates) =
             self.push_type_parameters(&interface.type_parameters);
@@ -340,7 +342,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
-                symbol: None,
+                symbol: interface_symbol,
                 is_abstract: false,
             };
             factory.callable(shape)
@@ -350,10 +352,10 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
-                symbol: None,
+                symbol: interface_symbol,
             })
         } else if !properties.is_empty() {
-            factory.object(properties)
+            factory.object_with_flags_and_symbol(properties, ObjectFlags::empty(), interface_symbol)
         } else {
             TypeId::ANY
         };
@@ -1009,8 +1011,47 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<tsz_binder::ModuleAugmentation> {
         let mut result = Vec::new();
         let mut candidates = crate::module_resolution::module_specifier_candidates(module_spec);
-        if !candidates.iter().any(|c| c == module_spec) {
-            candidates.push(module_spec.to_string());
+        let mut push_candidate = |candidate: String| {
+            if !candidate.is_empty() && !candidates.iter().any(|existing| existing == &candidate) {
+                candidates.push(candidate);
+            }
+        };
+
+        let trimmed = module_spec.trim().trim_matches('"').trim_matches('\'');
+        for specifier in [module_spec, trimmed] {
+            if let Some(target_idx) = self.ctx.resolve_import_target(specifier) {
+                push_candidate(format!("file_idx:{target_idx}"));
+            }
+        }
+
+        let is_relative = |specifier: &str| {
+            specifier.starts_with("./")
+                || specifier.starts_with(".\\")
+                || specifier.starts_with("../")
+                || specifier.starts_with("..\\")
+                || specifier == "."
+                || specifier == ".."
+        };
+        if is_relative(trimmed)
+            && let Some(parent) = Path::new(&self.ctx.file_name).parent()
+        {
+            let normalized =
+                parent
+                    .join(trimmed)
+                    .components()
+                    .fold(PathBuf::new(), |mut path, component| {
+                        match component {
+                            Component::Prefix(prefix) => path.push(prefix.as_os_str()),
+                            Component::RootDir => path.push(component.as_os_str()),
+                            Component::CurDir => {}
+                            Component::ParentDir => {
+                                path.pop();
+                            }
+                            Component::Normal(part) => path.push(part),
+                        }
+                        path
+                    });
+            push_candidate(normalized.to_string_lossy().to_string());
         }
 
         for candidate in &candidates {
@@ -1055,10 +1096,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// # Returns
     /// A vector of `PropertyInfo` representing the augmented members
-    pub(crate) fn get_module_augmentation_members(
+    fn get_module_augmentation_members_inner(
         &mut self,
         module_spec: &str,
         interface_name: &str,
+        type_args: Option<&[TypeId]>,
     ) -> Vec<tsz_solver::PropertyInfo> {
         use tsz_parser::parser::syntax_kind_ext::{
             EXPORT_DECLARATION, FUNCTION_DECLARATION, INTERFACE_DECLARATION, METHOD_SIGNATURE,
@@ -1082,6 +1124,28 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(interface) = arena.get_interface(node) {
+                let (interface_type_params, interface_type_param_updates) =
+                    if std::ptr::eq(arena, self.ctx.arena) {
+                        let (params, updates) =
+                            self.push_type_parameters(&interface.type_parameters);
+                        (params, Some(updates))
+                    } else {
+                        (Vec::new(), None)
+                    };
+
+                let interface_substitution = if let Some(type_args) = type_args
+                    && !interface_type_params.is_empty()
+                    && interface_type_params.len() == type_args.len()
+                {
+                    Some(tsz_solver::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &interface_type_params,
+                        type_args,
+                    ))
+                } else {
+                    None
+                };
+
                 // Extract members from interface augmentations.
                 for &member_idx in &interface.members.nodes {
                     let Some(member_node) = arena.get(member_idx) else {
@@ -1094,16 +1158,24 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = arena.get(sig.name)
                         && let Some(id_data) = arena.get_identifier(name_node)
                     {
-                        if member_node.kind == METHOD_SIGNATURE
-                            && std::ptr::eq(arena, self.ctx.arena)
-                            && let Some(ref _params) = sig.parameters
-                        {}
-                        let type_id = if sig.type_annotation.is_some()
-                            && std::ptr::eq(arena, self.ctx.arena)
-                        {
-                            self.get_type_of_node(sig.type_annotation)
+                        let type_id = if std::ptr::eq(arena, self.ctx.arena) {
+                            let mut type_id = self.get_type_of_interface_member_simple(member_idx);
+                            if let Some(substitution) = interface_substitution.as_ref() {
+                                type_id = tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    type_id,
+                                    substitution,
+                                );
+                            }
+                            type_id
                         } else {
-                            TypeId::ANY
+                            self.delegate_cross_arena_interface_member_simple_type(
+                                augmentation.node,
+                                member_idx,
+                                arena,
+                                type_args,
+                            )
+                            .unwrap_or(TypeId::ANY)
                         };
 
                         aug_member_order += 1;
@@ -1120,6 +1192,9 @@ impl<'a> CheckerState<'a> {
                             declaration_order: aug_member_order,
                         });
                     }
+                }
+                if let Some(updates) = interface_type_param_updates {
+                    self.pop_type_parameters(updates);
                 }
                 continue;
             }
@@ -1351,6 +1426,23 @@ impl<'a> CheckerState<'a> {
         members
     }
 
+    pub(crate) fn get_module_augmentation_members(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+    ) -> Vec<tsz_solver::PropertyInfo> {
+        self.get_module_augmentation_members_inner(module_spec, interface_name, None)
+    }
+
+    pub(crate) fn get_module_augmentation_members_instantiated(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+        type_args: &[TypeId],
+    ) -> Vec<tsz_solver::PropertyInfo> {
+        self.get_module_augmentation_members_inner(module_spec, interface_name, Some(type_args))
+    }
+
     /// Apply module augmentations to an interface type.
     ///
     /// This function merges augmentation members into an existing interface type,
@@ -1439,8 +1531,25 @@ impl<'a> CheckerState<'a> {
             }
             AugmentationTargetKind::Callable(shape_id) => {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
-                let merged_properties =
-                    Self::merge_properties(&augmentation_members, &base_shape.properties);
+                let prototype_name = self.ctx.types.intern_string("prototype");
+                let merged_properties = if base_shape.construct_signatures.is_empty() {
+                    Self::merge_properties(&augmentation_members, &base_shape.properties)
+                } else {
+                    let mut properties = base_shape.properties.clone();
+                    if let Some(prototype_prop) = properties
+                        .iter_mut()
+                        .find(|prop| prop.name == prototype_name)
+                    {
+                        let augmented_prototype = self.apply_module_augmentations(
+                            module_spec,
+                            interface_name,
+                            prototype_prop.type_id,
+                        );
+                        prototype_prop.type_id = augmented_prototype;
+                        prototype_prop.write_type = augmented_prototype;
+                    }
+                    properties
+                };
                 factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),

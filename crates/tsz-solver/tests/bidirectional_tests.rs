@@ -103,6 +103,62 @@ fn test_contextual_property_type() {
 }
 
 #[test]
+fn test_contextual_property_type_specializes_unique_symbol_mapped_keys() {
+    let interner = TypeInterner::new();
+
+    let sym_a = crate::types::SymbolRef(101);
+    let sym_b = crate::types::SymbolRef(202);
+    let key_a = interner.unique_symbol(sym_a);
+    let key_b = interner.unique_symbol(sym_b);
+    let keys_union = interner.union(vec![key_a, key_b]);
+
+    let key_param_info = crate::TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info.clone()));
+
+    let template = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("p")),
+            type_id: key_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mapped = interner.mapped(crate::MappedType {
+        type_param: key_param_info,
+        constraint: keys_union,
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, mapped);
+    let prop_ty = ctx
+        .get_property_type("__unique_101")
+        .expect("expected contextual property type");
+    let Some(crate::TypeData::Function(shape_id)) = interner.lookup(prop_ty) else {
+        panic!(
+            "expected function property type, got {:?}",
+            interner.lookup(prop_ty)
+        );
+    };
+    let shape = interner.function_shape(shape_id);
+    assert_eq!(shape.params[0].type_id, key_a);
+}
+
+#[test]
 fn test_contextual_function_return_type() {
     let interner = TypeInterner::new();
 

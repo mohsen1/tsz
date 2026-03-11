@@ -125,13 +125,25 @@ impl TypeInterner {
             return flat[0];
         }
 
-        // Abort reduction if any member is a Lazy type.
-        // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
-        // we must preserve the intersection as-is without attempting to merge or reduce.
-        // This prevents incorrect reductions on type aliases like `type A = { x: number }`.
-        let has_unresolved = flat
-            .iter()
-            .any(|&id| matches!(self.lookup(id), Some(TypeData::Lazy(_))));
+        // Abort reduction if any member is a meta-type the interner cannot safely
+        // reason about structurally on its own.
+        //
+        // Lazy/Application/Mapped members may later evaluate to object types with
+        // index signatures or other structure that is invisible here. If we merge
+        // concrete object members around them too early, we can collapse
+        // intersections like:
+        //   { [K in keyof Source]: string } & Pick<Tgt, Exclude<keyof Tgt, keyof Source>>
+        // into an object that incorrectly loses Tgt's string index signature after
+        // generic instantiation (`Source = {}`).
+        //
+        // Preserve these intersections as-is so the checker's resolver/evaluator can
+        // expand them with full symbol information later.
+        let has_unresolved = flat.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeData::Lazy(_) | TypeData::Application(_) | TypeData::Mapped(_))
+            )
+        });
         if has_unresolved {
             let list_id = self.intern_type_list(flat.into_vec());
             return self.intern(TypeData::Intersection(list_id));

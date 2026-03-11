@@ -855,7 +855,24 @@ impl<'a> CheckerState<'a> {
                 // union arrays.  This matches tsc: `var [a, b] = [1, "hello"]` infers
                 // a=number, b=string (tuple), not a=string|number (array).
                 let prev_contextual = checker.ctx.contextual_type;
+                let contextual_init = checker
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(var_decl.initializer);
+                let supports_pattern_context =
+                    checker
+                        .ctx
+                        .arena
+                        .get(contextual_init)
+                        .is_some_and(|init_node| {
+                            matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            )
+                        });
                 if is_destructuring
+                    && supports_pattern_context
                     && let Some(ctx_type) =
                         checker.build_contextual_type_from_pattern(var_decl.name)
                 {

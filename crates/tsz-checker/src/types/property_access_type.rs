@@ -5,6 +5,7 @@ use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -24,6 +25,23 @@ impl<'a> CheckerState<'a> {
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
         result
+    }
+
+    fn missing_typescript_lib_dom_global_alias(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        let ident = self.ctx.arena.get_identifier(node)?;
+        let name = ident.escaped_text.as_str();
+        if !matches!(name, "window" | "self") {
+            return None;
+        }
+        if !self.ctx.typescript_dom_replacement_loaded {
+            return None;
+        }
+        match name {
+            "window" if !self.ctx.typescript_dom_replacement_has_window => Some(name.to_string()),
+            "self" if !self.ctx.typescript_dom_replacement_has_self => Some(name.to_string()),
+            _ => None,
+        }
     }
 
     /// Inner implementation of property access type resolution.
@@ -72,6 +90,17 @@ impl<'a> CheckerState<'a> {
         {
             // Preserve diagnostics on the base expression when member name is missing.
             let _ = self.get_type_of_node(access.expression);
+            return TypeId::ERROR;
+        }
+
+        if let Some(missing_global) =
+            self.missing_typescript_lib_dom_global_alias(access.expression)
+        {
+            self.error_at_node_msg(
+                access.expression,
+                crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                &[&missing_global],
+            );
             return TypeId::ERROR;
         }
 
@@ -206,7 +235,7 @@ impl<'a> CheckerState<'a> {
         // When `get_type_of_node` widens literals (e.g., "" -> string, 42 -> number),
         // tsc still shows the literal type in error messages like TS2339.
         // Try to recover the literal type from the expression node for display purposes.
-        let display_object_type = if matches!(
+        let mut display_object_type = if matches!(
             original_object_type,
             TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
         ) {
@@ -223,7 +252,7 @@ impl<'a> CheckerState<'a> {
         // For `obj?.prop ?? fallback`, defer this work: the optional-chain fast path
         // below will resolve property access through `resolve_type_for_property_access`,
         // and eagerly evaluating applications here is redundant on hot paths.
-        let object_type = if access.question_dot_token && skip_optional_base_flow {
+        let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
         } else {
             self.evaluate_application_type(original_object_type)
@@ -234,7 +263,7 @@ impl<'a> CheckerState<'a> {
         // But `.c` should only be reached when `o` is defined, so we strip nullish
         // types. Only do this when this access is NOT itself an optional chain
         // (`question_dot_token` is false) but is part of one (parent has `?.`).
-        let object_type = if !access.question_dot_token
+        object_type = if !access.question_dot_token
             && super::computation::access::is_optional_chain(self.ctx.arena, access.expression)
         {
             let (non_nullish, _) = self.split_nullish_type(object_type);
@@ -242,6 +271,22 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+
+        if object_type == TypeId::ANY
+            && self.is_js_file()
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+            && self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .is_none()
+        {
+            let namespace_type = self.current_file_commonjs_namespace_type();
+            object_type = namespace_type;
+            display_object_type = namespace_type;
+        }
 
         // Fast path for optional chaining on non-class receivers when the
         // property resolves successfully without diagnostics.
@@ -389,6 +434,25 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if object_type == TypeId::ANY
+            && self.is_js_file()
+            && self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "module")
+            && self
+                .resolve_identifier_symbol_without_tracking(access.expression)
+                .is_none()
+            && self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+        {
+            return self.current_file_commonjs_module_exports_namespace_type();
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid
         if object_type == TypeId::ANY {
@@ -525,8 +589,17 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|constraint| {
                         access_query::enum_def_id(self.ctx.types, constraint).is_some()
                     });
+            let hidden_qualified_namespace_member_apparent_type = self
+                .qualified_namespace_member_hidden_on_exported_surface(
+                    idx,
+                    access.expression,
+                    property_name,
+                );
+            let hidden_qualified_namespace_member =
+                hidden_qualified_namespace_member_apparent_type.is_some();
 
             if !enum_instance_like_access
+                && !hidden_qualified_namespace_member
                 && let Some(member_type) =
                     self.resolve_namespace_value_member(object_type, property_name)
             {
@@ -536,7 +609,8 @@ impl<'a> CheckerState<'a> {
             // Fallback for namespace/export member accesses where type-only namespace
             // classification misses the object form but symbol resolution can still
             // identify `A.B` as a concrete exported value member.
-            if let Some(member_sym_id) = self.resolve_qualified_symbol(idx)
+            if !hidden_qualified_namespace_member
+                && let Some(member_sym_id) = self.resolve_qualified_symbol(idx)
                 && let Some(member_symbol) = self
                     .get_cross_file_symbol(member_sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
@@ -583,6 +657,19 @@ impl<'a> CheckerState<'a> {
                     }
                     // Also emit TS2693 for the type-only member itself
                     self.error_type_only_value_at(property_name, access.name_or_argument);
+                }
+                return TypeId::ERROR;
+            }
+            if let Some(display_type) = hidden_qualified_namespace_member_apparent_type.as_deref() {
+                if !access.question_dot_token
+                    && !property_name.starts_with('#')
+                    && !accessibility_error_emitted
+                {
+                    self.error_property_not_exist_with_apparent_type(
+                        property_name,
+                        display_type,
+                        access.name_or_argument,
+                    );
                 }
                 return TypeId::ERROR;
             }
@@ -722,14 +809,18 @@ impl<'a> CheckerState<'a> {
                         // With optional chaining, missing property results in undefined
                         return TypeId::UNDEFINED;
                     }
-                    // In JS checkJs mode, CommonJS `module.exports` accesses are valid.
+                    // In JS checkJs mode, unresolved CommonJS `module.exports` accesses
+                    // should use the current file's export surface instead of `any`.
                     if property_name == "exports"
                         && self.is_js_file()
                         && let Some(obj_node) = self.ctx.arena.get(access.expression)
                         && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
                         && ident.escaped_text == "module"
+                        && self
+                            .resolve_identifier_symbol_without_tracking(access.expression)
+                            .is_none()
                     {
-                        return TypeId::ANY;
+                        return self.current_file_commonjs_module_exports_namespace_type();
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
                     // Returns `any` type for properties that were assigned via expando pattern.
@@ -1639,63 +1730,13 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a property access is an expando function assignment pattern.
-    ///
-    /// TypeScript allows assigning properties to function and class declarations:
-    /// ```typescript
-    /// function foo() {}
-    /// foo.bar = 1;  // OK - expando pattern, no TS2339
-    /// ```
-    ///
-    /// Returns true if:
-    /// 1. The property access is the LHS of a `=` assignment
-    /// 2. The object expression is an identifier bound to a function or class declaration
-    /// 3. The object type is a function type
-    fn is_expando_function_assignment(
+    fn qualified_namespace_member_hidden_on_exported_surface(
         &self,
-        property_access_idx: NodeIndex,
+        access_idx: NodeIndex,
         object_expr_idx: NodeIndex,
-        object_type: TypeId,
-    ) -> bool {
-        use tsz_solver::visitor::is_function_type;
-
-        // Check if object type is a function type
-        if !is_function_type(self.ctx.types, object_type) {
-            return false;
-        }
-
-        // Check if property access is LHS of a `=` assignment
-        let parent_idx = match self.ctx.arena.get_extended(property_access_idx) {
-            Some(ext) if ext.parent.is_some() => ext.parent,
-            _ => return false,
-        };
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
-            return false;
-        };
-        if binary.operator_token != SyntaxKind::EqualsToken as u16
-            || binary.left != property_access_idx
-        {
-            return false;
-        }
-
-        // Resolve object symbol for both simple identifiers and qualified chains.
-        let sym_id = self
-            .resolve_identifier_symbol(object_expr_idx)
-            .or_else(|| self.resolve_qualified_symbol(object_expr_idx));
-
-        if let Some(sym_id) = sym_id
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-        {
-            return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
-        }
-
-        // Namespace member fallback: allow expando assignment for function-typed
-        // members accessed through namespace/value-module chains (e.g., `app.foo.bar = ...`).
-        // Binder tracks these expandos by chain key, so reads can observe them later.
-        fn root_identifier(
+        _property_name: &str,
+    ) -> Option<String> {
+        fn rightmost_namespace_name(
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
         ) -> Option<String> {
@@ -1703,258 +1744,153 @@ impl<'a> CheckerState<'a> {
             if node.kind == SyntaxKind::Identifier as u16 {
                 return arena.get_identifier(node).map(|id| id.escaped_text.clone());
             }
-            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = arena.get_access_expr(node)?;
-                return root_identifier(arena, access.expression);
+                let name_node = arena.get(access.name_or_argument)?;
+                return arena
+                    .get_identifier(name_node)
+                    .map(|id| id.escaped_text.clone());
+            }
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let name = arena.get_qualified_name(node)?;
+                let right = arena.get(name.right)?;
+                return arena
+                    .get_identifier(right)
+                    .map(|id| id.escaped_text.clone());
             }
             None
         }
 
-        if let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
-            && let Some(root_sym) = self.ctx.binder.file_locals.get(&root_name)
-            && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym)
-            && (root_symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
-                != 0
-        {
-            return true;
-        }
-
-        false
-    }
-
-    /// Check if a property access reads an expando property assigned via `X.prop = value`.
-    ///
-    /// Checks the current file's binder first, then all other binders in multi-file
-    /// mode (for global-scope cross-file expando access). Also handles import chains
-    /// like `a.C1.staticProp` by resolving the object expression to its source symbol
-    /// and checking the source file's binder.
-    fn is_expando_property_read(&self, object_expr_idx: NodeIndex, property_name: &str) -> bool {
-        fn property_access_chain(
+        fn module_name_matches(
             arena: &tsz_parser::parser::node::NodeArena,
-            idx: NodeIndex,
-        ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
-            }
-            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                let access = arena.get_access_expr(node)?;
-                let left = property_access_chain(arena, access.expression)?;
-                let right_node = arena.get(access.name_or_argument)?;
-                let right = arena.get_identifier(right_node)?.escaped_text.clone();
-                return Some(format!("{left}.{right}"));
-            }
-            None
+            module_idx: NodeIndex,
+            expected_name: &str,
+        ) -> bool {
+            let Some(node) = arena.get(module_idx) else {
+                return false;
+            };
+            let Some(module) = arena.get_module(node) else {
+                return false;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                return false;
+            };
+            arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == expected_name)
         }
 
-        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
-            return false;
-        };
+        fn module_exports_publicly(
+            arena: &tsz_parser::parser::node::NodeArena,
+            export_map: &rustc_hash::FxHashMap<u32, bool>,
+            module_idx: NodeIndex,
+        ) -> bool {
+            if export_map.get(&module_idx.0).copied().unwrap_or(false) {
+                return true;
+            }
 
-        // 1. Check current file's binder
-        if self
-            .ctx
-            .binder
-            .expando_properties
-            .get(&obj_key)
-            .is_some_and(|props| props.contains(property_name))
-        {
-            return true;
-        }
+            let Some(node) = arena.get(module_idx) else {
+                return false;
+            };
+            let Some(module) = arena.get_module(node) else {
+                return false;
+            };
 
-        // 2. Check all other binders (cross-file global scope access)
-        if let Some(all_binders) = &self.ctx.all_binders {
-            for binder in all_binders.iter() {
-                if binder
-                    .expando_properties
-                    .get(&obj_key)
-                    .is_some_and(|props| props.contains(property_name))
-                {
-                    return true;
+            if arena.has_modifier_ref(module.modifiers.as_ref(), SyntaxKind::ExportKeyword)
+                || arena.has_modifier_ref(module.modifiers.as_ref(), SyntaxKind::DeclareKeyword)
+            {
+                return true;
+            }
+
+            if let Some(name_node) = arena.get(module.name)
+                && (name_node.kind == SyntaxKind::StringLiteral as u16
+                    || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            {
+                return true;
+            }
+
+            let mut current = module_idx;
+            while let Some(ext) = arena.get_extended(current) {
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    return false;
                 }
-            }
-        }
 
-        // 3. For qualified access chains like `a.C1` where `a` is an import namespace,
-        //    the source file's binder stores the expando under just "C1" (the original
-        //    symbol name), not "a.C1". Extract the last segment and check all binders.
-        if let Some(last_dot) = obj_key.rfind('.') {
-            let last_segment = &obj_key[last_dot + 1..];
-            if let Some(all_binders) = &self.ctx.all_binders {
-                for binder in all_binders.iter() {
-                    if binder
-                        .expando_properties
-                        .get(last_segment)
-                        .is_some_and(|props| props.contains(property_name))
+                let Some(parent_node) = arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(parent_module) = arena.get_module(parent_node)
+                {
+                    if arena.has_modifier_ref(
+                        parent_module.modifiers.as_ref(),
+                        SyntaxKind::DeclareKeyword,
+                    ) {
+                        return true;
+                    }
+
+                    if let Some(name_node) = arena.get(parent_module.name)
+                        && (name_node.kind == SyntaxKind::StringLiteral as u16
+                            || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
                     {
                         return true;
                     }
                 }
+
+                current = parent_idx;
             }
+
+            false
         }
 
-        false
-    }
-
-    fn union_has_explicit_property_member(&mut self, object_type: TypeId, prop_name: &str) -> bool {
-        use tsz_solver::operations::property::PropertyAccessResult;
-
-        let Some(members) =
-            crate::query_boundaries::state::checking::union_members(self.ctx.types, object_type)
-        else {
-            return false;
-        };
-
-        members.iter().copied().any(|member| {
-            let resolved_member = self.resolve_type_for_property_access(member);
-            matches!(
-                self.resolve_property_access_with_env(resolved_member, prop_name),
-                PropertyAccessResult::Success {
-                    from_index_signature: false,
-                    ..
-                }
-            )
-        })
-    }
-
-    fn type_parameter_constraint_has_explicit_property(
-        &mut self,
-        object_type: TypeId,
-        prop_name: &str,
-    ) -> bool {
-        use tsz_solver::operations::property::PropertyAccessResult;
-
-        let Some(constraint) = crate::query_boundaries::state::checking::type_parameter_constraint(
-            self.ctx.types,
-            object_type,
-        ) else {
-            return false;
-        };
-
-        let resolved_constraint = self.resolve_type_for_property_access(constraint);
-        matches!(
-            self.resolve_property_access_with_env(resolved_constraint, prop_name),
-            PropertyAccessResult::Success {
-                from_index_signature: false,
-                ..
-            }
-        )
-    }
-
-    fn strict_bind_call_apply_method_type(
-        &mut self,
-        object_type: TypeId,
-        object_expr_idx: NodeIndex,
-        property_name: &str,
-    ) -> Option<TypeId> {
-        if property_name != "apply" {
+        if self.resolve_identifier_symbol(object_expr_idx).is_some() {
             return None;
         }
 
-        let factory = self.ctx.types.factory();
-        let mut candidates = vec![object_type];
-        if let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) {
-            let sym_type = self.get_type_of_symbol(sym_id);
-            if sym_type != TypeId::ERROR && !candidates.contains(&sym_type) {
-                candidates.push(sym_type);
-            }
-        }
+        let parent_name = rightmost_namespace_name(self.ctx.arena, object_expr_idx)?;
+        let member_id = self.resolve_qualified_symbol(access_idx)?;
+        let member_symbol = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))?;
 
-        let mut resolved_shape = None;
-        for candidate in candidates {
-            if let Some(shape) =
-                crate::query_boundaries::property_access::function_shape(self.ctx.types, candidate)
-            {
-                resolved_shape = Some((shape.params.clone(), shape.return_type));
-                break;
-            }
-            if let Some(shape) =
-                crate::query_boundaries::property_access::callable_shape(self.ctx.types, candidate)
-                && let Some(sig) = shape.call_signatures.first()
-            {
-                resolved_shape = Some((sig.params.clone(), sig.return_type));
-                break;
-            }
-        }
-
-        let (params, return_type) = resolved_shape?;
-
-        let tuple_elements: Vec<tsz_solver::TupleElement> = params
-            .iter()
-            .map(|param| tsz_solver::TupleElement {
-                type_id: param.type_id,
-                name: param.name,
-                optional: param.optional && !param.rest,
-                rest: param.rest,
-            })
-            .collect();
-        let args_tuple = factory.tuple(tuple_elements);
-        let method_shape = tsz_solver::FunctionShape {
-            params: vec![
-                tsz_solver::ParamInfo {
-                    name: Some(self.ctx.types.intern_string("thisArg")),
-                    type_id: TypeId::ANY,
-                    optional: false,
-                    rest: false,
-                },
-                tsz_solver::ParamInfo {
-                    name: Some(self.ctx.types.intern_string("args")),
-                    type_id: args_tuple,
-                    optional: true,
-                    rest: false,
-                },
-            ],
-            this_type: None,
-            return_type,
-            type_params: vec![],
-            type_predicate: None,
-            is_constructor: false,
-            is_method: false,
-        };
-
-        Some(factory.function(method_shape))
-    }
-
-    /// Emit TS1470 if `import.meta` appears in a file that builds to CommonJS output.
-    ///
-    /// TSC logic: in Node16/NodeNext module modes, the per-file format determines
-    /// whether the file outputs CJS (TS1470). For older module modes (< ES2020,
-    /// excluding System), ALL files produce CJS output so TS1470 always fires.
-    fn check_import_meta_in_cjs(&mut self, node_idx: NodeIndex) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_common::common::ModuleKind;
-
-        let module_kind = self.ctx.compiler_options.module;
-        let should_error = if module_kind.is_node_module() {
-            // Node16/Node18/Node20/NodeNext: per-file CJS/ESM determination
-            let current_file = &self.ctx.file_name;
-            let is_commonjs_file = current_file.ends_with(".cts") || current_file.ends_with(".cjs");
-            let is_esm_file = current_file.ends_with(".mts") || current_file.ends_with(".mjs");
-            if is_commonjs_file {
-                true
-            } else if is_esm_file {
-                false
-            } else if let Some(is_esm) = self.ctx.file_is_esm {
-                !is_esm
-            } else {
-                false
-            }
-        } else if module_kind == ModuleKind::System
-            || (module_kind as u32) >= (ModuleKind::ES2020 as u32)
+        if (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE)) == 0
+            || member_symbol.is_type_only
         {
-            // System and ES2020+ support import.meta natively
-            false
-        } else {
-            // CommonJS, AMD, UMD, ES2015, None → always CJS output
-            true
-        };
-
-        if should_error {
-            self.error_at_node(
-                node_idx,
-                diagnostic_messages::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
-                diagnostic_codes::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
-            );
+            return None;
         }
+
+        let mut saw_matching_namespace_decl = false;
+        for &decl_idx in &member_symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+
+            let mut current = decl_idx;
+            while let Some(ext) = self.ctx.arena.get_extended(current) {
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && module_name_matches(self.ctx.arena, parent_idx, &parent_name)
+                {
+                    saw_matching_namespace_decl = true;
+                    if module_exports_publicly(
+                        self.ctx.arena,
+                        &self.ctx.binder.module_declaration_exports_publicly,
+                        parent_idx,
+                    ) {
+                        return None;
+                    }
+                    break;
+                }
+                current = parent_idx;
+            }
+        }
+
+        saw_matching_namespace_decl.then(|| format!("typeof {parent_name}"))
     }
 }

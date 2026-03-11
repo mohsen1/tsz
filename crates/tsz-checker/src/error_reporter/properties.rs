@@ -3,11 +3,67 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn property_receiver_display_for_node(&self, type_id: TypeId, idx: NodeIndex) -> String {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        if self.is_js_file()
+            && let Some(info) = self.ctx.arena.node_info(idx)
+            && let Some(parent) = self.ctx.arena.get(info.parent)
+            && let Some(access) = self.ctx.arena.get_access_expr(parent)
+        {
+            let receiver = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(access.expression);
+            if let Some(receiver_node) = self.ctx.arena.get(receiver)
+                && receiver_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
+                && let Some(shape) =
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                && shape.symbol.is_none()
+                && self
+                    .resolve_identifier_symbol(receiver)
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| self.ctx.arena.get(symbol.value_declaration))
+                    .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
+                    .is_some_and(|decl| {
+                        self.ctx.arena.get(decl.initializer).is_some_and(|init| {
+                            init.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        })
+                    })
+            {
+                return format!("typeof {}", ident.escaped_text);
+            }
+        }
+        let is_element_access_receiver = self
+            .ctx
+            .arena
+            .node_info(idx)
+            .and_then(|info| self.ctx.arena.get(info.parent))
+            .and_then(|parent| self.ctx.arena.get_access_expr(parent))
+            .is_some_and(|access| {
+                let expr = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression);
+                self.ctx
+                    .arena
+                    .get(expr)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            });
+
+        if is_element_access_receiver {
+            return self.format_type_diagnostic_structural(type_id);
+        }
+
+        self.format_property_receiver_type_for_diagnostic(type_id)
+    }
+
     // =========================================================================
     // Property Errors
     // =========================================================================
@@ -53,13 +109,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
+        if self.get_source_location(idx).is_some() {
             // TS2550: Check if property exists in a newer lib version before
             // trying spelling suggestions. This matches tsc's priority order.
             if !self.has_syntax_parse_errors()
                 && let Some(lib_name) = self.get_lib_suggestion_for_property(prop_name, type_id)
             {
-                let type_str = self.format_type_diagnostic(type_id);
+                let type_str = self.property_receiver_display_for_node(type_id, idx);
                 let message = format!(
                     "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
                 );
@@ -149,27 +205,21 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
-
-            let diag = if let Some(ref suggestion) = suggestion {
-                builder.property_not_exist_did_you_mean(
-                    prop_name,
-                    type_id,
-                    suggestion,
-                    loc.start,
-                    loc.length(),
+            let type_display = self.property_receiver_display_for_node(type_id, idx);
+            let (code, message) = if let Some(ref suggestion) = suggestion {
+                (
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                    format!(
+                        "Property '{prop_name}' does not exist on type '{type_display}'. Did you mean '{suggestion}'?"
+                    ),
                 )
             } else {
-                builder.property_not_exist(prop_name, type_id, loc.start, loc.length())
+                (
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    format!("Property '{prop_name}' does not exist on type '{type_display}'."),
+                )
             };
-            // Use push_diagnostic for deduplication
-            self.ctx
-                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
+            self.error_at_node(idx, &message, code);
         }
     }
 

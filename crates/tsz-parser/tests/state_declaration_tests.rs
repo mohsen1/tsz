@@ -1,5 +1,6 @@
 //! Tests for declaration parsing in the parser.
 use crate::parser::{NodeIndex, ParserState, syntax_kind_ext};
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
 
 fn parse_source(source: &str) -> (ParserState, NodeIndex) {
@@ -32,6 +33,53 @@ fn parse_declaration_with_recovery_for_invalid_member() {
 fn parse_import_equals_declaration_with_targeted_error_recovery() {
     let (parser, _root) = parse_source("import = 'invalid';\nfunction ok() { return 1; }");
     assert!(!parser.get_diagnostics().is_empty());
+}
+
+#[test]
+fn parse_invalid_named_import_star_reports_expression_expected() {
+    let (parser, _root) = parse_source("import { * } from \"m\";");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "expected TS1003 for invalid named import `*`, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 recovery at `}}`, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "should not escalate to TS1128, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_default_import_followed_by_from_reports_missing_named_bindings() {
+    let (parser, _root) = parse_source("import defaultBinding, from \"m\";");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 for missing named bindings, got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_trailing_comma_before_from_recovers_as_next_statement() {
+    let (parser, _root) = parse_source("import { a }, from \"m\";");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes
+            .iter()
+            .filter(|&&code| code == diagnostic_codes::EXPECTED)
+            .count(),
+        2,
+        "expected two TS1005 diagnostics (`from` and `;`), got {diags:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "should recover through `from` as next statement instead of TS1434, got {diags:?}"
+    );
 }
 
 #[test]
@@ -288,11 +336,15 @@ fn invalid_bigint_import_specifier_preserves_missing_brace_recovery() {
         codes.contains(&1003),
         "expected TS1003 for invalid import specifier, got {codes:?}"
     );
-    // Recovery now properly consumes `}` and `from "..."` without cascading
-    // TS1128/TS1434, matching tsc's parseDelimitedList behavior.
+    // TypeScript recovers by ending the malformed import clause, then reports
+    // the stray `}` and `from` as follow-up syntax errors.
     assert!(
-        !codes.contains(&1128),
-        "should not emit cascading TS1128 after named imports recovery, got {codes:?}"
+        codes.contains(&1128),
+        "expected TS1128 after named imports recovery, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&1434),
+        "expected TS1434 after named imports recovery, got {codes:?}"
     );
 }
 
@@ -371,8 +423,9 @@ declare namespace M {
 
 #[test]
 fn invalid_bigint_import_specifiers_recover_cleanly() {
-    // After error recovery, named imports should consume `}` and `from "..."` properly
-    // without cascading TS1128/TS1434 errors. This matches tsc's parseDelimitedList.
+    // Invalid bigint import specifiers recover by ending the import at the
+    // malformed clause, then reporting the stray `}` and `from` as follow-up
+    // syntax errors. This matches the current TypeScript baseline.
     for source in [
         r#"import { 0n as foo } from "./foo";"#,
         r#"import { foo as 0n } from "./foo";"#,
@@ -380,12 +433,12 @@ fn invalid_bigint_import_specifiers_recover_cleanly() {
         let (parser, _root) = parse_source(source);
         let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
         assert!(
-            !codes.contains(&1128),
-            "should not emit cascading TS1128 for {source:?}, got {codes:?}"
+            codes.contains(&1128),
+            "expected TS1128 for {source:?}, got {codes:?}"
         );
         assert!(
-            !codes.contains(&1434),
-            "should not emit cascading TS1434 for {source:?}, got {codes:?}"
+            codes.contains(&1434),
+            "expected TS1434 for {source:?}, got {codes:?}"
         );
     }
 }

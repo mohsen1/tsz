@@ -148,6 +148,90 @@ fn test_exports_runtime_targets_substitute_matching_declaration_sidecars() {
 }
 
 #[test]
+fn test_package_root_types_js_is_ignored_for_module_resolution() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_package_types_js_ignored");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/foo")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/foo/package.json"),
+        r#"{"name":"foo","types":"foo.js"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/foo/foo.js"), "module.exports = {};").unwrap();
+    fs::write(dir.join("src/index.ts"), "import 'foo';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "foo",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved, None,
+        "package.json types entries should not resolve runtime JS files"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_package_root_main_js_still_resolves_for_module_resolution() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_package_main_js_runtime");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/foo")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(
+        dir.join("node_modules/foo/package.json"),
+        r#"{"name":"foo","main":"foo.js"}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/foo/foo.js"), "module.exports = {};").unwrap();
+    fs::write(dir.join("src/index.ts"), "import 'foo';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        allow_js: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "foo",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(canonicalize_or_owned(&dir.join("node_modules/foo/foo.js"))),
+        "package.json main entries should still resolve runtime JS files"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_collect_module_specifiers_finds_dynamic_imports() {
     let text = r#"import("./foo").then(x => x);"#;
     let path = Path::new("test.mts");

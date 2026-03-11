@@ -168,7 +168,7 @@ impl<'a> CheckerState<'a> {
             .or(numeric_string_index);
 
         if let Some(name) = literal_string.as_deref()
-            && self.is_global_this_expression(access.expression)
+            && self.is_global_this_like_expression(access.expression)
         {
             // For element access (globalThis['y']), tsc reports TS2339 at the full
             // expression span. For property access (globalThis.y), at the property name.
@@ -214,9 +214,11 @@ impl<'a> CheckerState<'a> {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
                 // Find the class that declares this private member (walk up hierarchy)
-                let class_name = self
-                    .get_declaring_class_name_for_private_member(object_type, prop_name)
-                    .unwrap_or_else(|| "the class".to_string());
+                let class_name = self.get_private_identifier_declaring_class_name(
+                    object_type,
+                    access.expression,
+                    prop_name,
+                );
 
                 let message = format_message(
                         diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
@@ -726,6 +728,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let used_generic_element_resolution = result_type.is_none();
         let mut result_type = result_type.unwrap_or_else(|| {
             if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
                 && self.is_generic_index_type(index_type)
@@ -814,6 +817,23 @@ impl<'a> CheckerState<'a> {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
 
+        if used_generic_element_resolution
+            && literal_index.is_none()
+            && self.ctx.no_unchecked_indexed_access()
+            && !self.ctx.skip_flow_narrowing
+            && result_type != TypeId::ERROR
+            && result_type != TypeId::ANY
+            && result_type != TypeId::UNKNOWN
+            && result_type != TypeId::NEVER
+            && self.split_nullish_type(result_type).1.is_none()
+        {
+            result_type = self
+                .ctx
+                .types
+                .factory()
+                .union(vec![result_type, TypeId::UNDEFINED]);
+        }
+
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
         {
@@ -896,6 +916,25 @@ impl<'a> CheckerState<'a> {
         if !report_no_index
             && use_index_signature_check
             && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+            && tsz_solver::type_queries::data::get_union_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+            .is_none()
+        {
+            let member_result = self.ctx.types.resolve_element_access_type(
+                object_type_for_access,
+                index_type,
+                None,
+            );
+            if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
+                report_no_index = true;
+            }
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
             && let Some(members) = tsz_solver::type_queries::data::get_union_members(
                 self.ctx.types,
                 object_type_for_access,
@@ -940,7 +979,12 @@ impl<'a> CheckerState<'a> {
             // TS7053 — it treats this as a valid JS-style property expansion.
             // We detect write context via `skip_flow_narrowing` which is set by
             // `get_type_of_assignment_target`.
+            let is_namespace_object = self
+                .ctx
+                .namespace_module_names
+                .contains_key(&object_type_for_access);
             let is_expando_write = self.ctx.skip_flow_narrowing
+                && !is_namespace_object
                 && (tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
                     || (self.ctx.is_js_file()
                         && tsz_solver::visitor::is_object_like_type(
@@ -950,10 +994,13 @@ impl<'a> CheckerState<'a> {
             if !is_expando_write {
                 self.error_no_index_signature_at(
                     index_type,
-                    object_type,
+                    object_type_for_access,
                     idx,
                     access.name_or_argument,
                 );
+                if self.ctx.skip_flow_narrowing {
+                    return TypeId::ERROR;
+                }
             }
         }
 

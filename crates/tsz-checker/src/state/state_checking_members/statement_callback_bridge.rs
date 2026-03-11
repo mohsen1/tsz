@@ -844,7 +844,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     }
                 }
 
-                self.check_statement(clause_idx);
+                let skip_clause_expression_check = export_decl.module_specifier.is_some()
+                    && self
+                        .ctx
+                        .arena
+                        .get(clause_idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+
+                if !skip_clause_expression_check {
+                    self.check_statement(clause_idx);
+                }
 
                 if let Some(et) = expected_type {
                     let actual_type = self.get_type_of_node(clause_idx);
