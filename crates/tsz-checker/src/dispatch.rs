@@ -1342,7 +1342,32 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // For unconstrained type parameters (no `extends`), skip —
                             // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
-                                if generic_query::contains_type_parameters(
+                                if tsz_solver::is_this_type(self.checker.ctx.types, asserted_type) {
+                                    // `this` type — substitute with class instance type
+                                    // for the overlap check. `ThisType` is parameter-like
+                                    // but `get_type_parameter_constraint` doesn't handle it,
+                                    // so we resolve it here to the enclosing class type.
+                                    // Skip in static context — `this` is invalid there
+                                    // (TS2526 handles that) so no overlap check needed.
+                                    if let Some(class_info) = &self.checker.ctx.enclosing_class
+                                        && !class_info.in_static_member
+                                    {
+                                        let class_idx = class_info.class_idx;
+                                        if let Some(node) = self.checker.ctx.arena.get(class_idx)
+                                            && let Some(class_data) =
+                                                self.checker.ctx.arena.get_class(node)
+                                        {
+                                            let instance_type = self
+                                                .checker
+                                                .get_class_instance_type(class_idx, class_data);
+                                            (true, instance_type)
+                                        } else {
+                                            (false, asserted_type)
+                                        }
+                                    } else {
+                                        (false, asserted_type)
+                                    }
+                                } else if generic_query::contains_type_parameters(
                                     self.checker.ctx.types,
                                     asserted_type,
                                 ) {
@@ -1836,5 +1861,50 @@ const fn keyword_type_mapping(kind: u16) -> Option<(&'static str, TypeId)> {
         k if k == SyntaxKind::BigIntKeyword as u16 => Some(("bigint", TypeId::BIGINT)),
         k if k == SyntaxKind::SymbolKeyword as u16 => Some(("symbol", TypeId::SYMBOL)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn ts2352_this_type_assertion_in_class() {
+        let diags = check_source_diagnostics(
+            r#"
+class C5 {
+    bar() {
+        let x1 = <this>undefined;
+        let x2 = undefined as this;
+    }
+}
+"#,
+        );
+        let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+        assert_eq!(
+            matching.len(),
+            2,
+            "Expected 2 TS2352 for this type assertions, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2352_this_type_assertion_static_no_error() {
+        // In static context, `this` is invalid (TS2526), so TS2352 should not fire
+        let diags = check_source_diagnostics(
+            r#"
+class C2 {
+    static y = <this>undefined;
+}
+"#,
+        );
+        let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+        assert_eq!(
+            ts2352.len(),
+            0,
+            "Expected no TS2352 in static context, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
     }
 }
