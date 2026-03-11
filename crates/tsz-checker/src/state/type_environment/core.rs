@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::{TypeSubstitution, instantiate_type};
+        use tsz_solver::{TypeSubstitution, instantiate_type, instantiate_type_with_depth_status};
 
         let Some((base, args)) = query::application_info(self.ctx.types, type_id) else {
             return type_id;
@@ -438,7 +438,11 @@ impl<'a> CheckerState<'a> {
         // Create substitution and instantiate
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
-        let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+        let (instantiated, depth_exceeded) =
+            instantiate_type_with_depth_status(self.ctx.types, body_type, &substitution);
+        if depth_exceeded {
+            *self.ctx.depth_exceeded.borrow_mut() = true;
+        }
         // Recursively evaluate in case the result contains more applications
         let result = self.evaluate_application_type(instantiated);
 

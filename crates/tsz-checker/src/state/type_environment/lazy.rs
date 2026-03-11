@@ -79,6 +79,61 @@ pub(crate) fn exit_refs_resolution_scope() {
 }
 
 impl<'a> CheckerState<'a> {
+    fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
+        use tsz_solver::TypeEvaluator;
+
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        if use_cache && let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id) {
+            if cached.depth_exceeded {
+                *self.ctx.depth_exceeded.borrow_mut() = true;
+            }
+            return cached.result;
+        }
+
+        if REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL {
+            self.ensure_relation_input_ready(type_id);
+        }
+
+        let mut depth_exceeded = false;
+        let result = {
+            let env = self.ctx.type_env.borrow();
+            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+            let result = evaluator.evaluate(type_id);
+            if evaluator.is_depth_exceeded() {
+                depth_exceeded = true;
+                *self.ctx.depth_exceeded.borrow_mut() = true;
+            }
+            result
+        };
+
+        let final_result = if query::index_access_types(self.ctx.types, result).is_some() {
+            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
+            let result = evaluator.evaluate(type_id);
+            if evaluator.is_depth_exceeded() {
+                depth_exceeded = true;
+                *self.ctx.depth_exceeded.borrow_mut() = true;
+            }
+            result
+        } else {
+            result
+        };
+
+        if use_cache {
+            self.ctx.env_eval_cache.borrow_mut().insert(
+                type_id,
+                crate::context::EnvEvalCacheEntry {
+                    result: final_result,
+                    depth_exceeded,
+                },
+            );
+        }
+
+        final_result
+    }
+
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
         match query::classify_for_type_resolution(self.ctx.types, type_id) {
@@ -122,57 +177,11 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::TypeEvaluator;
+        self.evaluate_type_with_env_impl(type_id, true)
+    }
 
-        // Fast path: intrinsic types don't need evaluation
-        if type_id.is_intrinsic() {
-            return type_id;
-        }
-
-        // Check shared evaluation cache
-        if let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id) {
-            return cached;
-        }
-
-        // Fuel-guard the eager ref resolution to prevent cascading through
-        // resolve_and_insert_def_type → get_type_of_symbol → evaluate_type_with_env
-        // → ensure_relation_input_ready → ensure_refs_resolved loops.
-        if REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL {
-            self.ensure_relation_input_ready(type_id);
-        }
-
-        // Use type_env (not type_environment) because type_env is updated during
-        // type checking with user-defined DefId→TypeId mappings, while
-        // type_environment only has the initial lib symbols from build_type_environment().
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
-            let result = evaluator.evaluate(type_id);
-            if evaluator.is_depth_exceeded() {
-                *self.ctx.depth_exceeded.borrow_mut() = true;
-            }
-            result
-        };
-
-        // If the result still contains IndexAccess types, try again with the full
-        // checker context as resolver (which can resolve type parameters etc.)
-        let final_result = if query::index_access_types(self.ctx.types, result).is_some() {
-            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
-            let result = evaluator.evaluate(type_id);
-            if evaluator.is_depth_exceeded() {
-                *self.ctx.depth_exceeded.borrow_mut() = true;
-            }
-            result
-        } else {
-            result
-        };
-
-        // Cache the final result
-        self.ctx
-            .env_eval_cache
-            .borrow_mut()
-            .insert(type_id, final_result);
-        final_result
+    pub(crate) fn evaluate_type_with_env_uncached(&mut self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_env_impl(type_id, false)
     }
 
     pub(crate) fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {

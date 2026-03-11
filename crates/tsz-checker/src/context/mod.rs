@@ -149,6 +149,12 @@ pub struct TypeCache {
     pub namespace_module_names: FxHashMap<TypeId, String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct EnvEvalCacheEntry {
+    pub result: TypeId,
+    pub depth_exceeded: bool,
+}
+
 /// Info about a symbol that came from destructuring a union type.
 /// Info about a symbol that came from destructuring a union type.
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
@@ -359,7 +365,10 @@ pub struct CheckerContext<'a> {
     /// Avoids re-evaluating the same `TypeId` through recursive mapped/conditional
     /// types on every call (e.g., `DeepPartial<Normalize<T>>` accessed 11k+ times
     /// in optional-chain-heavy benchmarks). Analogous to `node_types` for nodes.
-    pub env_eval_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    ///
+    /// The cache also preserves whether evaluation exceeded the solver recursion
+    /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
+    pub env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.

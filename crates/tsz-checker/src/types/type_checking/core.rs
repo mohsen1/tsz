@@ -590,6 +590,14 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(type_idx);
                 }
             }
+        } else if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                && let Some(type_arguments) = &type_ref.type_arguments
+            {
+                for &arg_idx in &type_arguments.nodes {
+                    self.check_type_for_parameter_properties(arg_idx);
+                }
+            }
         } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
             && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
         {
@@ -1603,6 +1611,16 @@ impl<'a> CheckerState<'a> {
                 if let Some(arr) = self.ctx.arena.get_array_type(node) {
                     self.check_type_node(arr.element_type);
                 }
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(type_arguments) = &type_ref.type_arguments
+                {
+                    for &arg_idx in &type_arguments.nodes {
+                        self.check_type_node(arg_idx);
+                    }
+                }
+                let _ = self.get_type_from_type_node(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {

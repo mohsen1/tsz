@@ -9055,6 +9055,47 @@ async function f() {
 }
 
 #[test]
+fn test_awaited_thenable_alias_reports_ts2589_and_ts7010() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Awaited<T> =
+    T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F, ...args: infer _): any; } ?
+        F extends ((value: infer V, ...args: infer _) => any) ?
+            Awaited<V> :
+            never :
+    T;
+
+interface BadPromise { then(cb: (value: BadPromise) => void): void; }
+type T16 = Awaited<BadPromise>;
+
+interface BadPromise1 { then(cb: (value: BadPromise2) => void): void; }
+interface BadPromise2 { then(cb: (value: BadPromise1) => void): void; }
+type T17 = Awaited<BadPromise1>;
+
+type T18 = Awaited<{ then(cb: (value: number, other: { }) => void)}>;
+"#,
+        CheckerOptions {
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2589_count = diagnostics.iter().filter(|(code, _)| *code == 2589).count();
+    let ts7010_count = diagnostics.iter().filter(|(code, _)| *code == 7010).count();
+
+    assert_eq!(
+        ts2589_count, 2,
+        "Expected TS2589 for both recursive Awaited thenables. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts7010_count, 1,
+        "Expected a single TS7010 for the malformed then signature inside Awaited. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_relational_operator_diagnostic_widens_literal_operand_types() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
