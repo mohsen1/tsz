@@ -133,7 +133,11 @@ impl<'a> InferSubstitutor<'a> {
                     });
                 }
                 if changed {
-                    self.interner.object(properties)
+                    self.interner.object_with_flags_and_symbol(
+                        properties,
+                        shape.flags,
+                        shape.symbol,
+                    )
                 } else {
                     type_id
                 }
@@ -193,7 +197,7 @@ impl<'a> InferSubstitutor<'a> {
                         properties,
                         string_index,
                         number_index,
-                        symbol: None,
+                        symbol: shape.symbol,
                     })
                 } else {
                     type_id
@@ -477,7 +481,7 @@ impl<'a> InferSubstitutor<'a> {
                         properties,
                         string_index,
                         number_index,
-                        symbol: None,
+                        symbol: shape.symbol,
                         is_abstract: shape.is_abstract,
                     })
                 } else {

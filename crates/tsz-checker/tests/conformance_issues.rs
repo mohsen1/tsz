@@ -7664,6 +7664,69 @@ const inputALike: ArrayLike<A> = { length: 0 };
 }
 
 #[test]
+fn test_named_interface_assignment_to_number_index_target_reports_missing_index_signature() {
+    let source = r#"
+interface InterfaceWithPublicAndOptional<T, U> { one: T; two?: U; }
+declare let aa: { [index: number]: number };
+declare let obj4: InterfaceWithPublicAndOptional<number, string>;
+aa = obj4;
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for named interface assigned to number index target. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("InterfaceWithPublicAndOptional<number, string>")
+                && message.contains("{ [index: number]: number; }")
+        }),
+        "Expected the named-interface to number-index TS2322. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_exported_alias_of_generic_interface_preserves_missing_number_index_error() {
+    let source = r#"
+namespace __test1__ {
+    export interface interfaceWithPublicAndOptional<T,U> { one: T; two?: U; };  var obj4: interfaceWithPublicAndOptional<number,string> = { one: 1 };;
+    export var __val__obj4 = obj4;
+}
+namespace __test2__ {
+    export declare var aa:{[index:number]:number;};;
+    export var __val__aa = aa;
+}
+__test2__.__val__aa = __test1__.__val__obj4
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for exported alias of generic interface assigned to number index target. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("interfaceWithPublicAndOptional<number, string>")
+                && message.contains("{ [index: number]: number; }")
+        }),
+        "Expected named generic interface display in TS2322. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_array_from_assignment_context_does_not_overwrite_direct_type_arg_inference() {
     let source = r#"
 interface A { a: string; }

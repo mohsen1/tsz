@@ -2640,9 +2640,9 @@ fn test_number_index_signature_type_mismatch() {
 }
 
 #[test]
-fn test_number_index_signature_vacuously_compatible_with_no_numeric_keys() {
-    // TypeScript accepts this: number index signatures constrain numeric keys.
-    // A source with only non-numeric keys vacuously satisfies the index.
+fn test_anonymous_number_index_signature_vacuously_compatible_with_no_numeric_keys() {
+    // Anonymous object types are allowed to satisfy numeric index signatures
+    // structurally when they have no numeric members.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2666,6 +2666,43 @@ fn test_number_index_signature_vacuously_compatible_with_no_numeric_keys() {
     let target = interner.object_with_index(target_shape);
 
     assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_named_object_without_number_index_does_not_satisfy_number_index_target() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(
+            interner.intern_string("one"),
+            TypeId::NUMBER,
+        )],
+        ObjectFlags::empty(),
+        Some(SymbolId(1)),
+    );
+
+    let target_shape = ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        string_index: None,
+    };
+    let target = interner.object_with_index(target_shape);
+
+    assert!(!checker.is_subtype_of(source, target));
+    assert!(matches!(
+        checker.explain_failure(source, target),
+        Some(SubtypeFailureReason::MissingIndexSignature {
+            index_kind: "number"
+        })
+    ));
 }
 
 #[test]

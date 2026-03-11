@@ -751,23 +751,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check number index signature
-        if let Some(ref t_number_idx) = target_shape.number_index
-            && let Some(ref s_number_idx) = source_shape.number_index
-        {
-            if s_number_idx.readonly && !t_number_idx.readonly {
-                return Some(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                });
-            }
-            if !self
-                .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
-                .is_true()
-            {
-                return Some(SubtypeFailureReason::IndexSignatureMismatch {
+        if let Some(ref t_number_idx) = target_shape.number_index {
+            if let Some(ref s_number_idx) = source_shape.number_index {
+                if s_number_idx.readonly && !t_number_idx.readonly {
+                    return Some(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    });
+                }
+                if !self
+                    .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
+                    .is_true()
+                {
+                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
+                        index_kind: "number",
+                        source_value_type: s_number_idx.value_type,
+                        target_value_type: t_number_idx.value_type,
+                    });
+                }
+            } else if let Some(ref s_string_idx) = source_shape.string_index {
+                if s_string_idx.readonly && !t_number_idx.readonly {
+                    return Some(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    });
+                }
+                if !self
+                    .check_subtype(s_string_idx.value_type, t_number_idx.value_type)
+                    .is_true()
+                {
+                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
+                        index_kind: "number",
+                        source_value_type: s_string_idx.value_type,
+                        target_value_type: t_number_idx.value_type,
+                    });
+                }
+            } else if source_shape.symbol.is_some() {
+                return Some(SubtypeFailureReason::MissingIndexSignature {
                     index_kind: "number",
-                    source_value_type: s_number_idx.value_type,
-                    target_value_type: t_number_idx.value_type,
                 });
             }
         }

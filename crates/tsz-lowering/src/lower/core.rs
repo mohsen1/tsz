@@ -404,6 +404,16 @@ impl<'a> TypeLowering<'a> {
         &self,
         declarations: &[(NodeIndex, &NodeArena)],
     ) -> (TypeId, Vec<TypeParamInfo>) {
+        self.lower_merged_interface_declarations_with_symbol(declarations, None)
+    }
+
+    /// Lower merged interface declarations and optionally stamp the resulting type
+    /// with the originating interface symbol.
+    pub fn lower_merged_interface_declarations_with_symbol(
+        &self,
+        declarations: &[(NodeIndex, &NodeArena)],
+        symbol_id: Option<tsz_binder::SymbolId>,
+    ) -> (TypeId, Vec<TypeParamInfo>) {
         if declarations.is_empty() {
             return (TypeId::ERROR, Vec::new());
         }
@@ -469,7 +479,7 @@ impl<'a> TypeLowering<'a> {
         // Assign declaration_order in FORWARD declaration order for diagnostics.
         self.assign_forward_declaration_order_cross_file(&mut parts, declarations);
 
-        let result = self.finish_interface_parts(parts, None);
+        let result = self.finish_interface_parts(parts, symbol_id);
 
         if type_params_collected {
             self.pop_type_param_scope();
