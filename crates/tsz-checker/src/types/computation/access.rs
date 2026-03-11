@@ -920,10 +920,11 @@ impl<'a> CheckerState<'a> {
             )
             .is_none()
         {
-            let member_result =
-                self.ctx
-                    .types
-                    .resolve_element_access_type(object_type_for_access, index_type, None);
+            let member_result = self.ctx.types.resolve_element_access_type(
+                object_type_for_access,
+                index_type,
+                None,
+            );
             if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
                 report_no_index = true;
             }
