@@ -159,7 +159,16 @@ impl<'a> CheckerState<'a> {
                             .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
                     });
                     if !args_have_type_params {
-                        let _ = self.evaluate_application_type(type_id);
+                        *self.ctx.depth_exceeded.borrow_mut() = false;
+                        let _ = self.evaluate_type_with_env_uncached(type_id);
+                        if *self.ctx.depth_exceeded.borrow() {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                idx,
+                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            );
+                        }
                     }
                 }
 
@@ -629,7 +638,7 @@ impl<'a> CheckerState<'a> {
                         if !args_have_type_params {
                             // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
                             *self.ctx.depth_exceeded.borrow_mut() = false;
-                            let _ = self.evaluate_application_type(result);
+                            let _ = self.evaluate_type_with_env_uncached(result);
 
                             // TS2589: emit at the type reference node if depth was exceeded
                             if *self.ctx.depth_exceeded.borrow() {

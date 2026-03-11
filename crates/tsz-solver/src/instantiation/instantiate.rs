@@ -1184,15 +1184,24 @@ pub fn instantiate_type(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
+    instantiate_type_with_depth_status(interner, type_id, substitution).0
+}
+
+/// Instantiate a type and report whether instantiation depth overflowed.
+pub fn instantiate_type_with_depth_status(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> (TypeId, bool) {
     if substitution.is_empty() || substitution.is_identity(interner) {
-        return type_id;
+        return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     let result = instantiator.instantiate(type_id);
     if instantiator.depth_exceeded {
-        TypeId::ERROR
+        (TypeId::ERROR, true)
     } else {
-        result
+        (result, false)
     }
 }
 

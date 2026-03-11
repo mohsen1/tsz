@@ -244,6 +244,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
         let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
 
+        let depth = self.def_depth.entry(def_id).or_insert(0);
+        if *depth >= Self::MAX_DEF_DEPTH {
+            self.mark_depth_exceeded();
+            return Some(TypeId::ERROR);
+        }
+        *depth += 1;
+
         // Expand type arguments
         let body_is_conditional_with_app_infer =
             self.is_conditional_with_application_infer(resolved);
