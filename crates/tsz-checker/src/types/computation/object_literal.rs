@@ -1002,9 +1002,69 @@ impl<'a> CheckerState<'a> {
                             // one) so mutually-recursive methods can resolve `this.other()`.
                             let mut this_props: Vec<PropertyInfo> =
                                 properties.values().cloned().collect();
+                            let current_method_name_atom = self.ctx.types.intern_string(&name);
                             for &method_name_atom in &obj_all_method_names {
                                 if !this_props.iter().any(|p| p.name == method_name_atom) {
-                                    let placeholder_method_type =
+                                    let placeholder_method_type = if method_name_atom
+                                        == current_method_name_atom
+                                    {
+                                        let params = method
+                                            .parameters
+                                            .nodes
+                                            .iter()
+                                            .filter_map(|&param_idx| {
+                                                let param = self
+                                                    .ctx
+                                                    .arena
+                                                    .get(param_idx)
+                                                    .and_then(|param_node| {
+                                                        self.ctx.arena.get_parameter(param_node)
+                                                    })?;
+                                                Some(tsz_solver::ParamInfo {
+                                                    name: self
+                                                        .ctx
+                                                        .arena
+                                                        .get(param.name)
+                                                        .and_then(|name_node| {
+                                                            self.ctx
+                                                                .arena
+                                                                .get_identifier(name_node)
+                                                        })
+                                                        .map(|ident| {
+                                                            self.ctx.types.intern_string(
+                                                                &ident.escaped_text,
+                                                            )
+                                                        }),
+                                                    type_id: if param.type_annotation.is_some() {
+                                                        self.get_type_from_type_node(
+                                                            param.type_annotation,
+                                                        )
+                                                    } else {
+                                                        TypeId::ANY
+                                                    },
+                                                    optional: param.question_token
+                                                        || param.initializer.is_some(),
+                                                    rest: param.dot_dot_dot_token,
+                                                })
+                                            })
+                                            .collect();
+                                        self.ctx.types.factory().callable(CallableShape {
+                                            call_signatures: vec![CallSignature {
+                                                type_params: Vec::new(),
+                                                params,
+                                                this_type: None,
+                                                return_type: TypeId::VOID,
+                                                type_predicate: None,
+                                                is_method: true,
+                                            }],
+                                            construct_signatures: Vec::new(),
+                                            properties: Vec::new(),
+                                            string_index: None,
+                                            number_index: None,
+                                            symbol: None,
+                                            is_abstract: false,
+                                        })
+                                    } else {
                                         self.ctx.types.factory().callable(CallableShape {
                                             call_signatures: vec![CallSignature {
                                                 type_params: Vec::new(),
@@ -1025,7 +1085,8 @@ impl<'a> CheckerState<'a> {
                                             number_index: None,
                                             symbol: None,
                                             is_abstract: false,
-                                        });
+                                        })
+                                    };
                                     this_props.push(PropertyInfo {
                                         name: method_name_atom,
                                         type_id: placeholder_method_type,

@@ -604,17 +604,32 @@ impl<'a> TypeFormatter<'a> {
         };
 
         // Method shorthand: `name(params): return_type` instead of `name: (params) => return_type`
-        if prop.is_method
-            && let Some(TypeData::Function(f_id)) = self.interner.lookup(prop.type_id)
-        {
-            let shape = self.interner.function_shape(f_id);
-            let type_params = self.format_type_params(&shape.type_params);
-            let params = self.format_params(&shape.params, shape.this_type);
-            let return_str = self.format(shape.return_type);
-            return format!(
-                "{readonly}{name}{optional}{type_params}({params}): {return_str}",
-                params = params.join(", ")
-            );
+        if prop.is_method {
+            match self.interner.lookup(prop.type_id) {
+                Some(TypeData::Function(f_id)) => {
+                    let shape = self.interner.function_shape(f_id);
+                    let type_params = self.format_type_params(&shape.type_params);
+                    let params = self.format_params(&shape.params, shape.this_type);
+                    let return_str = self.format(shape.return_type);
+                    return format!(
+                        "{readonly}{name}{optional}{type_params}({params}): {return_str}",
+                        params = params.join(", ")
+                    );
+                }
+                Some(TypeData::Callable(callable_id)) => {
+                    let shape = self.interner.callable_shape(callable_id);
+                    if let Some(sig) = shape.call_signatures.first() {
+                        let type_params = self.format_type_params(&sig.type_params);
+                        let params = self.format_params(&sig.params, sig.this_type);
+                        let return_str = self.format(sig.return_type);
+                        return format!(
+                            "{readonly}{name}{optional}{type_params}({params}): {return_str}",
+                            params = params.join(", ")
+                        );
+                    }
+                }
+                _ => {}
+            }
         }
 
         // tsc displays optional object properties WITH `| undefined`:
