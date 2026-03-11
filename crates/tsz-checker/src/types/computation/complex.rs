@@ -1549,15 +1549,22 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::PropertyInfo;
 
         // Resolve the function symbol from the new expression target
-        let sym_id = self
-            .ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, expr_idx)
-            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
-            .or_else(|| {
-                query::callable_shape_for_type(self.ctx.types, constructor_type)
-                    .and_then(|shape| shape.symbol)
-            })?;
+        let expr_kind = self.ctx.arena.get(expr_idx)?.kind;
+        let callable_symbol =
+            query::callable_shape_for_type(self.ctx.types, constructor_type).and_then(|shape| {
+                shape.symbol
+            });
+        let sym_id = if expr_kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            self.ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, expr_idx)
+                .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+                .or(callable_symbol)
+        } else {
+            callable_symbol
+                .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
+        }?;
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 

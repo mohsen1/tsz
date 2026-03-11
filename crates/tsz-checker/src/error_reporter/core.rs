@@ -864,14 +864,21 @@ impl<'a> CheckerState<'a> {
 
         let shape_id = get_object_shape_id(self.ctx.types, ty)?;
         let shape = self.ctx.types.object_shape(shape_id);
+        let has_js_ctor_brand = shape.properties.iter().any(|prop| {
+            self.ctx
+                .types
+                .resolve_atom_ref(prop.name)
+                .starts_with("__js_ctor_brand_")
+        });
         let mut parent_ids = shape.properties.iter().filter_map(|prop| prop.parent_id);
         let parent_sym = parent_ids.next()?;
         if parent_ids.any(|other| other != parent_sym) {
             return None;
         }
 
-        let symbol = self.ctx.binder.get_symbol(parent_sym)?;
-        if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0 {
+        let symbol = self.get_cross_file_symbol(parent_sym)?;
+        if !has_js_ctor_brand && (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0
+        {
             return None;
         }
 
