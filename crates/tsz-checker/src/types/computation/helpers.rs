@@ -14,6 +14,27 @@ use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn empty_array_literal_prefers_never(&self, idx: NodeIndex) -> bool {
+        let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        match parent_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.ctx
+                    .arena
+                    .get_access_expr(parent_node)
+                    .is_some_and(|access| access.expression == idx)
+            }
+            _ => false,
+        }
+    }
+
     fn union_context_for_array_literal_is_ambiguous(&self, contextual: TypeId) -> bool {
         let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
         else {
@@ -356,7 +377,7 @@ impl<'a> CheckerState<'a> {
             // When noImplicitAny is off, empty array literals without contextual type
             // are typed as any[] (matching tsc behavior). With noImplicitAny on, use never[]
             // which is the "evolving array type" starting point.
-            if !self.ctx.no_implicit_any() {
+            if !self.ctx.no_implicit_any() && !self.empty_array_literal_prefers_never(idx) {
                 return factory.array(TypeId::ANY);
             }
             return factory.array(TypeId::NEVER);
@@ -528,6 +549,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.ctx.contextual_type = helper
                         .get_array_element_type()
+                        .filter(|&ty| ty != TypeId::NEVER)
                         .or_else(|| {
                             // Fallback: try the pre-Application-evaluation form for
                             // iterable types like Iterable<readonly [K, V]>. The fully-
@@ -692,6 +714,7 @@ impl<'a> CheckerState<'a> {
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
             && context_element_type != TypeId::UNKNOWN
+            && context_element_type != TypeId::NEVER
         {
             // Check if all elements are structurally compatible with the contextual type.
             // IMPORTANT: Use is_subtype_of (structural check) instead of is_assignable_to

@@ -434,7 +434,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(signatures) = overload_signatures.as_deref()
-            && let Some(return_type) = self.resolve_overloaded_call_with_signatures(
+            && let Some(overload_resolution) = self.resolve_overloaded_call_with_signatures(
                 args,
                 signatures,
                 force_bivariant_callbacks,
@@ -442,20 +442,22 @@ impl<'a> CheckerState<'a> {
             )
         {
             trace!(
-                return_type = ?return_type,
+                result = ?overload_resolution.result,
                 signatures_count = signatures.len(),
                 "Resolved overloaded call return type"
             );
-            let return_type =
-                self.apply_this_substitution_to_call_return(return_type, call.expression);
-            return if nullish_cause.is_some() {
-                self.ctx
-                    .types
-                    .factory()
-                    .union(vec![return_type, TypeId::UNDEFINED])
-            } else {
-                return_type
-            };
+            return self.handle_call_result(
+                overload_resolution.result,
+                CallResultContext {
+                    callee_expr: call.expression,
+                    call_idx: idx,
+                    args,
+                    arg_types: &overload_resolution.arg_types,
+                    callee_type: callee_type_for_resolution,
+                    is_super_call: false,
+                    is_optional_chain: nullish_cause.is_some(),
+                },
+            );
         }
 
         // Resolve Lazy/Application types before creating the contextual context.
