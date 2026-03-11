@@ -1,6 +1,6 @@
 //! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
 
-use crate::diagnostics::diagnostic_codes;
+use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -323,7 +323,7 @@ impl<'a> CheckerState<'a> {
             if !self.has_syntax_parse_errors()
                 && let Some(suggestion) = self.find_similar_property(prop_name, target)
             {
-                let type_str = self.format_type_diagnostic(target);
+                let type_str = self.format_excess_property_target_type(target);
                 let message = format!(
                     "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
                 );
@@ -335,17 +335,17 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store)
-            .with_namespace_module_names(&self.ctx.namespace_module_names);
-            let diag = builder.excess_property(prop_name, target, loc.start, loc.length());
-            // Use push_diagnostic for deduplication
-            self.ctx
-                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
+            let type_str = self.format_excess_property_target_type(target);
+            let message = format!(
+                "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+            );
+            self.ctx.push_diagnostic(Diagnostic::error(
+                &self.ctx.file_name,
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+            ));
         }
     }
 

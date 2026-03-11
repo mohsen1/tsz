@@ -895,6 +895,13 @@ impl<'a> ContextualTypeContext<'a> {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
                 }
+                if let Some(prop) = crate::type_queries::get_finite_mapped_property_type(
+                    self.interner,
+                    mapped_id,
+                    name,
+                ) {
+                    return Some(prop);
+                }
                 // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
                 // parameter), use the mapped type's template as the contextual property type
                 // IF the template doesn't reference the mapped type's bound parameter.
@@ -930,6 +937,17 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Application(app_id)) => {
+                let prop_key = self.interner.literal_string(name);
+                let indexed = self.interner.index_access(expected, prop_key);
+                let indexed_evaluated =
+                    crate::evaluation::evaluate::evaluate_type(self.interner, indexed);
+                if indexed_evaluated != indexed
+                    && indexed_evaluated != TypeId::ERROR
+                    && indexed_evaluated != TypeId::NEVER
+                {
+                    return Some(indexed_evaluated);
+                }
+
                 let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);

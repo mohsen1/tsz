@@ -5,8 +5,9 @@
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
 use crate::TypeDatabase;
-use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId};
+use crate::types::{LiteralValue, MappedModifier, PropertyInfo, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
+use rustc_hash::FxHashSet;
 use tsz_common::Atom;
 
 // =============================================================================
@@ -1020,6 +1021,7 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+
 /// Instantiate a mapped type template for a specific property key, handling
 /// name collisions between the mapped key parameter and outer type parameters.
 ///
@@ -1055,6 +1057,329 @@ pub fn instantiate_mapped_template_for_property(
     let mut subst = TypeSubstitution::new();
     subst.insert(key_param_name, key_literal);
     instantiate_type(db, template, &subst)
+}
+
+fn collect_exact_literal_property_keys_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    keys: &mut FxHashSet<Atom>,
+    visited: &mut FxHashSet<TypeId>,
+) -> Option<()> {
+    if !visited.insert(type_id) {
+        return Some(());
+    }
+
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+    if evaluated != type_id {
+        return collect_exact_literal_property_keys_inner(db, evaluated, keys, visited);
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
+            keys.insert(atom);
+            Some(())
+        }
+        Some(TypeData::Literal(LiteralValue::Number(n))) => {
+            let atom = db.intern_string(
+                &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
+            );
+            keys.insert(atom);
+            Some(())
+        }
+        Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+            for &member in db.type_list(members).iter() {
+                collect_exact_literal_property_keys_inner(db, member, keys, visited)?;
+            }
+            Some(())
+        }
+        Some(TypeData::Enum(_, members)) => {
+            collect_exact_literal_property_keys_inner(db, members, keys, visited)
+        }
+        Some(TypeData::Conditional(cond_id)) => {
+            let cond = db.conditional_type(cond_id);
+            let branch = resolve_concrete_conditional_branch(db, &cond)?;
+            collect_exact_literal_property_keys_inner(db, branch, keys, visited)
+        }
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            info.constraint.and_then(|constraint| {
+                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+            })
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            collect_exact_literal_property_keys_inner(db, inner, keys, visited)
+        }
+        Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Never)) => Some(()),
+        _ => None,
+    }
+}
+
+fn collect_exact_literal_property_keys(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<FxHashSet<Atom>> {
+    let mut keys = FxHashSet::default();
+    let mut visited = FxHashSet::default();
+    collect_exact_literal_property_keys_inner(db, type_id, &mut keys, &mut visited)?;
+    Some(keys)
+}
+
+fn resolve_concrete_conditional_branch(
+    db: &dyn TypeDatabase,
+    cond: &crate::types::ConditionalType,
+) -> Option<TypeId> {
+    let check_type = crate::evaluation::evaluate::evaluate_type(db, cond.check_type);
+    let extends_type = crate::evaluation::evaluate::evaluate_type(db, cond.extends_type);
+
+    if contains_type_parameters_db(db, check_type)
+        || contains_type_parameters_db(db, extends_type)
+        || matches!(check_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+        || matches!(extends_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+    {
+        return None;
+    }
+
+    if let Some(TypeData::StringIntrinsic { kind, type_arg }) = db.lookup(extends_type)
+        && type_arg == TypeId::STRING
+    {
+        let transformed =
+            crate::evaluation::evaluate::evaluate_type(db, db.string_intrinsic(kind, check_type));
+        return Some(if transformed == check_type {
+            cond.true_type
+        } else {
+            cond.false_type
+        });
+    }
+
+    Some(if crate::is_subtype_of(db, check_type, extends_type) {
+        cond.true_type
+    } else {
+        cond.false_type
+    })
+}
+
+fn remap_mapped_property_key(
+    db: &dyn TypeDatabase,
+    mapped: &crate::types::MappedType,
+    source_key: TypeId,
+) -> TypeId {
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+
+    let Some(name_type) = mapped.name_type else {
+        return source_key;
+    };
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(mapped.type_param.name, source_key);
+    crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst))
+}
+
+fn add_mapped_property_optional_undefined(
+    db: &dyn TypeDatabase,
+    mapped: &crate::types::MappedType,
+    value_type: TypeId,
+) -> TypeId {
+    if mapped.optional_modifier == Some(MappedModifier::Add) {
+        db.union(vec![value_type, TypeId::UNDEFINED])
+    } else {
+        value_type
+    }
+}
+
+fn specialize_mapped_property_value_type_for_key(
+    db: &dyn TypeDatabase,
+    value_type: TypeId,
+    key_literal: TypeId,
+) -> TypeId {
+    let value_type = crate::evaluation::evaluate::evaluate_type(db, value_type);
+    match db.lookup(value_type) {
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            let args: Vec<_> = app
+                .args
+                .iter()
+                .map(|&arg| specialize_mapped_property_value_type_for_key(db, arg, key_literal))
+                .collect();
+            if args == app.args {
+                value_type
+            } else {
+                db.application(app.base, args)
+            }
+        }
+        Some(TypeData::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            let params: Vec<_> = shape
+                .params
+                .iter()
+                .map(|param| crate::ParamInfo {
+                    type_id: specialize_mapped_property_value_type_for_key(db, param.type_id, key_literal),
+                    ..param.clone()
+                })
+                .collect();
+            let return_type =
+                specialize_mapped_property_value_type_for_key(db, shape.return_type, key_literal);
+            if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
+                && return_type == shape.return_type
+            {
+                value_type
+            } else {
+                db.function(crate::FunctionShape {
+                    type_params: shape.type_params.clone(),
+                    params,
+                    this_type: shape.this_type,
+                    return_type,
+                    type_predicate: shape.type_predicate.clone(),
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                })
+            }
+        }
+        Some(TypeData::Union(_)) => {
+            if let Some(narrowed) =
+                narrow_union_by_literal_discriminant_property(db, value_type, key_literal)
+            {
+                return narrowed;
+            }
+            value_type
+        }
+        _ => value_type,
+    }
+}
+
+fn narrow_union_by_literal_discriminant_property(
+    db: &dyn TypeDatabase,
+    union_type: TypeId,
+    key_literal: TypeId,
+) -> Option<TypeId> {
+    let TypeData::Union(list_id) = db.lookup(union_type)? else {
+        return None;
+    };
+    let members = db.type_list(list_id);
+    let mut candidate_props = FxHashSet::default();
+
+    for &member in members.iter() {
+        let Some(shape) = get_object_shape(db, member) else {
+            continue;
+        };
+        for prop in &shape.properties {
+            if prop.type_id == key_literal {
+                candidate_props.insert(prop.name);
+            }
+        }
+    }
+
+    for prop_name in candidate_props {
+        let retained: Vec<_> = members
+            .iter()
+            .copied()
+            .filter(|member| {
+                get_object_shape(db, *member).is_some_and(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == prop_name)
+                        .is_some_and(|prop| prop.type_id == key_literal)
+                })
+            })
+            .collect();
+        if retained.is_empty() || retained.len() == members.len() {
+            continue;
+        }
+        return Some(if retained.len() == 1 {
+            retained[0]
+        } else {
+            db.union_preserve_members(retained)
+        });
+    }
+
+    None
+}
+
+fn collect_mapped_property_names_from_source_keys(
+    db: &dyn TypeDatabase,
+    mapped: &crate::types::MappedType,
+    source_keys: FxHashSet<Atom>,
+) -> Option<FxHashSet<Atom>> {
+    let mut property_names = FxHashSet::default();
+
+    for source_key in source_keys {
+        let key_literal = db.literal_string(db.resolve_atom(source_key).as_ref());
+        let mapped_key = remap_mapped_property_key(db, mapped, key_literal);
+        let mapped_names = collect_exact_literal_property_keys(db, mapped_key)?;
+        property_names.extend(mapped_names);
+    }
+
+    Some(property_names)
+}
+
+/// Collect exact property names for a mapped type when its key constraint can be reduced
+/// to a finite set of literal property keys.
+pub fn collect_finite_mapped_property_names(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+) -> Option<FxHashSet<Atom>> {
+    let mapped = db.mapped_type(mapped_id);
+    let source_keys = collect_exact_literal_property_keys(db, mapped.constraint)?;
+    collect_mapped_property_names_from_source_keys(db, &mapped, source_keys)
+}
+
+/// Resolve the exact property type for a property on a mapped type when its key
+/// constraint is a finite literal set.
+pub fn get_finite_mapped_property_type(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    let mapped = db.mapped_type(mapped_id);
+    let source_keys = collect_exact_literal_property_keys(db, mapped.constraint)?;
+    let target_atom = db.intern_string(property_name);
+    let mut matches = Vec::new();
+
+    for source_key in source_keys {
+        let key_literal = db.literal_string(db.resolve_atom(source_key).as_ref());
+        let remapped = remap_mapped_property_key(db, &mapped, key_literal);
+        let remapped_keys = collect_exact_literal_property_keys(db, remapped)?;
+        if !remapped_keys.contains(&target_atom) {
+            continue;
+        }
+
+        let instantiated = instantiate_mapped_template_for_property(
+            db,
+            mapped.template,
+            mapped.type_param.name,
+            key_literal,
+        );
+        let value_type = specialize_mapped_property_value_type_for_key(
+            db,
+            crate::evaluation::evaluate::evaluate_type(db, instantiated),
+            key_literal,
+        );
+        matches.push(add_mapped_property_optional_undefined(
+            db, &mapped, value_type,
+        ));
+    }
+
+    match matches.len() {
+        0 => None,
+        1 => Some(matches[0]),
+        _ => Some(db.union_preserve_members(matches)),
+    }
+}
+
+/// Backward-compatible alias for callers that only used this on deferred/remapped mapped types.
+pub fn collect_deferred_mapped_property_names(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+) -> Option<FxHashSet<Atom>> {
+    collect_finite_mapped_property_names(db, mapped_id)
+}
+
+/// Backward-compatible alias for callers that only used this on deferred/remapped mapped types.
+pub fn get_deferred_mapped_property_type(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    get_finite_mapped_property_type(db, mapped_id, property_name)
 }
 
 /// Find the private brand name for a type.

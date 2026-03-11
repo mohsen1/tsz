@@ -121,6 +121,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
             return self.checker.check_literal_to_intrinsic(value, t_kind);
         }
+        if let LiteralValue::String(_) = value
+            && let Some((kind, type_arg)) =
+                string_intrinsic_components(self.checker.interner, self.target)
+            && type_arg == TypeId::STRING
+        {
+            let transformed = self
+                .checker
+                .evaluate_type(self.checker.interner.string_intrinsic(kind, self.source));
+            if transformed == self.source {
+                return SubtypeResult::True;
+            }
+        }
         if let Some(t_lit) = literal_value(self.checker.interner, self.target) {
             return if value == &t_lit {
                 SubtypeResult::True
@@ -713,6 +725,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // Template literal <: string is always true
         if intrinsic_kind(self.checker.interner, self.target) == Some(IntrinsicKind::String) {
             return SubtypeResult::True;
+        }
+
+        if let Some((kind, type_arg)) =
+            string_intrinsic_components(self.checker.interner, self.target)
+            && type_arg == TypeId::STRING
+        {
+            let transformed = self
+                .checker
+                .evaluate_type(self.checker.interner.string_intrinsic(kind, self.source));
+            if transformed == self.source {
+                return SubtypeResult::True;
+            }
         }
 
         // Template literal <: Template literal

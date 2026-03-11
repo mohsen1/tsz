@@ -204,3 +204,23 @@ fn string_not_subtype_of_string_intrinsic() {
         "string should NOT be assignable to Uppercase<T>"
     );
 }
+
+#[test]
+fn uppercase_literal_is_subtype_of_uppercase_string() {
+    let interner = TypeInterner::new();
+
+    let uppercase_string =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+    let uppercase_literal = interner.literal_string("FOO");
+    let lowercase_literal = interner.literal_string("bar");
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(uppercase_literal, uppercase_string),
+        "\"FOO\" should be assignable to Uppercase<string>"
+    );
+    assert!(
+        !checker.is_subtype_of(lowercase_literal, uppercase_string),
+        "\"bar\" should not be assignable to Uppercase<string>"
+    );
+}

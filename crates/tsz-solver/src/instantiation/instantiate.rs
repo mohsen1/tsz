@@ -957,7 +957,11 @@ impl<'a> TypeInstantiator<'a> {
                 // (which has a proper TypeResolver) handle the full expansion.
                 let has_lazy_application =
                     template_has_lazy_application_in_composite(self.interner, new_template);
-                if self.preserve_meta_types || has_lazy_extends || has_lazy_application {
+                if self.preserve_meta_types
+                    || new_name_type.is_some()
+                    || has_lazy_extends
+                    || has_lazy_application
+                {
                     mapped_type
                 } else if crate::visitor::contains_type_parameters(self.interner, new_constraint) {
                     // Don't eagerly evaluate when the constraint still contains type

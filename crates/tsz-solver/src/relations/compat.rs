@@ -832,6 +832,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 properties.extend(true_props);
                 properties.extend(false_props);
             }
+            Some(TypeData::Mapped(mapped_id)) => {
+                if let Some(mapped_props) =
+                    crate::type_queries::collect_finite_mapped_property_names(
+                        self.interner,
+                        mapped_id,
+                    )
+                {
+                    properties.extend(mapped_props);
+                }
+            }
             _ => {}
         }
 

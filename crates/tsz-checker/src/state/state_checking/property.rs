@@ -11,6 +11,46 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn nested_property_target_type(
+        &mut self,
+        owner_type: TypeId,
+        prop_name: Atom,
+        fallback: TypeId,
+    ) -> TypeId {
+        let prop_name_str = self.ctx.types.resolve_atom(prop_name);
+
+        if let Some(type_id) =
+            self.contextual_object_literal_property_type(owner_type, prop_name_str.as_ref())
+        {
+            return type_id;
+        }
+
+        if let Some(type_id) = self
+            .ctx
+            .types
+            .contextual_property_type(owner_type, prop_name_str.as_ref())
+        {
+            return type_id;
+        }
+
+        let resolved_owner = self.resolve_type_for_property_access(owner_type);
+        if resolved_owner != owner_type
+            && let Some(type_id) = self
+                .ctx
+                .types
+                .contextual_property_type(resolved_owner, prop_name_str.as_ref())
+        {
+            return type_id;
+        }
+
+        match self.resolve_property_access_with_env(owner_type, &prop_name_str) {
+            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
+                type_id
+            }
+            _ => fallback,
+        }
+    }
+
     pub(crate) fn check_object_literal_excess_properties(
         &mut self,
         source: TypeId,
@@ -167,6 +207,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         target_prop_types.clone(),
                     );
+                    let nested_target =
+                        self.nested_property_target_type(target, source_prop.name, nested_target);
 
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
@@ -181,6 +223,7 @@ impl<'a> CheckerState<'a> {
         // Handle intersection targets
         if let Some(members) = query::intersection_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
+            let mut dynamic_members = Vec::new();
             let mut has_index_signature = false;
             let mut index_value_types: Vec<TypeId> = Vec::new();
 
@@ -204,19 +247,13 @@ impl<'a> CheckerState<'a> {
                     if resolved_member == TypeId::OBJECT {
                         continue;
                     }
-                    // If an intersection member has no object shape, it may accept
-                    // arbitrary properties — skip excess checking.  This covers type
-                    // parameters, unresolved conditional types,
-                    // and generic application types.
-                    // Only skip for non-primitive types (primitives like `string` that
-                    // don't have an object shape should not suppress the check).
                     if !tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
-                        return;
+                        dynamic_members.push(member);
                     }
                 }
             }
 
-            if target_shapes.is_empty() {
+            if target_shapes.is_empty() && dynamic_members.is_empty() {
                 return;
             }
 
@@ -232,6 +269,7 @@ impl<'a> CheckerState<'a> {
                 // For intersections, property exists if it's in ANY member's named
                 // properties OR covered by an index signature.
                 let mut found_in_named = false;
+                let mut member_may_accept_unknown = false;
                 let mut nested_target_types = Vec::new();
 
                 for shape in &target_shapes {
@@ -241,8 +279,28 @@ impl<'a> CheckerState<'a> {
                         nested_target_types.push(prop.type_id);
                     }
                 }
+                for &member in &dynamic_members {
+                    match self.resolve_property_access_with_env(
+                        member,
+                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
+                    ) {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } => {
+                            found_in_named = true;
+                            nested_target_types.push(type_id);
+                        }
+                        tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                            ..
+                        } => {}
+                        _ => {
+                            member_may_accept_unknown = true;
+                        }
+                    }
+                }
 
-                let is_known = found_in_named || has_index_signature;
+                let is_known = found_in_named || has_index_signature || member_may_accept_unknown;
 
                 if !is_known {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
@@ -263,6 +321,11 @@ impl<'a> CheckerState<'a> {
                     if !all_nested.is_empty() {
                         let nested_target =
                             tsz_solver::utils::intersection_or_single(self.ctx.types, all_nested);
+                        let nested_target = self.nested_property_target_type(
+                            target,
+                            source_prop.name,
+                            nested_target,
+                        );
                         self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
@@ -302,6 +365,11 @@ impl<'a> CheckerState<'a> {
                     }
                     let nested_target =
                         tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
+                    let nested_target = self.nested_property_target_type(
+                        target,
+                        source_prop.name,
+                        nested_target,
+                    );
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
@@ -349,9 +417,14 @@ impl<'a> CheckerState<'a> {
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
                     // =============================================================
                     // For nested object literals, recursively check for excess properties
+                    let nested_target = self.nested_property_target_type(
+                        target,
+                        source_prop.name,
+                        target_prop.type_id,
+                    );
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
-                        Some(target_prop.type_id),
+                        Some(nested_target),
                         idx,
                     );
                 }
@@ -1119,6 +1192,51 @@ impl<'a> CheckerState<'a> {
             return mapped_property;
         }
 
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && let Some(members) =
+            query::intersection_members(self.ctx.types, resolved_object_type)
+        {
+            let prop_atom = self.ctx.types.intern_string(prop_name);
+            let mut member_results = Vec::new();
+            let mut any_from_index = false;
+
+            for member in members {
+                match self.resolve_property_access_with_env(member, prop_name) {
+                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                        type_id,
+                        from_index_signature,
+                        ..
+                    } => {
+                        member_results.push(type_id);
+                        any_from_index |= from_index_signature;
+                    }
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                        ..
+                    } => {}
+                    other => return other,
+                }
+            }
+
+            if !member_results.is_empty() {
+                let type_id = match member_results.len() {
+                    1 => member_results[0],
+                    _ => self.ctx.types.factory().intersection(member_results),
+                };
+                return tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id,
+                    write_type: None,
+                    from_index_signature: any_from_index,
+                };
+            }
+
+            result = tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                type_id: resolved_object_type,
+                property_name: prop_atom,
+            };
+        }
+
         // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
         // the solver's NoopResolver can't resolve Lazy(DefId) constraints (type alias refs).
         // Expand the mapped type using the checker's type environment and retry.
@@ -1156,11 +1274,6 @@ impl<'a> CheckerState<'a> {
         let mapped_id = tsz_solver::mapped_type_id(self.ctx.types, mapped_type)?;
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
-        // Keep `as`-remapped keys on the conservative path for now.
-        if mapped.name_type.is_some() {
-            return None;
-        }
-
         let prop_atom = self.ctx.types.intern_string(prop_name);
         let cache_key = (mapped_type, prop_atom);
 
@@ -1188,11 +1301,67 @@ impl<'a> CheckerState<'a> {
         let can_cache = !self.contains_type_parameters_cached(mapped_type);
         let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
+        if let Some(property_type) =
+            crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+                self.ctx.types,
+                mapped_id,
+                prop_name,
+            )
+        {
+            if can_cache {
+                self.ctx
+                    .narrowing_cache
+                    .property_cache
+                    .borrow_mut()
+                    .insert(cache_key, Some(property_type));
+            }
+            return Some(
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: property_type,
+                    write_type: None,
+                    from_index_signature: false,
+                },
+            );
+        }
+
+        if let Some(names) =
+            crate::query_boundaries::state::checking::collect_finite_mapped_property_names(
+                self.ctx.types,
+                mapped_id,
+            )
+        {
+            if can_cache && !names.contains(&prop_atom) {
+                self.ctx
+                    .narrowing_cache
+                    .property_cache
+                    .borrow_mut()
+                    .insert(cache_key, None);
+            }
+            if !names.contains(&prop_atom) {
+                return Some(
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
+                        type_id: mapped_type,
+                        property_name: prop_atom,
+                    },
+                );
+            }
+        }
+
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        let mut matching_source_keys = Vec::new();
+
         // If the constraint is an explicit literal key set, reject unknown keys early.
         // For non-literal/complex constraints, fall back to full expansion.
         if !query::is_string_type(self.ctx.types, constraint) {
             let keys = query::extract_string_literal_keys(self.ctx.types, constraint);
-            if !keys.is_empty() && !keys.contains(&prop_atom) {
+            if !keys.is_empty()
+                && keys.contains(&prop_atom) {
+                    matching_source_keys.push(prop_atom);
+                }
+            if !keys.is_empty() && matching_source_keys.is_empty() {
                 if can_cache {
                     self.ctx
                         .narrowing_cache
@@ -1252,26 +1421,36 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let key_literal = self.ctx.types.literal_string_atom(prop_atom);
+        if matching_source_keys.is_empty() {
+            matching_source_keys.push(prop_atom);
+        }
 
-        // Instantiate the template for this property key, handling potential
-        // name collisions between mapped key param and outer type parameters.
-        // (See `instantiate_mapped_template_for_property` docs for details.)
-        let instantiated =
-            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
-                self.ctx.types,
-                mapped.template,
-                mapped.type_param.name,
-                key_literal,
-            );
-        let property_type = self.evaluate_type_with_env(instantiated);
-        let property_type = match mapped.optional_modifier {
-            Some(tsz_solver::MappedModifier::Add) => self
-                .ctx
-                .types
-                .factory()
-                .union(vec![property_type, TypeId::UNDEFINED]),
-            Some(tsz_solver::MappedModifier::Remove) | None => property_type,
+        let mut property_types = Vec::new();
+        for source_key_atom in matching_source_keys {
+            let key_literal = self.ctx.types.literal_string_atom(source_key_atom);
+            let instantiated =
+                crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
+                    self.ctx.types,
+                    mapped.template,
+                    mapped.type_param.name,
+                    key_literal,
+                );
+            let property_type = self.evaluate_type_with_env(instantiated);
+            let property_type = match mapped.optional_modifier {
+                Some(tsz_solver::MappedModifier::Add) => self
+                    .ctx
+                    .types
+                    .factory()
+                    .union(vec![property_type, TypeId::UNDEFINED]),
+                Some(tsz_solver::MappedModifier::Remove) | None => property_type,
+            };
+            property_types.push(property_type);
+        }
+
+        let property_type = match property_types.len() {
+            0 => return None,
+            1 => property_types[0],
+            _ => self.ctx.types.factory().union(property_types),
         };
 
         if can_cache {

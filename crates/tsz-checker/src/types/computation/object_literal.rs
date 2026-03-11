@@ -10,7 +10,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
-    fn contextual_object_literal_property_type(
+    pub(crate) fn contextual_object_literal_property_type(
         &mut self,
         contextual_type: TypeId,
         property_name: &str,
@@ -125,7 +125,20 @@ impl<'a> CheckerState<'a> {
             }
         };
         let original_contextual_type = contextual_type;
-
+        let mut best_property_type = None;
+        let env_property_type = if matches!(
+            self.resolve_property_access_with_env(original_contextual_type, property_name),
+            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+        ) {
+            match self.resolve_property_access_with_env(original_contextual_type, property_name) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id, ..
+                } => Some(type_id),
+                _ => None,
+            }
+        } else {
+            None
+        };
         if let Some(property_type) = self
             .ctx
             .types
@@ -141,7 +154,15 @@ impl<'a> CheckerState<'a> {
                     property_type = property_type.0,
                     "contextual_object_literal_property_type: pre-eval extracted"
                 );
-                return Some(self.sanitize_contextual_property_type(property_type));
+                best_property_type =
+                    self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+            }
+
+            if let Some(env_property_type) = env_property_type {
+                best_property_type = self.prefer_more_specific_contextual_property_type(
+                    best_property_type,
+                    env_property_type,
+                );
             }
         }
 
@@ -154,7 +175,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: union-member extracted"
             );
-            return Some(self.sanitize_contextual_property_type(property_type));
+            best_property_type =
+                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         let resolved_original_contextual_type =
@@ -172,7 +194,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: resolved-original extracted"
             );
-            return Some(self.sanitize_contextual_property_type(property_type));
+            best_property_type =
+                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         if resolved_original_contextual_type != original_contextual_type
@@ -186,7 +209,8 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: resolved-union-member extracted"
             );
-            return Some(self.sanitize_contextual_property_type(property_type));
+            best_property_type =
+                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
         // Cache the expensive contextual type resolution chain.
@@ -215,7 +239,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if contextual_type == TypeId::UNKNOWN {
-            return Some(TypeId::UNKNOWN);
+            return Some(best_property_type.unwrap_or(TypeId::UNKNOWN));
         }
 
         if let Some(property_type) = self
@@ -229,7 +253,19 @@ impl<'a> CheckerState<'a> {
                 property_type = property_type.0,
                 "contextual_object_literal_property_type: extracted"
             );
-            return Some(self.sanitize_contextual_property_type(property_type));
+            best_property_type =
+                self.prefer_more_specific_contextual_property_type(best_property_type, property_type);
+        }
+
+        if let Some(type_id) = env_property_type {
+            tracing::trace!(
+                contextual_type = contextual_type.0,
+                property_name,
+                property_type = type_id.0,
+                "contextual_object_literal_property_type: env property access extracted"
+            );
+            best_property_type =
+                self.prefer_more_specific_contextual_property_type(best_property_type, type_id);
         }
 
         let alternate_contextual_type = {
@@ -256,8 +292,15 @@ impl<'a> CheckerState<'a> {
                     property_type = property_type.0,
                     "contextual_object_literal_property_type: alternate extracted"
                 );
-                return Some(self.sanitize_contextual_property_type(property_type));
+                best_property_type = self.prefer_more_specific_contextual_property_type(
+                    best_property_type,
+                    property_type,
+                );
             }
+        }
+
+        if let Some(property_type) = best_property_type {
+            return Some(self.sanitize_contextual_property_type(property_type));
         }
 
         // If contextual extraction fails but the parent context is generic/deferred,
@@ -281,6 +324,40 @@ impl<'a> CheckerState<'a> {
             "contextual_object_literal_property_type: no property type"
         );
         None
+    }
+
+    fn prefer_more_specific_contextual_property_type(
+        &self,
+        current: Option<TypeId>,
+        candidate: TypeId,
+    ) -> Option<TypeId> {
+        let Some(current) = current else {
+            return Some(candidate);
+        };
+
+        if current == candidate {
+            return Some(current);
+        }
+
+        if matches!(current, TypeId::ANY | TypeId::UNKNOWN) && !matches!(candidate, TypeId::ANY | TypeId::UNKNOWN) {
+            return Some(candidate);
+        }
+        if matches!(candidate, TypeId::ANY | TypeId::UNKNOWN) && !matches!(current, TypeId::ANY | TypeId::UNKNOWN) {
+            return Some(current);
+        }
+
+        let current_eval = tsz_solver::evaluate_type(self.ctx.types, current);
+        let candidate_eval = tsz_solver::evaluate_type(self.ctx.types, candidate);
+        let candidate_narrower =
+            tsz_solver::is_subtype_of(self.ctx.types, candidate_eval, current_eval);
+        let current_narrower =
+            tsz_solver::is_subtype_of(self.ctx.types, current_eval, candidate_eval);
+
+        if candidate_narrower && !current_narrower {
+            Some(candidate)
+        } else {
+            Some(current)
+        }
     }
 
     fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
