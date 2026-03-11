@@ -1485,7 +1485,14 @@ impl<'a> CheckerState<'a> {
                 }
                 Some((wants_string, wants_number))
             }
-            query::IndexKeyKind::Other => None,
+            query::IndexKeyKind::Other => tsz_solver::type_queries::get_type_parameter_constraint(
+                self.ctx.types,
+                index_type,
+            )
+            .and_then(|constraint| {
+                (constraint != index_type).then(|| self.get_index_key_kind(constraint))
+            })
+            .flatten(),
         }
     }
 
