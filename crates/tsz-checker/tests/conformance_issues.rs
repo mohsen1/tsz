@@ -9292,3 +9292,39 @@ baz({ p: "" });
         "Expected computed-property contextual index signature calls to succeed.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_class_entity_named_computed_members_induce_ts2411_index_checks() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+var s: string;
+var n: number;
+var a: any;
+class C {
+    [s]: number;
+    [n] = n;
+    [s + n] = 2;
+    [+s]: typeof s;
+    [a]: number;
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2411 = diagnostics.iter().filter(|(code, _)| *code == 2411).count();
+    assert_eq!(
+        ts2411, 2,
+        "Expected two TS2411 diagnostics for [+s] against synthesized string/number index constraints.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2564 && message.contains("Property '[+s]' has no initializer")
+        }),
+        "Expected TS2564 for non-canonical computed property name [+s].\nActual diagnostics: {diagnostics:#?}"
+    );
+}

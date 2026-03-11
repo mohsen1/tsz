@@ -701,7 +701,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(key) = self.property_key_from_name(prop.name) else {
+            let Some(key) = self.property_key_from_name(prop.name).or_else(|| {
+                let name_node = self.ctx.arena.get(prop.name)?;
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    return None;
+                }
+                let raw = self.node_text(prop.name)?;
+                let normalized = raw.trim_end_matches(':').trim();
+                let inner = normalized
+                    .strip_prefix('[')
+                    .and_then(|s| s.strip_suffix(']'))
+                    .unwrap_or(normalized)
+                    .trim()
+                    .to_string();
+                Some(PropertyKey::Computed(ComputedKey::Ident(inner)))
+            }) else {
                 continue;
             };
 
