@@ -170,13 +170,15 @@ impl<'a> ContextualTypeContext<'a> {
                 return None;
             }
             // When all callable union members agree on the parameter type, return it directly.
-            // When they disagree, tsc creates a union of the parameter types (e.g., `string | number`)
-            // rather than giving up. This prevents false TS7006 for overloaded/union callbacks.
+            // When they disagree, a direct union of callable types does not provide a
+            // contextual parameter type. This matches conformance cases like
+            // `IWithCallSignatures | IWithCallSignatures3`, where the callback
+            // parameter should remain implicit-any and report TS7006.
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
                 return Some(first);
             }
-            return Some(crate::utils::union_or_single(self.interner, param_types));
+            return None;
         }
 
         // Handle Application explicitly.
