@@ -973,6 +973,10 @@ impl<'a> CheckerState<'a> {
 
             // TS2393: Duplicate function implementation.
             {
+                let has_non_function_conflict =
+                    declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                        conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) == 0
+                    });
                 let func_impls_with_scope: Vec<(NodeIndex, NodeIndex)> = declarations
                     .iter()
                     .filter(|(decl_idx, flags, is_local, _, _)| {
@@ -999,7 +1003,9 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
                                 diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
                             );
-                            conflicts.remove(&idx);
+                            if !has_non_function_conflict {
+                                conflicts.remove(&idx);
+                            }
                         }
                     }
                 }
