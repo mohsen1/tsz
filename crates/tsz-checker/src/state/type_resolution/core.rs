@@ -912,6 +912,9 @@ impl<'a> CheckerState<'a> {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
                     self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
+                    if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+                        self.prime_lib_type_params(name);
+                    }
                     if self.symbol_is_namespace_only(sym_id) {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
