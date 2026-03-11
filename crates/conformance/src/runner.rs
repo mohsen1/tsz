@@ -186,7 +186,13 @@ impl Runner {
                 "Creating batch process pool with {} workers",
                 concurrency_limit
             );
-            match ProcessPool::new(&self.tsz_binary, concurrency_limit).await {
+            match ProcessPool::new(
+                &self.tsz_binary,
+                concurrency_limit,
+                self.args.max_compilations_per_worker,
+            )
+            .await
+            {
                 Ok(pool) => Some(Arc::new(pool)),
                 Err(e) => {
                     warn!(

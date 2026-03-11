@@ -6,6 +6,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -39,17 +40,29 @@ pub struct ProcessPool {
     /// Channel of available worker indices.
     available_tx: tokio::sync::mpsc::Sender<usize>,
     available_rx: Mutex<tokio::sync::mpsc::Receiver<usize>>,
+    /// Maximum compilations per worker before recycling (0 = no limit).
+    max_compilations: usize,
+    /// Per-worker compilation counters.
+    compilation_counts: Vec<AtomicUsize>,
 }
 
 impl ProcessPool {
     /// Create a new pool with `n` workers using the given tsz binary path.
-    pub async fn new(tsz_binary: &str, n: usize) -> anyhow::Result<Self> {
+    ///
+    /// `max_compilations` controls worker recycling: after a worker processes this
+    /// many compilations, it is killed and a fresh process is spawned on next use.
+    /// This returns all process memory to the OS, preventing unbounded RSS growth
+    /// from arena/cache accumulation and malloc fragmentation in long-lived workers.
+    /// Set to 0 to disable recycling.
+    pub async fn new(tsz_binary: &str, n: usize, max_compilations: usize) -> anyhow::Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::channel(n);
         let mut workers = Vec::with_capacity(n);
+        let mut compilation_counts = Vec::with_capacity(n);
 
         for i in 0..n {
             let worker = Self::spawn_worker(tsz_binary)?;
             workers.push(Mutex::new(Some(worker)));
+            compilation_counts.push(AtomicUsize::new(0));
             tx.send(i).await.expect("channel should not be closed");
         }
 
@@ -58,6 +71,8 @@ impl ProcessPool {
             tsz_binary: tsz_binary.to_string(),
             available_tx: tx,
             available_rx: Mutex::new(rx),
+            max_compilations,
+            compilation_counts,
         })
     }
 
@@ -94,9 +109,10 @@ impl ProcessPool {
     ) -> anyhow::Result<BatchOutcome> {
         let mut guard = self.workers[idx].lock().await;
 
-        // If worker is dead, respawn
+        // If worker is dead (crashed or recycled), respawn
         if guard.is_none() {
             *guard = Some(Self::spawn_worker(&self.tsz_binary)?);
+            self.compilation_counts[idx].store(0, Ordering::Relaxed);
         }
 
         let worker = guard.as_mut().unwrap();
@@ -122,40 +138,55 @@ impl ProcessPool {
         // Read lines until sentinel (with timeout)
         let read_future = read_until_sentinel(&mut worker.stdout);
 
-        if timeout.is_zero() {
+        let outcome = if timeout.is_zero() {
             match read_future.await {
-                Ok(Some(output)) => Ok(BatchOutcome::Done(output)),
+                Ok(Some(output)) => BatchOutcome::Done(output),
                 Ok(None) => {
                     // EOF — process died
                     *guard = None;
-                    Ok(BatchOutcome::Crashed)
+                    return Ok(BatchOutcome::Crashed);
                 }
                 Err(_) => {
                     *guard = None;
-                    Ok(BatchOutcome::Crashed)
+                    return Ok(BatchOutcome::Crashed);
                 }
             }
         } else {
             match tokio::time::timeout(timeout, read_future).await {
-                Ok(Ok(Some(output))) => Ok(BatchOutcome::Done(output)),
+                Ok(Ok(Some(output))) => BatchOutcome::Done(output),
                 Ok(Ok(None)) => {
                     // EOF — process died
                     *guard = None;
-                    Ok(BatchOutcome::Crashed)
+                    return Ok(BatchOutcome::Crashed);
                 }
                 Ok(Err(_)) => {
                     *guard = None;
-                    Ok(BatchOutcome::Crashed)
+                    return Ok(BatchOutcome::Crashed);
                 }
                 Err(_) => {
                     // Timeout — kill the process
                     if let Some(mut w) = guard.take() {
                         let _ = w.child.kill().await;
                     }
-                    Ok(BatchOutcome::Timeout)
+                    return Ok(BatchOutcome::Timeout);
                 }
             }
+        };
+
+        // Successful compilation — check if this worker should be recycled.
+        // Recycling kills the process so the OS reclaims all memory, preventing
+        // unbounded RSS growth from global caches and malloc fragmentation.
+        if self.max_compilations > 0 {
+            let count = self.compilation_counts[idx].fetch_add(1, Ordering::Relaxed) + 1;
+            if count >= self.max_compilations {
+                if let Some(mut w) = guard.take() {
+                    let _ = w.child.kill().await;
+                }
+                // Worker is now None; it will be respawned on next use.
+            }
         }
+
+        Ok(outcome)
     }
 
     fn spawn_worker(tsz_binary: &str) -> anyhow::Result<BatchWorker> {
