@@ -819,8 +819,12 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token(); // skip `declare`
-        let is_decl = !self.scanner.has_preceding_line_break()
-            && matches!(
+        let is_decl = if self.scanner.has_preceding_line_break() {
+            false
+        } else if self.is_token(SyntaxKind::ImportKeyword) {
+            self.look_ahead_is_import_equals() || self.look_ahead_is_import_declaration()
+        } else {
+            matches!(
                 self.token(),
                 SyntaxKind::ClassKeyword
                     | SyntaxKind::InterfaceKeyword
@@ -838,7 +842,8 @@ impl ParserState {
                     | SyntaxKind::UsingKeyword
                     | SyntaxKind::AwaitKeyword
                     | SyntaxKind::ExportKeyword
-            );
+            )
+        };
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
@@ -1127,6 +1132,14 @@ impl ParserState {
     /// Parse import equals declaration: import X = require("...") or import X = Y.Z
     pub(crate) fn parse_import_equals_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        self.parse_import_equals_declaration_with_modifiers(start_pos, None)
+    }
+
+    pub(crate) fn parse_import_equals_declaration_with_modifiers(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
         self.parse_expected(SyntaxKind::ImportKeyword);
 
         // Check for type modifier: `import type X = require(...)`
@@ -1160,7 +1173,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ImportDeclData {
-                modifiers: None,
+                modifiers,
                 is_type_only,
                 import_clause: name,
                 module_specifier: module_reference,
