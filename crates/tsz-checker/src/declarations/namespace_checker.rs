@@ -126,7 +126,6 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2300 on the class static member that conflicts with a namespace export.
     fn report_duplicate_on_class_static_member(&mut self, sym_id: SymbolId, name: &str) {
-        use tsz_binder::symbol_flags;
         use tsz_common::diagnostics::diagnostic_codes;
         use tsz_parser::syntax_kind_ext;
 
@@ -148,10 +147,38 @@ impl<'a> CheckerState<'a> {
             };
 
             for &member_idx in &class.members.nodes {
-                if let Some(member_sym_id) = self.ctx.binder.get_node_symbol(member_idx)
-                    && let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id)
-                    && member_symbol.escaped_name == name
-                    && (member_symbol.flags & symbol_flags::STATIC) != 0
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let is_static = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .is_some_and(|prop| self.has_static_modifier(&prop.modifiers)),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|method| self.has_static_modifier(&method.modifiers)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                        self.ctx
+                            .arena
+                            .get_accessor(member_node)
+                            .is_some_and(|accessor| self.has_static_modifier(&accessor.modifiers))
+                    }
+                    _ => false,
+                };
+                if !is_static {
+                    continue;
+                }
+
+                if self
+                    .get_member_name_node(member_node)
+                    .and_then(|name_idx| self.ctx.arena.get(name_idx))
+                    .and_then(|name_node| self.get_identifier_text(name_node))
+                    .as_deref()
+                    == Some(name)
                 {
                     let error_node = self
                         .get_declaration_name_node(member_idx)
