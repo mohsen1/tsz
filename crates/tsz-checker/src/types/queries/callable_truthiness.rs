@@ -8,11 +8,13 @@
 //!   always defined. Did you mean to call it instead?"
 
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type, get_enum_member_type};
 
 /// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +87,14 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        if let Some(condition_result) = self.enum_member_condition_result(node_idx, ty) {
+            self.error_at_node_msg(
+                node_idx,
+                diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                &[condition_result],
+            );
+        }
+
         match self.get_syntactic_truthy_semantics(node_idx) {
             SyntacticTruthiness::AlwaysTruthy => {
                 self.error_at_node(
@@ -101,6 +111,55 @@ impl<'a> CheckerState<'a> {
                 );
             }
             SyntacticTruthiness::Sometimes => {}
+        }
+    }
+
+    fn enum_member_condition_result(&mut self, node_idx: NodeIndex, ty: TypeId) -> Option<&'static str> {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return None;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            let inner_ty = self.get_type_of_node(paren.expression);
+            return self.enum_member_condition_result(paren.expression, inner_ty);
+        }
+
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            let unary = self.ctx.arena.get_unary_expr_ex(node)?;
+            let inner_ty = self.get_type_of_node(unary.expression);
+            return self.enum_member_condition_result(unary.expression, inner_ty);
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            let assertion = self.ctx.arena.get_type_assertion(node)?;
+            let inner_ty = self.get_type_of_node(assertion.expression);
+            return self.enum_member_condition_result(
+                assertion.expression,
+                inner_ty,
+            );
+        }
+
+        let ty = self.evaluate_type_with_env(ty);
+        let sym_id = self.ctx.resolve_type_to_symbol_id(ty)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+            return None;
+        }
+
+        let underlying = get_enum_member_type(self.ctx.types, ty)?;
+        match classify_literal_type(self.ctx.types, underlying) {
+            LiteralTypeKind::Number(value) => Some(if value == 0.0 { "false" } else { "true" }),
+            LiteralTypeKind::String(value) => Some(if value.is_none() {
+                "false"
+            } else {
+                "true"
+            }),
+            LiteralTypeKind::Boolean(value) => Some(if value { "true" } else { "false" }),
+            _ => None,
         }
     }
 
