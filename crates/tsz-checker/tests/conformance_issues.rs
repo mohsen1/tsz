@@ -9536,7 +9536,6 @@ declare const g: <T, U, V>() => AsyncGenerator<T, U, V>;
     );
 }
 
-
 #[test]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(

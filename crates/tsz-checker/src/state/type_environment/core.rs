@@ -1596,10 +1596,9 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-            self.ctx.types,
-            base_type,
-        ) else {
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
+        else {
             return base_type;
         };
 

@@ -870,15 +870,19 @@ impl<'a> CheckerState<'a> {
                     || right_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     || right_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
                     || (right_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                        && self.ctx.arena.get_binary_expr(right_node).is_some_and(|bin| {
-                            matches!(
-                                bin.operator_token,
-                                k if k == SyntaxKind::BarBarToken as u16
-                                    || k == SyntaxKind::AmpersandAmpersandToken as u16
-                                    || k == SyntaxKind::QuestionQuestionToken as u16
-                                    || k == SyntaxKind::CommaToken as u16
-                            )
-                        }));
+                        && self
+                            .ctx
+                            .arena
+                            .get_binary_expr(right_node)
+                            .is_some_and(|bin| {
+                                matches!(
+                                    bin.operator_token,
+                                    k if k == SyntaxKind::BarBarToken as u16
+                                        || k == SyntaxKind::AmpersandAmpersandToken as u16
+                                        || k == SyntaxKind::QuestionQuestionToken as u16
+                                        || k == SyntaxKind::CommaToken as u16
+                                )
+                            }));
                 if needs_fresh_contextual_check {
                     self.clear_type_cache_recursive(right_idx);
                 }
