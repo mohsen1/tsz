@@ -694,13 +694,19 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let evaluated = match classify_for_traversal(self.ctx.types, type_id) {
-            TypeTraversalKind::Application { .. }
-            | TypeTraversalKind::Conditional(_)
-            | TypeTraversalKind::Mapped(_)
-            | TypeTraversalKind::IndexAccess { .. }
-            | TypeTraversalKind::KeyOf(_) => self.evaluate_type_with_resolution(type_id),
-            _ => type_id,
+        // Performance guard: skip expensive evaluation after 200 unique type visits.
+        // Deep generic/mapped-type chains (styled-components) cause hangs otherwise.
+        let evaluated = if guard.iterations() <= 200 {
+            match classify_for_traversal(self.ctx.types, type_id) {
+                TypeTraversalKind::Application { .. }
+                | TypeTraversalKind::Conditional(_)
+                | TypeTraversalKind::Mapped(_)
+                | TypeTraversalKind::IndexAccess { .. }
+                | TypeTraversalKind::KeyOf(_) => self.evaluate_type_with_resolution(type_id),
+                _ => type_id,
+            }
+        } else {
+            type_id
         };
         if evaluated != type_id
             && self.type_requires_structure_of_symbol_inner(
@@ -1871,7 +1877,6 @@ impl<'a> CheckerState<'a> {
 }
 
 /// Check if contextual type is `boolean` and the literal is a boolean literal.
-/// tsz needs this because BOOLEAN is intrinsic, not `true | false` union like tsc.
 fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId) -> bool {
     if ctx_type != TypeId::BOOLEAN
         && ctx_type != TypeId::BOOLEAN_TRUE
@@ -1879,11 +1884,6 @@ fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId
     {
         return false;
     }
-
-    // Check if the literal type is a boolean literal.
-    // Boolean literals are always interned to intrinsic IDs (BOOLEAN_TRUE /
-    // BOOLEAN_FALSE) by the solver's `get_intrinsic_id`, so we only need to
-    // compare against those constants — no type data inspection required.
     literal_type == TypeId::BOOLEAN_TRUE || literal_type == TypeId::BOOLEAN_FALSE
 }
 
