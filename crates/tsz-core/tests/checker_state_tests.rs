@@ -16648,12 +16648,12 @@ const n: number = state;
     }
 
     // Accept TS2352 as valid — conditional type assertion overlap check
-    let non_ts2352 = checker
+    let non_ts2352: Vec<_> = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code != 2352)
-        .collect::<Vec<_>>();
+        .collect();
     assert!(
         non_ts2352.is_empty(),
         "Generic function with conditional return should only produce TS2352 (if any): {:?}",
@@ -17109,12 +17109,12 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 
     // Accept TS2352 as valid — tsc also emits this for conditional type assertions
     // when the type can't be proven to overlap with the conditional result.
-    let non_ts2352 = checker
+    let non_ts2352: Vec<_> = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code != 2352)
-        .collect::<Vec<_>>();
+        .collect();
     assert!(
         non_ts2352.is_empty(),
         "Constraint property lookup with infer should only produce TS2352 (if any): {:?}",
