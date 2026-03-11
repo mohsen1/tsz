@@ -961,6 +961,43 @@ k.x === j.x;
 }
 
 #[test]
+fn test_current_file_commonjs_exports_use_late_bound_assignment_types() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+exports.y = exports.x = void 0;
+exports.x = 1;
+exports.y = 2;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+
+    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
+    assert!(
+        relevant
+            .iter()
+            .any(|(_, message)| message.contains("Type 'undefined' is not assignable to type '2'.")),
+        "Expected exports.y chained assignment to use the later inferred type. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        relevant
+            .iter()
+            .any(|(_, message)| message.contains("Type 'undefined' is not assignable to type '1'.")),
+        "Expected exports.x chained assignment to use the later inferred type. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
