@@ -25994,6 +25994,70 @@ fn test_awaited_promise_number() {
 }
 
 #[test]
+fn test_awaited_thenable_matches_optional_onfulfilled_parameter() {
+    let interner = TypeInterner::new();
+
+    let then_name = interner.intern_string("then");
+    let onfulfilled_name = interner.intern_string("onfulfilled");
+    let rest_name = interner.intern_string("args");
+    let value_name = interner.intern_string("value");
+    let infer_f_name = interner.intern_string("F");
+    let infer_rest_name = interner.intern_string("_");
+
+    let source_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(value_name, TypeId::NUMBER)],
+        TypeId::ANY,
+    ));
+    let source_then = interner.function(FunctionShape {
+        params: vec![ParamInfo::optional(onfulfilled_name, source_callback)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let source_thenable = interner.object(vec![PropertyInfo::readonly(then_name, source_then)]);
+
+    let infer_f = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_f_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_rest_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let pattern_then = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo::required(onfulfilled_name, infer_f),
+            ParamInfo::rest(rest_name, infer_rest),
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let pattern_thenable = interner.object(vec![PropertyInfo::readonly(then_name, pattern_then)]);
+
+    let cond = ConditionalType {
+        check_type: source_thenable,
+        extends_type: pattern_thenable,
+        true_type: infer_f,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    assert_eq!(result, source_callback);
+}
+
+#[test]
 fn test_awaited_nested_promise() {
     // Awaited<Promise<Promise<string>>> = string (recursive unwrap)
     let interner = TypeInterner::new();

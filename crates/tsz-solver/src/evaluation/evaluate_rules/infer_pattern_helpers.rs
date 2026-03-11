@@ -80,9 +80,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .take(fixed_param_count)
             .zip(pattern_params.iter().take(fixed_param_count))
         {
-            if source_param.optional != pattern_param.optional
-                || source_param.rest != pattern_param.rest
-            {
+            if source_param.rest != pattern_param.rest {
+                return false;
+            }
+            let allow_optional_source_match = strip_nullish_optionals
+                && source_param.optional
+                && !pattern_param.optional;
+            if !allow_optional_source_match && source_param.optional != pattern_param.optional {
                 return false;
             }
             let source_param_type = if source_param.optional && strip_nullish_optionals {
@@ -442,7 +446,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.match_signature_params_for_infer(
                     &source_fn.params,
                     &pattern_fn.params,
-                    false,
+                    true,
                     bindings,
                     checker,
                 )
