@@ -914,6 +914,24 @@ impl<'a> CheckerState<'a> {
         if !report_no_index
             && use_index_signature_check
             && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+            && tsz_solver::type_queries::data::get_union_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+            .is_none()
+        {
+            let member_result =
+                self.ctx
+                    .types
+                    .resolve_element_access_type(object_type_for_access, index_type, None);
+            if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
+                report_no_index = true;
+            }
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
             && let Some(members) = tsz_solver::type_queries::data::get_union_members(
                 self.ctx.types,
                 object_type_for_access,

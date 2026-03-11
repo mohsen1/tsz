@@ -732,6 +732,16 @@ impl<'a> CheckerState<'a> {
                         if let Some(namespace_type) =
                             self.commonjs_namespace_type_for_file(self.ctx.current_file_idx)
                         {
+                            let display_name = self
+                                .ctx
+                                .file_name
+                                .rsplit_once('/')
+                                .map(|(_, name)| name)
+                                .unwrap_or(self.ctx.file_name.as_str())
+                                .to_string();
+                            self.ctx
+                                .namespace_module_names
+                                .insert(namespace_type, display_name);
                             return namespace_type;
                         }
                         return TypeId::ANY;
