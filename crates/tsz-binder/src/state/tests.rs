@@ -1459,6 +1459,23 @@ x = 1;
 }
 
 #[test]
+fn assignment_in_class_computed_property_does_not_create_flow_assignment() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+let x: number;
+class A { [(x = 1, "_")]() {} }
+x;
+"#,
+    );
+
+    let assignment_count = count_flow_nodes_with_flags(&binder, flow_flags::ASSIGNMENT);
+    assert_eq!(
+        assignment_count, 0,
+        "assignments evaluated inside class computed property names should not create ASSIGNMENT flow nodes"
+    );
+}
+
+#[test]
 fn switch_creates_switch_clause_flow() {
     // Switch statements should create SWITCH_CLAUSE flow nodes.
     let (binder, _parser) = parse_and_bind(
