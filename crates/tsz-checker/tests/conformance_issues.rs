@@ -8897,3 +8897,69 @@ test4({
         "Did not expect widened callback-return diagnostics once contextual return typing is preserved.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_isolated_declarations_reports_computed_object_literal_exports() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+const y: 0 = 0;
+let u = Symbol();
+
+export let o = { [y]: 1 };
+export let o2 = { [u]: 1 };
+export let o3 = { [1]: 1 };
+export let o31 = { [-1]: 1 };
+export let o32 = { [1 - 1]: 1 };
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            isolated_declarations: true,
+            ..Default::default()
+        },
+    );
+
+    let ts9038_count = diagnostics.iter().filter(|(code, _)| *code == 9038).count();
+    assert_eq!(
+        ts9038_count, 3,
+        "Expected TS9038 only for non-literal computed object-literal property names.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_computed_object_literal_argument_mismatch_reports_ts2345() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type State = {
+  a: number;
+  b: string;
+};
+
+class Test {
+  setState(state: State) {}
+  test(entries: [string, unknown][]) {
+    for (const [key, value] of entries) {
+      this.setState({
+        [key]: value,
+      });
+    }
+  }
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message.contains("Argument of type")
+                && message.contains("is not assignable to parameter of type 'State'")
+        }),
+        "Expected TS2345 for computed object literal argument mismatch.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
