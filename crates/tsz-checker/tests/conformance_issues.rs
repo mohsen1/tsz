@@ -1038,9 +1038,17 @@ fn compile_and_get_diagnostics_with_lib_and_options(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
+    compile_and_get_diagnostics_named_with_lib_and_options("test.ts", source, options)
+}
+
+fn compile_and_get_diagnostics_named_with_lib_and_options(
+    file_name: &str,
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
     let lib_files = load_lib_files_for_test();
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
@@ -1051,7 +1059,7 @@ fn compile_and_get_diagnostics_with_lib_and_options(
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
+        file_name.to_string(),
         options,
     );
 
@@ -9511,5 +9519,52 @@ namespace ModuleEnum {
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2331),
         "Did not expect TS2331 for `this` inside enum member initializers.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_arrow_return_cast_reports_cast_type_in_message() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "mytest.js",
+        r#"
+/**
+ * @template T
+ * @param {T|undefined} value value or not
+ * @returns {T} result value
+ */
+const foo1 = value => /** @type {string} */({ ...value });
+
+/**
+ * @template T
+ * @param {T|undefined} value value or not
+ * @returns {T} result value
+ */
+const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
+"#,
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            allow_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "Expected two TS2322 diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| message.contains("Type 'string' is not assignable to type 'T'.")),
+        "Expected direct JSDoc cast type in TS2322 message, got: {ts2322_messages:?}"
     );
 }

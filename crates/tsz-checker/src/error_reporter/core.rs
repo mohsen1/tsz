@@ -711,6 +711,30 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn jsdoc_annotated_expression_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = expr_idx;
+        loop {
+            if let Some(type_id) = self.jsdoc_type_annotation_for_node_direct(current) {
+                let display_type = self.widen_function_like_display_type(type_id);
+                return Some(self.format_assignability_type_for_message(display_type, target));
+            }
+
+            let node = self.ctx.arena.get(current)?;
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return None;
+            }
+
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            current = paren.expression;
+        }
+    }
+
     fn object_literal_source_type_display(&mut self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
@@ -761,6 +785,10 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
+            return display;
+        }
+
         if self.is_literal_sensitive_assignment_target(target)
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
