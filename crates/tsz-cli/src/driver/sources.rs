@@ -7,8 +7,11 @@ use super::*;
 pub enum FileReadResult {
     /// File was successfully read as UTF-8 text
     Text(String),
-    /// File appears to be binary (emit TS1490), but keep best-effort text for parser diagnostics
-    Binary(String),
+    /// File appears to be binary (emit TS1490), with best-effort text retained.
+    Binary {
+        text: String,
+        suppress_parser_diagnostics: bool,
+    },
     /// File could not be read (I/O error)
     Error(String),
 }
@@ -61,14 +64,20 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
     }
 
     // Check for binary indicators
-    if is_binary_file(&bytes) {
-        return FileReadResult::Binary(String::from_utf8_lossy(&bytes).to_string());
+    if let Some(suppress_parser_diagnostics) = classify_binary_file(&bytes) {
+        return FileReadResult::Binary {
+            text: String::from_utf8_lossy(&bytes).to_string(),
+            suppress_parser_diagnostics,
+        };
     }
 
     // Try to decode as UTF-8
     match String::from_utf8(bytes) {
         Ok(text) => FileReadResult::Text(text),
-        Err(err) => FileReadResult::Binary(String::from_utf8_lossy(err.as_bytes()).to_string()),
+        Err(err) => FileReadResult::Binary {
+            text: String::from_utf8_lossy(err.as_bytes()).to_string(),
+            suppress_parser_diagnostics: true,
+        },
     }
 }
 
@@ -78,16 +87,16 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 /// - UTF-16 BOM at start
 /// - Many consecutive null bytes (embedded binaries, corrupted files)
 /// - Repeated control bytes in first 1024 bytes
-pub(super) fn is_binary_file(bytes: &[u8]) -> bool {
+pub(super) fn classify_binary_file(bytes: &[u8]) -> Option<bool> {
     if bytes.is_empty() {
-        return false;
+        return None;
     }
 
     // Check for many null bytes (binary file indicator)
     // TypeScript considers files with many nulls as binary
     let null_count = bytes.iter().take(1024).filter(|&&b| b == 0).count();
     if null_count > 10 {
-        return true;
+        return Some(true);
     }
 
     // Check for consecutive null bytes (UTF-16 or binary)
@@ -97,14 +106,16 @@ pub(super) fn is_binary_file(bytes: &[u8]) -> bool {
         if byte == 0 {
             consecutive_nulls += 1;
             if consecutive_nulls >= 4 {
-                return true;
+                return Some(true);
             }
         } else {
             consecutive_nulls = 0;
         }
     }
 
-    // Check for non-whitespace control bytes (e.g. U+0000/Control-Range from garbled UTF-16 read as UTF-8)
+    // Check for non-whitespace control bytes.
+    // Preserve parser diagnostics for this softer case: tsc still reports TS1490,
+    // but malformed-text recovery can also produce real scanner/parser diagnostics.
     let control_count = bytes
         .iter()
         .take(1024)
@@ -113,10 +124,10 @@ pub(super) fn is_binary_file(bytes: &[u8]) -> bool {
         })
         .count();
     if control_count >= 4 {
-        return true;
+        return Some(false);
     }
 
-    false
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +136,8 @@ pub(super) struct SourceEntry {
     pub(super) text: Option<String>,
     /// If true, this file appears to be binary (emit TS1490)
     pub(super) is_binary: bool,
+    /// If true, suppress parser diagnostics and keep only TS1490 for this file.
+    pub(super) suppress_parser_diagnostics: bool,
 }
 
 pub(super) fn sources_have_no_default_lib(sources: &[SourceEntry]) -> bool {
@@ -409,7 +422,7 @@ pub(super) fn read_source_files(
     cache: Option<&CompilationCache>,
     changed_paths: Option<&FxHashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
-    let mut sources: FxHashMap<PathBuf, (Option<String>, bool)> = FxHashMap::default(); // (text, is_binary)
+    let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
     let mut seen = FxHashSet::default();
     let mut pending = VecDeque::new();
@@ -436,7 +449,7 @@ pub(super) fn read_source_files(
                 (cache.bind_cache.get(&path), cache.dependencies.get(&path))
         {
             dependencies.insert(path.clone(), cached_deps.clone());
-            sources.insert(path.clone(), (None, false)); // Cached files are not binary
+            sources.insert(path.clone(), (None, false, false)); // Cached files are not binary
             for dep in cached_deps {
                 if seen.insert(dep.clone()) {
                     pending.push_back(dep.clone());
@@ -446,9 +459,12 @@ pub(super) fn read_source_files(
         }
 
         // Read file with binary detection
-        let (text, is_binary) = match read_source_file(&path) {
-            FileReadResult::Text(t) => (t, false),
-            FileReadResult::Binary(text) => (text, true),
+        let (text, is_binary, suppress_parser_diagnostics) = match read_source_file(&path) {
+            FileReadResult::Text(t) => (t, false, false),
+            FileReadResult::Binary {
+                text,
+                suppress_parser_diagnostics,
+            } => (text, true, suppress_parser_diagnostics),
             FileReadResult::Error(e) => {
                 return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
             }
@@ -467,7 +483,10 @@ pub(super) fn read_source_files(
             tsz::checker::triple_slash_validator::extract_reference_paths(&text)
         };
 
-        sources.insert(path.clone(), (Some(text), is_binary));
+        sources.insert(
+            path.clone(),
+            (Some(text), is_binary, suppress_parser_diagnostics),
+        );
         let entry = dependencies.entry(path.clone()).or_default();
 
         if !options.no_resolve {
@@ -628,10 +647,11 @@ pub(super) fn read_source_files(
 
     let mut list: Vec<SourceEntry> = sources
         .into_iter()
-        .map(|(path, (text, is_binary))| SourceEntry {
+        .map(|(path, (text, is_binary, suppress_parser_diagnostics))| SourceEntry {
             path,
             text,
             is_binary,
+            suppress_parser_diagnostics,
         })
         .collect();
     list.sort_by(|left, right| {

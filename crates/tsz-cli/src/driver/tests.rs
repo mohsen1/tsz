@@ -147,9 +147,16 @@ fn test_read_source_file_binary_with_control_bytes() {
     let path = file.path().to_path_buf();
     let result = read_source_file(&path);
     match result {
-        FileReadResult::Binary(text) => {
+        FileReadResult::Binary {
+            text,
+            suppress_parser_diagnostics,
+        } => {
             assert!(!text.is_empty(), "binary text payload should be preserved");
             assert_eq!(text.as_bytes()[0], b'G');
+            assert!(
+                !suppress_parser_diagnostics,
+                "control-byte binary should preserve parser diagnostics"
+            );
         }
         _ => panic!("expected binary detection for control-byte file"),
     }
