@@ -287,6 +287,31 @@ enum Nums {
 }
 
 #[test]
+fn test_const_enum_string_named_members_are_accessible_by_element_access() {
+    let source = r#"
+const enum E {
+    "hyphen-member" = 1,
+    "123startsWithNumber" = 2,
+    "has space" = 3,
+}
+
+const a = E["hyphen-member"];
+const b = E["123startsWithNumber"];
+const c = E["has space"];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        !has_error(
+            &diagnostics,
+            tsz_common::diagnostics::diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        ),
+        "Expected string-named const enum members to be accessible via element access. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
     let source = r#"
 enum Colors {

@@ -817,7 +817,7 @@ impl BinderState {
             for &member_idx in &enum_decl.members.nodes {
                 if let Some(member_node) = arena.get(member_idx)
                     && let Some(member) = arena.get_enum_member(member_node)
-                    && let Some(member_name) = Self::get_identifier_name(arena, member.name)
+                    && let Some(member_name) = Self::get_property_name(arena, member.name)
                 {
                     let sym_id = self
                         .symbols
