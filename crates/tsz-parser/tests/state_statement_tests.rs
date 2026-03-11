@@ -32,6 +32,34 @@ fn parse_with_statement_with_recovery_when_expression_missing() {
 }
 
 #[test]
+fn parse_block_followed_by_equals_emits_ts2809_instead_of_ts1128() {
+    let (parser, _root) = parse_source(
+        r#"
+declare function fn(): { a: 1, b: 2 }
+let a: number;
+let b: number;
+
+{ a, b } = fn();
+{ a, b }
+= fn();
+"#,
+    );
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    let ts2809_count = codes
+        .iter()
+        .filter(|&&code| {
+            code
+                == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I
+        })
+        .count();
+    assert_eq!(ts2809_count, 2, "expected two TS2809 diagnostics, got {codes:?}");
+    assert!(
+        !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "should not fall back to generic TS1128, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_template_recovery_preserves_follow_up_statement() {
     let (parser, root) = parse_source("const bad = `head${1 + 2`;\nconst ok = 1;");
     let sf = parser.get_arena().get_source_file_at(root).unwrap();
