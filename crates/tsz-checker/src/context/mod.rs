@@ -561,6 +561,21 @@ pub struct CheckerContext<'a> {
     /// Current depth of call expression resolution.
     pub call_depth: RefCell<tsz_solver::recursion::DepthCounter>,
 
+    /// Depth counter for `is_direct_circular_reference` recursion.
+    /// Prevents stack overflow when evaluating recursive type aliases
+    /// (e.g., `type N<T, K> = T | { [P in K]: N<T, K> }[K]`).
+    pub circ_ref_depth: RefCell<tsz_solver::recursion::DepthCounter>,
+
+    /// Depth counter for `types_have_no_overlap` / `objects_with_independently_overlapping_props`
+    /// mutual recursion. Prevents stack overflow on infinitely-expanding recursive types
+    /// (e.g., `interface List<T> { owner: List<List<T>> }`).
+    pub overlap_depth: RefCell<tsz_solver::recursion::DepthCounter>,
+
+    /// Names of `@typedef` types currently being resolved.
+    /// Prevents infinite recursion for circular JSDoc typedefs
+    /// (e.g., `@typedef {string | JsonArray} Json` where `JsonArray = ReadonlyArray<Json>`).
+    pub resolving_jsdoc_typedefs: RefCell<Vec<String>>,
+
     /// Stack of expected return types for functions.
     pub return_type_stack: Vec<TypeId>,
     /// Stack of contextual yield types for generator functions.

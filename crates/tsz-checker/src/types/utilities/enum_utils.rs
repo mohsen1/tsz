@@ -615,27 +615,17 @@ impl<'a> CheckerState<'a> {
         // are mutually recursive. For infinitely-expanding recursive types (e.g.,
         // `interface List<T> { owner: List<List<T>> }`), the property-level overlap
         // check re-enters this function with ever-deeper type arguments, causing
-        // unbounded stack growth. A depth limit of 20 is generous for real-world
-        // types while preventing stack overflow. When the limit is reached we
-        // conservatively report "types overlap" (return false) — matching tsc's
-        // behavior of assuming comparability for excessively deep recursive types.
-        thread_local! {
-            static OVERLAP_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-        }
-        const MAX_OVERLAP_DEPTH: u32 = 20;
-
-        let depth = OVERLAP_DEPTH.with(|d| {
-            let v = d.get();
-            d.set(v + 1);
-            v
-        });
-        if depth >= MAX_OVERLAP_DEPTH {
-            OVERLAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        // unbounded stack growth. The depth counter on `ctx.overlap_depth` (limit 20)
+        // is generous for real-world types while preventing stack overflow. When the
+        // limit is reached we conservatively report "types overlap" (return false) —
+        // matching tsc's behavior of assuming comparability for excessively deep
+        // recursive types.
+        if !self.ctx.overlap_depth.borrow_mut().enter() {
             return false; // Conservatively assume overlap
         }
 
         let result = self.types_have_no_overlap_inner(left, right);
-        OVERLAP_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        self.ctx.overlap_depth.borrow_mut().leave();
         result
     }
 
