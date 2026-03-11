@@ -840,14 +840,14 @@ impl BinderState {
         {
             if let Some(target_exports) = target_symbol.exports.as_ref() {
                 for (export_name, &export_sym_id) in target_exports.iter() {
-                    if !file_exports.has(export_name) {
+                    if export_name != "default" && !file_exports.has(export_name) {
                         file_exports.set(export_name.clone(), export_sym_id);
                     }
                 }
             }
             if let Some(target_members) = target_symbol.members.as_ref() {
                 for (member_name, &member_sym_id) in target_members.iter() {
-                    if !file_exports.has(member_name) {
+                    if member_name != "default" && !file_exports.has(member_name) {
                         file_exports.set(member_name.clone(), member_sym_id);
                     }
                 }

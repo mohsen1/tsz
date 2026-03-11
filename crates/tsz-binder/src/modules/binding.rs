@@ -541,7 +541,9 @@ impl BinderState {
                                              exported_symbols: &mut Vec<(String, SymbolId)>| {
                                                 if let Some(exports) = symbol.exports.as_ref() {
                                                     for (export_name, &export_sym_id) in exports.iter() {
-                                                        if export_name != "export=" {
+                                                        if export_name != "export="
+                                                            && export_name != "default"
+                                                        {
                                                             exported_symbols.push((
                                                                 export_name.clone(),
                                                                 export_sym_id,
@@ -551,8 +553,12 @@ impl BinderState {
                                                 }
                                                 if let Some(members) = symbol.members.as_ref() {
                                                     for (member_name, &member_sym_id) in members.iter() {
-                                                        exported_symbols
-                                                            .push((member_name.clone(), member_sym_id));
+                                                        if member_name != "default" {
+                                                            exported_symbols.push((
+                                                                member_name.clone(),
+                                                                member_sym_id,
+                                                            ));
+                                                        }
                                                     }
                                                 }
                                             };
