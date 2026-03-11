@@ -623,10 +623,20 @@ impl<'a> CheckerState<'a> {
                 // Keep class references in type position as instance types to avoid
                 // constructor/instance split diagnostics (e.g. `Type 'Dataset' is not
                 // assignable to type 'Dataset'` in parser harness regressions).
+                // Also check class_instance_type_cache for in-progress builds
+                // (Phase 2 partial type), preventing constructor type fallback.
                 self.ctx
                     .symbol_instance_types
                     .get(&sym_id)
                     .copied()
+                    .or_else(|| {
+                        let decl = if !symbol.value_declaration.is_none() {
+                            Some(symbol.value_declaration)
+                        } else {
+                            symbol.declarations.first().copied()
+                        };
+                        decl.and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                    })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
             } else {
                 self.get_type_of_symbol(sym_id)
@@ -757,11 +767,33 @@ impl<'a> CheckerState<'a> {
         def_id: tsz_solver::DefId,
     ) -> Option<(bool, TypeId)> {
         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-            // Use get_type_of_symbol (not type_reference_symbol_type) because
-            // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
-            // which insert_type_env_symbol rejects as a self-recursive alias.
-            // We need the concrete structural type for TypeEnvironment resolution.
-            let resolved = self.get_type_of_symbol(sym_id);
+            // For CLASS symbols, prefer the instance type over the constructor
+            // type returned by get_type_of_symbol.  During class construction
+            // (Phase 2 of get_class_instance_type_inner), symbol_instance_types
+            // is not populated yet, but class_instance_type_cache holds the
+            // partial instance type.  Without this, TypeEnvironment::resolve_lazy
+            // returns the constructor type (Callable), causing false TS2339 on
+            // property access for self-referential parameters (e.g. `p.x` where
+            // `p: Point` inside class Point).
+            let resolved = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
+            {
+                self.ctx
+                    .symbol_instance_types
+                    .get(&sym_id)
+                    .copied()
+                    .or_else(|| {
+                        let decl = if !symbol.value_declaration.is_none() {
+                            Some(symbol.value_declaration)
+                        } else {
+                            symbol.declarations.first().copied()
+                        };
+                        decl.and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                    })
+                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+            } else {
+                self.get_type_of_symbol(sym_id)
+            };
             let inserted = self.insert_type_env_symbol(sym_id, resolved);
             Some((inserted, resolved))
         } else {

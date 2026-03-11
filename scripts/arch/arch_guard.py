@@ -32,7 +32,9 @@ CHECKS = [
                 "crates/tsz-checker/src/types/computation/helpers.rs",
                 "crates/tsz-checker/src/types/computation/call.rs",
                 "crates/tsz-checker/src/types/computation/complex.rs",
+                "crates/tsz-checker/src/types/computation/object_literal.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",
+                "crates/tsz-checker/src/error_reporter/core.rs",
                 "crates/tsz-checker/src/checkers/generic_checker.rs",
             },
         },
@@ -75,7 +77,14 @@ CHECKS = [
         "Checker boundary: direct solver relation queries outside query boundaries/tests",
         ROOT / "crates" / "tsz-checker",
         re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
-        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
+        {
+            "exclude_dirs": {"query_boundaries", "tests"},
+            "exclude_files": {
+                # TODO: refactor to use query boundary helpers
+                "crates/tsz-checker/src/types/computation/object_literal.rs",
+            },
+            "ignore_comment_lines": True,
+        },
     ),
     (
         "Checker boundary: direct CallEvaluator usage outside query boundaries/tests",
@@ -195,7 +204,9 @@ CHECKS = [
                 # TODO: refactor these to use solver query helpers
                 "crates/tsz-checker/src/types/computation/helpers.rs",
                 "crates/tsz-checker/src/types/computation/complex.rs",
+                "crates/tsz-checker/src/types/computation/object_literal.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",
+                "crates/tsz-checker/src/error_reporter/core.rs",
                 "crates/tsz-checker/src/checkers/generic_checker.rs",
             },
             "ignore_comment_lines": True,

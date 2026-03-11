@@ -141,12 +141,11 @@ impl<'a> CheckerState<'a> {
                                 // { name: pattern = default } — check the LHS of the assignment
                                 if let Some(bin) = self.ctx.arena.get_binary_expr(value_node)
                                     && bin.operator_token == SyntaxKind::EqualsToken as u16
-                                {
-                                    if let Some(lhs_node) = self.ctx.arena.get(bin.left) {
-                                        if lhs_node.kind
+                                    && let Some(lhs_node) = self.ctx.arena.get(bin.left)
+                                        && (lhs_node.kind
                                             == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                                             || lhs_node.kind
-                                                == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                                == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
                                         {
                                             let prop_type = self
                                                 .resolve_property_type_for_destructuring(
@@ -159,8 +158,6 @@ impl<'a> CheckerState<'a> {
                                                 );
                                             }
                                         }
-                                    }
-                                }
                             }
                         }
                     }
@@ -219,17 +216,14 @@ impl<'a> CheckerState<'a> {
                         // element = default — check LHS
                         if let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
                             && bin.operator_token == SyntaxKind::EqualsToken as u16
-                        {
-                            if let Some(lhs_node) = self.ctx.arena.get(bin.left) {
-                                if lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                    || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && let Some(lhs_node) = self.ctx.arena.get(bin.left)
+                                && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
                                 {
                                     self.check_destructuring_property_accessibility(
                                         bin.left, elem_type,
                                     );
                                 }
-                            }
-                        }
                     }
                 }
             }
