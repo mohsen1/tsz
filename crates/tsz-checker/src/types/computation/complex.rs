@@ -1446,6 +1446,7 @@ impl<'a> CheckerState<'a> {
 
     fn new_target_is_class_symbol(&self, expr_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
         let Some(ident) = self.ctx.arena.get_identifier_at(expr_idx) else {
             return false;
         };
@@ -1460,10 +1461,81 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        self.ctx
+        if self
+            .ctx
             .binder
             .get_symbol(sym_id)
             .is_some_and(|symbol| (symbol.flags & symbol_flags::CLASS) != 0)
+        {
+            return true;
+        }
+        // Cross-file: in multi-file mode, the name may resolve to a namespace in the
+        // current file while a class with the same name exists in another file
+        // (class+namespace declaration merging across files). Walk up enclosing
+        // namespaces and search all binders for a CLASS symbol with the same name.
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            if !self.ctx.binder.is_external_module() {
+                let arena = self.ctx.arena;
+                let mut current = expr_idx;
+                for _ in 0..100 {
+                    let Some(ext) = arena.get_extended(current) else {
+                        break;
+                    };
+                    let parent_idx = ext.parent;
+                    if parent_idx.is_none() {
+                        break;
+                    }
+                    let Some(parent_node) = arena.get(parent_idx) else {
+                        break;
+                    };
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        if let Some(module_data) = arena.get_module(parent_node)
+                            && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
+                        {
+                            let ns_name = ns_name_ident.escaped_text.as_str();
+                            // Search all binders for a CLASS symbol with the target
+                            // name exported from a namespace matching ns_name.
+                            for binder in all_binders.iter() {
+                                for (_, &parent_sym_id) in binder.file_locals.iter() {
+                                    let Some(parent_sym) =
+                                        self.ctx.binder.get_symbol(parent_sym_id)
+                                    else {
+                                        continue;
+                                    };
+                                    if parent_sym.flags
+                                        & (symbol_flags::NAMESPACE_MODULE
+                                            | symbol_flags::VALUE_MODULE)
+                                        == 0
+                                    {
+                                        continue;
+                                    }
+                                    if let Some(parent_exports) = parent_sym.exports.as_ref()
+                                        && let Some(nested_ns_id) = parent_exports.get(ns_name)
+                                        && let Some(nested_ns) =
+                                            self.ctx.binder.get_symbol(nested_ns_id)
+                                        && nested_ns.flags
+                                            & (symbol_flags::NAMESPACE_MODULE
+                                                | symbol_flags::VALUE_MODULE)
+                                            != 0
+                                        && let Some(nested_exports) = nested_ns.exports.as_ref()
+                                        && let Some(member_id) = nested_exports.get(name)
+                                        && self
+                                            .ctx
+                                            .binder
+                                            .get_symbol(member_id)
+                                            .is_some_and(|s| (s.flags & symbol_flags::CLASS) != 0)
+                                    {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    current = parent_idx;
+                }
+            }
+        }
+        false
     }
 
     /// Synthesize an instance type for a JS constructor function.
