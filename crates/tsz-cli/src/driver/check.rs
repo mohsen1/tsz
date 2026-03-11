@@ -47,7 +47,7 @@ fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
         .any(|diag| is_real_syntax_error(diag.code))
 }
 
-fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
+const fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
     matches!(code, 2427 | 2457)
 }
 
@@ -1239,7 +1239,7 @@ const q: PromiseLike<number> = p;
         .expect("write source");
 
         let resolved = resolved_options_for_es2015_strict_test();
-        let file_paths = vec![file_path.clone()];
+        let file_paths = vec![file_path];
         let SourceReadResult {
             sources,
             dependencies: _,
