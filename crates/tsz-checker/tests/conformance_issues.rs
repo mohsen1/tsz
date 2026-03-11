@@ -197,8 +197,7 @@ new cls3();
     let ts2511_count = diagnostics.iter().filter(|(code, _)| *code == 2511).count();
 
     assert_eq!(
-        ts2511_count,
-        3,
+        ts2511_count, 3,
         "Expected TS2511 for mixed and all-abstract constructor unions. Actual diagnostics: {diagnostics:#?}"
     );
 }
@@ -234,8 +233,7 @@ new cls3();
     let ts2511_count = diagnostics.iter().filter(|(code, _)| *code == 2511).count();
 
     assert_eq!(
-        ts2511_count,
-        2,
+        ts2511_count, 2,
         "Expected TS2511 for mixed and abstract declared constructor unions in the conformance shape. Actual diagnostics: {diagnostics:#?}"
     );
 }
