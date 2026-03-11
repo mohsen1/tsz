@@ -612,8 +612,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                     .arena
                                     .get_literal(expr)
                                     .and_then(|lit| {
-                                        tsz_solver::utils::canonicalize_numeric_name(&lit.text)
-                                            .map(|canonical| canonical == "NaN" || canonical == lit.text)
+                                        tsz_solver::utils::canonicalize_numeric_name(&lit.text).map(
+                                            |canonical| canonical == "NaN" || canonical == lit.text,
+                                        )
                                     })
                                     .unwrap_or(false)
                             } else {
