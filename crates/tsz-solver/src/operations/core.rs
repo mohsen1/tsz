@@ -1603,7 +1603,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .copied()
                     .all(|member| self.is_single_signature_callable_member(member))
             {
-                return CallResult::NotCallable { type_id: union_type };
+                return CallResult::NotCallable {
+                    type_id: union_type,
+                };
             }
 
             match compatibility {
