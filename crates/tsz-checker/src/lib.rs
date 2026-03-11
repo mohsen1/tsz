@@ -95,6 +95,9 @@ mod control_flow_type_guard_tests;
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
+#[path = "../tests/dynamic_import_defer_tests.rs"]
+mod dynamic_import_defer_tests;
+#[cfg(test)]
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]
