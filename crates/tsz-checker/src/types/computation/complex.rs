@@ -1552,10 +1552,8 @@ impl<'a> CheckerState<'a> {
 
         // Resolve the function symbol from the new expression target
         let expr_kind = self.ctx.arena.get(expr_idx)?.kind;
-        let callable_symbol =
-            query::callable_shape_for_type(self.ctx.types, constructor_type).and_then(|shape| {
-                shape.symbol
-            });
+        let callable_symbol = query::callable_shape_for_type(self.ctx.types, constructor_type)
+            .and_then(|shape| shape.symbol);
         let sym_id = if expr_kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             self.ctx
                 .binder

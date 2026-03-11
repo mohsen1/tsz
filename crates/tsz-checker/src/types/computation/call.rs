@@ -554,50 +554,50 @@ impl<'a> CheckerState<'a> {
                 // For example, `(value: string) => U` <: `(value: never) => U`, so
                 // evaluation would reduce the union to just the never-parameterized
                 // callback, losing contextual type information.
-                
+
                 if should_preserve_contextual_application_shape(this.ctx.types, param_type) {
-                        param_type
-                    } else if let Some(members) =
-                        tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
-                    {
-                        let evaluated_members: Vec<_> = members
-                            .iter()
-                            .map(|&m| {
-                                if should_preserve_contextual_application_shape(this.ctx.types, m) {
-                                    m
-                                } else {
-                                    this.evaluate_type_with_env(m)
-                                }
-                            })
-                            .collect();
-                        // If evaluation didn't change any member, preserve the original
-                        // TypeId so that type alias name resolution still works.
-                        if evaluated_members
-                            .iter()
-                            .zip(members.iter())
-                            .all(|(e, m)| e == m)
-                        {
-                            param_type
-                        } else {
-                            let reduced = this.ctx.types.union_literal_reduce(evaluated_members);
-                            // Propagate type alias name mapping to the evaluated TypeId.
-                            // When a union type alias (e.g., `ExoticAnimal = CatDog | ManBearPig`)
-                            // is stored with Lazy members, evaluation resolves each member,
-                            // producing a new union TypeId. Transfer the DefId mapping so
-                            // diagnostics can still display the alias name.
-                            if reduced != param_type
-                                && let Some(def_id) =
-                                    this.ctx.definition_store.find_def_for_type(param_type)
-                            {
-                                this.ctx
-                                    .definition_store
-                                    .register_type_to_def(reduced, def_id);
+                    param_type
+                } else if let Some(members) =
+                    tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
+                {
+                    let evaluated_members: Vec<_> = members
+                        .iter()
+                        .map(|&m| {
+                            if should_preserve_contextual_application_shape(this.ctx.types, m) {
+                                m
+                            } else {
+                                this.evaluate_type_with_env(m)
                             }
-                            reduced
-                        }
+                        })
+                        .collect();
+                    // If evaluation didn't change any member, preserve the original
+                    // TypeId so that type alias name resolution still works.
+                    if evaluated_members
+                        .iter()
+                        .zip(members.iter())
+                        .all(|(e, m)| e == m)
+                    {
+                        param_type
                     } else {
-                        this.evaluate_type_with_env(param_type)
+                        let reduced = this.ctx.types.union_literal_reduce(evaluated_members);
+                        // Propagate type alias name mapping to the evaluated TypeId.
+                        // When a union type alias (e.g., `ExoticAnimal = CatDog | ManBearPig`)
+                        // is stored with Lazy members, evaluation resolves each member,
+                        // producing a new union TypeId. Transfer the DefId mapping so
+                        // diagnostics can still display the alias name.
+                        if reduced != param_type
+                            && let Some(def_id) =
+                                this.ctx.definition_store.find_def_for_type(param_type)
+                        {
+                            this.ctx
+                                .definition_store
+                                .register_type_to_def(reduced, def_id);
+                        }
+                        reduced
                     }
+                } else {
+                    this.evaluate_type_with_env(param_type)
+                }
             };
         // Two-pass argument collection for generic calls is only needed when at least one
         // argument is contextually sensitive (e.g. lambdas/object literals needing contextual type).

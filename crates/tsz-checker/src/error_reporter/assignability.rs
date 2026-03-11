@@ -148,7 +148,11 @@ impl<'a> CheckerState<'a> {
                         left_order.cmp(&right_order),
                         left_pos.cmp(&right_pos),
                     ) {
-                        (true, true, std::cmp::Ordering::Equal, pos_ord) if pos_ord != std::cmp::Ordering::Equal => pos_ord,
+                        (true, true, std::cmp::Ordering::Equal, pos_ord)
+                            if pos_ord != std::cmp::Ordering::Equal =>
+                        {
+                            pos_ord
+                        }
                         (true, true, ord, _) if ord != std::cmp::Ordering::Equal => ord,
                         (true, false, _, _) => std::cmp::Ordering::Less,
                         (false, true, _, _) => std::cmp::Ordering::Greater,
