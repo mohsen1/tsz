@@ -136,6 +136,20 @@ pub struct ParserState {
     /// number of following module-closing braces in the token stream so outer
     /// list recovery can report them as stray braces.
     pub(crate) deferred_module_close_braces: u32,
+    /// When malformed import-attribute recovery breaks a type constituent,
+    /// stop consuming `&`-continued intersections so the tail falls back to
+    /// statement-level recovery like TypeScript.
+    pub(crate) abort_intersection_continuation: bool,
+    /// After malformed import-attribute recovery inside an intersection type,
+    /// parse the next `import()` options object with generic expression
+    /// grammar so its diagnostics degrade like TypeScript's fallback path.
+    pub(crate) fallback_import_type_options_once: bool,
+    /// Parse `import()` options using type-import attribute grammar instead of
+    /// generic object-literal expression grammar.
+    pub(crate) in_import_type_options_context: bool,
+    /// Malformed type-import attribute recovery consumed the import call tail
+    /// through `).Name`, so `parse_import_expression` must not expect `)` again.
+    pub(crate) import_attribute_tail_recovered: bool,
 }
 
 impl ParserState {
@@ -174,6 +188,10 @@ impl ParserState {
             seen_module_indicator: false,
             last_named_imports_consumed_closing_brace: false,
             deferred_module_close_braces: 0,
+            abort_intersection_continuation: false,
+            fallback_import_type_options_once: false,
+            in_import_type_options_context: false,
+            import_attribute_tail_recovered: false,
         }
     }
 
@@ -192,6 +210,10 @@ impl ParserState {
         self.seen_module_indicator = false;
         self.last_named_imports_consumed_closing_brace = false;
         self.deferred_module_close_braces = 0;
+        self.abort_intersection_continuation = false;
+        self.fallback_import_type_options_once = false;
+        self.in_import_type_options_context = false;
+        self.import_attribute_tail_recovered = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded

@@ -275,6 +275,15 @@ impl ParserState {
         // Parse first constituent
         let first = self.parse_primary_type();
 
+        let mut fallback_next_import_type_options = false;
+        if self.abort_intersection_continuation {
+            self.abort_intersection_continuation = false;
+            if !self.is_token(SyntaxKind::AmpersandToken) {
+                return first;
+            }
+            fallback_next_import_type_options = true;
+        }
+
         // Check for & to form intersection
         if !has_leading_amp && !self.is_token(SyntaxKind::AmpersandToken) {
             return first;
@@ -283,7 +292,10 @@ impl ParserState {
         let mut types = vec![first];
 
         while self.parse_optional(SyntaxKind::AmpersandToken) {
+            self.fallback_import_type_options_once = fallback_next_import_type_options;
             types.push(self.parse_primary_type());
+            self.fallback_import_type_options_once = false;
+            fallback_next_import_type_options = false;
         }
 
         let end_pos = self.token_end();
@@ -781,7 +793,10 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Parse the import call: import("./module")
+        let saved_import_type_options_context = self.in_import_type_options_context;
+        self.in_import_type_options_context = true;
         let argument = self.parse_import_expression();
+        self.in_import_type_options_context = saved_import_type_options_context;
 
         // Check that the argument is a string literal (TS1141)
         if let Some(call_node) = self.arena.get(argument)
