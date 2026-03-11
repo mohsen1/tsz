@@ -264,21 +264,24 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-            return composite
-                .types
-                .nodes
-                .iter()
-                .any(|&member| self.type_node_contains_abstract_constructor(member, visited_aliases));
+            return composite.types.nodes.iter().any(|&member| {
+                self.type_node_contains_abstract_constructor(member, visited_aliases)
+            });
         }
 
         if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
-            return self.type_node_contains_abstract_constructor(wrapped.type_node, visited_aliases);
+            return self
+                .type_node_contains_abstract_constructor(wrapped.type_node, visited_aliases);
         }
 
         if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
             let Some(sym_id) = self
                 .resolve_identifier_symbol(type_ref.type_name)
-                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, type_ref.type_name))
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, type_ref.type_name)
+                })
             else {
                 return false;
             };
@@ -305,7 +308,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(alias) = self.ctx.arena.get_type_alias(decl_node)
-                    && self.type_node_contains_abstract_constructor(alias.type_node, visited_aliases)
+                    && self
+                        .type_node_contains_abstract_constructor(alias.type_node, visited_aliases)
                 {
                     return true;
                 }
