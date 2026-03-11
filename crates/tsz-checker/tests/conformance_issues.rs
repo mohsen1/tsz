@@ -5453,6 +5453,28 @@ eval = 1;
     );
 }
 
+#[test]
+fn test_ts1100_eval_increment_strict_mode_reports_assignment_errors() {
+    let source = r#"
+"use strict";
+eval++;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        has_error(&diagnostics, 1100),
+        "Expected TS1100 for strict-mode eval increment. Got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2630),
+        "Expected TS2630 for strict-mode eval increment. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2356),
+        "Did not expect TS2356 for strict-mode eval increment. Got: {diagnostics:?}"
+    );
+}
+
 // =========================================================================
 // Iterable spread in function calls — TS2556 / TS2345
 // =========================================================================

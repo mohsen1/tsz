@@ -889,6 +889,11 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
             {
+                self.check_strict_mode_eval_or_arguments_assignment(unary.operand);
+                if self.check_function_assignment(unary.operand) {
+                    return TypeId::NUMBER;
+                }
+
                 // Get operand type for validation.
                 // TSC checks arithmetic type BEFORE lvalue — if the type check
                 // fails (TS2356), the lvalue check (TS2357) is skipped.
