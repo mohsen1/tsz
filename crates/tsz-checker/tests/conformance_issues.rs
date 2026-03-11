@@ -7798,6 +7798,39 @@ const foo: Foo = {
 }
 
 #[test]
+fn test_conditional_return_with_any_branch_reports_non_any_failing_branch() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare function getAny(): any;
+
+function return2(x: string): string {
+    return x.startsWith("a") ? getAny() : 1;
+}
+
+const return5 = (x: string): string => x.startsWith("a") ? getAny() : 1;
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ESNext,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let branch_errors = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type 'string'")
+        })
+        .count();
+
+    assert_eq!(
+        branch_errors, 2,
+        "Expected conditional return branches to report the non-any branch mismatch.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type_reports_ts2538_for_any_index() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
