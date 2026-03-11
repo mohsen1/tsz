@@ -69,7 +69,10 @@ fn parse_trailing_comma_before_from_recovers_as_next_statement() {
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert_eq!(
-        codes.iter().filter(|&&code| code == diagnostic_codes::EXPECTED).count(),
+        codes
+            .iter()
+            .filter(|&&code| code == diagnostic_codes::EXPECTED)
+            .count(),
         2,
         "expected two TS1005 diagnostics (`from` and `;`), got {diags:?}"
     );

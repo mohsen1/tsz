@@ -33,11 +33,7 @@ impl<'a> NarrowingContext<'a> {
     /// This is the negation of `narrow_by_typeof`.
     /// For example, narrowing `string | number` with `typeof "string"` (sense=false)
     /// yields `number`.
-    pub fn narrow_by_typeof_negation(
-        &self,
-        source_type: TypeId,
-        typeof_result: &str,
-    ) -> TypeId {
+    pub fn narrow_by_typeof_negation(&self, source_type: TypeId, typeof_result: &str) -> TypeId {
         // For each typeof result, we exclude matching types
         let excluded = match typeof_result {
             "string" => TypeId::STRING,
