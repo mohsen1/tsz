@@ -81,6 +81,98 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
+    let source = r#"
+abstract class AbstractClass {
+    abstract prop: string;
+    abstract cb: (s: string) => void;
+}
+
+abstract class DerivedAbstractClass extends AbstractClass {
+    cb = (s: string) => {};
+
+    constructor() {
+        super();
+        this.cb(this.prop.toLowerCase());
+    }
+}
+
+class Implementation extends DerivedAbstractClass {
+    prop = "";
+
+    constructor() {
+        super();
+        this.cb(this.prop);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2715_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2715)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2715_messages
+            .iter()
+            .any(|message| message.contains("Abstract property 'prop' in class 'AbstractClass'")),
+        "Expected TS2715 for inherited abstract prop access. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2715_messages
+            .iter()
+            .all(|message| !message.contains("Abstract property 'cb'")),
+        "Concrete overrides must suppress inherited abstract cb diagnostics. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_destructuring_from_this_in_constructor_reports_ts2715_per_property() {
+    let source = r#"
+abstract class C1 {
+    abstract x: string;
+    abstract y: string;
+
+    constructor() {
+        let { x, y: y1 } = this;
+        ({ x, y: y1, "y": y1 } = this);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2715_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2715)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2715_messages.len(),
+        5,
+        "Expected one TS2715 per destructured abstract property occurrence. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2715_messages
+            .iter()
+            .filter(|message| message.contains("Abstract property 'x' in class 'C1'"))
+            .count(),
+        2,
+        "Expected two TS2715 diagnostics for x destructuring. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2715_messages
+            .iter()
+            .filter(|message| message.contains("Abstract property 'y' in class 'C1'"))
+            .count(),
+        3,
+        "Expected three TS2715 diagnostics for y destructuring. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_union_display_collapses_members_to_enum_name() {
     let source = r#"
 namespace X {

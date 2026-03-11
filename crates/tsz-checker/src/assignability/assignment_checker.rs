@@ -14,6 +14,79 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn report_abstract_properties_in_destructuring_assignment(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) {
+        let right_idx = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+        if !self.is_this_expression(right_idx) || self.ctx.function_depth != 0 {
+            return;
+        }
+
+        let Some(class_idx) = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx) else {
+            return;
+        };
+        if !self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|info| info.in_constructor)
+        {
+            return;
+        }
+
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+        if left_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+
+        let Some(obj) = self.ctx.arena.get_literal_expr(left_node) else {
+            return;
+        };
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            let (prop_name, error_node) = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                (
+                    self.get_property_name_resolved(prop.name),
+                    prop.name,
+                )
+            } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
+                    (
+                        self.ctx
+                            .arena
+                            .get(shorthand.name)
+                            .and_then(|node| self.ctx.arena.get_identifier(node))
+                            .map(|ident| ident.escaped_text.clone()),
+                        shorthand.name,
+                    )
+                } else {
+                    (None, NodeIndex::NONE)
+                }
+            } else {
+                (None, NodeIndex::NONE)
+            };
+
+            if let Some(prop_name) = prop_name
+                && let Some(declaring_class_name) =
+                    self.find_abstract_property_declaring_class(class_idx, &prop_name)
+            {
+                self.error_abstract_property_in_constructor(
+                    &prop_name,
+                    &declaring_class_name,
+                    error_node,
+                );
+            }
+        }
+    }
+
     // =========================================================================
     // Assignment Operator Utilities
     // =========================================================================
@@ -600,6 +673,10 @@ impl<'a> CheckerState<'a> {
             // property/element individually, which correctly handles private
             // members and other access-controlled properties.
             let mut check_assignability = !is_destructuring;
+
+            if is_destructuring {
+                self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
+            }
 
             if check_assignability {
                 let widened_left = tsz_solver::widening::widen_type(self.ctx.types, left_type);
