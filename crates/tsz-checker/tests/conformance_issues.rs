@@ -6184,6 +6184,30 @@ lf.Order.ASC = 1;
 }
 
 #[test]
+fn test_const_enum_element_access_requires_string_literal_index() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+const enum G {
+    A = 1,
+    B = 2,
+}
+
+var z1 = G[G.A];
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2476),
+        "Expected TS2476 for const enum element access with a non-string-literal index.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_modules_imported_non_literal_string_enum_member_uses_ts18055() {
     let diagnostics = compile_two_files_get_diagnostics_with_options(
         r#"export const bar = "bar";"#,
