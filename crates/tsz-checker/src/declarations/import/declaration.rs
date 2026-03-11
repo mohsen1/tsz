@@ -482,16 +482,6 @@ impl<'a> CheckerState<'a> {
                 );
         }
 
-        if let Some(binders) = &self.ctx.all_binders
-            && binders.iter().any(|binder| {
-                binder.declared_modules.contains(module_name)
-                    || binder.shorthand_ambient_modules.contains(module_name)
-            })
-        {
-            tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
-            return;
-        }
-
         if self.would_create_cycle(module_name) {
             tracing::trace!(%module_name, "check_import_declaration: cycle detected");
             let cycle_path: Vec<&str> = self
@@ -519,15 +509,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.import_resolution_stack.push(module_name.clone());
-
-        // Check ambient modules BEFORE resolution errors.
-        // `declare module "x"` in .d.ts files should suppress TS2307 even when
-        // file-based resolution fails (matching check_import_equals_declaration).
-        if self.is_ambient_module_match(module_name) {
-            tracing::trace!(%module_name, "check_import_declaration: ambient module match, returning");
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
 
         // Node.js built-in modules (e.g. "fs", "path", "node:fs") should not
         // trigger TS2307/TS2882 when using Node module resolution. TSC resolves
@@ -586,6 +567,25 @@ impl<'a> CheckerState<'a> {
                 self.ctx.import_resolution_stack.pop();
                 return;
             }
+        }
+
+        // Ambient module declarations still suppress TS2307 when the driver
+        // did not report a concrete resolution failure for this import.
+        if self.is_ambient_module_match(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: ambient module match, returning");
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        if let Some(binders) = &self.ctx.all_binders
+            && binders.iter().any(|binder| {
+                binder.declared_modules.contains(module_name)
+                    || binder.shorthand_ambient_modules.contains(module_name)
+            })
+        {
+            tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
+            self.ctx.import_resolution_stack.pop();
+            return;
         }
 
         // For side-effect imports (import "module") in default mode (no_unchecked_side_effect_imports=false),
