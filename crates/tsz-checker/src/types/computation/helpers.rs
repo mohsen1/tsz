@@ -792,7 +792,8 @@ impl<'a> CheckerState<'a> {
                 //    which is a grammar error (TS17006). Reporting "always truthy" on top
                 //    would be a false positive.
                 if operand_type != TypeId::ERROR && !self.is_lhs_of_exponentiation(idx) {
-                    self.check_truthy_or_falsy_with_type(unary.operand, operand_type);
+                    // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
+                    self.check_truthy_or_falsy_with_type_no_enum(unary.operand, operand_type);
                 }
                 TypeId::BOOLEAN
             }

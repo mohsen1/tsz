@@ -425,6 +425,16 @@ Example: deleteExpressionMustBeOptional.ts
   `objectLiteralEnumPropertyNames`, and others where namespace-local variables or enum
   objects were incorrectly compared against global lib declarations.
 
+- ~~False positive TS2845 for enum members in `||`/`&&`/`!` contexts~~ **FIXED** (2026-03-11)
+  Fix: `check_truthy_or_falsy_with_type` in `callable_truthiness.rs` emitted TS2845
+  "This condition will always return" for enum members used as `||`/`&&` left operands
+  and `!` operands. tsc only emits TS2845 for enum members in condition contexts
+  (if/while/for/ternary), not in logical operator contexts. Added
+  `check_truthy_or_falsy_with_type_no_enum` variant that skips the enum member check,
+  used by `||`/`&&` (binary.rs) and `!` (helpers.rs) callers.
+  Fixes 2 conformance tests (`computedPropertyNames47_ES6`,
+  `logicalNotOperatorWithEnumType`).
+
 ---
 
 ### RC-5: Entity Name Resolution (~6%)

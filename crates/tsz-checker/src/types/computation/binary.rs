@@ -419,7 +419,8 @@ impl<'a> CheckerState<'a> {
 
             // Logical AND: `a && b`
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
-                self.check_truthy_or_falsy_with_type(left_idx, left_type);
+                // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
+                self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
                 // TS2774: check for non-nullable callable tested for truthiness
                 // Only check at the top-level binary expression (not nested ones)
                 // to avoid duplicate diagnostics when this is inside an if-condition.
@@ -452,7 +453,8 @@ impl<'a> CheckerState<'a> {
             // Logical OR: `a || b`
             if op_kind == SyntaxKind::BarBarToken as u16 {
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
-                self.check_truthy_or_falsy_with_type(left_idx, left_type);
+                // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
+                self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
 
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
