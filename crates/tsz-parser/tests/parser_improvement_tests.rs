@@ -1,6 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
 fn test_index_signature_with_modifier_emits_ts1071() {
@@ -960,6 +961,27 @@ export const a: import("./test1").T<typeof import("./test2").theme> = null as an
         parse_errors,
         0,
         "Expected no parser errors for import type with generics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_import_type_with_invalid_import_attribute_key_reports_ts1478() {
+    let source = r#"
+const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_OR_STRING_LITERAL_EXPECTED),
+        "Expected TS1478 for invalid import-attribute key, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "Expected tail recovery to surface TS1128 diagnostics, got {:?}",
         parser.get_diagnostics()
     );
 }
