@@ -267,6 +267,9 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/utilities/jsdoc.rs",
             "crates/tsz-checker/src/state/variable_checking/core.rs",
+            "crates/tsz-checker/src/dispatch.rs",
+            "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
+            "crates/tsz-checker/src/state/type_analysis/computed.rs",
         },
     ),
 ]

@@ -606,10 +606,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .is_some_and(|jsdoc| {
                                 !CheckerState::jsdoc_type_tag_declares_callable(jsdoc)
-                                    && !crate::query_boundaries::state::checking::is_callable_type(
-                                        checker.ctx.types,
-                                        evaluated_type,
-                                    )
+                                    && !query::is_callable_type(checker.ctx.types, evaluated_type)
                             });
                     let suppress_initializer_context = evaluated_type != TypeId::ANY
                         && checker.suppress_initializer_contextual_type_for_generic_call(
