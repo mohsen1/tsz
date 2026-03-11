@@ -1,5 +1,6 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
+use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -8,6 +9,103 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
+        let factory = self.ctx.types.factory();
+        match value {
+            JsonValue::Null => TypeId::NULL,
+            JsonValue::Bool(_) => TypeId::BOOLEAN,
+            JsonValue::Number(_) => TypeId::NUMBER,
+            JsonValue::String(_) => TypeId::STRING,
+            JsonValue::Array(elements) => {
+                let element_types: Vec<TypeId> = elements
+                    .iter()
+                    .map(|element| self.json_value_type(element))
+                    .collect();
+                let element_type = match element_types.as_slice() {
+                    [] => TypeId::NEVER,
+                    [single] => *single,
+                    _ => factory.union(element_types),
+                };
+                factory.array(element_type)
+            }
+            JsonValue::Object(entries) => {
+                let mut props = Vec::with_capacity(entries.len());
+                for (declaration_order, (name, entry_value)) in entries.iter().enumerate() {
+                    let prop_type = self.json_value_type(entry_value);
+                    props.push(PropertyInfo {
+                        name: self.ctx.types.intern_string(name),
+                        type_id: prop_type,
+                        write_type: prop_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: declaration_order as u32,
+                    });
+                }
+                factory.object(props)
+            }
+        }
+    }
+
+    pub(crate) fn json_module_type_for_module(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        if !self.ctx.compiler_options.resolve_json_module {
+            return None;
+        }
+
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let source_file = target_arena.source_files.first()?;
+        if !source_file.file_name.ends_with(".json") {
+            return None;
+        }
+
+        let source_text = source_file.text.trim();
+        if source_text.is_empty() {
+            return Some(self.ctx.types.factory().object(Vec::new()));
+        }
+
+        let parsed = serde_json::from_str::<JsonValue>(source_text).ok()?;
+        Some(self.json_value_type(&parsed))
+    }
+
+    pub(crate) fn json_module_namespace_type_for_module(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let json_type = self.json_module_type_for_module(module_name, source_file_idx)?;
+        let namespace_type = self.ctx.types.factory().object(vec![PropertyInfo {
+            name: self.ctx.types.intern_string("default"),
+            type_id: json_type,
+            write_type: json_type,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }]);
+        self.ctx.namespace_module_names.insert(
+            namespace_type,
+            self.imported_namespace_display_module_name(module_name),
+        );
+        Some(namespace_type)
+    }
+
     fn is_undefined_like_commonjs_rhs(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;

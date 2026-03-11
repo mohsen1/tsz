@@ -420,6 +420,61 @@ const y = x.get("a");
 }
 
 #[test]
+fn test_check_files_parallel_require_empty_json_module_reports_ts2339() {
+    let files = vec![
+        (
+            "/file1.ts".to_string(),
+            r#"
+import emptyContent = require("./empty-content.json");
+let x = emptyContent.a;
+import emptyObject = require("./empty-object.json");
+if (x) {
+    let b = emptyObject.b;
+    x = (emptyContent.b === b);
+}
+"#
+            .to_string(),
+        ),
+        ("/empty-content.json".to_string(), "".to_string()),
+        ("/empty-object.json".to_string(), "{ }".to_string()),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            resolve_json_module: true,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "/file1.ts")
+        .expect("expected importer file result");
+    let codes: Vec<u32> = file.diagnostics.iter().map(|diag| diag.code).collect();
+    assert_eq!(
+        codes,
+        vec![2339, 2339, 2339],
+        "Expected exactly TS2339 diagnostics for empty JSON module property reads. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+    for diagnostic in &file.diagnostics {
+        assert!(
+            diagnostic
+                .message_text
+                .contains("does not exist on type '{}'."),
+            "Expected empty JSON modules to be typed as '{{}}'. Actual diagnostic: {diagnostic:#?}"
+        );
+    }
+}
+
+#[test]
 fn test_check_files_parallel_default_import_of_object_literal_keeps_export_type() {
     let files = vec![
         (

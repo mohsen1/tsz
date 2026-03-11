@@ -574,7 +574,9 @@ impl<'a> CheckerState<'a> {
             || file_name.ends_with(".jsx")
             || file_name.ends_with(".mjs")
             || file_name.ends_with(".cjs");
-        if is_js_like {
+        let is_json_module =
+            file_name.ends_with(".json") && self.ctx.compiler_options.resolve_json_module;
+        if is_js_like || is_json_module {
             return;
         }
         let source_file_name = source_file.file_name.clone();
