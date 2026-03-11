@@ -10055,7 +10055,10 @@ fn test_union_generic_single_signature_members_require_shared_call_signature() {
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
 
     let generic_number = interner.function(FunctionShape {
-        params: vec![ParamInfo::required(interner.intern_string("a"), TypeId::NUMBER)],
+        params: vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::NUMBER,
+        )],
         this_type: None,
         return_type: TypeId::VOID,
         type_params: vec![TypeParamInfo {
@@ -10070,7 +10073,10 @@ fn test_union_generic_single_signature_members_require_shared_call_signature() {
     });
 
     let generic_string = interner.function(FunctionShape {
-        params: vec![ParamInfo::required(interner.intern_string("a"), TypeId::STRING)],
+        params: vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::STRING,
+        )],
         this_type: None,
         return_type: TypeId::VOID,
         type_params: vec![TypeParamInfo {
