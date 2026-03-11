@@ -1010,6 +1010,11 @@ impl<'a> CheckerState<'a> {
                                     let placeholder_method_type = if method_name_atom
                                         == current_method_name_atom
                                     {
+                                        // Push method's type parameters to scope so that
+                                        // parameter type annotations like `x: T` can resolve
+                                        // `T` without emitting false TS2304.
+                                        let (_, tp_updates) =
+                                            self.push_type_parameters(&method.type_parameters);
                                         let params = method
                                             .parameters
                                             .nodes
@@ -1047,22 +1052,25 @@ impl<'a> CheckerState<'a> {
                                                 })
                                             })
                                             .collect();
-                                        self.ctx.types.factory().callable(CallableShape {
-                                            call_signatures: vec![CallSignature {
-                                                type_params: Vec::new(),
-                                                params,
-                                                this_type: None,
-                                                return_type: TypeId::VOID,
-                                                type_predicate: None,
-                                                is_method: true,
-                                            }],
-                                            construct_signatures: Vec::new(),
-                                            properties: Vec::new(),
-                                            string_index: None,
-                                            number_index: None,
-                                            symbol: None,
-                                            is_abstract: false,
-                                        })
+                                        let placeholder =
+                                            self.ctx.types.factory().callable(CallableShape {
+                                                call_signatures: vec![CallSignature {
+                                                    type_params: Vec::new(),
+                                                    params,
+                                                    this_type: None,
+                                                    return_type: TypeId::VOID,
+                                                    type_predicate: None,
+                                                    is_method: true,
+                                                }],
+                                                construct_signatures: Vec::new(),
+                                                properties: Vec::new(),
+                                                string_index: None,
+                                                number_index: None,
+                                                symbol: None,
+                                                is_abstract: false,
+                                            });
+                                        self.pop_type_parameters(tp_updates);
+                                        placeholder
                                     } else {
                                         self.ctx.types.factory().callable(CallableShape {
                                             call_signatures: vec![CallSignature {
