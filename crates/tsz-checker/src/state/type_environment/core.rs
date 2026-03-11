@@ -408,6 +408,13 @@ impl<'a> CheckerState<'a> {
                     optional_modifier: mapped.optional_modifier,
                 };
                 let mapped_type_id = self.ctx.types.mapped(inst_mapped);
+                if matches!(
+                    self.ctx.types.lookup(evaluated_arg),
+                    Some(tsz_solver::TypeData::Intersection(_) | tsz_solver::TypeData::Union(_))
+                ) && self.contains_type_parameters_cached(evaluated_arg)
+                {
+                    return mapped_type_id;
+                }
                 return self.evaluate_type_with_env(mapped_type_id);
             }
         }
