@@ -765,6 +765,67 @@ const x = (a) => a + 1;
 }
 
 #[test]
+fn test_js_commonjs_deep_exports_assignment_reports_ts2339_against_current_module_surface() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        "exports.a.b.c = 0;",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2339 = diagnostic_message(&relevant, 2339)
+        .expect("expected TS2339 for deep assignment through unresolved exports member");
+
+    assert_eq!(relevant.len(), 1, "unexpected diagnostics: {relevant:#?}");
+    assert!(
+        ts2339.contains("Property 'a' does not exist on type 'typeof import(\"a\")'."),
+        "Expected TS2339 to target the current file CommonJS namespace surface. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_direct_exports_members_remain_visible() {
+    let source = r#"
+exports.x = 0;
+{
+    exports.Cls = function() {
+        this.x = 0;
+    }
+}
+
+const instance = new exports.Cls();
+exports.x;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected direct CommonJS export member writes to stay visible. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_callback_typedef_contextually_types_closure_parameters() {
     let source = r#"
 /** @callback Sid
