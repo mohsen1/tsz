@@ -83,9 +83,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if source_param.rest != pattern_param.rest {
                 return false;
             }
-            let allow_optional_source_match = strip_nullish_optionals
-                && source_param.optional
-                && !pattern_param.optional;
+            let allow_optional_source_match =
+                strip_nullish_optionals && source_param.optional && !pattern_param.optional;
             if !allow_optional_source_match && source_param.optional != pattern_param.optional {
                 return false;
             }
