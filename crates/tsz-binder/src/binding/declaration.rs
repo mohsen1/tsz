@@ -1806,13 +1806,18 @@ impl BinderState {
                     .is_some_and(|ident| ident.escaped_text == "undefined");
             }
 
-            if node.kind != syntax_kind_ext::VOID_EXPRESSION {
+            if node.kind != syntax_kind_ext::VOID_EXPRESSION
+                && node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            {
                 return false;
             }
 
             let Some(unary) = arena.get_unary_expr(node) else {
                 return false;
             };
+            if unary.operator != SyntaxKind::VoidKeyword as u16 {
+                return false;
+            }
             let Some(expr) = arena.get(unary.operand) else {
                 return false;
             };

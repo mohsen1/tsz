@@ -8,6 +8,43 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn is_undefined_like_commonjs_rhs(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "undefined");
+        }
+
+        if node.kind != syntax_kind_ext::VOID_EXPRESSION
+            && node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::VoidKeyword as u16 {
+            return false;
+        }
+        let Some(expr) = self.ctx.arena.get(unary.operand) else {
+            return false;
+        };
+
+        matches!(expr.kind, k if k == SyntaxKind::NumericLiteral as u16)
+            && self
+                .ctx
+                .arena
+                .get_literal(expr)
+                .is_some_and(|lit| lit.text == "0")
+    }
+
     pub(crate) fn current_file_commonjs_namespace_type(&mut self) -> TypeId {
         self.current_file_commonjs_namespace_type_with_display_extension(false)
     }
@@ -74,6 +111,7 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::BINARY_EXPRESSION
                 && let Some(binary) = self.ctx.arena.get_binary_expr(node)
                 && binary.operator_token == SyntaxKind::EqualsToken as u16
+                && !self.is_undefined_like_commonjs_rhs(binary.right)
                 && let Some(name) =
                     self.current_file_commonjs_export_target_member_name(binary.left)
             {
@@ -424,6 +462,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+            if rhs_type == TypeId::UNDEFINED {
+                continue;
+            }
             props.push(tsz_solver::PropertyInfo {
                 name: name_atom,
                 type_id: rhs_type,

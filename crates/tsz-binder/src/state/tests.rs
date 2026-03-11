@@ -601,6 +601,7 @@ fn count_flow_nodes_with_flags(binder: &BinderState, flags: u32) -> usize {
         .count()
 }
 
+
 // =============================================================================
 // 1. HOISTING RULES
 // =============================================================================
@@ -2717,6 +2718,37 @@ foo.baz = 'hello';
     }
     // Note: expando tracking may not work for all patterns in all cases,
     // so we don't assert that the map is non-empty unconditionally.
+}
+
+#[test]
+fn void_zero_expando_assignments_are_skipped() {
+    let source = r#"
+exports.k = void 0;
+var o = {};
+o.y = void 0;
+"#;
+
+    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(
+        !binder
+            .expando_properties
+            .get("exports")
+            .is_some_and(|props| props.contains("k")),
+        "unexpected exports expando tracking: {:?}",
+        binder.expando_properties
+    );
+    assert!(
+        !binder
+            .expando_properties
+            .get("o")
+            .is_some_and(|props| props.contains("y")),
+        "unexpected object expando tracking: {:?}",
+        binder.expando_properties
+    );
 }
 
 // =============================================================================
