@@ -424,6 +424,34 @@ class Baz {
 }
 
 #[test]
+fn test_jsdoc_param_function_type_without_return_reports_ts7014() {
+    let source = r#"
+/** @param {function(...[*])} callback */
+function g(callback) {
+    callback([1], [2], [3]);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7014),
+        "Expected TS7014 for JSDoc function type without return annotation. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_assignment_preserves_numeric_literal_source_display() {
     let source = r#"
 enum E {
