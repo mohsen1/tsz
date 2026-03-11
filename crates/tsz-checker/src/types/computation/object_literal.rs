@@ -372,6 +372,12 @@ impl<'a> CheckerState<'a> {
         {
             return TypeId::UNKNOWN;
         }
+        if let Some(tsz_solver::TypeData::TypeParameter(info) | tsz_solver::TypeData::Infer(info)) =
+            self.ctx.types.lookup(property_type)
+            && let Some(default) = info.default
+        {
+            return default;
+        }
         property_type
     }
 

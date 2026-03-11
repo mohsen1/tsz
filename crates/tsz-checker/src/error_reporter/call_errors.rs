@@ -60,13 +60,17 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(TypeId, TypeId)> {
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let evaluated_target = self.judge_evaluate(resolved_target);
+        let contextual_target = self.evaluate_contextual_type(target_type);
         let mut contextual_property_type = None;
         let mut env_property_type = None;
-        for candidate in [target_type, resolved_target, evaluated_target] {
-            if let Some(property_type) = self
-                .ctx
-                .types
-                .contextual_property_type(candidate, prop_name)
+        for candidate in [
+            contextual_target,
+            evaluated_target,
+            resolved_target,
+            target_type,
+        ] {
+            if let Some(property_type) =
+                self.contextual_object_literal_property_type(candidate, prop_name)
                 && self.should_prefer_property_target_type(contextual_property_type, property_type)
             {
                 contextual_property_type = Some(property_type);
@@ -83,18 +87,23 @@ impl<'a> CheckerState<'a> {
 
         if let Some(type_id) = env_property_type.or(contextual_property_type) {
             let prop_atom = self.ctx.types.intern_string(prop_name);
-            let declared_optional_type = [target_type, resolved_target, evaluated_target]
-                .into_iter()
-                .filter_map(|candidate| {
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
-                })
-                .find_map(|shape| {
-                    shape
-                        .properties
-                        .iter()
-                        .find(|p| p.name == prop_atom && p.optional)
-                        .map(|p| p.type_id)
-                });
+            let declared_optional_type = [
+                contextual_target,
+                evaluated_target,
+                resolved_target,
+                target_type,
+            ]
+            .into_iter()
+            .filter_map(|candidate| {
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+            })
+            .find_map(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == prop_atom && p.optional)
+                    .map(|p| p.type_id)
+            });
 
             let effective_type =
                 if self.should_prefer_property_target_type(contextual_property_type, type_id) {

@@ -577,6 +577,7 @@ impl<'a> CheckerState<'a> {
         if is_generic_call {
             self.ctx.preserve_literal_types = true;
         }
+        let mut non_generic_contextual_types: Option<Vec<Option<TypeId>>> = None;
         let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
@@ -1515,6 +1516,7 @@ impl<'a> CheckerState<'a> {
                     ))
                 })
                 .collect();
+            non_generic_contextual_types = Some(single_pass_contextual_types.clone());
             self.collect_call_argument_types_with_context(
                 args,
                 |i, arg_count| {
@@ -1606,6 +1608,43 @@ impl<'a> CheckerState<'a> {
                     actual_this_type,
                 )
             };
+
+        if !is_generic_call
+            && let CallResult::ArgumentTypeMismatch {
+                index,
+                fallback_return,
+                ..
+            } = result.clone()
+            && let Some(expected) = non_generic_contextual_types
+                .as_ref()
+                .and_then(|types| types.get(index).copied().flatten())
+                .map(|expected| self.evaluate_contextual_type(expected))
+            && let Some(actual) = arg_types.get(index).copied()
+        {
+            let fresh_subtype = assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected);
+            if fresh_subtype {
+                if let Some(&arg_idx) = args.get(index)
+                    && self
+                        .ctx
+                        .arena
+                        .get(arg_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                    && expected != TypeId::ANY
+                    && expected != TypeId::UNKNOWN
+                    && !is_type_parameter_type(self.ctx.types, expected)
+                {
+                    self.check_object_literal_excess_properties(actual, expected, arg_idx);
+                }
+                let recovered_return = if fallback_return != TypeId::ERROR {
+                    Some(fallback_return)
+                } else {
+                    assign_query::get_function_return_type(self.ctx.types, callee_type_for_call)
+                };
+                if let Some(return_type) = recovered_return {
+                    result = CallResult::Success(return_type);
+                }
+            }
+        }
 
         let should_retry_generic_call = if let Some(ctx_type) = self.ctx.contextual_type {
             match &result {
