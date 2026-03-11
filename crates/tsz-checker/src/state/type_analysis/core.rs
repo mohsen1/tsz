@@ -17,6 +17,122 @@ type TypeParamPushResult = (
 );
 
 impl<'a> CheckerState<'a> {
+    // Nested generic declarations can be re-evaluated out of context (for example during
+    // application-type expansion), so recover the nearest enclosing generic scope when the
+    // current type-parameter list is missing its outer captures.
+    fn maybe_push_enclosing_type_parameters(
+        &mut self,
+        type_parameters: &tsz_parser::parser::NodeList,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        let Some(&first_param_idx) = type_parameters.nodes.first() else {
+            return Vec::new();
+        };
+
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(first_param_idx)
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
+
+        let mut depth = 0;
+        while current.is_some() && depth < 64 {
+            depth += 1;
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if !current.is_some() {
+                break;
+            }
+
+            let maybe_enclosing_type_params =
+                self.ctx
+                    .arena
+                    .get(current)
+                    .and_then(|parent| match parent.kind {
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_interface(parent)
+                            .and_then(|iface| iface.type_parameters.clone()),
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_type_alias(parent)
+                            .and_then(|type_alias| type_alias.type_parameters.clone()),
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || k == syntax_kind_ext::ARROW_FUNCTION =>
+                        {
+                            self.ctx
+                                .arena
+                                .get_function(parent)
+                                .and_then(|func| func.type_parameters.clone())
+                        }
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(parent)
+                            .and_then(|method| method.type_parameters.clone()),
+                        k if k == syntax_kind_ext::METHOD_SIGNATURE
+                            || k == syntax_kind_ext::CALL_SIGNATURE
+                            || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                        {
+                            self.ctx
+                                .arena
+                                .get_signature(parent)
+                                .and_then(|sig| sig.type_parameters.clone())
+                        }
+                        k if k == syntax_kind_ext::FUNCTION_TYPE
+                            || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+                        {
+                            self.ctx
+                                .arena
+                                .get_function_type(parent)
+                                .and_then(|func| func.type_parameters.clone())
+                        }
+                        _ => None,
+                    });
+
+            let Some(enclosing_type_params) = maybe_enclosing_type_params else {
+                continue;
+            };
+
+            let mut any_missing = false;
+            let mut any_present = false;
+            for &param_idx in &enclosing_type_params.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(param.name) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                if self
+                    .ctx
+                    .type_parameter_scope
+                    .contains_key(ident.escaped_text.as_str())
+                {
+                    any_present = true;
+                } else {
+                    any_missing = true;
+                }
+            }
+
+            if any_missing && !any_present {
+                let (_, updates) = self.push_type_parameters(&Some(enclosing_type_params));
+                return updates;
+            }
+        }
+
+        Vec::new()
+    }
+
     /// Resolve a qualified name (A.B.C) to its type.
     ///
     /// This function handles qualified type names like `Namespace.SubType`, `Module.Interface`,
@@ -1198,8 +1314,8 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), Vec::new());
         }
 
+        let mut updates = self.maybe_push_enclosing_type_parameters(list);
         let mut params = Vec::new();
-        let mut updates = Vec::new();
         let mut param_indices = Vec::new();
         let mut seen_names = FxHashSet::default();
 

@@ -154,6 +154,44 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
 }
 
 #[test]
+fn test_ts2304_not_emitted_for_interface_method_constraint_capturing_outer_generic() {
+    let diagnostics = check_without_lib(
+        r#"
+interface Effect<out A> {
+    readonly _A: A;
+}
+
+interface Rpc<in out Tag extends string, out Payload = unknown, out Success = unknown> {
+    readonly _tag: Tag;
+    readonly payloadSchema: Payload;
+    readonly successSchema: Success;
+}
+
+interface RpcAny {
+    readonly _tag: string;
+}
+
+type Payload<R> = R extends Rpc<infer _Tag, infer _Payload, infer _Success> ? _Payload : never;
+type ResultFrom<R extends RpcAny> = R extends Rpc<infer _Tag, infer _Payload, infer _Success> ? _Success : never;
+type ToHandlerFn<Current extends RpcAny> = (payload: Payload<Current>) => ResultFrom<Current>;
+type HandlersFrom<Rpc extends RpcAny> = {
+    readonly [Current in Rpc as Current["_tag"]]: ToHandlerFn<Current>;
+};
+
+interface RpcGroup<in out R extends RpcAny> {
+    toLayer<Handlers extends HandlersFrom<R>>(build: Effect<Handlers>): unknown;
+}
+"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Expected no TS2304 for outer interface type parameter captured by method constraint, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2304_emitted_for_console_without_lib() {
     let diagnostics = check_without_lib(r#"console.log("hello");"#);
 
