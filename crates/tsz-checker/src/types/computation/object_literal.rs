@@ -11,6 +11,149 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn fallback_contextual_callable_property_type(
+        &mut self,
+        type_id: TypeId,
+        depth: usize,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::assignability::ExcessPropertiesKind;
+
+        if depth == 0 {
+            return None;
+        }
+
+        let mut candidates = Vec::new();
+
+        let resolved_type = self.resolve_type_for_property_access(type_id);
+        if resolved_type != type_id
+            && let Some(candidate) =
+                self.fallback_contextual_callable_property_type(resolved_type, depth - 1)
+        {
+            candidates.push(candidate);
+        }
+
+        let evaluated_type = self.evaluate_type_with_env(type_id);
+        let evaluated_type = self.resolve_type_for_property_access(evaluated_type);
+        let evaluated_type = self.resolve_lazy_type(evaluated_type);
+        let evaluated_type = self.evaluate_application_type(evaluated_type);
+        if evaluated_type != type_id
+            && evaluated_type != resolved_type
+            && let Some(candidate) =
+                self.fallback_contextual_callable_property_type(evaluated_type, depth - 1)
+        {
+            candidates.push(candidate);
+        }
+
+        match crate::query_boundaries::assignability::classify_for_excess_properties(
+            self.ctx.types,
+            type_id,
+        ) {
+            ExcessPropertiesKind::Object(_) | ExcessPropertiesKind::ObjectWithIndex(_) => {
+                if let Some(shape) =
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                {
+                    for prop in &shape.properties {
+                        if crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            prop.type_id,
+                        )
+                        .is_some()
+                        {
+                            candidates.push(prop.type_id);
+                        }
+                    }
+
+                    if let Some(index) = &shape.string_index
+                        && crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            index.value_type,
+                        )
+                        .is_some()
+                    {
+                        candidates.push(index.value_type);
+                    }
+
+                    if let Some(index) = &shape.number_index
+                        && crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            index.value_type,
+                        )
+                        .is_some()
+                    {
+                        candidates.push(index.value_type);
+                    }
+                }
+            }
+            ExcessPropertiesKind::Union(members) | ExcessPropertiesKind::Intersection(members) => {
+                for member in members {
+                    if let Some(candidate) =
+                        self.fallback_contextual_callable_property_type(member, depth - 1)
+                    {
+                        candidates.push(candidate);
+                    }
+                }
+            }
+            ExcessPropertiesKind::NotObject => {}
+        }
+
+        if candidates.is_empty() {
+            None
+        } else if candidates.len() == 1 {
+            Some(candidates[0])
+        } else {
+            Some(self.ctx.types.factory().union_preserve_members(candidates))
+        }
+    }
+
+    fn should_preserve_absent_contextual_property_type(
+        &mut self,
+        type_id: TypeId,
+        depth: usize,
+    ) -> bool {
+        use crate::query_boundaries::assignability::ExcessPropertiesKind;
+
+        if depth == 0 {
+            return false;
+        }
+
+        if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+            || tsz_solver::type_queries::get_mapped_type(self.ctx.types, type_id).is_some()
+            || tsz_solver::type_queries::get_type_application(self.ctx.types, type_id).is_some()
+        {
+            return true;
+        }
+
+        let resolved_type = self.resolve_type_for_property_access(type_id);
+        if resolved_type != type_id
+            && self.should_preserve_absent_contextual_property_type(resolved_type, depth - 1)
+        {
+            return true;
+        }
+
+        let evaluated_type = self.evaluate_type_with_env(type_id);
+        let evaluated_type = self.resolve_type_for_property_access(evaluated_type);
+        let evaluated_type = self.resolve_lazy_type(evaluated_type);
+        let evaluated_type = self.evaluate_application_type(evaluated_type);
+        if evaluated_type != type_id
+            && evaluated_type != resolved_type
+            && self.should_preserve_absent_contextual_property_type(evaluated_type, depth - 1)
+        {
+            return true;
+        }
+
+        match crate::query_boundaries::assignability::classify_for_excess_properties(
+            self.ctx.types,
+            type_id,
+        ) {
+            ExcessPropertiesKind::Union(members) | ExcessPropertiesKind::Intersection(members) => {
+                members.into_iter().any(|member| {
+                    self.should_preserve_absent_contextual_property_type(member, depth - 1)
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn union_with_non_nullish_non_object_member(&mut self, type_id: TypeId, depth: usize) -> bool {
         use crate::query_boundaries::assignability::ExcessPropertiesKind;
 
@@ -481,7 +624,9 @@ impl<'a> CheckerState<'a> {
 
         let property_presence =
             self.contextual_property_presence(original_contextual_type, property_name, 6);
-        if property_presence == ContextualPropertyPresence::Absent {
+        if property_presence == ContextualPropertyPresence::Absent
+            && !self.should_preserve_absent_contextual_property_type(original_contextual_type, 6)
+        {
             best_property_type = None;
         }
 
@@ -785,6 +930,20 @@ impl<'a> CheckerState<'a> {
                             prop.initializer,
                         ) {
                         None
+                    } else {
+                        property_context_type
+                    };
+                    let property_context_type = if property_context_type.is_none()
+                        && let Some(ctx_type) = self.ctx.contextual_type
+                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                        && matches!(
+                            init_node.kind,
+                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                        ) {
+                        self.contextual_object_literal_property_type(ctx_type, "*")
+                            .or_else(|| {
+                                self.fallback_contextual_callable_property_type(ctx_type, 6)
+                            })
                     } else {
                         property_context_type
                     };
