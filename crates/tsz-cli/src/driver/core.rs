@@ -664,9 +664,24 @@ pub(crate) fn compile_with_cache_and_changes(
 /// NOT a blanket 17000..18000 range: many 17xxx codes (17009 "super before this",
 /// 17011 "super before property access") are checker-level semantic errors that
 /// must NOT suppress TS5107.
-fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
-    // 8xxx: JS grammar errors — always real
-    (8000..9000).contains(&code)
+const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool {
+    // Only a narrow subset of 8xxx codes are true JS grammar / parse failures.
+    // JSDoc validation errors like TS8024 should not suppress TS5107.
+    matches!(code,
+        8002 // 'import ... =' can only be used in TypeScript files
+        | 8003 // Type assertion expressions can only be used in TypeScript files
+        | 8004 // 'readonly' type modifier is only permitted on array and tuple literal types
+        | 8006 // 'interface' declarations can only be used in TypeScript files
+        | 8008 // Type aliases can only be used in TypeScript files
+        | 8009 // The '?' modifier can only be used in TypeScript files
+        | 8010 // Type annotations can only be used in TypeScript files
+        | 8011 // Type arguments can only be used in TypeScript files
+        | 8013 // Non-null assertions can only be used in TypeScript files
+        | 8015 // Namespace declarations can only be used in TypeScript files
+        | 8016 // Type assertion expressions can only be used in TypeScript files
+        | 8017 // Signature declarations can only be used in TypeScript files
+        | 8018 // Type-only import/export syntax can only be used in TypeScript files
+    )
     // Specific 17xxx grammar-level errors only.
     || matches!(code,
         17002 // Expected corresponding JSX closing tag
