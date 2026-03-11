@@ -530,14 +530,11 @@ fn load_lib_file_recursive(
         .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
 
     for ref_lib in parse_lib_references(&source_text) {
-        let ref_path = resolve_lib_reference_path(&lib_path, &ref_lib).ok_or_else(|| {
-            anyhow::anyhow!(
-                "failed to resolve referenced lib '{}' from {}",
-                ref_lib,
-                lib_path.display()
-            )
-        })?;
-        load_lib_file_recursive(&ref_path, loaded, result)?;
+        if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
+            load_lib_file_recursive(&ref_path, loaded, result)?;
+        }
+        // Skip unresolvable references silently — not all referenced libs
+        // (e.g., dom, webworker) are needed for every compilation target.
     }
 
     let file_name = lib_path.to_string_lossy().to_string();
@@ -608,9 +605,9 @@ fn normalize_lib_reference_name(name: &str) -> String {
         "es6" => "es6".to_string(),
         "es7" => "es2016".to_string(),
         "lib" | "lib.d.ts" => "es5".to_string(),
-        "dom" => "dom.generated".to_string(),
-        "dom.iterable" => "dom.iterable.generated".to_string(),
-        "dom.asynciterable" => "dom.asynciterable.generated".to_string(),
+        // Modern TypeScript (6.x) uses lib.dom.d.ts directly, not .generated suffix.
+        // Pass through as-is — the file candidates already include lib.{name}.d.ts.
+        "dom" | "dom.iterable" | "dom.asynciterable" => name.to_lowercase(),
         s if s.starts_with("lib.") && s.ends_with(".d.ts") => {
             let inner = &s[4..s.len() - 5];
             normalize_lib_reference_name(inner)
