@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_const_enum_symbol(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn is_const_enum_symbol(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };

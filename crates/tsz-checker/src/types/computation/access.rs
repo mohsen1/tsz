@@ -312,10 +312,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2476: A const enum member can only be accessed using a string literal.
-        if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
-        {
+        let const_enum_sym = self
+            .resolve_identifier_symbol(access.expression)
+            .map(|sym_id| {
+                self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                    .unwrap_or(sym_id)
+            })
+            .or_else(|| {
+                self.resolve_qualified_symbol(access.expression)
+                    .map(|sym_id| {
+                        self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                            .unwrap_or(sym_id)
+                    })
+            })
+            .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
+            .or_else(|| {
+                self.enum_symbol_from_type(object_type_for_access)
+                    .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
+            });
+
+        if const_enum_sym.is_some() {
             let arg_is_string_literal =
                 self.ctx
                     .arena
