@@ -60,6 +60,20 @@ let b: number;
 }
 
 #[test]
+fn parse_invalid_import_expression_start_reports_ts1128_instead_of_from_expected() {
+    let (parser, _root) = parse_source("import 10;");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 for invalid import statement start, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "should not emit generic TS1005 'from' expected, got {codes:?}"
+    );
+}
+
+#[test]
 fn parse_template_recovery_preserves_follow_up_statement() {
     let (parser, root) = parse_source("const bad = `head${1 + 2`;\nconst ok = 1;");
     let sf = parser.get_arena().get_source_file_at(root).unwrap();
