@@ -1479,6 +1479,45 @@ var obj = {
 }
 
 #[test]
+fn test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+// @ts-check
+var lol;
+const obj = {
+  /** @type {function(number): number} */
+  arrowFunc: (num="0") => num + 42,
+  /** @type {string} */
+  lol
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "Expected contextual JSDoc function typing to check default parameter initializers. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'undefined' is not assignable to type 'string'.")
+        }),
+        "Expected JSDoc shorthand property mismatch to preserve the undefined source type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_string_is_assignable_to_iterable_string_under_es2015() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r##"
