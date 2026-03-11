@@ -369,9 +369,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     }
                     if yield_star_return_type
                         .is_none_or(|ty| ty == TypeId::UNKNOWN || ty == TypeId::ANY)
-                        && let Some(ctx_return) = contextual_yield_star_return {
-                            yield_star_return_type = Some(ctx_return);
-                        }
+                        && let Some(ctx_return) = contextual_yield_star_return
+                    {
+                        yield_star_return_type = Some(ctx_return);
+                    }
                     // Collect yield* element type for unannotated generators when resolvable
                     // (skip when async iterator info is None/fallback ANY)
                     if self.checker.ctx.current_yield_type().is_none() && async_info.is_some() {
