@@ -205,7 +205,10 @@ fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: No
     })
 }
 
-fn expression_needs_contextual_return_type(state: &CheckerState, expr_idx: NodeIndex) -> bool {
+pub(crate) fn expression_needs_contextual_return_type(
+    state: &CheckerState,
+    expr_idx: NodeIndex,
+) -> bool {
     use tsz_parser::parser::syntax_kind_ext;
 
     if is_contextually_sensitive(state, expr_idx) {

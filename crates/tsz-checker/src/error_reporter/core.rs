@@ -766,7 +766,6 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) -> String {
         if self.is_literal_sensitive_assignment_target(target)
-            && !self.is_property_assignment_initializer(anchor_idx)
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
             return display;
@@ -774,7 +773,6 @@ impl<'a> CheckerState<'a> {
 
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if self.is_literal_sensitive_assignment_target(target)
-                && !self.is_property_assignment_initializer(expr_idx)
                 && let Some(display) = self.literal_expression_display(expr_idx)
             {
                 return display;
@@ -808,14 +806,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
-            if (self.is_literal_sensitive_assignment_target(target)
-                || (self.assignment_source_is_return_expression(anchor_idx)
-                    && tsz_solver::type_queries::contains_type_parameters_db(
-                        self.ctx.types,
-                        target,
-                    )))
-                && let Some(display) = self.literal_expression_display(expr_idx)
-                && !self.is_property_assignment_initializer(expr_idx)
+            if let Some(display) = self.literal_expression_display(expr_idx)
+                && (self.is_literal_sensitive_assignment_target(target)
+                    || (self.assignment_source_is_return_expression(anchor_idx)
+                        && tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            target,
+                        )
+                        && !self.is_property_assignment_initializer(expr_idx)))
             {
                 return display;
             }
