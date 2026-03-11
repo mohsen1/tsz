@@ -865,6 +865,93 @@ c.p + c.q;
 }
 
 #[test]
+fn test_merged_declarations_non_exported_namespace_members_stay_hidden() {
+    let source = r#"
+namespace M {
+ export enum Color {
+   Red, Green
+ }
+}
+namespace M {
+ export namespace Color {
+   export var Blue = 4;
+  }
+}
+var p = M.Color.Blue;
+
+namespace M {
+    export function foo() {
+    }
+}
+
+namespace M {
+    namespace foo {
+        export var x = 1;
+    }
+}
+
+namespace M {
+    export namespace foo {
+        export var y = 2
+    }
+}
+
+namespace M {
+    namespace foo {
+        export var z = 1;
+    }
+}
+
+M.foo()
+M.foo.x
+M.foo.y
+M.foo.z
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "mergedDeclarations3.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2339: Vec<&str> = relevant
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Expected exactly 2 TS2339 errors. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("Property 'x' does not exist on type")),
+        "Expected TS2339 for M.foo.x. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|message| message.contains("Property 'z' does not exist on type")),
+        "Expected TS2339 for M.foo.z. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        !ts2339
+            .iter()
+            .any(|message| message.contains("Property 'y'")),
+        "Did not expect TS2339 for M.foo.y. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_callback_typedef_contextually_types_closure_parameters() {
     let source = r#"
 /** @callback Sid

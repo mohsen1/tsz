@@ -34,6 +34,64 @@ namespace M {
 }
 
 #[test]
+fn export_namespace_wrapper_marks_inner_module_as_publicly_exported() {
+    let source = r"
+namespace M {
+    export namespace foo {
+        export var y = 1;
+    }
+    namespace foo {
+        export var z = 1;
+    }
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let source_file = arena
+        .get_source_file_at(root)
+        .expect("expected source file");
+    let outer_ns_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("expected outer namespace");
+    let outer_ns = arena
+        .get_module_at(outer_ns_idx)
+        .expect("expected outer namespace declaration");
+    let body = arena
+        .get_module_block_at(outer_ns.body)
+        .expect("expected outer namespace body");
+    let statements = body.statements.as_ref().expect("expected inner statements");
+
+    let exported_stmt_idx = statements.nodes[0];
+    let exported_stmt = arena
+        .get_export_decl_at(exported_stmt_idx)
+        .expect("expected export declaration wrapper");
+    let exported_foo_idx = exported_stmt.export_clause;
+    let plain_foo_idx = statements.nodes[1];
+
+    assert_eq!(
+        binder
+            .module_declaration_exports_publicly
+            .get(&exported_foo_idx.0),
+        Some(&true),
+        "export namespace foo should be recorded as publicly exported"
+    );
+    assert_eq!(
+        binder
+            .module_declaration_exports_publicly
+            .get(&plain_foo_idx.0),
+        Some(&false),
+        "plain namespace foo should remain non-exported"
+    );
+}
+
+#[test]
 fn records_import_metadata_for_exported_reexports() {
     let source = r"
 export { A, B as C } from './a';

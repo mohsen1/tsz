@@ -218,6 +218,8 @@ pub struct BinderState {
     pub(crate) current_scope_idx: usize,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Export visibility of namespace/module declaration nodes after binder rules.
+    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
@@ -391,6 +393,7 @@ pub struct BinderStateScopeInputs {
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
     pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
     pub module_exports: FxHashMap<String, SymbolTable>,
+    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     pub reexports: FileReexportsMap,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,

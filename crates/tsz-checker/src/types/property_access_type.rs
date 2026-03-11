@@ -5,6 +5,7 @@ use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -588,8 +589,17 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|constraint| {
                         access_query::enum_def_id(self.ctx.types, constraint).is_some()
                     });
+            let hidden_qualified_namespace_member_apparent_type = self
+                .qualified_namespace_member_hidden_on_exported_surface(
+                    idx,
+                    access.expression,
+                    property_name,
+                );
+            let hidden_qualified_namespace_member =
+                hidden_qualified_namespace_member_apparent_type.is_some();
 
             if !enum_instance_like_access
+                && !hidden_qualified_namespace_member
                 && let Some(member_type) =
                     self.resolve_namespace_value_member(object_type, property_name)
             {
@@ -599,7 +609,8 @@ impl<'a> CheckerState<'a> {
             // Fallback for namespace/export member accesses where type-only namespace
             // classification misses the object form but symbol resolution can still
             // identify `A.B` as a concrete exported value member.
-            if let Some(member_sym_id) = self.resolve_qualified_symbol(idx)
+            if !hidden_qualified_namespace_member
+                && let Some(member_sym_id) = self.resolve_qualified_symbol(idx)
                 && let Some(member_symbol) = self
                     .get_cross_file_symbol(member_sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
@@ -646,6 +657,19 @@ impl<'a> CheckerState<'a> {
                     }
                     // Also emit TS2693 for the type-only member itself
                     self.error_type_only_value_at(property_name, access.name_or_argument);
+                }
+                return TypeId::ERROR;
+            }
+            if let Some(display_type) = hidden_qualified_namespace_member_apparent_type.as_deref() {
+                if !access.question_dot_token
+                    && !property_name.starts_with('#')
+                    && !accessibility_error_emitted
+                {
+                    self.error_property_not_exist_with_apparent_type(
+                        property_name,
+                        display_type,
+                        access.name_or_argument,
+                    );
                 }
                 return TypeId::ERROR;
             }
@@ -1704,6 +1728,177 @@ impl<'a> CheckerState<'a> {
                 found_types,
             ))
         }
+    }
+
+    fn qualified_namespace_member_hidden_on_exported_surface(
+        &self,
+        access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        _property_name: &str,
+    ) -> Option<String> {
+        fn rightmost_namespace_name(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let name_node = arena.get(access.name_or_argument)?;
+                return arena
+                    .get_identifier(name_node)
+                    .map(|id| id.escaped_text.clone());
+            }
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let name = arena.get_qualified_name(node)?;
+                let right = arena.get(name.right)?;
+                return arena
+                    .get_identifier(right)
+                    .map(|id| id.escaped_text.clone());
+            }
+            None
+        }
+
+        fn module_name_matches(
+            arena: &tsz_parser::parser::node::NodeArena,
+            module_idx: NodeIndex,
+            expected_name: &str,
+        ) -> bool {
+            let Some(node) = arena.get(module_idx) else {
+                return false;
+            };
+            let Some(module) = arena.get_module(node) else {
+                return false;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                return false;
+            };
+            arena
+                .get_identifier(name_node)
+                .is_some_and(|ident| ident.escaped_text == expected_name)
+        }
+
+        fn module_exports_publicly(
+            arena: &tsz_parser::parser::node::NodeArena,
+            export_map: &rustc_hash::FxHashMap<u32, bool>,
+            module_idx: NodeIndex,
+        ) -> bool {
+            if export_map.get(&module_idx.0).copied().unwrap_or(false) {
+                return true;
+            }
+
+            let Some(node) = arena.get(module_idx) else {
+                return false;
+            };
+            let Some(module) = arena.get_module(node) else {
+                return false;
+            };
+
+            if arena.has_modifier_ref(module.modifiers.as_ref(), SyntaxKind::ExportKeyword)
+                || arena.has_modifier_ref(module.modifiers.as_ref(), SyntaxKind::DeclareKeyword)
+            {
+                return true;
+            }
+
+            if let Some(name_node) = arena.get(module.name)
+                && (name_node.kind == SyntaxKind::StringLiteral as u16
+                    || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            {
+                return true;
+            }
+
+            let mut current = module_idx;
+            while let Some(ext) = arena.get_extended(current) {
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    return false;
+                }
+
+                let Some(parent_node) = arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(parent_module) = arena.get_module(parent_node)
+                {
+                    if arena.has_modifier_ref(
+                        parent_module.modifiers.as_ref(),
+                        SyntaxKind::DeclareKeyword,
+                    ) {
+                        return true;
+                    }
+
+                    if let Some(name_node) = arena.get(parent_module.name)
+                        && (name_node.kind == SyntaxKind::StringLiteral as u16
+                            || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                    {
+                        return true;
+                    }
+                }
+
+                current = parent_idx;
+            }
+
+            false
+        }
+
+        if self.resolve_identifier_symbol(object_expr_idx).is_some() {
+            return None;
+        }
+
+        let Some(parent_name) = rightmost_namespace_name(self.ctx.arena, object_expr_idx) else {
+            return None;
+        };
+        let Some(member_id) = self.resolve_qualified_symbol(access_idx) else {
+            return None;
+        };
+        let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+        else {
+            return None;
+        };
+
+        if (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE)) == 0
+            || member_symbol.is_type_only
+        {
+            return None;
+        }
+
+        let mut saw_matching_namespace_decl = false;
+        for &decl_idx in &member_symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+
+            let mut current = decl_idx;
+            while let Some(ext) = self.ctx.arena.get_extended(current) {
+                let parent_idx = ext.parent;
+                if parent_idx.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && module_name_matches(self.ctx.arena, parent_idx, &parent_name)
+                {
+                    saw_matching_namespace_decl = true;
+                    if module_exports_publicly(
+                        self.ctx.arena,
+                        &self.ctx.binder.module_declaration_exports_publicly,
+                        parent_idx,
+                    ) {
+                        return None;
+                    }
+                    break;
+                }
+                current = parent_idx;
+            }
+        }
+
+        saw_matching_namespace_decl.then(|| format!("typeof {parent_name}"))
     }
 
     /// Check if a property access is an expando function assignment pattern.
