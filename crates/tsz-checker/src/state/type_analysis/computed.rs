@@ -1372,6 +1372,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(module_specifier) =
                     self.get_require_module_specifier(import.module_specifier)
                 {
+                    if let Some(json_type) = self.json_module_type_for_module(
+                        &module_specifier,
+                        Some(self.ctx.current_file_idx),
+                    ) {
+                        return (json_type, Vec::new());
+                    }
+
                     // Resolve the canonical export surface (module-specifier variants,
                     // cross-file tables, and export= member merging).
                     let exports_table = self.resolve_effective_module_exports(&module_specifier);
@@ -1516,6 +1523,14 @@ impl<'a> CheckerState<'a> {
 
             // For ES6 imports with import_module set, resolve using module_exports
             if let Some(ref module_name) = import_module {
+                let import_source_file_idx = self
+                    .ctx
+                    .cross_file_symbol_targets
+                    .borrow()
+                    .get(&sym_id)
+                    .copied()
+                    .or(Some(self.ctx.current_file_idx));
+
                 // Check if this is a shorthand ambient module (declare module "foo" without body)
                 // Imports from shorthand ambient modules are typed as `any`
                 if self
@@ -1532,6 +1547,12 @@ impl<'a> CheckerState<'a> {
                 // Namespace imports have import_name = None, namespace
                 // re-exports have import_name = Some("*").
                 if import_name.is_none() || import_name.as_deref() == Some("*") {
+                    if let Some(json_namespace_type) = self
+                        .json_module_namespace_type_for_module(module_name, import_source_file_idx)
+                    {
+                        return (json_namespace_type, Vec::new());
+                    }
+
                     // This is a namespace import: import * as ns from 'module'
                     // Create an object type containing all module exports
 
@@ -1709,6 +1730,13 @@ impl<'a> CheckerState<'a> {
                 // This is a named import: import { X } from 'module'
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = import_name.as_ref().unwrap_or(&escaped_name);
+
+                if export_name == "default"
+                    && let Some(json_type) =
+                        self.json_module_type_for_module(module_name, import_source_file_idx)
+                {
+                    return (json_type, Vec::new());
+                }
 
                 // Check if the module exists first (for proper error differentiation)
                 let module_exists = self.ctx.binder.module_exports.contains_key(module_name)
