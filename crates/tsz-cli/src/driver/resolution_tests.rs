@@ -232,6 +232,55 @@ fn test_package_root_main_js_still_resolves_for_module_resolution() {
 }
 
 #[test]
+fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_extensionless_json");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    fs::write(dir.join("src/index.ts"), "import data = require('./data');").unwrap();
+    fs::write(dir.join("src/data.json"), "{\"value\": 42}").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        resolve_json_module: true,
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "./data",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        None,
+        "extensionless relative imports should not fall through to data.json"
+    );
+
+    assert_eq!(
+        resolve_module_specifier(
+            &dir.join("src/index.ts"),
+            "./data.json",
+            &options,
+            &dir,
+            &mut cache,
+            &known_files,
+        ),
+        Some(canonicalize_or_owned(&dir.join("src/data.json"))),
+        "explicit .json imports should still resolve when resolveJsonModule is enabled"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_collect_module_specifiers_finds_dynamic_imports() {
     let text = r#"import("./foo").then(x => x);"#;
     let path = Path::new("test.mts");

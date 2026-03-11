@@ -2092,22 +2092,12 @@ impl ModuleResolver {
                 return Some(resolved);
             }
         }
-        if self.resolve_json_module
-            && let Some(resolved) = try_file_with_suffixes_and_extension(path, "json", suffixes)
-        {
-            return Some(resolved);
-        }
 
         let index = path.join("index");
         for ext in extensions {
             if let Some(resolved) = try_file_with_suffixes_and_extension(&index, ext, suffixes) {
                 return Some(resolved);
             }
-        }
-        if self.resolve_json_module
-            && let Some(resolved) = try_file_with_suffixes_and_extension(&index, "json", suffixes)
-        {
-            return Some(resolved);
         }
 
         None
@@ -3691,6 +3681,34 @@ mod tests {
             result.expect_err("Expected JSON resolution to fail without resolveJsonModule");
         let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, 2732); // TS2732
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_extensionless_json_import");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("app.ts"), "import data = require('./data');").unwrap();
+        fs::write(dir.join("data.json"), "{\"value\": 42}").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            resolve_json_module: true,
+            module_resolution: Some(ModuleResolutionKind::Node),
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let result = resolver.resolve("./data", &dir.join("app.ts"), Span::new(0, 10));
+
+        let failure = result.expect_err(
+            "Expected extensionless resolution to reject ./data even when data.json exists",
+        );
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, 2307);
 
         let _ = fs::remove_dir_all(&dir);
     }
