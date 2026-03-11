@@ -456,9 +456,25 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         // Fast path: if the return type is already recognized as a valid generator type,
                         // we don't need to do the complex structural subtyping check that fails due to overloads.
                         // If it is not (e.g. `number`), we run the check to emit the TS2322 assignability error.
-                        if self
-                            .get_generator_return_type_argument(return_type)
-                            .is_none()
+                        let has_direct_builtin_generator_annotation = self
+                            .ctx
+                            .arena
+                            .get(func.type_annotation)
+                            .and_then(|node| self.ctx.arena.get_type_ref(node))
+                            .and_then(|type_ref| self.node_text(type_ref.type_name))
+                            .is_some_and(|name| {
+                                matches!(
+                                    name.as_str(),
+                                    "Generator"
+                                        | "AsyncGenerator"
+                                        | "Iterator"
+                                        | "AsyncIterator"
+                                        | "IterableIterator"
+                                        | "AsyncIterableIterator"
+                                )
+                            });
+                        if !has_direct_builtin_generator_annotation
+                            && self.get_generator_return_type_argument(return_type).is_none()
                         {
                             self.check_assignable_or_report(
                                 any_gen,
