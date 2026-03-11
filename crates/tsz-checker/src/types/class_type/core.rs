@@ -1680,7 +1680,12 @@ impl<'a> CheckerState<'a> {
             let name_node = self.ctx.arena.get(access.name_or_argument)?;
             let ident = self.ctx.arena.get_identifier(name_node)?;
             let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
-            Some((ident.escaped_text.clone(), binary.right, is_private, access.name_or_argument))
+            Some((
+                ident.escaped_text.clone(),
+                binary.right,
+                is_private,
+                access.name_or_argument,
+            ))
         }
     }
 }
