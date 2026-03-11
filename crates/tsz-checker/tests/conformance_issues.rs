@@ -8821,8 +8821,9 @@ test4({
         !diagnostics.iter().any(|(code, message)| {
             *code == 2322
                 && (message.contains("Type 'string' is not assignable to type '\"foo\"'")
-                    || message
-                        .contains("Type '{ prop: string; }' is not assignable to type '{ prop: \"foo\"; }'"))
+                    || message.contains(
+                        "Type '{ prop: string; }' is not assignable to type '{ prop: \"foo\"; }'",
+                    ))
         }),
         "Did not expect widened callback-return diagnostics once contextual return typing is preserved.\nActual diagnostics: {diagnostics:#?}"
     );
