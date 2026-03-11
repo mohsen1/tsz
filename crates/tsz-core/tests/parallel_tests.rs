@@ -478,6 +478,114 @@ b;
 }
 
 #[test]
+fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts2451() {
+    let files = vec![
+        ("a.ts".to_string(), "const Bar = 3;\n".to_string()),
+        ("b.ts".to_string(), "class Bar {}\n".to_string()),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file_b = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "b.ts")
+        .expect("expected b.ts result");
+
+    let codes: Vec<u32> = file_b
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2451 || diag.code == 2300)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        codes,
+        vec![2451],
+        "Expected b.ts to report TS2451 for cross-file const/class redeclaration. Diagnostics: {:#?}",
+        file_b.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_module_augmentation_redeclaration_marks_target_file() {
+    let files = vec![
+        ("dir/a.ts".to_string(), "export const x = 0;\n".to_string()),
+        (
+            "dir/b.ts".to_string(),
+            r#"
+export {};
+declare module "./a" {
+    export const x: 1;
+}
+declare module "./a" {
+    export const x: 2;
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file_a = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "dir/a.ts")
+        .expect("expected dir/a.ts result");
+    let file_b = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "dir/b.ts")
+        .expect("expected dir/b.ts result");
+
+    let a_codes: Vec<u32> = file_a
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2451 || diag.code == 2300)
+        .map(|diag| diag.code)
+        .collect();
+    let b_codes: Vec<u32> = file_b
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2451 || diag.code == 2300)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        a_codes,
+        vec![2451],
+        "Expected dir/a.ts to report TS2451 from module augmentation redeclarations. Diagnostics: {:#?}",
+        file_a.diagnostics
+    );
+    assert_eq!(
+        b_codes,
+        vec![2451, 2451],
+        "Expected dir/b.ts to report two TS2451 diagnostics from duplicate augmentation exports. Diagnostics: {:#?}",
+        file_b.diagnostics
+    );
+}
+
+#[test]
 fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
