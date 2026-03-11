@@ -1249,6 +1249,57 @@ namespace Intl {
 }
 
 #[test]
+fn test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz() {
+    let source = r#"
+// @ts-check
+var lol;
+const obj = {
+  /** @type {string|undefined} */
+  bar: 42,
+  /** @type {function(number): number} */
+  method1(n1) {
+      return "42";
+  },
+  /** @type {function(number): number} */
+  method2: (n1) => "lol",
+  /** @type {function(number): number} */
+  arrowFunc: (num="0") => num + 42,
+  /** @type {string} */
+  lol
+}
+lol = "string"
+/** @type {string} */
+var s = obj.method1(0);
+
+/** @type {string} */
+var s1 = obj.method2("0");
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2448),
+        "Did not expect TS2448 on the declaration while checking JSDoc-typed object literal properties. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322) && has_error(&diagnostics, 2345),
+        "Expected the property-level and call-site JSDoc diagnostics to remain. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_string_is_assignable_to_iterable_string_under_es2015() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r##"

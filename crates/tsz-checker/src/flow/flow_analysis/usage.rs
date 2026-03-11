@@ -1289,6 +1289,18 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return false;
         };
+        // The declaration name itself is not a TDZ "use". Some checker flows
+        // re-query the declared symbol while analyzing its own initializer or
+        // synthetic JSDoc shape, and those should not report TS2448/TS2449/TS2450
+        // on the declaration identifier.
+        if usage_idx == decl_idx {
+            return false;
+        }
+        if let Some(usage_ext) = self.ctx.arena.get_extended(usage_idx)
+            && usage_ext.parent == decl_idx
+        {
+            return false;
+        }
 
         if usage_node.pos >= decl_node.end {
             return false;
@@ -1493,6 +1505,25 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = decl_node_opt else {
             return false;
         };
+
+        // The declaration name itself is not a TDZ use. Some later checker
+        // flows re-enter the symbol while validating the declaration's own
+        // initializer/JSDoc shape, and those should not report TS2448 on the
+        // declared name token.
+        if usage_idx == decl_idx {
+            return false;
+        }
+        if let Some(usage_ext) = self.ctx.arena.get_extended(usage_idx)
+            && usage_ext.parent == decl_idx
+            && matches!(
+                decl_node.kind,
+                syntax_kind_ext::VARIABLE_DECLARATION
+                    | syntax_kind_ext::BINDING_ELEMENT
+                    | syntax_kind_ext::PARAMETER
+            )
+        {
+            return false;
+        }
 
         // In multi-file mode, validate the declaration node kind matches the
         // symbol.  A mismatch means the node index is from a different file's
