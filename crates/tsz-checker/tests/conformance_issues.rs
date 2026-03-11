@@ -9788,3 +9788,37 @@ if (Strs.A) {}
         "Expected four always-true enum condition diagnostics, got: {ts2845_messages:#?}"
     );
 }
+
+#[test]
+fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare const sym: unique symbol;
+type Both =
+    { s: number, '0': number, [sym]: boolean }
+    | { [n: number]: number, [s: string]: string | number };
+declare var both: Both;
+both[0] = 1;
+both[1] = 0;
+both[0] = 'not ok';
+both[sym] = 'not ok';
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert_eq!(
+        ts7053_count, 2,
+        "Expected TS7053 for partial numeric and unique-symbol union writes.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected the incompatible write to the shared numeric slot to stay TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
