@@ -749,6 +749,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         );
                         return TypeId::ANY;
                     }
+                    // TS2332: `this` inside enum member initializers is always invalid,
+                    // even when the enum is nested in a namespace.
+                    if self.checker.is_this_in_enum_member_initializer(idx) {
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_CURRENT_LOCATION,
+                            diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_CURRENT_LOCATION,
+                        );
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                            diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        );
+                        return TypeId::ANY;
+                    }
                     // TS2331: 'this' cannot be referenced in a module or namespace body
                     if self.checker.is_this_in_namespace_body(idx) {
                         self.checker.error_at_node(
