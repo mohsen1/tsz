@@ -1620,8 +1620,8 @@ mod tests {
         let mut fmt = TypeFormatter::new(&db);
         let result = fmt.format(mapped);
         assert!(
-            result.contains("readonly [P in"),
-            "Expected 'readonly [P in', got: {result}"
+            result.contains("readonly [x: string]: number"),
+            "Expected readonly index-signature display, got: {result}"
         );
     }
 
