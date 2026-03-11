@@ -148,6 +148,22 @@ tsz:  "Type 'number' is not assignable to type 'inf'."
 Added special-case handling in `format_literal()` in `diagnostics/format.rs` to
 display `Infinity`, `-Infinity`, and `NaN` using JavaScript conventions.
 
+#### Sub-pattern E-pre: Angle-Bracket Assertion Type Display — DONE
+
+```
+tsc:  "Conversion of type 'B' to type 'T' may be a mistake"
+tsz:  "Conversion of type 'B' to type 'T>' may be a mistake"
+```
+
+**Affected tests:** `genericTypeAssertions4`, `genericTypeAssertions5`, and others with `<T>expr`
+
+**Status: FIXED** (commit `9a5d78e04` — 2026-03-11)
+
+**Fix:** For angle-bracket assertions `<T>expr`, the parser's type_node span includes
+the closing `>`, causing `node_text()` to return `T>` instead of `T`. Added bracket-balanced
+`>` stripping in `assertion_declared_type_texts` in `error_reporter/generics.rs`: only strips
+a trailing `>` when brackets are unbalanced, preserving legitimate generic types like `Array<T>`.
+
 #### Sub-pattern E: `typeof` vs Structural Display (1 fingerprint, but widespread pattern)
 
 ```
