@@ -45,12 +45,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let namespace_type = self.ctx.types.factory().object(props);
-        self.ctx
-            .namespace_module_names
-            .insert(
-                namespace_type,
-                self.current_file_commonjs_module_name(preserve_js_extension),
-            );
+        self.ctx.namespace_module_names.insert(
+            namespace_type,
+            self.current_file_commonjs_module_name(preserve_js_extension),
+        );
         namespace_type
     }
 
@@ -249,7 +247,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn strip_typescript_module_extension(path: &str) -> &str {
-        for ext in &[".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"] {
+        for ext in &[
+            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts",
+        ] {
             if let Some(stripped) = path.strip_suffix(ext) {
                 return stripped;
             }

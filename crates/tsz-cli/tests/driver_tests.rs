@@ -6787,7 +6787,9 @@ fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
     let ts1079_diags: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION)
+        .filter(|d| {
+            d.code == diagnostic_codes::A_MODIFIER_CANNOT_BE_USED_WITH_AN_IMPORT_DECLARATION
+        })
         .collect();
     assert!(
         !ts1079_diags.is_empty(),
