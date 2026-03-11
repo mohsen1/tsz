@@ -705,6 +705,36 @@ fn test_ts2322_accessor_compatible_divergent_types() {
 }
 
 #[test]
+fn test_ts2322_annotated_getter_contextually_types_unannotated_setter_parameter() {
+    let source = r#"
+        class C {
+            get x(): string { return ""; }
+            set x(value) { value = 0; }
+        }
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    let ts7006: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected setter body assignment to be checked against getter type: {diagnostics:?}"
+    );
+    assert!(
+        ts7006.is_empty(),
+        "paired getter should contextually type the setter parameter: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_for_of_annotation_mismatch() {
     let source = r"
         for (const x: string of [1, 2, 3]) {}

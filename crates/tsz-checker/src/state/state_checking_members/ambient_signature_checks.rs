@@ -1227,7 +1227,31 @@ impl<'a> CheckerState<'a> {
             TypeId::VOID
         };
 
-        self.cache_parameter_types(&accessor.parameters.nodes, None);
+        let contextual_setter_param_types = if node.kind == syntax_kind_ext::SET_ACCESSOR {
+            self.contextual_setter_parameter_types_for_class_accessor(accessor)
+        } else {
+            None
+        };
+        self.cache_parameter_types(
+            &accessor.parameters.nodes,
+            contextual_setter_param_types.as_deref(),
+        );
+        if let Some(contextual_types) = contextual_setter_param_types.as_ref() {
+            for (&param_idx, contextual_type) in accessor
+                .parameters
+                .nodes
+                .iter()
+                .zip(contextual_types.iter().copied())
+            {
+                let Some(contextual_type) = contextual_type else {
+                    continue;
+                };
+                self.ctx.node_types.insert(param_idx.0, contextual_type);
+                if let Some(param) = self.ctx.arena.get_parameter_at(param_idx) {
+                    self.ctx.node_types.insert(param.name.0, contextual_type);
+                }
+            }
+        }
 
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&accessor.parameters.nodes);
@@ -1406,45 +1430,8 @@ impl<'a> CheckerState<'a> {
         _setter_idx: NodeIndex,
         setter_accessor: &tsz_parser::parser::node::AccessorData,
     ) -> bool {
-        let Some(ref class_info) = self.ctx.enclosing_class else {
-            return false;
-        };
-
-        // Try string-based name matching first (handles identifiers and literals)
-        if let Some(setter_name) = self.get_property_name(setter_accessor.name) {
-            for &member_idx in &class_info.member_nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                    && let Some(getter) = self.ctx.arena.get_accessor(member_node)
-                    && let Some(getter_name) = self.get_property_name(getter.name)
-                    && getter_name == setter_name
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // Fallback for computed property names like [method3]: compare the inner
-        // expression's resolved symbol so that `get [x]()` pairs with `set [x](v)`.
-        let setter_sym = self.resolve_computed_name_symbol(setter_accessor.name);
-        if setter_sym.is_none() {
-            return false;
-        }
-        for &member_idx in &class_info.member_nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                && let Some(getter) = self.ctx.arena.get_accessor(member_node)
-                && self.resolve_computed_name_symbol(getter.name) == setter_sym
-            {
-                return true;
-            }
-        }
-        false
+        self.paired_getter_member_for_setter(setter_accessor)
+            .is_some()
     }
 
     /// TS2808: Check that a getter is at least as accessible as its paired setter.
@@ -1565,7 +1552,10 @@ impl<'a> CheckerState<'a> {
     /// Resolve the symbol of a computed property name's inner expression.
     /// Returns the SymbolId if the name is a computed property with an identifier
     /// that resolves to a known symbol.
-    fn resolve_computed_name_symbol(&self, name_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+    pub(crate) fn resolve_computed_name_symbol(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
         let name_node = self.ctx.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return None;

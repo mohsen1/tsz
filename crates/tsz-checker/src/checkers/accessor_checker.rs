@@ -11,6 +11,73 @@ use tsz_parser::parser::syntax_kind_ext;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn paired_getter_member_for_setter(
+        &self,
+        setter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<NodeIndex> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+
+        if let Some(setter_name) = self.get_property_name(setter_accessor.name) {
+            for &member_idx in &class_info.member_nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                    && let Some(getter) = self.ctx.arena.get_accessor(member_node)
+                    && let Some(getter_name) = self.get_property_name(getter.name)
+                    && getter_name == setter_name
+                {
+                    return Some(member_idx);
+                }
+            }
+            return None;
+        }
+
+        let setter_sym = self.resolve_computed_name_symbol(setter_accessor.name);
+        setter_sym?;
+
+        for &member_idx in &class_info.member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(getter) = self.ctx.arena.get_accessor(member_node)
+                && self.resolve_computed_name_symbol(getter.name) == setter_sym
+            {
+                return Some(member_idx);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn contextual_setter_parameter_types_for_class_accessor(
+        &mut self,
+        setter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<Vec<Option<tsz_solver::TypeId>>> {
+        let &first_param_idx = setter_accessor.parameters.nodes.first()?;
+        let param = self.ctx.arena.get_parameter_at(first_param_idx)?;
+        if param.type_annotation.is_some() {
+            return None;
+        }
+
+        let getter_member_idx = self.paired_getter_member_for_setter(setter_accessor)?;
+        let getter_node = self.ctx.arena.get(getter_member_idx)?;
+        let getter = self.ctx.arena.get_accessor(getter_node)?;
+
+        let getter_type = if getter.type_annotation.is_some() {
+            self.get_type_from_type_node(getter.type_annotation)
+        } else if getter.body.is_some() {
+            self.infer_getter_return_type(getter.body)
+        } else {
+            return None;
+        };
+
+        let mut contextual_types = vec![None; setter_accessor.parameters.nodes.len()];
+        contextual_types[0] = Some(getter_type);
+        Some(contextual_types)
+    }
+
     // =========================================================================
     // Accessor Abstract Consistency
     // =========================================================================
