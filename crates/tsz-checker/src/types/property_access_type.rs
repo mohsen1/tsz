@@ -1,6 +1,7 @@
 //! Property access type resolution, global augmentation property lookup,
 //! and expando function pattern detection.
 
+use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -519,13 +520,10 @@ impl<'a> CheckerState<'a> {
 
             let enum_instance_like_access = self
                 .is_enum_instance_property_access(object_type, access.expression)
-                || tsz_solver::type_queries::get_type_parameter_constraint(
-                    self.ctx.types,
-                    object_type,
-                )
-                .is_some_and(|constraint| {
-                    tsz_solver::type_queries::get_enum_def_id(self.ctx.types, constraint).is_some()
-                });
+                || access_query::type_parameter_constraint(self.ctx.types, object_type)
+                    .is_some_and(|constraint| {
+                        access_query::enum_def_id(self.ctx.types, constraint).is_some()
+                    });
 
             if !enum_instance_like_access
                 && let Some(member_type) =
@@ -853,30 +851,23 @@ impl<'a> CheckerState<'a> {
 
                         if enum_instance_like_access {
                             let enum_display: Option<String> =
-                                tsz_solver::type_queries::get_type_parameter_constraint(
+                                access_query::type_parameter_constraint(
                                     self.ctx.types,
                                     display_object_type,
                                 )
                                 .filter(|constraint| {
-                                    tsz_solver::type_queries::get_enum_def_id(
-                                        self.ctx.types,
-                                        *constraint,
-                                    )
-                                    .is_some()
+                                    access_query::enum_def_id(self.ctx.types, *constraint).is_some()
                                 })
                                 .map(|constraint| {
                                     self.format_type_for_assignability_message(constraint)
                                 })
                                 .or_else(|| {
-                                    tsz_solver::type_queries::get_enum_def_id(
-                                        self.ctx.types,
-                                        display_object_type,
-                                    )
-                                    .map(|_| {
-                                        self.format_type_for_assignability_message(
-                                            display_object_type,
-                                        )
-                                    })
+                                    access_query::enum_def_id(self.ctx.types, display_object_type)
+                                        .map(|_| {
+                                            self.format_type_for_assignability_message(
+                                                display_object_type,
+                                            )
+                                        })
                                 });
                             if let Some(enum_display) = enum_display {
                                 self.error_property_not_exist_with_apparent_type(
