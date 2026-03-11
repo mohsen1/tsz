@@ -129,6 +129,37 @@ class Implementation extends DerivedAbstractClass {
 }
 
 #[test]
+fn test_cached_constructor_parameters_preserve_nested_method_contextual_types() {
+    let source = r#"
+declare function createInstance<
+    Ctor extends new (...args: any[]) => any
+>(ctor: Ctor, ...args: [options: IMenuWorkbenchToolBarOptions | undefined]): any;
+
+interface IMenuWorkbenchToolBarOptions {
+    toolbarOptions: {
+        foo(bar: string): string;
+    };
+}
+
+class MenuWorkbenchToolBar {
+    constructor(options: IMenuWorkbenchToolBarOptions | undefined) {}
+}
+
+createInstance(MenuWorkbenchToolBar, {
+    toolbarOptions: {
+        foo(bar) { return bar; }
+    }
+});
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 7006),
+        "Expected nested method parameter to keep contextual type through generic rest-argument rechecking. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_assignment_compat_with_indexed_targets_matches_tsc() {
     let source = r#"
 var x = { one: 1 };
