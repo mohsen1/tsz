@@ -758,24 +758,11 @@ impl BinderState {
             // TYPE_ALIAS symbol and record the partnership so the checker can
             // resolve type references to the type alias body while value references
             // go through the namespace alias.
-            let existing_alias_id = self
-                .current_scope
-                .get(name)
-                .filter(|id| {
-                    self.symbols
-                        .get(*id)
-                        .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
-                })
-                .or_else(|| {
-                    self.module_exports
-                        .get(self.debugger.current_file.as_str())
-                        .and_then(|exports| exports.get(name))
-                        .filter(|id| {
-                            self.symbols
-                                .get(*id)
-                                .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
-                        })
-                });
+            let existing_alias_id = self.current_scope.get(name).filter(|id| {
+                self.symbols
+                    .get(*id)
+                    .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
+            });
             if let Some(alias_id) = existing_alias_id {
                 let sym_id = self
                     .symbols
@@ -786,15 +773,6 @@ impl BinderState {
                 }
                 // TYPE_ALIAS takes current_scope so type references resolve to it
                 self.current_scope.set(name.to_string(), sym_id);
-                if self.current_scope_id.is_some()
-                    && !self.in_module_augmentation
-                    && self
-                        .scopes
-                        .get(self.current_scope_id.0 as usize)
-                        .is_some_and(|scope| scope.kind == ContainerKind::SourceFile)
-                {
-                    self.file_locals.set(name.to_string(), sym_id);
-                }
                 self.node_symbols.insert(idx.0, sym_id);
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS
@@ -1566,7 +1544,7 @@ impl BinderState {
                     }
                     // Detect expando property assignments (X.prop = value)
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                        self.detect_expando_assignment(arena, bin.left, bin.right);
+                        self.detect_expando_assignment(arena, bin.left);
                     }
                     return;
                 }
@@ -1608,11 +1586,10 @@ impl BinderState {
                     self.bind_expression(arena, unary.operand);
                     if (unary.operator == SyntaxKind::PlusPlusToken as u16
                         || unary.operator == SyntaxKind::MinusMinusToken as u16)
-                        && !Self::is_inside_class_member_computed_property_name(arena, idx)
-                    {
-                        let flow = self.create_flow_assignment(idx);
-                        self.current_flow = flow;
-                    }
+                        && !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                            let flow = self.create_flow_assignment(idx);
+                            self.current_flow = flow;
+                        }
                 }
                 return;
             }
@@ -1793,41 +1770,7 @@ impl BinderState {
     /// Detect expando property assignments of the form `X.prop = value`.
     /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
     /// (`A.B.prop`) so function members on namespaces can collect expandos.
-    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex, rhs: NodeIndex) {
-        fn is_undefined_like_rhs(arena: &NodeArena, idx: NodeIndex) -> bool {
-            let Some(node) = arena.get(idx) else {
-                return false;
-            };
-
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena
-                    .get_identifier(node)
-                    .is_some_and(|ident| ident.escaped_text == "undefined");
-            }
-
-            if node.kind != syntax_kind_ext::VOID_EXPRESSION
-                && node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            {
-                return false;
-            }
-
-            let Some(unary) = arena.get_unary_expr(node) else {
-                return false;
-            };
-            if unary.operator != SyntaxKind::VoidKeyword as u16 {
-                return false;
-            }
-            let Some(expr) = arena.get(unary.operand) else {
-                return false;
-            };
-            matches!(expr.kind, k if k == SyntaxKind::NumericLiteral as u16)
-                && arena.get_literal(expr).is_some_and(|lit| lit.text == "0")
-        }
-
-        if is_undefined_like_rhs(arena, rhs) {
-            return;
-        }
-
+    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex) {
         fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
             let node = arena.get(idx)?;
             if node.kind == SyntaxKind::Identifier as u16 {

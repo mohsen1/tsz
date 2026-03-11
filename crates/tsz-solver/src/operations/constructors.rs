@@ -53,8 +53,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.resolve_intersection_new(type_id, list_id, arg_types)
             }
             TypeData::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                self.resolve_new(app.base, arg_types)
+                let evaluated = self.checker.evaluate_type(type_id);
+                if evaluated != type_id {
+                    self.resolve_new(evaluated, arg_types)
+                } else {
+                    let app = self.interner.type_application(app_id);
+                    self.resolve_new(app.base, arg_types)
+                }
             }
             TypeData::TypeParameter(param_info) => {
                 if let Some(constraint) = param_info.constraint {

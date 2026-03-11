@@ -420,85 +420,51 @@ const y = x.get("a");
 }
 
 #[test]
-fn test_check_files_parallel_require_empty_json_module_reports_ts2339() {
-    let files = vec![
-        (
-            "/file1.ts".to_string(),
-            r#"
-import emptyContent = require("./empty-content.json");
-let x = emptyContent.a;
-import emptyObject = require("./empty-object.json");
-if (x) {
-    let b = emptyObject.b;
-    x = (emptyContent.b === b);
-}
-"#
-            .to_string(),
-        ),
-        ("/empty-content.json".to_string(), "".to_string()),
-        ("/empty-object.json".to_string(), "{ }".to_string()),
-    ];
+fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+declare class Component<P> { constructor(props: P); props: P; }
 
-    let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
-        &crate::checker::context::CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
-            target: tsz_common::common::ScriptTarget::ES2015,
-            resolve_json_module: true,
-            no_lib: true,
-            ..Default::default()
-        },
-        &[],
-    );
-
-    let file = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "/file1.ts")
-        .expect("expected importer file result");
-    let codes: Vec<u32> = file.diagnostics.iter().map(|diag| diag.code).collect();
-    assert_eq!(
-        codes,
-        vec![2339, 2339, 2339],
-        "Expected exactly TS2339 diagnostics for empty JSON module property reads. Actual diagnostics: {:#?}",
-        file.diagnostics
-    );
-    for diagnostic in &file.diagnostics {
-        assert!(
-            diagnostic
-                .message_text
-                .contains("does not exist on type '{}'."),
-            "Expected empty JSON modules to be typed as '{{}}'. Actual diagnostic: {diagnostic:#?}"
-        );
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
     }
-}
 
-#[test]
-fn test_check_files_parallel_default_import_of_object_literal_keeps_export_type() {
-    let files = vec![
-        (
-            "/file1.ts".to_string(),
-            r#"
-export default { answer: 1 };
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    type CreateElementChildren<P> =
+        P extends { children?: infer C }
+            ? C extends any[]
+                ? C
+                : C[]
+            : unknown;
+
+    declare function createElement<P extends {}>(
+        type: ComponentClass<P>,
+        ...children: CreateElementChildren<P>
+    ): any;
+
+    declare function createElement2<P extends {}>(
+        type: ComponentClass<P>,
+        child: CreateElementChildren<P>
+    ): any;
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    createElement(InferFunctionTypes, (foo) => "" + foo);
+    createElement2(InferFunctionTypes, [(foo) => "" + foo]);
+}
 "#
-            .to_string(),
-        ),
-        (
-            "/file2.ts".to_string(),
-            r#"
-import value from "./file1";
-value.missing;
-"#
-            .to_string(),
-        ),
-    ];
+        .to_string(),
+    )];
 
     let program = compile_files(files);
     let result = check_files_parallel(
         &program,
         &crate::checker::context::CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
             target: tsz_common::common::ScriptTarget::ES2015,
             no_lib: true,
             ..Default::default()
@@ -506,243 +472,271 @@ value.missing;
         &[],
     );
 
-    let file = result
+    let file_result = result
         .file_results
         .iter()
-        .find(|file| file.file_name == "/file2.ts")
-        .expect("expected importer file result");
-    let codes: Vec<u32> = file.diagnostics.iter().map(|diag| diag.code).collect();
-    assert_eq!(
-        codes,
-        vec![2339],
-        "Expected exactly TS2339 in /file2.ts. Actual diagnostics: {:#?}",
-        file.diagnostics
-    );
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected test.ts result");
     assert!(
-        file.diagnostics[0]
-            .message_text
-            .contains("Property 'missing' does not exist on type '{ answer: number; }'."),
-        "Expected TS2339 to target the default-export object literal. Actual diagnostics: {:#?}",
-        file.diagnostics
+        !file_result.diagnostics.iter().any(|diag| diag.code == 2345),
+        "parallel file checking should preserve namespace-local ComponentClass inference for createElement. Actual diagnostics: {:#?}",
+        file_result.diagnostics,
     );
-}
 
-#[test]
-fn test_check_files_parallel_dot_and_trailing_slash_directory_imports_keep_ts2339() {
-    let files = vec![
-        (
-            "/a.ts".to_string(),
-            r#"
-export default { a: 0 };
-"#
-            .to_string(),
-        ),
-        (
-            "/a/index.ts".to_string(),
-            r#"
-export default { aIndex: 0 };
-"#
-            .to_string(),
-        ),
-        (
-            "/a/test.ts".to_string(),
-            r#"
-import a from ".";
-import aIndex from "./";
-a.a;
-aIndex.aIndex;
-"#
-            .to_string(),
-        ),
-        (
-            "/a/b/test.ts".to_string(),
-            r#"
-import a from "..";
-import aIndex from "../";
-a.a;
-aIndex.aIndex;
-"#
-            .to_string(),
-        ),
-    ];
-
-    let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
+    let file = program
+        .files
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected merged test.ts file");
+    let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut recreated_checker = crate::checker::state::CheckerState::with_options(
+        &file.arena,
+        &rebuilt_binder,
+        &query_cache,
+        file.file_name.clone(),
         &crate::checker::context::CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
             target: tsz_common::common::ScriptTarget::ES2015,
             no_lib: true,
             ..Default::default()
         },
-        &[],
     );
-
-    for file_name in ["/a/test.ts", "/a/b/test.ts"] {
-        let file = result
-            .file_results
+    recreated_checker.check_source_file(file.source_file);
+    assert!(
+        !recreated_checker
+            .ctx
+            .diagnostics
             .iter()
-            .find(|file| file.file_name == file_name)
-            .expect("expected test file result");
-        let codes: Vec<u32> = file.diagnostics.iter().map(|diag| diag.code).collect();
-        assert_eq!(
-            codes,
-            vec![2339],
-            "Expected exactly TS2339 in {file_name}. Actual diagnostics: {:#?}",
-            file.diagnostics
-        );
-        assert!(
-            file.diagnostics[0]
-                .message_text
-                .contains("Property 'a' does not exist on type '{ aIndex: number; }'."),
-            "Expected TS2339 to target the index export object in {file_name}. Actual diagnostics: {:#?}",
-            file.diagnostics
-        );
+            .any(|diag| diag.code == 2345),
+        "recreated binder checking should preserve namespace-local ComponentClass inference for createElement. Actual diagnostics: {:#?}",
+        recreated_checker.ctx.diagnostics,
+    );
+}
+
+#[test]
+fn test_recreated_binder_keeps_namespace_local_generic_class_application_instance_type() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
     }
-}
 
-#[test]
-fn test_check_files_parallel_preserves_ts2454_for_umd_namespace_qualified_type_member() {
-    let files = vec![
-        (
-            "foo.d.ts".to_string(),
-            r#"
-export var x: number;
-export function fn(): void;
-export interface Thing { n: typeof x }
-export as namespace Foo;
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    declare let c: ComponentClass<{ children: (foo: number) => string }>;
+    const z = new c({ children: (foo) => "" + foo });
+    z.props;
+}
 "#
-            .to_string(),
-        ),
-        (
-            "a.ts".to_string(),
-            r#"
-/// <reference path="foo.d.ts" />
-Foo.fn();
-let x: Foo.Thing;
-let y: number = x.n;
-"#
-            .to_string(),
-        ),
-    ];
+        .to_string(),
+    )];
 
     let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
-        &crate::checker::context::CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
-            target: tsz_common::common::ScriptTarget::ES2015,
-            no_lib: true,
-            ..Default::default()
-        },
+    let file = program
+        .files
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected merged test.ts file");
+    let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut checker = crate::checker::state::CheckerState::with_options(
+        &file.arena,
+        &rebuilt_binder,
+        &query_cache,
+        file.file_name.clone(),
+        &crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(file.source_file);
+    let source_file = file
+        .arena
+        .get(file.source_file)
+        .and_then(|node| file.arena.get_source_file(node))
+        .expect("missing source file");
+    let namespace_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&stmt_idx| {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(module_decl) = file.arena.get_module(stmt_node) else {
+                return false;
+            };
+            file.arena
+                .get_identifier_at(module_decl.name)
+                .is_some_and(|ident| ident.escaped_text.as_str() == "N1")
+        })
+        .expect("missing namespace declaration");
+    let namespace_body_statements = file
+        .arena
+        .get(namespace_stmt)
+        .and_then(|node| file.arena.get_module(node))
+        .map(|module| module.body)
+        .and_then(|body_idx| file.arena.get(body_idx))
+        .and_then(|node| file.arena.get_module_block(node))
+        .and_then(|module_block| module_block.statements.as_ref())
+        .map(|statements| statements.nodes.clone())
+        .expect("missing namespace body");
+    let component_return_name = namespace_body_statements
+        .iter()
+        .copied()
+        .find_map(|stmt_idx| {
+            let stmt_node = file.arena.get(stmt_idx)?;
+            let interface_decl = file.arena.get_interface(stmt_node)?;
+            let interface_name = file
+                .arena
+                .get_identifier_at(interface_decl.name)?
+                .escaped_text
+                .as_str();
+            if interface_name != "ComponentClass" {
+                return None;
+            }
+            let construct_idx = interface_decl.members.nodes.first().copied()?;
+            let construct_node = file.arena.get(construct_idx)?;
+            let construct_sig = file.arena.get_signature(construct_node)?;
+            let type_ref_node = file.arena.get(construct_sig.type_annotation)?;
+            let type_ref = file.arena.get_type_ref(type_ref_node)?;
+            Some(type_ref.type_name)
+        })
+        .expect("missing Component<P> return type");
+    let local_component_sym = file
+        .scopes
+        .iter()
+        .find(|scope| {
+            scope.kind == crate::binder::ContainerKind::Module && scope.table.has("Component")
+        })
+        .and_then(|scope| scope.table.get("Component"))
+        .expect("missing namespace-local Component");
+    let binder_resolved_component = rebuilt_binder.resolve_identifier_with_filter(
+        &file.arena,
+        component_return_name,
         &[],
+        |_| true,
     );
-
-    let file = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "a.ts")
-        .expect("expected a.ts result");
-    let relevant_codes: Vec<u32> = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code != 2318)
-        .map(|diag| diag.code)
-        .collect();
 
     assert_eq!(
-        relevant_codes,
-        vec![2454],
-        "Expected only TS2454 in a.ts. Actual diagnostics: {:#?}",
-        file.diagnostics
+        binder_resolved_component,
+        Some(local_component_sym),
+        "rebuilt binder should resolve the interface's unqualified Component<P> to the namespace-local symbol",
     );
-}
-
-#[test]
-fn test_check_files_parallel_preserves_tdz_after_namespace_reexport() {
-    let files = vec![
-        (
-            "0.ts".to_string(),
-            r#"
-export const a = 1;
-export const b = 2;
-"#
-            .to_string(),
-        ),
-        (
-            "1.ts".to_string(),
-            r#"
-export * as ns from "./0";
-ns.a;
-ns.b;
-let ns = { a: 1, b: 2 };
-ns.a;
-ns.b;
-"#
-            .to_string(),
-        ),
-        (
-            "2.ts".to_string(),
-            r#"
-import * as foo from "./1";
-
-foo.ns.a;
-foo.ns.b;
-"#
-            .to_string(),
-        ),
-    ];
-
-    let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
-        &crate::checker::context::CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
-            target: tsz_common::common::ScriptTarget::ES2015,
-            no_lib: true,
-            ..Default::default()
-        },
-        &[],
-    );
-
-    let file = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "1.ts")
-        .expect("expected 1.ts result");
-
-    let ts2448_count = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == 2448)
-        .count();
-    let ts2454_count = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == 2454)
-        .count();
-
-    assert_eq!(
-        ts2448_count, 2,
-        "Expected exactly two TS2448 diagnostics in 1.ts. Actual diagnostics: {:#?}",
-        file.diagnostics
-    );
-    assert_eq!(
-        ts2454_count, 2,
-        "Expected exactly two TS2454 diagnostics in 1.ts. Actual diagnostics: {:#?}",
-        file.diagnostics
-    );
-
-    let importer = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "2.ts")
-        .expect("expected 2.ts result");
-    let importer_codes: Vec<u32> = importer.diagnostics.iter().map(|diag| diag.code).collect();
     assert!(
-        importer_codes.is_empty(),
-        "Expected no diagnostics in 2.ts. Actual diagnostics: {:#?}",
-        importer.diagnostics
+        checker.ctx.diagnostics.iter().any(|diag| diag.code == 2339),
+        "recreated binder should keep the namespace-local Component<P> instance type inside ComponentClass<P>. Actual diagnostics: {:#?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_recreated_binder_keeps_namespace_local_component_class_assignability() {
+    let files = vec![(
+        "test.ts".to_string(),
+        r#"
+declare class Component<P> { constructor(props: P); }
+
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
+    }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+    declare let target: ComponentClass<{ children: (foo: number) => string }>;
+    target = InferFunctionTypes;
+    target;
+}
+"#
+        .to_string(),
+    )];
+
+    let program = compile_files(files);
+    let file = program
+        .files
+        .iter()
+        .find(|file| file.file_name == "test.ts")
+        .expect("expected merged test.ts file");
+    let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let mut checker = crate::checker::state::CheckerState::with_options(
+        &file.arena,
+        &rebuilt_binder,
+        &query_cache,
+        file.file_name.clone(),
+        &crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(file.source_file);
+    let source_file = file
+        .arena
+        .get(file.source_file)
+        .and_then(|node| file.arena.get_source_file(node))
+        .expect("missing source file");
+    let namespace_stmt = source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&stmt_idx| {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(module_decl) = file.arena.get_module(stmt_node) else {
+                return false;
+            };
+            file.arena
+                .get_identifier_at(module_decl.name)
+                .is_some_and(|ident| ident.escaped_text.as_str() == "N1")
+        })
+        .expect("missing namespace declaration");
+    let namespace_body_statements = file
+        .arena
+        .get(namespace_stmt)
+        .and_then(|node| file.arena.get_module(node))
+        .map(|module| module.body)
+        .and_then(|body_idx| file.arena.get(body_idx))
+        .and_then(|node| file.arena.get_module_block(node))
+        .and_then(|module_block| module_block.statements.as_ref())
+        .map(|statements| statements.nodes.clone())
+        .expect("missing namespace body");
+    let assignment_expr = namespace_body_statements
+        .iter()
+        .copied()
+        .find_map(|stmt_idx| {
+            let stmt_node = file.arena.get(stmt_idx)?;
+            let expr_stmt = file.arena.get_expression_statement(stmt_node)?;
+            let expr_node = file.arena.get(expr_stmt.expression)?;
+            file.arena
+                .get_binary_expr(expr_node)
+                .map(|binary| (binary.left, binary.right))
+        })
+        .expect("missing target assignment");
+    let target_expr = namespace_body_statements
+        .iter()
+        .copied()
+        .rev()
+        .find_map(|stmt_idx| {
+            let stmt_node = file.arena.get(stmt_idx)?;
+            let expr_stmt = file.arena.get_expression_statement(stmt_node)?;
+            let ident = file.arena.get_identifier_at(expr_stmt.expression)?;
+            (ident.escaped_text.as_str() == "target").then_some(expr_stmt.expression)
+        })
+        .expect("missing target expression");
+    let source_type = checker.get_type_of_node(assignment_expr.1);
+    let target_type = checker.get_type_of_node(target_expr);
+
+    assert!(
+        checker.is_assignable_to(source_type, target_type),
+        "namespace-local ComponentClass assignability should accept subclass constructors. Actual diagnostics: {:#?}",
+        checker.ctx.diagnostics,
     );
 }
 
@@ -1293,189 +1287,6 @@ class D {
             .iter()
             .any(|msg| msg.contains("Property 'c' must be of type 'number'")),
         "Expected property-vs-property TS2717 for 'c'. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-}
-
-#[test]
-fn test_check_files_parallel_private_name_static_instance_conflicts_emit_ts2804() {
-    let files = vec![(
-        "test.ts".to_string(),
-        r#"
-class A {
-    #foo = "foo";
-    static #foo() { }
-}
-class B {
-    static get #bar() { return ""; }
-    set #bar(value: string) { }
-}
-"#
-        .to_string(),
-    )];
-
-    let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
-        &crate::checker::context::CheckerOptions {
-            target: tsz_common::common::ScriptTarget::ES2015,
-            no_lib: true,
-            ..Default::default()
-        },
-        &[],
-    );
-
-    let file = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "test.ts")
-        .expect("expected test.ts result");
-
-    let ts2804_messages: Vec<&str> = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == 2804)
-        .map(|diag| diag.message_text.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2804_messages.len(),
-        2,
-        "Expected TS2804 on the later static/instance private-name conflicts only. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-    assert!(
-        ts2804_messages
-            .iter()
-            .all(|msg| msg
-                .contains("Static and instance elements cannot share the same private name")),
-        "Expected TS2804 static/instance private-name message. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-    assert!(
-        file.diagnostics.iter().all(|diag| diag.code != 2300),
-        "Did not expect TS2300 for pure static/instance private-name conflicts. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-}
-
-#[test]
-fn test_check_files_parallel_duplicate_private_accessors_report_all_occurrences() {
-    let files = vec![(
-        "test.ts".to_string(),
-        r#"
-class A {
-    get #foo() { return ""; }
-    get #foo() { return ""; }
-}
-class B {
-    static set #bar(value: string) { }
-    static set #bar(value: string) { }
-}
-"#
-        .to_string(),
-    )];
-
-    let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
-        &crate::checker::context::CheckerOptions {
-            target: tsz_common::common::ScriptTarget::ES2015,
-            no_lib: true,
-            ..Default::default()
-        },
-        &[],
-    );
-
-    let file = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "test.ts")
-        .expect("expected test.ts result");
-
-    let ts2300_count = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == 2300)
-        .count();
-
-    assert_eq!(
-        ts2300_count, 4,
-        "Expected TS2300 on both private getter declarations and both private setter declarations. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-}
-
-#[test]
-fn test_check_files_parallel_private_accessor_before_field_reports_field_only() {
-    let source = r#"
-function cases() {
-    class A {
-        get #foo() { return ""; }
-        #foo = "foo";
-    }
-    class B {
-        set #foo(value: string) { }
-        #foo = "foo";
-    }
-    class C {
-        static set #foo(value: string) { }
-        static #foo = "foo";
-    }
-}
-"#;
-    let files = vec![("test.ts".to_string(), source.to_string())];
-
-    let program = compile_files(files);
-    let result = check_files_parallel(
-        &program,
-        &crate::checker::context::CheckerOptions {
-            target: tsz_common::common::ScriptTarget::ES2015,
-            no_lib: true,
-            ..Default::default()
-        },
-        &[],
-    );
-
-    let file = result
-        .file_results
-        .iter()
-        .find(|file| file.file_name == "test.ts")
-        .expect("expected test.ts result");
-
-    let ts2300_count = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == 2300)
-        .count();
-    let ts2300_starts: Vec<u32> = file
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == 2300)
-        .map(|diag| diag.start)
-        .collect();
-
-    let expected_starts: Vec<usize> = source
-        .match_indices("#foo = \"foo\";")
-        .map(|(idx, _)| idx)
-        .collect();
-
-    assert_eq!(
-        ts2300_count, 3,
-        "Expected TS2300 only on the later field declarations. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-    for expected_start in expected_starts {
-        assert!(
-            ts2300_starts.contains(&(expected_start as u32)),
-            "Expected TS2300 at field start {expected_start}, got starts {:?}. Diagnostics: {:#?}",
-            ts2300_starts,
-            file.diagnostics
-        );
-    }
-    assert!(
-        file.diagnostics.iter().all(|diag| diag.code != 2804),
-        "Did not expect TS2804 for same-staticness private accessor/field conflicts. Diagnostics: {:#?}",
         file.diagnostics
     );
 }

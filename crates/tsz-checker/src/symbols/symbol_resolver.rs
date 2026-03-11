@@ -440,6 +440,12 @@ impl<'a> CheckerState<'a> {
         };
         let name = ident.escaped_text.as_str();
 
+        if self.lookup_type_parameter(name).is_none()
+            && let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
+        {
+            return TypeSymbolResolution::Type(sym_id);
+        }
+
         let ignore_libs = !self.ctx.has_lib_loaded();
         // Collect lib binders for cross-arena symbol lookup
         let lib_binders = if ignore_libs {
@@ -1143,7 +1149,7 @@ impl<'a> CheckerState<'a> {
     /// chain only sees file2's namespace body. This method walks up the AST
     /// to find enclosing `MODULE_DECLARATION` nodes and checks their merged
     /// symbol exports for the name.
-    fn resolve_unqualified_name_in_enclosing_namespace(
+    pub(crate) fn resolve_unqualified_name_in_enclosing_namespace(
         &self,
         node_idx: NodeIndex,
         name: &str,

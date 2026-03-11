@@ -102,6 +102,7 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             };
+            let _ = self.type_reference_symbol_type(sym_id);
             // Use Lazy(DefId) instead of Ref(SymbolRef)
             let base_type = self.ctx.create_lazy_type_ref(sym_id);
             if has_type_args {
@@ -124,6 +125,32 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
             let name = ident.escaped_text.as_str();
+
+            // Type literal members inside namespaces should prefer same-namespace
+            // type declarations before falling back to file/global symbols.
+            if self.lookup_type_parameter(name).is_none()
+                && let Some(sym_id) =
+                    self.resolve_unqualified_name_in_enclosing_namespace(type_name_idx, name)
+            {
+                let _ = self.type_reference_symbol_type(sym_id);
+                let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                if has_type_args {
+                    let type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| {
+                                    self.get_type_from_type_node_in_type_literal(arg_idx)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    return factory.application(base_type, type_args);
+                }
+                return base_type;
+            }
 
             if has_type_args {
                 // Handle compiler-intrinsic types that need special TypeData
@@ -240,6 +267,7 @@ impl<'a> CheckerState<'a> {
                 let base_type = if let Some(type_param) = type_param {
                     type_param
                 } else if let Some(sym_id) = sym_id {
+                    let _ = self.type_reference_symbol_type(sym_id);
                     // Use Lazy(DefId) instead of Ref(SymbolRef)
                     self.ctx.create_lazy_type_ref(sym_id)
                 } else {
@@ -263,6 +291,7 @@ impl<'a> CheckerState<'a> {
                 if let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
+                    let _ = self.type_reference_symbol_type(sym_id);
                     // Use Lazy(DefId) instead of Ref(SymbolRef)
                     return self.ctx.create_lazy_type_ref(sym_id);
                 }
@@ -327,6 +356,7 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
+                let _ = self.type_reference_symbol_type(sym_id);
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false

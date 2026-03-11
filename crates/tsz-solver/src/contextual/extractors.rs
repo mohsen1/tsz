@@ -768,10 +768,27 @@ pub(crate) fn extract_rest_param_type_at(
     };
 
     if index >= rest_start {
-        // The callback rest param aligns with the contextual function's rest param.
-        // Return the rest param's type directly (it's already a tuple or array type).
         if let Some(rp) = rest_param {
-            return Some(rp.type_id);
+            let mut normalized = rp.clone();
+            if let Some(evaluated) = evaluate_rest_like_type(db, normalized.type_id) {
+                normalized.type_id = evaluated;
+            }
+            let expanded = crate::type_queries::unpack_tuple_rest_parameter(db, &normalized);
+            let tuple_unpacked = expanded.len() > 1
+                || expanded.first().is_some_and(|param| {
+                    param.type_id != normalized.type_id
+                        || param.rest != normalized.rest
+                        || param.optional != normalized.optional
+                });
+            if tuple_unpacked {
+                let mut expanded_params = params[..rest_start].to_vec();
+                expanded_params.extend(expanded);
+                return extract_rest_param_type_at(db, &expanded_params, index);
+            }
+
+            // The callback rest param aligns with the contextual function's rest param.
+            // Return the rest param's type directly (it's already a tuple or array type).
+            return Some(normalized.type_id);
         }
         // Past the end with no rest param — no contextual type.
         return None;
@@ -807,6 +824,23 @@ pub(crate) fn extract_rest_param_type_at(
         } else {
             Some(db.tuple(remaining_fixed))
         }
+    }
+}
+
+fn evaluate_rest_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => Some(inner),
+        Some(
+            TypeData::Lazy(_)
+            | TypeData::Mapped(_)
+            | TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::Application(_),
+        ) => {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+            (evaluated != type_id).then_some(evaluated)
+        }
+        _ => None,
     }
 }
 
@@ -854,9 +888,9 @@ fn extract_param_type_at_inner(
     if let Some(last_param) = rest_param {
         // Adjust index relative to rest parameter start
         let rest_index = index - rest_start;
-        if let Some(TypeData::ReadonlyType(inner)) = db.lookup(last_param.type_id) {
+        if let Some(evaluated) = evaluate_rest_like_type(db, last_param.type_id) {
             let mut mock_params = params.to_vec();
-            mock_params.last_mut().unwrap().type_id = inner;
+            mock_params.last_mut().unwrap().type_id = evaluated;
             return extract_param_type_at_inner(db, &mock_params, index, arg_count);
         }
         if let Some(TypeData::Array(elem)) = db.lookup(last_param.type_id) {
@@ -930,15 +964,7 @@ fn extract_param_type_at_inner(
                 }
             }
             // If all returned generic types, just fall through
-        } else if let Some(TypeData::Application(_app_id)) = db.lookup(last_param.type_id) {
-            let evaluated = crate::evaluation::evaluate::evaluate_type(db, last_param.type_id);
-            if evaluated != last_param.type_id {
-                let mut mock_params = params.to_vec();
-                mock_params.last_mut().unwrap().type_id = evaluated;
-                return extract_param_type_at_inner(db, &mock_params, index, arg_count);
-            }
         }
-
         // If we still didn't extract a specific type, check constraint
         if let Some(constraint) =
             crate::type_queries::get_type_parameter_constraint(db, last_param.type_id)

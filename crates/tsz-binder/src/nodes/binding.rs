@@ -886,11 +886,10 @@ impl BinderState {
                     self.bind_node(arena, unary.operand);
                     if (unary.operator == SyntaxKind::PlusPlusToken as u16
                         || unary.operator == SyntaxKind::MinusMinusToken as u16)
-                        && !Self::is_inside_class_member_computed_property_name(arena, idx)
-                    {
-                        let flow = self.create_flow_assignment(idx);
-                        self.current_flow = flow;
-                    }
+                        && !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                            let flow = self.create_flow_assignment(idx);
+                            self.current_flow = flow;
+                        }
                 }
             }
 

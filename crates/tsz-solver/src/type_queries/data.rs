@@ -513,16 +513,45 @@ pub fn unpack_tuple_rest_parameter(
 
     // Check if the rest parameter type is a tuple
     if let Some(tuple_elements) = get_tuple_elements(db, param.type_id) {
-        // Convert tuple elements to individual parameters
-        tuple_elements
-            .into_iter()
-            .map(|elem| crate::types::ParamInfo {
-                name: elem.name, // Preserve tuple element names if present
-                type_id: elem.type_id,
-                optional: elem.optional,
-                rest: elem.rest, // Preserve rest flag for trailing ...T[] in tuple
-            })
-            .collect()
+        let mut unpacked = Vec::new();
+        for elem in tuple_elements {
+            if !elem.rest {
+                unpacked.push(crate::types::ParamInfo {
+                    name: elem.name,
+                    type_id: elem.type_id,
+                    optional: elem.optional,
+                    rest: false,
+                });
+                continue;
+            }
+
+            let expansion = crate::utils::expand_tuple_rest(db, elem.type_id);
+            for fixed in expansion.fixed {
+                unpacked.push(crate::types::ParamInfo {
+                    name: fixed.name,
+                    type_id: fixed.type_id,
+                    optional: fixed.optional,
+                    rest: false,
+                });
+            }
+            if let Some(variadic) = expansion.variadic {
+                unpacked.push(crate::types::ParamInfo {
+                    name: elem.name,
+                    type_id: db.array(variadic),
+                    optional: false,
+                    rest: true,
+                });
+            }
+            for tail in expansion.tail {
+                unpacked.push(crate::types::ParamInfo {
+                    name: tail.name,
+                    type_id: tail.type_id,
+                    optional: tail.optional,
+                    rest: tail.rest,
+                });
+            }
+        }
+        unpacked
     } else {
         // Not a tuple - keep the rest parameter as-is
         // This handles cases like `...args: string[]` which should remain a rest parameter

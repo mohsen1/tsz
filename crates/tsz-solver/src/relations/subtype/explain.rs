@@ -1052,30 +1052,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let rest_is_top = self.allow_bivariant_rest
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
         let source_required = self.required_param_count(&source.params);
-        let target_required = self.required_param_count(&target.params);
-        // When the target has rest parameters, skip arity check entirely —
-        // the rest parameter can accept any number of arguments, and type
-        // compatibility of extra source params is checked later against the rest element type.
-        // This aligns with check_function_subtype which also skips the arity check when
-        // target_has_rest is true.
-        let too_many_params = !self.allow_bivariant_param_count
-            && !rest_is_top
-            && !target_has_rest
-            && source_required > target_required;
-        if !target_has_rest && too_many_params {
-            return Some(SubtypeFailureReason::TooManyParameters {
-                source_count: source_required,
-                target_count: target_required,
-            });
-        }
-
-        // Check parameter types
-        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let target_fixed_count = if target_has_rest {
             target.params.len().saturating_sub(1)
         } else {
             target.params.len()
         };
+        let target_rest_min_required = if target_has_rest {
+            target
+                .params
+                .last()
+                .map(|param| self.rest_param_min_required_arg_count(param.type_id))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let too_many_params = !self.allow_bivariant_param_count
+            && !rest_is_top
+            && source_required > target_fixed_count + target_rest_min_required;
+        if too_many_params {
+            return Some(SubtypeFailureReason::TooManyParameters {
+                source_count: source_required,
+                target_count: target_fixed_count + target_rest_min_required,
+            });
+        }
+
+        // Check parameter types
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let source_fixed_count = if source_has_rest {
             source.params.len().saturating_sub(1)
         } else {
@@ -1107,6 +1109,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return None; // Invalid rest parameter
             };
             if rest_is_top {
+                if let Some((param_index, source_param)) =
+                    self.first_top_rest_unassignable_source_param(&source.params)
+                {
+                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                        param_index,
+                        source_param,
+                        target_param: rest_elem_type,
+                    });
+                }
                 return None;
             }
 

@@ -612,20 +612,15 @@ impl<'a> TypeLowering<'a> {
                     args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
                 let type_symbol = self.resolve_type_symbol(data.type_name);
                 let value_symbol = self.resolve_value_symbol(data.type_name);
-                let base_type =
-                    if let (Some(type_symbol), Some(value_symbol)) = (type_symbol, value_symbol) {
-                        if type_symbol == value_symbol || base_type == TypeId::ERROR {
-                            self.interner.type_query(SymbolRef(value_symbol))
-                        } else {
-                            base_type
-                        }
-                    } else if base_type == TypeId::ERROR {
-                        value_symbol
-                            .map(|symbol_id| self.interner.type_query(SymbolRef(symbol_id)))
-                            .unwrap_or(base_type)
-                    } else {
-                        base_type
-                    };
+                let base_type = if type_symbol.is_some() && base_type != TypeId::ERROR {
+                    base_type
+                } else if base_type == TypeId::ERROR {
+                    value_symbol
+                        .map(|symbol_id| self.interner.type_query(SymbolRef(symbol_id)))
+                        .unwrap_or(base_type)
+                } else {
+                    base_type
+                };
                 return self.interner.application(base_type, type_args);
             }
 
@@ -715,13 +710,14 @@ impl<'a> TypeLowering<'a> {
                 let lazy_type = self.interner.lazy(def_id);
                 return lazy_type;
             }
-            if let Some(def_id) = self.resolve_def_id_by_name(name) {
+            // Prefer NodeIndex-based resolution when it is available. It preserves
+            // lexical shadowing for same-arena/user-code cases, while the scoped
+            // name lookup above still handles cross-arena namespace references.
+            if let Some(def_id) = self.resolve_def_id(node_idx) {
                 let lazy_type = self.interner.lazy(def_id);
                 return lazy_type;
             }
-            // Fall back to NodeIndex-based resolution for same-arena contexts
-            // where no name-based resolver is available (e.g., user code).
-            if let Some(def_id) = self.resolve_def_id(node_idx) {
+            if let Some(def_id) = self.resolve_def_id_by_name(name) {
                 let lazy_type = self.interner.lazy(def_id);
                 return lazy_type;
             }

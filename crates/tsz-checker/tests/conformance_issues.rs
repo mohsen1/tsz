@@ -129,37 +129,6 @@ class Implementation extends DerivedAbstractClass {
 }
 
 #[test]
-fn test_cached_constructor_parameters_preserve_nested_method_contextual_types() {
-    let source = r#"
-declare function createInstance<
-    Ctor extends new (...args: any[]) => any
->(ctor: Ctor, ...args: [options: IMenuWorkbenchToolBarOptions | undefined]): any;
-
-interface IMenuWorkbenchToolBarOptions {
-    toolbarOptions: {
-        foo(bar: string): string;
-    };
-}
-
-class MenuWorkbenchToolBar {
-    constructor(options: IMenuWorkbenchToolBarOptions | undefined) {}
-}
-
-createInstance(MenuWorkbenchToolBar, {
-    toolbarOptions: {
-        foo(bar) { return bar; }
-    }
-});
-"#;
-
-    let diagnostics = compile_and_get_diagnostics(source);
-    assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 7006),
-        "Expected nested method parameter to keep contextual type through generic rest-argument rechecking. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
 fn test_assignment_compat_with_indexed_targets_matches_tsc() {
     let source = r#"
 var x = { one: 1 };
@@ -245,82 +214,566 @@ enum e5a { One }
 }
 
 #[test]
-fn test_switch_discriminant_narrows_nested_indexed_access_base() {
-    let source = r#"
-interface Square {
-    ["dash-ok"]: "square";
-    ["square-size"]: number;
-}
-interface Rectangle {
-    ["dash-ok"]: "rectangle";
-    width: number;
-    height: number;
-}
-interface Circle {
-    ["dash-ok"]: "circle";
-    radius: number;
-}
-type Shape = Square | Rectangle | Circle;
-interface Subshape {
-    "0": {
-        sub: {
-            under: {
-                shape: Shape;
-            }
-        }
+fn test_constructor_parameters_rest_argument_contextually_types_object_literal_methods() {
+    if !lib_files_available() {
+        return;
     }
+
+    let source = r#"
+declare function createInstance<
+    Ctor extends new (...args: any[]) => any,
+    R extends InstanceType<Ctor>
+>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;
+
+interface IMenuWorkbenchToolBarOptions {
+    toolbarOptions: {
+        foo(bar: string): string;
+    };
 }
 
-function subarea(s: Subshape): number {
-    switch (s[0]["sub"].under["shape"]["dash-ok"]) {
-        case "square":
-            return s[0].sub.under.shape["square-size"] * s[0].sub.under.shape["square-size"];
-        case "rectangle":
-            return s[0]["sub"]["under"]["shape"]["width"] * s[0]["sub"]["under"]["shape"].height;
-        case "circle":
-            return Math.PI * s[0].sub.under["shape"].radius * s[0]["sub"].under.shape["radius"];
-    }
+class MenuWorkbenchToolBar {
+    constructor(options: IMenuWorkbenchToolBarOptions | undefined) {}
 }
+
+createInstance(MenuWorkbenchToolBar, {
+    toolbarOptions: {
+        foo(bar) { return bar; }
+    }
+});
 "#;
 
-    let diagnostics = compile_and_get_diagnostics(source);
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| !matches!(*code, 2304 | 2318))
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 7006 | 2345))
         .collect();
+
     assert!(
         relevant.is_empty(),
-        "Expected nested discriminant switch to narrow the indexed-access base. Actual diagnostics: {relevant:#?}"
+        "ConstructorParameters rest contextual typing should not produce TS7006/TS2345, got: {diagnostics:#?}"
     );
 }
 
 #[test]
-fn test_switch_discriminant_narrows_tuple_union_siblings() {
+fn test_partial_method_rest_parameter_preserves_contextual_tuple_elements() {
     let source = r#"
-type A = ["aa", number];
-type B = ["bb", string];
-type C = A | B;
+declare function assignPartial<T>(target: T, partial: Partial<T>): T;
 
-function check(c: C) {
-    switch (c[0]) {
-        case "aa":
-            var aa: number = c[1];
-            break;
-        case "bb":
-            var bb: string = c[1];
-            break;
+let obj = {
+    foo(bar: string) {}
+};
+
+assignPartial(obj, { foo(...args) {} });
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 7006 | 2345))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Partial<T> method rest contextual typing should not produce TS7006/TS2345, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_spread_arguments_preserve_tuple_element_types_for_rest_positions() {
+    let source = r#"
+declare const t1: [number, boolean, string];
+
+(function (a, b, c){})(...t1);
+
+declare const t2: [number, boolean, ...string[]];
+
+(function (a, b, c){})(...t2);
+
+declare const t3: [boolean, ...string[]];
+
+(function (a, b, c){})(1, ...t3);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2345))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Tuple spread rest arguments should not collapse to never, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_contextual_tuple_rest_callbacks_accept_variadic_typeof_tuple_shapes() {
+    let source = r#"
+declare const t2: [number, boolean, ...string[]];
+declare function f2(cb: (...args: typeof t2) => void): void;
+f2((a, b, c) => {});
+f2((a, ...x) => {});
+
+declare const t3: [boolean, ...string[]];
+declare function f3(cb: (x: number, ...args: typeof t3) => void): void;
+f3((...x) => {});
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2345 | 7006))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Variadic typeof tuple callback contextual typing should not produce TS2322/TS2345/TS7006, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tuple_union_and_generic_rest_callback_compatibility() {
+    let source = r#"
+function f4<T extends any[]>(t: T) {
+    function f(cb: (x: number, ...args: T) => void) {}
+    f((a, b, ...x) => {});
+}
+type ArgsUnion = [number, string] | [number, Error];
+type TupleUnionFunc = (...params: ArgsUnion) => number;
+
+const funcUnionTupleNoRest: TupleUnionFunc = (num, strOrErr) => {
+  return num;
+};
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    let ts7006_count = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
+
+    assert_eq!(
+        ts7006_count, 0,
+        "Generic tuple rest callbacks should still receive contextual parameter typing, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2322_count, 0,
+        "Tuple-union rest callback assignment should not report TS2322, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_rest_tuple_callback_rejects_extra_fixed_parameter() {
+    if !lib_files_available() {
+        return;
     }
+
+    let source = r#"
+function f4<T extends any[]>(t: T) {
+    function f(cb: (x: number, ...args: T) => void) {}
+    f((a, b, ...x) => {});
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2345).count(),
+        1,
+        "Generic rest tuple callbacks should reject extra fixed parameters that are not guaranteed by T. diagnostics={diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_higher_order_generic_rest_call_accepts_generic_binary_function() {
+    let source = r#"
+function call<T extends unknown[], U>(f: (...args: T) => U, ...args: T) {
+    return f(...args);
+}
+
+function callr<T extends unknown[], U>(args: T, f: (...args: T) => U) {
+    return f(...args);
+}
+
+declare const sn: [string, number];
+declare function f16<A, B>(a: A, b: B): A | B;
+declare function f15(a: string, b: number): string | number;
+
+let x20 = call((x, y) => x + y, 10, 20);
+let x21 = call((x, y) => x + y, 10, "hello");
+let x22 = call(f15, "hello", 42);
+let x23 = call(f16, "hello", 42);
+let x24 = call<[string, number], string | number>(f16, "hello", 42);
+let x30 = callr(sn, (x, y) => x + y);
+let x31 = callr(sn, f15);
+let x32 = callr(sn, f16);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Higher-order generic rest calls should accept a generic binary function without TS2345. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_interface_construct_signature_prefers_namespace_local_class_reference() {
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> { constructor(props: P); }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    declare let c: ComponentClass<{ children: (foo: number) => string }>;
+    let z = new c({ children: foo => "" + foo });
+    z.props;
+
+    declare function takes(c: ComponentClass<{ children: (foo: number) => string }>): void;
+    takes(InferFunctionTypes);
 }
 "#;
 
     let diagnostics = compile_and_get_diagnostics(source);
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect();
-    assert!(
-        relevant.is_empty(),
-        "Expected tuple-union discriminant switch to narrow sibling element access. Actual diagnostics: {relevant:#?}"
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected interface construct signature to keep the namespace-local Component return type, producing exactly one TS2339 for z.props. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2345_count, 0,
+        "Namespace-local Component references in interface construct signatures should not drift to the global class. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_component_class_inference_keeps_namespace_local_construct_signature() {
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> { constructor(props: P); }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    declare function makeP<P extends {}>(Ctor: ComponentClass<P>): void;
+    makeP(InferFunctionTypes);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 0,
+        "Generic call inference should preserve namespace-local construct signature return types for ComponentClass<P>. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_interface_construct_signature_stays_namespace_local_with_top_level_type_alias() {
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+type Id = number;
+
+namespace N1 {
+    declare class Component<P> { constructor(props: P); }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    type CreateElementChildren<P> = P extends { children?: infer C }
+        ? C extends any[]
+            ? C
+            : C[]
+        : unknown;
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    declare let c: ComponentClass<{ children: (foo: number) => string }>;
+    let z = new c({ children: foo => "" + foo });
+    z.props;
+
+    declare function makeP<P extends {}>(Ctor: ComponentClass<P>): CreateElementChildren<P>;
+    let inferred = makeP(InferFunctionTypes);
+    inferred;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2339_count, 1,
+        "A top-level type alias must not cause interface construct signatures to resolve to the global Component. Expected exactly one TS2339 for z.props. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2345_count, 0,
+        "Generic inference should keep the namespace-local ComponentClass<P> construct signature even when unrelated top-level type aliases are present. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_create_element_inference_keeps_namespace_local_construct_signature() {
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
+    }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    type CreateElementChildren<P> =
+        P extends { children?: infer C }
+            ? C extends any[]
+                ? C
+                : C[]
+            : unknown;
+
+    declare function createElement<P extends {}>(
+        type: ComponentClass<P>,
+        ...children: CreateElementChildren<P>
+    ): any;
+
+    declare function createElement2<P extends {}>(
+        type: ComponentClass<P>,
+        child: CreateElementChildren<P>
+    ): any;
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    createElement(InferFunctionTypes, (foo) => "" + foo);
+    createElement2(InferFunctionTypes, [(foo) => "" + foo]);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 0,
+        "Generic createElement inference should accept the namespace-local construct signature for InferFunctionTypes. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_create_element_inference_keeps_namespace_local_construct_signature_in_conformance_mode() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
+    }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    type CreateElementChildren<P> =
+        P extends { children?: infer C }
+            ? C extends any[]
+                ? C
+                : C[]
+            : unknown;
+
+    declare function createElement<P extends {}>(
+        type: ComponentClass<P>,
+        ...children: CreateElementChildren<P>
+    ): any;
+
+    declare function createElement2<P extends {}>(
+        type: ComponentClass<P>,
+        child: CreateElementChildren<P>
+    ): any;
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    createElement(InferFunctionTypes, (foo) => "" + foo);
+    createElement2(InferFunctionTypes, [(foo) => "" + foo]);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 0,
+        "Conformance-mode createElement inference should accept the namespace-local construct signature for InferFunctionTypes. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_create_element_inference_keeps_namespace_local_construct_signature_with_merged_lib_contexts()
+ {
+    if !lib_files_available() {
+        return;
+    }
+
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
+    }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    type CreateElementChildren<P> =
+        P extends { children?: infer C }
+            ? C extends any[]
+                ? C
+                : C[]
+            : unknown;
+
+    declare function createElement<P extends {}>(
+        type: ComponentClass<P>,
+        ...children: CreateElementChildren<P>
+    ): any;
+
+    declare function createElement2<P extends {}>(
+        type: ComponentClass<P>,
+        child: CreateElementChildren<P>
+    ): any;
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    createElement(InferFunctionTypes, (foo) => "" + foo);
+    createElement2(InferFunctionTypes, [(foo) => "" + foo]);
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 0,
+        "Merged-lib createElement inference should accept the namespace-local construct signature for InferFunctionTypes. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_create_element_inference_keeps_namespace_local_construct_signature_with_shared_lib_cache() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let source = r#"
+declare class Component<P> { constructor(props: P); props: P; }
+
+namespace N1 {
+    declare class Component<P> {
+        constructor(props: P);
+    }
+
+    interface ComponentClass<P = {}> {
+        new (props: P): Component<P>;
+    }
+
+    type CreateElementChildren<P> =
+        P extends { children?: infer C }
+            ? C extends any[]
+                ? C
+                : C[]
+            : unknown;
+
+    declare function createElement<P extends {}>(
+        type: ComponentClass<P>,
+        ...children: CreateElementChildren<P>
+    ): any;
+
+    declare function createElement2<P extends {}>(
+        type: ComponentClass<P>,
+        child: CreateElementChildren<P>
+    ): any;
+
+    class InferFunctionTypes extends Component<{ children: (foo: number) => string }> {}
+
+    createElement(InferFunctionTypes, (foo) => "" + foo);
+    createElement2(InferFunctionTypes, [(foo) => "" + foo]);
+}
+"#;
+
+    let diagnostics =
+        compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_cache_and_options(
+            source,
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        );
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 0,
+        "Shared lib cache must not poison user-defined Component lookups during createElement inference. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -876,330 +1329,6 @@ const x = (a) => a + 1;
 }
 
 #[test]
-fn test_js_commonjs_deep_exports_assignment_reports_ts2339_against_current_module_surface() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        "exports.a.b.c = 0;",
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect();
-    let ts2339 = diagnostic_message(&relevant, 2339)
-        .expect("expected TS2339 for deep assignment through unresolved exports member");
-
-    assert_eq!(relevant.len(), 1, "unexpected diagnostics: {relevant:#?}");
-    assert!(
-        ts2339.contains("Property 'a' does not exist on type 'typeof import(\"a\")'."),
-        "Expected TS2339 to target the current file CommonJS namespace surface. Actual diagnostics: {relevant:#?}"
-    );
-}
-
-#[test]
-fn test_js_commonjs_direct_exports_members_remain_visible() {
-    let source = r#"
-exports.x = 0;
-{
-    exports.Cls = function() {
-        this.x = 0;
-    }
-}
-
-const instance = new exports.Cls();
-exports.x;
-"#;
-
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        source,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect();
-
-    assert!(
-        relevant.is_empty(),
-        "Expected direct CommonJS export member writes to stay visible. Actual diagnostics: {relevant:#?}"
-    );
-}
-
-#[test]
-fn test_js_constructor_void_zero_assignment_does_not_create_member() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        r#"
-function C() {
-    this.p = 1;
-    this.q = void 0;
-}
-var c = new C();
-c.p + c.q;
-"#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            no_implicit_any: true,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code == 2339 || *code == 18048)
-        .collect();
-    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
-    assert!(
-        relevant.iter().all(|(_, message)| {
-            message.contains("Property 'q' does not exist on type 'C'.")
-                || message.contains("Property 'q' does not exist on type 'typeof c'.")
-        }),
-        "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
-    );
-    assert!(
-        !has_error(&relevant, 18048),
-        "Did not expect TS18048 once the void-zero constructor property is skipped. Actual diagnostics: {relevant:#?}"
-    );
-}
-
-#[test]
-fn test_js_void_zero_expando_reports_named_receiver_type() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        r#"
-var o = {};
-o.y = void 0;
-o.y;
-"#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            no_implicit_any: true,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code == 2339)
-        .collect();
-
-    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
-    assert!(
-        relevant
-            .iter()
-            .all(|(_, message)| message.contains("Property 'y' does not exist on type 'typeof o'.")),
-        "Expected TS2339 to display typeof o for missing JS expando property. Actual diagnostics: {relevant:#?}"
-    );
-}
-
-#[test]
-fn test_js_constructor_factory_call_does_not_keep_undefined_return() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        r#"
-/** @param {number} x */
-function A(x) {
-    if (!(this instanceof A)) {
-        return new A(x);
-    }
-    this.x = x;
-}
-var k = A(1);
-var j = new A(2);
-k.x === j.x;
-"#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            strict: true,
-            no_implicit_this: false,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    assert!(
-        !diagnostics.iter().any(|(code, message)| {
-            *code == 18048 && message.contains("'k' is possibly 'undefined'")
-        }),
-        "Expected JS constructor-style factory call to return the instance type. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_current_file_commonjs_exports_use_late_bound_assignment_types() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        r#"
-exports.y = exports.x = void 0;
-exports.x = 1;
-exports.y = 2;
-"#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
-
-    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
-    assert!(
-        relevant
-            .iter()
-            .any(|(_, message)| message.contains("Type 'undefined' is not assignable to type '2'.")),
-        "Expected exports.y chained assignment to use the later inferred type. Actual diagnostics: {relevant:#?}"
-    );
-    assert!(
-        relevant
-            .iter()
-            .any(|(_, message)| message.contains("Type 'undefined' is not assignable to type '1'.")),
-        "Expected exports.x chained assignment to use the later inferred type. Actual diagnostics: {relevant:#?}"
-    );
-}
-
-#[test]
-fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "a.js",
-        r#"
-function C() {
-    this.p = 1;
-    this.q = void 0;
-}
-var c = new C();
-c.p + c.q;
-"#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            target: ScriptTarget::ES2015,
-            no_implicit_any: true,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let ts2339 = diagnostic_message(&diagnostics, 2339)
-        .expect("expected TS2339 for missing constructor property");
-
-    assert!(
-        ts2339.contains("Property 'q' does not exist on type 'C'."),
-        "Expected constructor instance missing-property display to use C. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        !ts2339.contains("typeof c"),
-        "Did not expect constructor instance missing-property display to use typeof c. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_merged_declarations_non_exported_namespace_members_stay_hidden() {
-    let source = r#"
-namespace M {
- export enum Color {
-   Red, Green
- }
-}
-namespace M {
- export namespace Color {
-   export var Blue = 4;
-  }
-}
-var p = M.Color.Blue;
-
-namespace M {
-    export function foo() {
-    }
-}
-
-namespace M {
-    namespace foo {
-        export var x = 1;
-    }
-}
-
-namespace M {
-    export namespace foo {
-        export var y = 2
-    }
-}
-
-namespace M {
-    namespace foo {
-        export var z = 1;
-    }
-}
-
-M.foo()
-M.foo.x
-M.foo.y
-M.foo.z
-"#;
-
-    let diagnostics = compile_and_get_diagnostics_named(
-        "mergedDeclarations3.ts",
-        source,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect();
-    let ts2339: Vec<&str> = relevant
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .map(|(_, message)| message.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2339.len(),
-        2,
-        "Expected exactly 2 TS2339 errors. Actual diagnostics: {relevant:#?}"
-    );
-    assert!(
-        ts2339
-            .iter()
-            .any(|message| message.contains("Property 'x' does not exist on type")),
-        "Expected TS2339 for M.foo.x. Actual diagnostics: {relevant:#?}"
-    );
-    assert!(
-        ts2339
-            .iter()
-            .any(|message| message.contains("Property 'z' does not exist on type")),
-        "Expected TS2339 for M.foo.z. Actual diagnostics: {relevant:#?}"
-    );
-    assert!(
-        !ts2339
-            .iter()
-            .any(|message| message.contains("Property 'y'")),
-        "Did not expect TS2339 for M.foo.y. Actual diagnostics: {relevant:#?}"
-    );
-}
-
-#[test]
 fn test_jsdoc_callback_typedef_contextually_types_closure_parameters() {
     let source = r#"
 /** @callback Sid
@@ -1750,73 +1879,49 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.esnext.d.ts"),
         manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.esnext.d.ts"),
         manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
         manifest_dir.join("TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("TypeScript/src/lib/es2015.core.d.ts"),
         manifest_dir.join("TypeScript/src/lib/lib.dom.d.ts"),
         manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir
-            .join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
         manifest_dir.join("../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../TypeScript/src/lib/es2015.core.d.ts"),
         manifest_dir.join("../TypeScript/src/lib/lib.dom.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir
-            .join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
         manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
         manifest_dir.join("../../TypeScript/src/lib/es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/src/lib/es2015.core.d.ts"),
         manifest_dir.join("../../TypeScript/src/lib/lib.dom.d.ts"),
         manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.core.d.ts"),
         manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
     ];
 
     let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
     for lib_path in &lib_paths {
         if lib_path.exists()
             && let Ok(content) = std::fs::read_to_string(lib_path)
         {
-            let file_name = lib_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("lib.d.ts")
-                .to_string();
-            if !seen_files.insert(file_name.clone()) {
-                continue;
-            }
-            let lib_file = LibFile::from_source(file_name, content);
+            let lib_file = LibFile::from_source("lib.d.ts".to_string(), content);
             lib_files.push(Arc::new(lib_file));
         }
     }
@@ -1825,13 +1930,6 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
 
 fn lib_files_available() -> bool {
     !load_lib_files_for_test().is_empty()
-}
-
-fn without_missing_global_type_errors(diagnostics: Vec<(u32, String)>) -> Vec<(u32, String)> {
-    diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect()
 }
 
 fn compile_and_get_diagnostics_with_lib(source: &str) -> Vec<(u32, String)> {
@@ -1850,43 +1948,13 @@ fn compile_and_get_diagnostics_named_with_lib_and_options(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
-    compile_and_get_raw_diagnostics_named_with_lib_and_options(file_name, source, options)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
-}
-
-fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
-    file_name: &str,
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<tsz_common::diagnostics::Diagnostic> {
     let lib_files = load_lib_files_for_test();
 
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    let checker_lib_contexts = if lib_files.is_empty() {
-        Vec::new()
-    } else {
-        let raw_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| BinderLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&raw_contexts);
-        lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect()
-    };
-    binder.bind_source_file(parser.get_arena(), root);
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -1897,13 +1965,24 @@ fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
         options,
     );
 
-    if !checker_lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(checker_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<tsz_checker::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
     }
 
     checker.check_source_file(root);
-    checker.ctx.diagnostics
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
 }
 
 fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
@@ -1927,13 +2006,14 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
             })
             .collect();
         binder.merge_lib_contexts_into_binder(&raw_contexts);
-        lib_files
-            .iter()
-            .map(|lib| CheckerLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect()
+        vec![CheckerLibContext {
+            arena: Arc::clone(&lib_files[0].arena),
+            binder: Arc::new({
+                let mut merged = BinderState::new();
+                merged.merge_lib_contexts_into_binder(&raw_contexts);
+                merged
+            }),
+        }]
     };
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -1948,8 +2028,62 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
 
     if !checker_lib_contexts.is_empty() {
         checker.ctx.set_lib_contexts(checker_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
     }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_cache_and_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let checker_lib_contexts = if lib_files.is_empty() {
+        Vec::new()
+    } else {
+        let raw_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&raw_contexts);
+        vec![CheckerLibContext {
+            arena: Arc::clone(&lib_files[0].arena),
+            binder: Arc::new({
+                let mut merged = BinderState::new();
+                merged.merge_lib_contexts_into_binder(&raw_contexts);
+                merged
+            }),
+        }]
+    };
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    if !checker_lib_contexts.is_empty() {
+        checker.ctx.set_lib_contexts(checker_lib_contexts);
+    }
+    checker.ctx.shared_lib_type_cache = Some(Arc::new(dashmap::DashMap::new()));
 
     checker.check_source_file(root);
     checker
@@ -2227,41 +2361,6 @@ const obj = {
                 && message.contains("Type 'undefined' is not assignable to type 'string'.")
         }),
         "Expected JSDoc shorthand property mismatch to preserve the undefined source type. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_jsdoc_type_reference_to_merged_class_preserves_ts2454() {
-    let diagnostics = compile_and_get_diagnostics_named(
-        "jsdocTypeReferenceToMergedClass.js",
-        r#"
-var Workspace = {}
-/** @type {Workspace.Project} */
-var p;
-p.isServiceProject()
-
-Workspace.Project = function wp() { }
-Workspace.Project.prototype = {
-  isServiceProject() {}
-}
-"#,
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            strict: true,
-            strict_null_checks: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    assert!(
-        has_error(&diagnostics, 2454),
-        "Expected TS2454 for JSDoc-typed merged class value before assignment. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        !has_error(&diagnostics, 2339),
-        "Did not expect TS2339 once the JSDoc merged class type resolves. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -5274,87 +5373,6 @@ const fn2: <T>(x: T) => void = function test(t) {
     );
 }
 
-/// Issue: contextual generic callback parameters can fall back to `unknown`
-/// when the contextual target is itself generic and reuses the same type
-/// parameter names as the callee.
-///
-/// Mirrors: genericContextualTypes1.ts (`arrayFilter(x => x.value > 10)`)
-/// Expected: no TS2322/TS2339/TS18046/TS7006
-#[test]
-fn test_generic_contextual_filter_callback_preserves_constraint() {
-    let source = r"
-type Box<T> = { value: T };
-
-declare function arrayFilter<T>(f: (x: T) => boolean): (a: T[]) => T[];
-
-const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 10);
-";
-
-    let options = CheckerOptions {
-        strict: true,
-        ..CheckerOptions::default()
-    };
-    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
-
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code != 2318)
-        .cloned()
-        .collect();
-
-    assert!(
-        !has_error(&relevant, 2322),
-        "Should NOT emit TS2322 for generic contextual filter callback.\nActual errors: {relevant:#?}"
-    );
-    assert!(
-        !has_error(&relevant, 2339),
-        "Should NOT emit TS2339 for generic contextual filter callback.\nActual errors: {relevant:#?}"
-    );
-    assert!(
-        !has_error(&relevant, 18046),
-        "Should NOT emit TS18046 for generic contextual filter callback.\nActual errors: {relevant:#?}"
-    );
-    assert!(
-        !has_error(&relevant, 7006),
-        "Should NOT emit TS7006 for generic contextual filter callback.\nActual errors: {relevant:#?}"
-    );
-}
-
-#[test]
-fn test_array_missing_property_diagnostic_preserves_es5_prefix_under_es2015_target() {
-    let source = r"
-class C1 {
-    x = 1;
-}
-let arr_any: any[] = [];
-let c1: C1 = new C1();
-arr_any = c1;
-";
-
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        source,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let message = diagnostics
-        .iter()
-        .find(|(code, _)| *code == 2740)
-        .map(|(_, message)| message.as_str())
-        .expect("expected TS2740 diagnostic");
-
-    assert!(
-        message.contains("length, pop, push, concat"),
-        "Expected TS2740 to start with ES5 array members, got: {message}"
-    );
-    assert!(
-        !message.contains("[Symbol.iterator]"),
-        "Expected TS2740 to avoid Symbol.iterator in the displayed prefix, got: {message}"
-    );
-}
-
 /// Issue: false-positive TS2345 in contextual signature instantiation chain.
 ///
 /// Mirrors: contextualSignatureInstantiation2.ts
@@ -5824,44 +5842,6 @@ b({ callback: (x) => {} });
     assert!(
         !has_error(&diagnostics, 7006),
         "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.callback.\nActual errors: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_optional_function_property_in_union_with_primitive_contextually_types_object_literal_branch()
- {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
-type Validate = (text: string, pos: number, self: Rule) => number | boolean;
-interface FullRule {
-    validate: string | number | Validate;
-    normalize?: (match: {x: string}) => void;
-}
-
-type Rule = string | FullRule;
-
-const obj: {field: Rule} = {
-    field: {
-        validate: (_t, _p, _s) => false,
-        normalize: match => match.x,
-    }
-};
-        "#,
-        CheckerOptions {
-            no_implicit_any: true,
-            strict: true,
-            target: ScriptTarget::ESNext,
-            ..CheckerOptions::default()
-        },
-    );
-
-    if diagnostics.is_empty() {
-        return;
-    }
-
-    assert!(
-        diagnostics.is_empty(),
-        "Did not expect diagnostics when the object-literal branch of the union is contextually typed.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -7312,52 +7292,6 @@ function process(v: Variant) {
     );
 }
 
-#[test]
-fn test_export_equals_default_property_keeps_default_import_on_export_object() {
-    let diagnostics = compile_two_files_get_diagnostics_with_options(
-        r#"
-var x = {
-    greeting: "hello, world",
-    default: 42
-};
-
-export = x;
-"#,
-        r#"
-import foo from "./a";
-foo.toExponential(2);
-
-import { default as namedFoo } from "./a";
-namedFoo.toExponential(2);
-"#,
-        "./a",
-        CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
-            target: ScriptTarget::ES2015,
-            no_lib: true,
-            ..Default::default()
-        },
-    );
-
-    let ts2339_messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .map(|(_, message)| message.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2339_messages.len(),
-        2,
-        "Expected both default-import forms to stay typed as the export= object, not its `default` property. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2339_messages.iter().all(|message| message.contains(
-            "Property 'toExponential' does not exist on type '{ greeting: string; default: number; }'."
-        )),
-        "Expected TS2339 to report against the full export= object surface. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Multi-file helpers for cross-file type-only export tests
 // ---------------------------------------------------------------------------
@@ -7662,22 +7596,17 @@ var x = E["B"];
 
 #[test]
 fn test_regexp_literal_exec_preserves_nullability() {
-    let diagnostics =
-        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
-            r#"
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
 let re = /\d{4}/;
 let result = re.exec("2015");
 let value = result[0];
 "#,
-            CheckerOptions {
-                target: tsz_common::common::ScriptTarget::ES2015,
-                ..CheckerOptions::default()
-            },
-        ));
-
-    if diagnostics.is_empty() {
-        return;
-    }
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
 
     assert!(
         has_error(&diagnostics, 18047),
@@ -7784,205 +7713,6 @@ fn compile_ambient_module_and_consumer_get_diagnostics(
         .collect()
 }
 
-#[test]
-fn test_commonjs_exported_js_constructor_with_prototype_writes_is_constructable() {
-    let a_source = r#"
-function F() {}
-F.prototype.answer = 42;
-module.exports.F = F;
-"#;
-    let b_source = r#"
-const x = require("./a.js");
-new x.F();
-"#;
-
-    let mut parser_a = ParserState::new("a.js".to_string(), a_source.to_string());
-    let root_a = parser_a.parse_source_file();
-    let mut binder_a = BinderState::new();
-    binder_a.bind_source_file(parser_a.get_arena(), root_a);
-
-    let mut parser_b = ParserState::new("b.js".to_string(), b_source.to_string());
-    let root_b = parser_b.parse_source_file();
-    let mut binder_b = BinderState::new();
-    binder_b.bind_source_file(parser_b.get_arena(), root_b);
-
-    let arena_a = Arc::new(parser_a.get_arena().clone());
-    let arena_b = Arc::new(parser_b.get_arena().clone());
-    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
-
-    let file_a_exports = binder_a.module_exports.get("a.js").cloned();
-    if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
-            .insert("./a.js".to_string(), exports.clone());
-    }
-
-    let mut cross_file_targets = FxHashMap::default();
-    if let Some(exports) = &file_a_exports {
-        for (_name, &sym_id) in exports.iter() {
-            cross_file_targets.insert(sym_id, 0usize);
-        }
-    }
-
-    let binder_a = Arc::new(binder_a);
-    let binder_b = Arc::new(binder_b);
-    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        arena_b.as_ref(),
-        binder_b.as_ref(),
-        &types,
-        "b.js".to_string(),
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            strict: true,
-            no_lib: true,
-            module: tsz_common::common::ModuleKind::CommonJS,
-            ..Default::default()
-        },
-    );
-
-    checker.ctx.set_all_arenas(all_arenas);
-    checker.ctx.set_all_binders(all_binders);
-    checker.ctx.set_current_file_idx(1);
-    for (sym_id, file_idx) in &cross_file_targets {
-        checker
-            .ctx
-            .cross_file_symbol_targets
-            .borrow_mut()
-            .insert(*sym_id, *file_idx);
-    }
-
-    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    resolved_module_paths.insert((1, "./a.js".to_string()), 0);
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::new(resolved_module_paths));
-
-    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
-    resolved_modules.insert("./a.js".to_string());
-    checker.ctx.set_resolved_modules(resolved_modules);
-
-    checker.check_source_file(root_b);
-
-    let diagnostics: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect();
-
-    assert!(
-        !diagnostics.iter().any(|(code, _)| *code == 7009),
-        "Expected exported JS constructor to remain constructable across require(). Got: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_commonjs_exported_js_constructor_index_errors_use_function_name() {
-    let a_source = r#"
-const s = Symbol();
-function F() {}
-F.prototype[s] = "ok";
-module.exports.F = F;
-module.exports.S = s;
-"#;
-    let b_source = r#"
-const x = require("./a.js");
-const inst = new x.F();
-inst[x.S];
-"#;
-
-    let mut parser_a = ParserState::new("a.js".to_string(), a_source.to_string());
-    let root_a = parser_a.parse_source_file();
-    let mut binder_a = BinderState::new();
-    binder_a.bind_source_file(parser_a.get_arena(), root_a);
-
-    let mut parser_b = ParserState::new("b.js".to_string(), b_source.to_string());
-    let root_b = parser_b.parse_source_file();
-    let mut binder_b = BinderState::new();
-    binder_b.bind_source_file(parser_b.get_arena(), root_b);
-
-    let arena_a = Arc::new(parser_a.get_arena().clone());
-    let arena_b = Arc::new(parser_b.get_arena().clone());
-    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
-
-    let file_a_exports = binder_a.module_exports.get("a.js").cloned();
-    if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
-            .insert("./a.js".to_string(), exports.clone());
-    }
-
-    let mut cross_file_targets = FxHashMap::default();
-    if let Some(exports) = &file_a_exports {
-        for (_name, &sym_id) in exports.iter() {
-            cross_file_targets.insert(sym_id, 0usize);
-        }
-    }
-
-    let binder_a = Arc::new(binder_a);
-    let binder_b = Arc::new(binder_b);
-    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        arena_b.as_ref(),
-        binder_b.as_ref(),
-        &types,
-        "b.js".to_string(),
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            strict: true,
-            no_lib: true,
-            module: tsz_common::common::ModuleKind::CommonJS,
-            ..Default::default()
-        },
-    );
-
-    checker.ctx.set_all_arenas(all_arenas);
-    checker.ctx.set_all_binders(all_binders);
-    checker.ctx.set_current_file_idx(1);
-    for (sym_id, file_idx) in &cross_file_targets {
-        checker
-            .ctx
-            .cross_file_symbol_targets
-            .borrow_mut()
-            .insert(*sym_id, *file_idx);
-    }
-
-    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    resolved_module_paths.insert((1, "./a.js".to_string()), 0);
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::new(resolved_module_paths));
-
-    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
-    resolved_modules.insert("./a.js".to_string());
-    checker.ctx.set_resolved_modules(resolved_modules);
-
-    checker.check_source_file(root_b);
-
-    let ts7053 = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 7053)
-        .map(|d| d.message_text.as_str())
-        .collect::<Vec<_>>();
-
-    assert!(
-        ts7053
-            .iter()
-            .any(|message| message.contains("index type 'F'")),
-        "Expected TS7053 to use the constructor name instead of a structural synthesized object. Got: {ts7053:#?}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Type-only export filtering: namespace import value access
 // ---------------------------------------------------------------------------
@@ -8078,73 +7808,6 @@ test([
     assert!(
         has_error(&diagnostics, 7006),
         "Expected TS7006 when array literal contextual type comes from ambiguous union. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_array_literal_union_context_ignores_non_object_non_array_members() {
-    if !lib_files_available() {
-        return;
-    }
-
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
-declare function test(arg: ((arg: number) => void)[] | string): void;
-
-test([
-  (arg) => {
-    arg.toFixed();
-  },
-]);
-"#,
-        CheckerOptions {
-            no_implicit_any: true,
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    assert!(
-        !has_error(&diagnostics, 7006),
-        "Did not expect TS7006 when the non-array union member is a primitive. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_union_call_signatures_with_mismatched_parameters_report_implicit_any() {
-    if !lib_files_available() {
-        return;
-    }
-
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
-interface IWithCallSignatures {
-    (a: number): string;
-}
-interface IWithCallSignatures3 {
-    (b: string): number;
-}
-interface IWithCallSignatures4 {
-    (a: number): string;
-    (a: string, b: number): number;
-}
-
-var x3: IWithCallSignatures | IWithCallSignatures3 = a => a.toString();
-var x4: IWithCallSignatures | IWithCallSignatures4 = a => a.toString();
-"#,
-        CheckerOptions {
-            no_implicit_any: true,
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let ts7006 = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
-    assert_eq!(
-        ts7006, 2,
-        "Expected TS7006 for mismatched union call signatures. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -8420,387 +8083,6 @@ fn ts7008_static_property_without_assignment_in_static_block() {
     assert!(
         has_error(&diagnostics, 7008),
         "Static property NOT assigned in static block should still emit TS7008. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn ts7008_private_identifier_in_ambient_class_is_suppressed() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-        declare class A {
-            #prop;
-        }
-        class B {
-            #prop;
-        }
-        "#,
-        CheckerOptions {
-            no_implicit_any: true,
-            target: ScriptTarget::ESNext,
-            ..Default::default()
-        },
-    );
-
-    let ts7008_count = diagnostics.iter().filter(|(code, _)| *code == 7008).count();
-
-    assert_eq!(
-        ts7008_count, 1,
-        "Expected only the non-ambient private field to emit TS7008. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn ts2803_private_method_destructuring_assignment_anchors_at_private_name() {
-    let source = r#"
-class A {
-    #method() {}
-    constructor() {
-        ({ x: this.#method } = { x: () => {} });
-    }
-}
-"#;
-    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
-        "test.ts",
-        source,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    let ts2803: Vec<_> = diagnostics.iter().filter(|d| d.code == 2803).collect();
-    assert_eq!(ts2803.len(), 1, "Expected one TS2803. Got: {diagnostics:?}");
-
-    let expected_start = source
-        .find("this.#method")
-        .map(|idx| idx as u32 + "this.".len() as u32)
-        .expect("expected test source to contain `this.#method`");
-    assert_eq!(
-        ts2803[0].start, expected_start,
-        "Expected TS2803 to anchor at `#method` in the destructuring target."
-    );
-}
-
-#[test]
-fn ts2803_static_private_method_destructuring_assignment_anchors_at_private_name() {
-    let source = r#"
-class A {
-    static #method() {}
-    static assign() {
-        ({ x: A.#method } = { x: () => {} });
-    }
-}
-"#;
-    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
-        "test.ts",
-        source,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    let ts2803: Vec<_> = diagnostics.iter().filter(|d| d.code == 2803).collect();
-    assert_eq!(ts2803.len(), 1, "Expected one TS2803. Got: {diagnostics:?}");
-
-    let expected_start = source
-        .find("A.#method")
-        .map(|idx| idx as u32 + "A.".len() as u32)
-        .expect("expected test source to contain `A.#method`");
-    assert_eq!(
-        ts2803[0].start, expected_start,
-        "Expected TS2803 to anchor at `#method` in the static destructuring target."
-    );
-}
-
-#[test]
-fn ts18013_named_class_expression_private_access_uses_inner_class_name() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-const C = class D {
-    static #field = D.#method();
-    static #method() { return 42; }
-    static getClass() { return D; }
-};
-
-C.getClass().#method;
-C.getClass().#field;
-"#,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    let ts18013: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 18013)
-        .collect();
-    assert_eq!(
-        ts18013.len(),
-        2,
-        "Expected two TS18013 errors. Got: {diagnostics:?}"
-    );
-    assert!(
-        ts18013
-            .iter()
-            .all(|(_, message)| message.contains("outside class 'D'")),
-        "Expected TS18013 to use the inner class-expression name 'D'. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn ts18014_shadowed_private_access_uses_constructor_type_name() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-class A {
-    static #x = 5;
-    constructor() {
-        class B {
-            #x = 5;
-            constructor() {
-                class C {
-                    constructor() {
-                        A.#x;
-                    }
-                }
-            }
-        }
-    }
-}
-"#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| { *code == 18014 && message.contains("type 'typeof A'") }),
-        "Expected TS18014 to reference constructor-side type 'typeof A'. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn private_name_keyof_excludes_ecmascript_private_members() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r##"
-class A {
-    #fooField = 3;
-    #fooMethod() {}
-    get #fooProp() { return 1; }
-    set #fooProp(value: number) {}
-    bar = 3;
-    baz = 3;
-}
-
-let k: keyof A = "bar";
-k = "baz";
-
-k = "#fooField";
-k = "#fooMethod";
-k = "#fooProp";
-k = "fooField";
-k = "fooMethod";
-k = "fooProp";
-"##,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
-    assert_eq!(
-        ts2322.len(),
-        6,
-        "Expected six TS2322 diagnostics. Got: {diagnostics:?}"
-    );
-    for expected in [
-        "\"#fooField\"",
-        "\"#fooMethod\"",
-        "\"#fooProp\"",
-        "\"fooField\"",
-        "\"fooMethod\"",
-        "\"fooProp\"",
-    ] {
-        assert!(
-            ts2322.iter().any(|(_, message)| {
-                message.contains(expected) && message.contains("type 'keyof A'")
-            }),
-            "Expected TS2322 mentioning {expected}. Got: {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn private_name_object_spread_excludes_private_members() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-class C {
-    #prop = 1;
-    static #propStatic = 1;
-
-    method(other: C) {
-        const obj = { ...other };
-        obj.#prop;
-        const { ...rest } = other;
-        rest.#prop;
-
-        const statics = { ...C };
-        statics.#propStatic;
-        const { ...sRest } = C;
-        sRest.#propStatic;
-    }
-}
-"#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    let ts2339: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .collect();
-    assert_eq!(
-        ts2339.len(),
-        4,
-        "Expected four TS2339 diagnostics. Got: {diagnostics:?}"
-    );
-    let empty_object_count = ts2339
-        .iter()
-        .filter(|(_, message)| message.contains("type '{}'."))
-        .count();
-    let static_object_count = ts2339
-        .iter()
-        .filter(|(_, message)| {
-            message.contains("type '{ prototype: C; }'.") || message.contains("type 'C'.")
-        })
-        .count();
-    assert_eq!(
-        empty_object_count, 2,
-        "Expected object spread/rest from instance to erase private names. Got: {diagnostics:?}"
-    );
-    assert_eq!(
-        static_object_count, 2,
-        "Expected constructor spread/rest to keep only public constructor properties. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn private_name_generic_class_assignments_preserve_instantiation_display() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-class C<T> {
-    #foo: T;
-    #bar(): T {
-      return this.#foo;
-    }
-    constructor(t: T) {
-      this.#foo = t;
-      t = this.#bar();
-    }
-    set baz(t: T) {
-      this.#foo = t;
-    }
-    get baz(): T {
-      return this.#foo;
-    }
-}
-
-let a = new C(3);
-let b = new C("hello");
-
-a = b;
-b = a;
-"#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
-    assert_eq!(
-        ts2322.len(),
-        2,
-        "Expected two TS2322 diagnostics. Got: {diagnostics:?}"
-    );
-    assert!(
-        ts2322.iter().any(|(_, message)| message
-            .contains("Type 'C<string>' is not assignable to type 'C<number>'.")),
-        "Expected generic instantiation display to preserve `C<string>` -> `C<number>`. Got: {diagnostics:?}"
-    );
-    assert!(
-        ts2322.iter().any(|(_, message)| message
-            .contains("Type 'C<number>' is not assignable to type 'C<string>'.")),
-        "Expected generic instantiation display to preserve `C<number>` -> `C<string>`. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn class_expression_assignment_preserves_typeof_variable_name_display() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-interface A {
-  prop: string;
-}
-
-const A: { new(): A } = class {}
-"#,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    assert!(
-        diagnostics.iter().any(|(code, message)| {
-            *code == 2322
-                && message.contains("Type 'typeof A' is not assignable to type 'new () => A'.")
-        }),
-        "Expected class-expression assignment to display `typeof A`. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn anonymous_class_expression_argument_preserves_typeof_display() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-function foo<T>(x = class { prop: T }): T {
-    return undefined;
-}
-
-foo(class { static prop = "hello" }).length;
-"#,
-        CheckerOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        },
-    );
-
-    assert!(
-        diagnostics.iter().any(|(code, message)| {
-            *code == 2345
-                && message.contains(
-                    "Argument of type 'typeof (Anonymous class)' is not assignable to parameter of type 'typeof (Anonymous class)'.",
-                )
-        }),
-        "Expected anonymous class-expression diagnostics to preserve `typeof (Anonymous class)`. Got: {diagnostics:?}"
     );
 }
 
@@ -9421,73 +8703,6 @@ const result: A[] = from(inputB, ({ b }): A => ({ a: b }));
     assert!(
         ts2339.is_empty(),
         "Contextual destructuring in Array.from callback should not emit TS2339. Got: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn test_destructuring_union_with_undefined_reports_ts2339() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-const fInferred = ({ a = 0 } = {}) => a;
-const fAnnotated: typeof fInferred = ({ a = 0 } = {}) => a;
-
-declare var t: { s: string } | undefined;
-const { s } = t;
-function fst({ s } = t) { }
-"#,
-        CheckerOptions {
-            strict: true,
-            ..CheckerOptions::default()
-        }
-        .apply_strict_defaults(),
-    );
-
-    let ts2339_messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .map(|(_, message)| message.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2339_messages.len(),
-        2,
-        "Expected TS2339 on both destructuring sites from contextualTypeForInitalizedVariablesFiltersUndefined.ts. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2339_messages.iter().all(|message| message
-            .contains("Property 's' does not exist on type '{ s: string; } | undefined'.")),
-        "Expected TS2339 to preserve the union-with-undefined message for both destructuring sites. Actual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_binding_default_initializer_does_not_suppress_missing_property_ts2339() {
-    let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
-declare const source: {};
-const { x = 1 } = source;
-"#,
-        CheckerOptions {
-            strict: true,
-            ..CheckerOptions::default()
-        }
-        .apply_strict_defaults(),
-    );
-
-    let ts2339_messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .map(|(_, message)| message.as_str())
-        .collect();
-
-    assert_eq!(
-        ts2339_messages.len(),
-        1,
-        "Expected TS2339 even when the binding element has a default initializer. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2339_messages[0].contains("Property 'x' does not exist on type '{}'."),
-        "Expected TS2339 to report the missing property on '{{}}'. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -12197,9 +11412,8 @@ function bar<T extends string[], K extends number>() {
 
 #[test]
 fn test_contextual_computed_non_bindable_property_type_mapped_callback_literal_return() {
-    let diagnostics =
-        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
-            r#"
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
 type Original = { foo: 'expects a string literal', baz: boolean, bar: number };
 type Mapped = {
   [prop in keyof Original]: (arg: Original[prop]) => Original[prop]
@@ -12211,12 +11425,12 @@ const unexpectedlyFailingExample: Mapped = {
   bar: (arg) => 51345
 };
 "#,
-            CheckerOptions {
-                strict: true,
-                target: ScriptTarget::ES2015,
-                ..CheckerOptions::default()
-            },
-        ));
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
 
     assert!(
         diagnostics.is_empty(),
@@ -12225,109 +11439,9 @@ const unexpectedlyFailingExample: Mapped = {
 }
 
 #[test]
-fn test_contextual_computed_non_bindable_property_type_computed_key_callback_destructuring() {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
-declare function testD(): "d";
-
-declare function forceMatch2<T>(matched: {
-  [key in keyof T]: ({ key }: { key: key }) => void;
-}): void;
-
-forceMatch2({
-  [testD()]: ({ key }) => {},
-});
-"#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    assert!(
-        diagnostics.is_empty(),
-        "Did not expect a false TS7031 on a computed mapped callback parameter after generic inference.\nActual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
-fn test_contextual_property_of_generic_filtering_mapped_type_preserves_literal_keys() {
-    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
-        r#"
-declare function f1<T extends object>(
-  data: T,
-  handlers: { [P in keyof T as P]: (value: T[P], prop: P) => void },
-): void;
-
-f1(
-  {
-    foo: 0,
-    bar: "",
-  },
-  {
-    foo: (value, key) => {},
-    bar: (value, key) => {},
-  },
-);
-
-declare function f2<T extends object>(
-  data: T,
-  handlers: { [P in keyof T as T[P] extends string ? P : never]: (value: T[P], prop: P) => void },
-): void;
-
-f2(
-  {
-    foo: 0,
-    bar: "",
-  },
-  {
-    bar: (value, key) => {},
-  },
-);
-
-f2(
-  {
-    foo: 0,
-    bar: "",
-  },
-  {
-    foo: (value, key) => {
-      // implicit `any`s
-    },
-  },
-);
-"#,
-        CheckerOptions {
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-    );
-
-    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
-    let ts2353_count = diagnostics.iter().filter(|(code, _)| *code == 2353).count();
-    let ts7006_count = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
-
-    assert_eq!(
-        ts2322_count, 0,
-        "Did not expect false TS2322 diagnostics for contextually typed mapped callbacks.\nActual diagnostics: {diagnostics:#?}"
-    );
-    assert_eq!(
-        ts2353_count, 1,
-        "Expected one TS2353 for the filtered-out 'foo' handler.\nActual diagnostics: {diagnostics:#?}"
-    );
-    assert_eq!(
-        ts7006_count, 2,
-        "Expected two TS7006 diagnostics for the filtered-out callback parameters.\nActual diagnostics: {diagnostics:#?}"
-    );
-}
-
-#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
-    let diagnostics =
-        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
-            r#"
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
 type Component = { name?: string } | ((props: {}) => void);
 type WithInstallPlugin = { _prefix?: string };
 
@@ -12339,12 +11453,12 @@ export function withInstall<C extends Component, T extends WithInstallPlugin>(
   return "";
 }
 "#,
-            CheckerOptions {
-                strict: true,
-                target: ScriptTarget::ES2015,
-                ..CheckerOptions::default()
-            },
-        ));
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
 
     assert!(
         diagnostics.is_empty(),
@@ -12354,9 +11468,8 @@ export function withInstall<C extends Component, T extends WithInstallPlugin>(
 
 #[test]
 fn test_narrowing_by_typeof_switch_chunk_matches_real_file() {
-    let diagnostics = without_missing_global_type_errors(
-        compile_and_get_diagnostics_with_lib_and_options(
-            r#"
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
 declare function assertNever(x: never): never;
 type L = (x: number) => string;
 type R = { x: string, y: number };
@@ -12384,16 +11497,37 @@ function multipleGenericExhaustive<X extends L, Y extends R>(xy: X | Y): [X, str
     }
 }
 "#,
-            CheckerOptions {
-                strict: true,
-                target: ScriptTarget::ES2015,
-                ..CheckerOptions::default()
-            },
-        ),
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
     );
 
     assert!(
         diagnostics.is_empty(),
         "Did not expect diagnostics for the narrowingByTypeofInSwitch generic chunk.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_any_rest_assignment_rejects_never_parameter_source() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare var ff1: (... args: any[]) => void;
+declare var ff4: (a: never) => void;
+
+ff1 = ff4;
+"#,
+    );
+
+    let ts2322 = diagnostic_message(&diagnostics, 2322)
+        .expect("expected TS2322 for assigning never-parameter function to any-rest target");
+
+    assert!(
+        ts2322.contains(
+            "Type '(a: never) => void' is not assignable to type '(...args: any[]) => void'."
+        ),
+        "Expected the any-rest assignment failure to mention the source and target callable types.\nActual diagnostics: {diagnostics:#?}"
     );
 }

@@ -179,6 +179,7 @@ impl<'a> CheckerState<'a> {
 
             // Evaluate Application types in rest params (solver's NoopResolver can't resolve these)
             let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
+            let evaluated_type = self.normalize_contextual_signature_with_env(evaluated_type);
 
             contextual_signature_type_params =
                 self.contextual_type_params_from_expected(evaluated_type);
@@ -333,12 +334,39 @@ impl<'a> CheckerState<'a> {
                 let is_this_param = name == Some(this_atom);
                 let is_js_file = self.is_js_file();
                 let contextual_type = if let Some(ref helper) = ctx_helper {
-                    if param.dot_dot_dot_token {
+                    let direct = if param.dot_dot_dot_token {
                         // Rest parameter: get the full tuple/array type from context,
                         // not just the element at this position.
                         helper.get_rest_parameter_type(contextual_index)
                     } else {
                         helper.get_parameter_type(contextual_index)
+                    };
+
+                    if let Some(extracted) = direct {
+                        let resolved = self.resolve_type_query_type(extracted);
+                        let evaluated = self.evaluate_type_with_env(resolved);
+                        if evaluated != extracted {
+                            helper
+                                .expected()
+                                .and_then(|expected| {
+                                    self.contextual_parameter_type_with_env_from_expected(
+                                        expected,
+                                        contextual_index,
+                                        param.dot_dot_dot_token,
+                                    )
+                                })
+                                .or(Some(extracted))
+                        } else {
+                            Some(extracted)
+                        }
+                    } else {
+                        helper.expected().and_then(|expected| {
+                            self.contextual_parameter_type_with_env_from_expected(
+                                expected,
+                                contextual_index,
+                                param.dot_dot_dot_token,
+                            )
+                        })
                     }
                 } else {
                     None

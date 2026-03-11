@@ -5,6 +5,7 @@ use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 impl<'a> CheckerState<'a> {
@@ -257,6 +258,39 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(alias_type)
+    }
+
+    fn declaration_namespace_prefix(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<String> {
+        let mut parent = arena
+            .get_extended(node_idx)
+            .map_or(NodeIndex::NONE, |info| info.parent);
+        let mut prefixes = Vec::new();
+
+        while !parent.is_none() {
+            let parent_node = arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = arena.get_module(parent_node)
+                && let Some(name_node) = arena.get(module.name)
+                && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(name_ident) = arena.get_identifier(name_node)
+            {
+                prefixes.push(name_ident.escaped_text.clone());
+            }
+
+            parent = arena
+                .get_extended(parent)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+
+        if prefixes.is_empty() {
+            None
+        } else {
+            Some(prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
+        }
     }
 
     /// Compute the type of a namespace or module symbol.
@@ -803,6 +837,13 @@ impl<'a> CheckerState<'a> {
                 let computed_names = self.precompute_computed_property_names(&declarations);
                 let prewarmed_type_params =
                     self.prewarm_member_type_reference_params(&declarations);
+                let namespace_prefix = declarations.iter().copied().find_map(|decl_idx| {
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|node| self.ctx.arena.get_interface(node))
+                        .and_then(|_| self.declaration_namespace_prefix(self.ctx.arena, decl_idx))
+                });
 
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -829,6 +870,19 @@ impl<'a> CheckerState<'a> {
                         .cloned()
                         .or_else(|| self.ctx.get_def_type_params(def_id))
                 };
+                let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                    namespace_prefix
+                        .as_ref()
+                        .and_then(|prefix| {
+                            let mut scoped =
+                                String::with_capacity(prefix.len() + 1 + type_name.len());
+                            scoped.push_str(prefix);
+                            scoped.push('.');
+                            scoped.push_str(type_name);
+                            self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
+                        })
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
+                };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -838,7 +892,8 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
-                .with_lazy_type_params_resolver(&lazy_type_params_resolver);
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+                .with_name_def_id_resolver(&name_resolver);
                 let mut interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 

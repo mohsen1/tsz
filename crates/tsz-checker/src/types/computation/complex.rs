@@ -659,8 +659,10 @@ impl<'a> CheckerState<'a> {
         // so we resolve it here to the actual constructor/value type.
         constructor_type = self.resolve_type_query_type(constructor_type);
 
-        // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
-        constructor_type = self.evaluate_application_type(constructor_type);
+        // Fully evaluate applied constructor types in the current type environment.
+        // `new` on values typed as `ComponentClass<Props>` or `Newable<T>` needs the
+        // instantiated construct signatures, not the unevaluated Application shell.
+        constructor_type = self.evaluate_type_with_env(constructor_type);
 
         // For intersection types (e.g., Constructor<Tagged> & typeof Base), evaluate
         // Application members within the intersection so the solver can find construct
