@@ -108,6 +108,38 @@ impl<'a> CheckerState<'a> {
         fn_node.kind == FUNCTION_EXPRESSION || fn_node.kind == FUNCTION_DECLARATION
     }
 
+    /// Check if `this` is inside a static class member by walking the AST.
+    /// Returns true if the nearest enclosing method/accessor/static-block has a `static` modifier.
+    /// Unlike `enclosing_class.in_static_member`, this works even outside the
+    /// `check_class_member` flow (e.g., during `get_type_of_node` caching).
+    pub(crate) fn is_this_in_static_class_member(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_STATIC_BLOCK_DECLARATION, GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR,
+        };
+        let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
+            Some(f) => f,
+            None => return false,
+        };
+        let fn_node = match self.ctx.arena.get(enclosing_fn) {
+            Some(n) => n,
+            None => return false,
+        };
+        match fn_node.kind {
+            k if k == METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(fn_node)
+                .is_some_and(|m| self.has_static_modifier(&m.modifiers)),
+            k if k == GET_ACCESSOR || k == SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(fn_node)
+                .is_some_and(|a| self.has_static_modifier(&a.modifiers)),
+            k if k == CLASS_STATIC_BLOCK_DECLARATION => true,
+            _ => false,
+        }
+    }
+
     /// Check if the enclosing non-arrow function has an explicit `this` parameter.
     ///
     /// TypeScript allows functions to declare `this` as their first parameter

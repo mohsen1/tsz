@@ -1286,19 +1286,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For static members, `this` is the constructor type (`typeof A`), not the
+        // instance type. `get_type_of_symbol` on a class symbol returns the instance
+        // type, so we must use `get_class_constructor_type` explicitly.
+        if is_static {
+            let class = self.ctx.arena.get_class_at(class_idx)?;
+            return Some(self.get_class_constructor_type(class_idx, class));
+        }
+
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_idx) {
-            if is_static {
-                return Some(self.get_type_of_symbol(sym_id));
-            }
             return self.class_instance_type_from_symbol(sym_id);
         }
 
         let class = self.ctx.arena.get_class_at(class_idx)?;
-        Some(if is_static {
-            self.get_class_constructor_type(class_idx, class)
-        } else {
-            self.get_class_instance_type(class_idx, class)
-        })
+        Some(self.get_class_instance_type(class_idx, class))
     }
 
     // Section 43: Accessor Type Checking

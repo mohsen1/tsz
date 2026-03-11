@@ -396,6 +396,20 @@ Example: deleteExpressionMustBeOptional.ts
   `typeofObjectInference`, `intersectionOfTypeVariableHasApparentSignatures`, and many others
   where callback arrow functions had destructuring parameters.
 
+- ~~False positive TS2576 for `this` in static methods~~ **FIXED** (2026-03-11)
+  Fix: `this` inside static class methods resolved to the instance type (`A`) instead of
+  the constructor type (`typeof A`). Two issues: (1) `class_member_this_type` in `class.rs`
+  called `get_type_of_symbol` on the class symbol, which returns the instance type —
+  replaced with `get_class_constructor_type`. (2) The fallback `this` resolution in
+  `dispatch.rs` used the `in_static_member` flag from `enclosing_class`, but this flag
+  is only set during `check_class_member` and reset afterward. When `this` is evaluated
+  via a different code path (e.g., `get_type_of_node` caching), the flag is stale.
+  Added `is_this_in_static_class_member` helper in `scope_finder.rs` that walks the AST
+  to determine static context instead of relying on the transient flag.
+  Fixes 9 conformance tests (+9 net, 10541 → 10550, 83.8% → 83.9%), including
+  `genericStaticAnyTypeFunction`, `thisInGenericStaticMembers`, and others where
+  `this.staticMethod()` inside static methods was incorrectly flagged.
+
 ---
 
 ### RC-5: Entity Name Resolution (~6%)
