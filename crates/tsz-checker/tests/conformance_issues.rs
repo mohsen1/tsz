@@ -865,6 +865,38 @@ c.p + c.q;
 }
 
 #[test]
+fn test_js_void_zero_expando_reports_named_receiver_type() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+var o = {};
+o.y = void 0;
+o.y;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
+    assert!(
+        relevant
+            .iter()
+            .all(|(_, message)| message.contains("Property 'y' does not exist on type 'typeof o'.")),
+        "Expected TS2339 to display typeof o for missing JS expando property. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_merged_declarations_non_exported_namespace_members_stay_hidden() {
     let source = r#"
 namespace M {

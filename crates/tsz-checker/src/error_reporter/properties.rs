@@ -11,6 +11,25 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     fn property_receiver_display_for_node(&self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        if self.is_js_file()
+            && let Some(info) = self.ctx.arena.node_info(idx)
+            && let Some(parent) = self.ctx.arena.get(info.parent)
+            && let Some(access) = self.ctx.arena.get_access_expr(parent)
+        {
+            let receiver = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(access.expression);
+            if let Some(receiver_node) = self.ctx.arena.get(receiver)
+                && receiver_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
+                && let Some(shape) =
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                && shape.symbol.is_none()
+            {
+                return format!("typeof {}", ident.escaped_text);
+            }
+        }
         let is_element_access_receiver = self
             .ctx
             .arena
