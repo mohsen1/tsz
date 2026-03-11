@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
                 .get_identifier(name_node)
                 .is_some_and(|ident| ident.escaped_text == "exports")
         {
-            return self.current_file_commonjs_namespace_type();
+            return self.current_file_commonjs_module_exports_namespace_type();
         }
 
         // Don't report errors for any/error types - check BEFORE accessibility
@@ -796,7 +796,7 @@ impl<'a> CheckerState<'a> {
                             .resolve_identifier_symbol_without_tracking(access.expression)
                             .is_none()
                     {
-                        return self.current_file_commonjs_namespace_type();
+                        return self.current_file_commonjs_module_exports_namespace_type();
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
                     // Returns `any` type for properties that were assigned via expando pattern.

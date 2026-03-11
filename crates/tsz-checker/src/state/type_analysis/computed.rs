@@ -1628,7 +1628,10 @@ impl<'a> CheckerState<'a> {
                         // types as `typeof import("module")` in diagnostics.
                         self.ctx
                             .namespace_module_names
-                            .insert(namespace_type, module_name.to_string());
+                            .insert(
+                                namespace_type,
+                                self.imported_namespace_display_module_name(module_name),
+                            );
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
