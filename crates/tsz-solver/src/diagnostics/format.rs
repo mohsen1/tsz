@@ -1204,6 +1204,9 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_mapped(&mut self, mapped: &MappedType) -> String {
+        if let Some(index_signature) = self.try_format_mapped_as_index_signature(mapped) {
+            return index_signature;
+        }
         let param_name = self.atom(mapped.type_param.name);
         let readonly_prefix = match mapped.readonly_modifier {
             Some(MappedModifier::Add) => "readonly ",
@@ -1220,6 +1223,30 @@ impl<'a> TypeFormatter<'a> {
             self.format(mapped.constraint),
             self.format(mapped.template)
         )
+    }
+
+    fn try_format_mapped_as_index_signature(&mut self, mapped: &MappedType) -> Option<String> {
+        if mapped.name_type.is_some() || mapped.optional_modifier.is_some() {
+            return None;
+        }
+        let key_kind = match mapped.constraint {
+            TypeId::STRING => "string",
+            TypeId::NUMBER => "number",
+            _ => return None,
+        };
+        if crate::contains_type_parameter_named(self.interner, mapped.template, mapped.type_param.name)
+        {
+            return None;
+        }
+        let readonly_prefix = match mapped.readonly_modifier {
+            Some(MappedModifier::Add) => "readonly ",
+            Some(MappedModifier::Remove) => "-readonly ",
+            None => "",
+        };
+        Some(format!(
+            "{{ {readonly_prefix}[x: {key_kind}]: {}; }}",
+            self.format(mapped.template)
+        ))
     }
 
     fn format_template_literal(&mut self, spans: &[TemplateSpan]) -> String {
@@ -2363,7 +2390,7 @@ mod tests {
             optional_modifier: None,
         });
         let result = fmt.format(mapped);
-        assert_eq!(result, "{ [K in string]: number }");
+        assert_eq!(result, "{ [x: string]: number; }");
     }
 
     #[test]
@@ -2414,6 +2441,56 @@ mod tests {
             result.contains("-readonly"),
             "Expected remove readonly modifier, got: {result}"
         );
+    }
+
+    #[test]
+    fn format_mapped_string_index_signature_like() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: db.intern_string("P"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+
+        assert_eq!(fmt.format(mapped), "{ [x: string]: number; }");
+    }
+
+    #[test]
+    fn format_mapped_preserves_key_dependent_template() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+        let key_name = db.intern_string("P");
+        let key_param = db.type_param(TypeParamInfo {
+            name: key_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo {
+                name: key_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: TypeId::STRING,
+            template: key_param,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+
+        assert_eq!(fmt.format(mapped), "{ [P in string]: P }");
     }
 
     // =================================================================
