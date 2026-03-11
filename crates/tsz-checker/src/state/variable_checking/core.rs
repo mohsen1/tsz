@@ -1227,7 +1227,13 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .binder
                     .get_symbol(sym_id)
-                    .map(|symbol| symbol.declarations.iter().filter(|&&decl| decl.is_some()).count())
+                    .map(|symbol| {
+                        symbol
+                            .declarations
+                            .iter()
+                            .filter(|&&decl| decl.is_some())
+                            .count()
+                    })
                     .unwrap_or(0);
 
                 if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
