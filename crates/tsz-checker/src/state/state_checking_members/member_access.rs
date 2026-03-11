@@ -397,6 +397,114 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn symbol_is_parameter_property_of_current_class(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let mut decl_nodes = symbol.declarations.clone();
+        if symbol.value_declaration.is_some() {
+            decl_nodes.push(symbol.value_declaration);
+        }
+
+        decl_nodes.into_iter().any(|decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(decl_node) else {
+                return false;
+            };
+            if !self.has_parameter_property_modifier(&param.modifiers) {
+                return false;
+            }
+
+            self.enclosing_constructor_of_node(decl_idx)
+                .is_some_and(|ctor_idx| class_info.member_nodes.contains(&ctor_idx))
+        })
+    }
+
+    fn current_class_has_parameter_property_named(&self, name: &str) -> bool {
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+
+        class_info.member_nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                return false;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                return false;
+            };
+
+            ctor.parameters.nodes.iter().any(|&param_idx| {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                self.has_parameter_property_modifier(&param.modifiers)
+                    && self.get_node_text(param.name).as_deref() == Some(name)
+            })
+        })
+    }
+
+    fn enclosing_instance_property_initializer_of_node(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex)> {
+        let mut current = node_idx;
+        let mut steps = 0;
+        while steps < 256 {
+            steps += 1;
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_idx = ext.parent;
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let prop = self.ctx.arena.get_property_decl(parent_node)?;
+                if self.has_static_modifier(&prop.modifiers) || prop.initializer.is_none() {
+                    return None;
+                }
+                let member_name = self.get_property_name(prop.name)?;
+                return Some((member_name, prop.initializer));
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    pub(crate) fn should_suppress_unresolved_name_for_constructor_capture(
+        &self,
+        name: &str,
+        ident_idx: NodeIndex,
+    ) -> bool {
+        let Some((_member_name, _initializer_idx)) =
+            self.enclosing_instance_property_initializer_of_node(ident_idx)
+        else {
+            return false;
+        };
+
+        let ctor_declared_names = self.enclosing_class_constructor_declared_names();
+        if !ctor_declared_names.contains(name) {
+            return false;
+        }
+
+        !(self.current_class_has_parameter_property_named(name) && self.ctx.binder.is_external_module())
+    }
+
     fn collect_unqualified_identifier_references(
         &self,
         node_idx: NodeIndex,
@@ -478,6 +586,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                for child_idx in self.ctx.arena.get_children(node_idx) {
+                    self.collect_unqualified_identifier_references(child_idx, refs);
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
+                    self.collect_unqualified_identifier_references(prop.initializer, refs);
+                }
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.ctx.arena.get_shorthand_property(node) {
+                    refs.push((self.get_node_text(prop.name).unwrap_or_default(), prop.name));
+                    if prop.object_assignment_initializer.is_some() {
+                        self.collect_unqualified_identifier_references(
+                            prop.object_assignment_initializer,
+                            refs,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                for child_idx in self.ctx.arena.get_children(node_idx) {
+                    self.collect_unqualified_identifier_references(child_idx, refs);
+                }
+            }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.ctx.arena.get_call_expr(node) {
                     self.collect_unqualified_identifier_references(call.expression, refs);
@@ -536,11 +670,22 @@ impl<'a> CheckerState<'a> {
                 .resolve_identifier(self.ctx.arena, ident_idx)
             {
                 if self.symbol_is_constructor_parameter_of_current_class(sym_id) {
-                    self.error_at_node_msg(
-                        ident_idx,
-                        diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
-                        &[&name],
-                    );
+                    let is_parameter_property =
+                        self.symbol_is_parameter_property_of_current_class(sym_id);
+                    let error_code = if is_parameter_property && self.ctx.binder.is_external_module()
+                    {
+                        diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
+                    } else {
+                        diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN
+                    };
+                    let args: &[&str] = if error_code
+                        == diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN
+                    {
+                        &[member_name, &name]
+                    } else {
+                        &[&name]
+                    };
+                    self.error_at_node_msg(ident_idx, error_code, args);
                     continue;
                 }
 
@@ -579,11 +724,22 @@ impl<'a> CheckerState<'a> {
                     &[member_name, &name],
                 );
             } else {
-                self.error_at_node_msg(
-                    ident_idx,
-                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
-                    &[&name],
-                );
+                let is_parameter_property =
+                    self.current_class_has_parameter_property_named(&name)
+                        && self.ctx.binder.is_external_module();
+                let error_code = if is_parameter_property {
+                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
+                } else {
+                    diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN
+                };
+                let args: &[&str] = if error_code
+                    == diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN
+                {
+                    &[member_name, &name]
+                } else {
+                    &[&name]
+                };
+                self.error_at_node_msg(ident_idx, error_code, args);
             }
         }
     }

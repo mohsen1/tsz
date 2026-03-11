@@ -345,6 +345,20 @@ impl<'a> CheckerContext<'a> {
     /// - TS2536 uses the same scheme so nested indexed-access failures can report
     ///   multiple distinct messages at the same indexed-access start.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
+        if code == 2304
+            && self
+                .diagnostics
+                .iter()
+                .any(|diag| diag.start == start && diag.code == 2301)
+        {
+            return;
+        }
+        if code == 2301 {
+            self.diagnostics
+                .retain(|diag| !(diag.start == start && diag.code == 2304));
+            self.emitted_diagnostics.remove(&(start, 2304));
+        }
+
         // Check if we've already emitted this diagnostic
         let key = if code == 2430 || code == 2536 {
             // TS2430: an interface can fail to correctly extend multiple bases, each producing
@@ -387,6 +401,20 @@ impl<'a> CheckerContext<'a> {
     /// - TS2430 (incorrectly extends interface) uses (start ^ `message_hash`, code) to allow
     ///   multiple per-base diagnostics at the same interface name position.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
+        if diag.code == 2304
+            && self
+                .diagnostics
+                .iter()
+                .any(|existing| existing.start == diag.start && existing.code == 2301)
+        {
+            return;
+        }
+        if diag.code == 2301 {
+            self.diagnostics
+                .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
+            self.emitted_diagnostics.remove(&(diag.start, 2304));
+        }
+
         let key = if diag.code == 2318 && diag.start == 0 {
             // TS2318 at position 0: use message hash to distinguish different global type errors
             // (e.g., "Cannot find global type 'Array'" vs "Cannot find global type 'Object'")
