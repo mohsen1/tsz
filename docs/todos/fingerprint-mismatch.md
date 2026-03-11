@@ -285,6 +285,13 @@ Example: deleteExpressionMustBeOptional.ts
   with `VARIABLE` flag (constructor values infer type args from construct signatures).
   Fixes 4 conformance tests (`overrideInterfaceProperty`, `extendingCollectionsWithCheckJs`,
   `extendsTag1`, `jsdocAugments_withTypeParameter`).
+- ~~False positive TS2833 in `typeof` nested qualified name resolution~~ **FIXED** (2026-03-11)
+  Fix: `get_type_from_type_query` in `type_analysis/core.rs` used `get_type_of_node` for
+  the left side of QualifiedName, which dispatched to namespace resolution for nested
+  qualified names (e.g., `typeof l.nested.readonlyNestedType`). Added
+  `resolve_typeof_qualified_value_chain` helper that recursively resolves nested
+  QualifiedName nodes as value property access chains instead of namespace lookups.
+  Fixes 2 conformance tests (`uniqueSymbols`, `uniqueSymbolsDeclarations`).
 - ~~False positive TS2304 for class property and JSX attribute names~~ **FIXED** (2026-03-11)
   Fix: `direct_diagnostic_source_expression` in `error_reporter/core.rs` now returns
   `None` when the diagnostic anchor is a `PROPERTY_DECLARATION` or `JSX_ATTRIBUTE` name.
