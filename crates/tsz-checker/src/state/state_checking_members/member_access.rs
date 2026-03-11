@@ -267,7 +267,29 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn enclosing_class_constructor_param_names(&self) -> rustc_hash::FxHashSet<String> {
+    fn collect_declared_names_in_subtree(
+        &self,
+        node_idx: NodeIndex,
+        names: &mut rustc_hash::FxHashSet<String>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(decl) = self.ctx.arena.get_variable_declaration(node)
+                && let Some(name) = self.get_node_text(decl.name)
+            {
+                names.insert(name);
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_declared_names_in_subtree(child_idx, names);
+        }
+    }
+
+    fn enclosing_class_constructor_declared_names(&self) -> rustc_hash::FxHashSet<String> {
         let mut names = rustc_hash::FxHashSet::default();
 
         let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
@@ -295,6 +317,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_node_text(param.name) {
                     names.insert(name);
                 }
+            }
+
+            if ctor.body.is_some() {
+                self.collect_declared_names_in_subtree(ctor.body, &mut names);
             }
         }
 
@@ -491,8 +517,8 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        let ctor_param_names = self.enclosing_class_constructor_param_names();
-        if ctor_param_names.is_empty() {
+        let ctor_declared_names = self.enclosing_class_constructor_declared_names();
+        if ctor_declared_names.is_empty() {
             return;
         }
 
@@ -500,7 +526,7 @@ impl<'a> CheckerState<'a> {
         self.collect_unqualified_identifier_references(initializer_idx, &mut refs);
 
         for (name, ident_idx) in refs {
-            if !ctor_param_names.contains(&name) {
+            if !ctor_declared_names.contains(&name) {
                 continue;
             }
 
