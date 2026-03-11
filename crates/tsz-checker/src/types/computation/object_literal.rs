@@ -486,6 +486,14 @@ impl<'a> CheckerState<'a> {
 
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                let is_computed_name = self
+                    .ctx
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|prop_name_node| {
+                        prop_name_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    });
                 if let Some(prop_name_node) = self.ctx.arena.get(prop.name)
                     && prop_name_node.kind
                         == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
@@ -496,7 +504,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let name_opt = self.get_property_name_resolved(prop.name);
-                if let Some(name) = name_opt.clone() {
+                if !is_computed_name && let Some(name) = name_opt.clone() {
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
@@ -763,12 +771,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
+                    let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
 
                     // Set contextual type for shorthand property value
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
-                    self.ctx.contextual_type =
-                        self.contextual_type_option_for_expression(property_context_type);
+                    self.ctx.contextual_type = self.contextual_type_option_for_expression(
+                        jsdoc_declared_type.or(property_context_type),
+                    );
 
                     let value_type = if self.resolve_identifier_symbol(shorthand_name_idx).is_none()
                     {
@@ -861,22 +871,32 @@ impl<'a> CheckerState<'a> {
                     // Restore context
                     self.ctx.contextual_type = prev_context;
 
-                    // Apply bidirectional type inference - use contextual type to narrow the value type
-                    let value_type = tsz_solver::apply_contextual_type(
-                        self.ctx.types,
-                        value_type,
-                        property_context_type,
-                    );
-
-                    // Widen literal types for shorthand properties (same as named properties)
-                    let value_type = if !self.ctx.in_const_assertion
-                        && !self.ctx.preserve_literal_types
-                        && property_context_type.is_none()
-                        && !had_object_context
-                    {
-                        self.widen_literal_type(value_type)
+                    let value_type = if let Some(declared_type) = jsdoc_declared_type {
+                        self.check_assignable_or_report_at(
+                            value_type,
+                            declared_type,
+                            shorthand_name_idx,
+                            elem_idx,
+                        );
+                        declared_type
                     } else {
-                        value_type
+                        // Apply bidirectional type inference - use contextual type to narrow the value type
+                        let value_type = tsz_solver::apply_contextual_type(
+                            self.ctx.types,
+                            value_type,
+                            property_context_type,
+                        );
+
+                        // Widen literal types for shorthand properties (same as named properties)
+                        if !self.ctx.in_const_assertion
+                            && !self.ctx.preserve_literal_types
+                            && property_context_type.is_none()
+                            && !had_object_context
+                        {
+                            self.widen_literal_type(value_type)
+                        } else {
+                            value_type
+                        }
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
@@ -952,11 +972,17 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let prev_context = self.ctx.contextual_type;
+                    let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
                     if let Some(ctx_type) = prev_context {
                         let method_context_type =
                             self.contextual_object_literal_property_type(ctx_type, &name);
                         self.ctx.contextual_type =
-                            self.contextual_type_option_for_expression(method_context_type);
+                            self.contextual_type_option_for_expression(
+                                jsdoc_declared_type.or(method_context_type),
+                            );
+                    } else if jsdoc_declared_type.is_some() {
+                        self.ctx.contextual_type =
+                            self.contextual_type_option_for_expression(jsdoc_declared_type);
                     }
 
                     // If no explicit ThisType marker exists, use the object literal's
@@ -1029,6 +1055,7 @@ impl<'a> CheckerState<'a> {
 
                     // Restore context
                     self.ctx.contextual_type = prev_context;
+                    let method_type = jsdoc_declared_type.unwrap_or(method_type);
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
@@ -1730,6 +1757,12 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
+                if !string_index_types.is_empty() {
+                    // A computed string-key member makes the object open to arbitrary
+                    // string property access. Match tsc by widening the string index
+                    // over all string-named members, not just the computed one.
+                    string_index_types.extend(properties.iter().map(|prop| prop.type_id));
+                }
 
                 let string_index = if !string_index_types.is_empty() {
                     Some(IndexSignature {
