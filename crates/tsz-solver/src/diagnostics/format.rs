@@ -1234,8 +1234,11 @@ impl<'a> TypeFormatter<'a> {
             TypeId::NUMBER => "number",
             _ => return None,
         };
-        if crate::contains_type_parameter_named(self.interner, mapped.template, mapped.type_param.name)
-        {
+        if crate::contains_type_parameter_named(
+            self.interner,
+            mapped.template,
+            mapped.type_param.name,
+        ) {
             return None;
         }
         let readonly_prefix = match mapped.readonly_modifier {
