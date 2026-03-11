@@ -228,17 +228,79 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         let yielded_type = if yield_expr.expression.is_none() {
             TypeId::UNDEFINED
         } else {
+            let is_async_generator = self
+                .checker
+                .find_enclosing_function(idx)
+                .and_then(|fn_idx| self.checker.ctx.arena.get(fn_idx))
+                .is_some_and(|fn_node| {
+                    if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
+                        func.is_async && func.asterisk_token
+                    } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+                        self.checker.has_async_modifier(&method.modifiers) && method.asterisk_token
+                    } else {
+                        false
+                    }
+                });
             // Set contextual type for yield expression from the generator's yield type.
             // This allows `yield (num) => ...` to contextually type arrow params.
             // For `yield *expr`, the expression is an iterable of the yield type,
             // so wrap the contextual type in Array<T> to contextually type array elements.
             let prev_contextual = self.checker.ctx.contextual_type;
+            let mut contextual_yield_star_return = None;
             if let Some(yield_ctx) = self.checker.ctx.current_yield_type() {
                 if yield_expr.asterisk_token {
-                    // yield *[x => ...] needs Array<TYield> as contextual type
-                    // so each array element gets TYield as its contextual type
-                    let array_of_yield = self.checker.ctx.types.factory().array(yield_ctx);
-                    self.checker.ctx.contextual_type = Some(array_of_yield);
+                    let contextual_operand_type =
+                        self.checker
+                            .ctx
+                            .arena
+                            .get(yield_expr.expression)
+                            .map(|n| n.kind)
+                            .and_then(|kind| {
+                                let supports_return_context = matches!(
+                                    kind,
+                                    syntax_kind_ext::CALL_EXPRESSION
+                                        | syntax_kind_ext::AWAIT_EXPRESSION
+                                );
+                                if !supports_return_context {
+                                    return None;
+                                }
+                                let result_ctx = prev_contextual?;
+                                contextual_yield_star_return = Some(result_ctx);
+                                let expected_generator = self.get_expected_generator_type(idx)?;
+                                let generator_ctx =
+                                    tsz_solver::ContextualTypeContext::with_expected(
+                                        self.checker.ctx.types,
+                                        expected_generator,
+                                    );
+                                let next_ctx = generator_ctx
+                                    .get_generator_next_type()
+                                    .unwrap_or(TypeId::UNKNOWN);
+                                let generator_name = if is_async_generator {
+                                    "AsyncGenerator"
+                                } else {
+                                    "Generator"
+                                };
+                                let lib_binders = self.checker.get_lib_binders();
+                                let generator_sym = self
+                                    .checker
+                                    .ctx
+                                    .binder
+                                    .get_global_type_with_libs(generator_name, &lib_binders)?;
+                                let generator_def =
+                                    self.checker.ctx.get_or_create_def_id(generator_sym);
+                                let generator_base =
+                                    self.checker.ctx.types.factory().lazy(generator_def);
+                                Some(self.checker.ctx.types.factory().application(
+                                    generator_base,
+                                    vec![yield_ctx, result_ctx, next_ctx],
+                                ))
+                            })
+                            .unwrap_or_else(|| {
+                                // yield *[x => ...] needs Array<TYield> as contextual type
+                                // so each array element gets TYield as its contextual type
+                                self.checker.ctx.types.factory().array(yield_ctx)
+                            });
+                    self.checker.ctx.contextual_type = Some(contextual_operand_type);
                 } else {
                     self.checker.ctx.contextual_type = Some(yield_ctx);
                 }
@@ -246,22 +308,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             let expression_type = self.checker.get_type_of_node(yield_expr.expression);
             self.checker.ctx.contextual_type = prev_contextual;
             if yield_expr.asterisk_token {
-                let is_async_generator = self
-                    .checker
-                    .find_enclosing_function(idx)
-                    .and_then(|fn_idx| self.checker.ctx.arena.get(fn_idx))
-                    .is_some_and(|fn_node| {
-                        if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
-                            func.is_async && func.asterisk_token
-                        } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node)
-                        {
-                            self.checker.has_async_modifier(&method.modifiers)
-                                && method.asterisk_token
-                        } else {
-                            false
-                        }
-                    });
-
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 if is_async_generator {
                     let is_iterable = self.checker.is_async_iterable_type(expression_type)
@@ -320,6 +366,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         yield_star_return_type = self
                             .checker
                             .get_generator_return_type_argument(expression_type);
+                    }
+                    if yield_star_return_type
+                        .is_none_or(|ty| ty == TypeId::UNKNOWN || ty == TypeId::ANY)
+                    {
+                        if let Some(ctx_return) = contextual_yield_star_return {
+                            yield_star_return_type = Some(ctx_return);
+                        }
                     }
                     // Collect yield* element type for unannotated generators when resolvable
                     // (skip when async iterator info is None/fallback ANY)

@@ -9558,11 +9558,24 @@ fn test_async_generator_type_references_preserve_all_type_params() {
 
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
+interface Result<T, E> {
+    [Symbol.iterator](): Generator<E, T, unknown>
+}
+
+type Book = { id: string; title: string; authorId: string };
+type Author = { id: string; name: string };
+type BookWithAuthor = Book & { author: Author };
+
+declare const authorPromise: Promise<Result<Author, "NOT_FOUND_AUTHOR">>;
+declare const mapper: <T>(result: Result<T, "NOT_FOUND_AUTHOR">) => Result<T, "NOT_FOUND_AUTHOR">;
 type T = AsyncGenerator<string, number, unknown>;
 declare const g: <T, U, V>() => AsyncGenerator<T, U, V>;
-async function* f(): AsyncGenerator<"a", number, unknown> {
-    const x: number = yield* g();
-    return x;
+async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookWithAuthor, unknown> {
+    const test1 = await authorPromise.then(mapper);
+    const test2 = yield* await authorPromise.then(mapper);
+    const x1 = yield* g();
+    const x2: number = yield* g();
+    return null! as BookWithAuthor;
 }
 "#,
         CheckerOptions {
@@ -9578,7 +9591,7 @@ async function* f(): AsyncGenerator<"a", number, unknown> {
     assert_eq!(
         diagnostics.iter().filter(|(code, _)| *code == 2322).count(),
         0,
-        "AsyncGenerator yield* contextual typing should not cascade from bogus TS2314.\nActual diagnostics: {diagnostics:#?}"
+        "AsyncGenerator yield* contextual typing should preserve delegated return context.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
