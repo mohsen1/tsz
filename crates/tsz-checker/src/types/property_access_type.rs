@@ -82,13 +82,14 @@ impl<'a> CheckerState<'a> {
 
             if self.is_this_expression(access.expression)
                 && let Some(ref class_info) = self.ctx.enclosing_class.clone()
-                && class_info.in_constructor
-                && self.ctx.function_depth == 0  // Skip inside nested functions/arrow functions
-                && self.is_abstract_member(&class_info.member_nodes, property_name)
+                && self.ctx.function_depth == 0
+                && (class_info.in_constructor || self.is_in_instance_property_initializer(idx))
+                && let Some(declaring_class_name) =
+                    self.find_abstract_property_declaring_class(class_info.class_idx, property_name)
             {
                 self.error_abstract_property_in_constructor(
                     property_name,
-                    &class_info.name,
+                    &declaring_class_name,
                     access.name_or_argument,
                 );
             }

@@ -11,6 +11,30 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn binding_pattern_direct_source_is_this(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        let source_expr = if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            self.ctx
+                .arena
+                .get_variable_declaration(parent_node)
+                .map(|decl| decl.initializer)
+        } else {
+            None
+        };
+
+        source_expr.is_some_and(|expr_idx| {
+            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+            self.is_this_expression(expr_idx)
+        })
+    }
+
     fn add_undefined_if_missing_for_destructuring(&self, ty: TypeId) -> TypeId {
         if tsz_solver::type_contains_undefined(self.ctx.types, ty) {
             ty
@@ -736,6 +760,27 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(ref prop_name_str) = property_name {
+            if self.binding_pattern_direct_source_is_this(pattern_idx)
+                && self.ctx.function_depth == 0
+                && let Some(class_info) = self.ctx.enclosing_class.as_ref()
+                && class_info.in_constructor
+                && let Some(declaring_class_name) =
+                    self.find_abstract_property_declaring_class(class_info.class_idx, prop_name_str)
+            {
+                let error_node = if element_data.property_name.is_some() {
+                    element_data.property_name
+                } else if element_data.name.is_some() {
+                    element_data.name
+                } else {
+                    NodeIndex::NONE
+                };
+                self.error_abstract_property_in_constructor(
+                    prop_name_str,
+                    &declaring_class_name,
+                    error_node,
+                );
+            }
+
             use tsz_solver::operations::property::PropertyAccessResult;
             let prop_access_result =
                 self.resolve_property_access_with_env(parent_type, prop_name_str);

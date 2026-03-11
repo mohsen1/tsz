@@ -265,23 +265,116 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a member with the given name is an abstract property by looking up its symbol flags.
-    /// Only checks properties (not methods) because accessing `this.abstractMethod()` in constructor is allowed.
-    pub(crate) fn is_abstract_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
-        for &member_idx in member_nodes {
-            // Get symbol for this member
-            if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                // Check if name matches and symbol has ABSTRACT flag (property only)
-                if symbol.escaped_name == name
-                    && (symbol.flags & symbol_flags::ABSTRACT != 0)
-                    && (symbol.flags & symbol_flags::PROPERTY != 0)
-                {
-                    return true;
+    /// Find an abstract instance property/accessor in the current class chain and
+    /// return the declaring class name for TS2715 reporting.
+    pub(crate) fn find_abstract_property_declaring_class(
+        &self,
+        class_idx: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let mut current = class_idx;
+        let mut visited = 0usize;
+
+        while visited < 64 {
+            visited += 1;
+
+            let class_node = self.ctx.arena.get(current)?;
+            let class_data = self.ctx.arena.get_class(class_node)?;
+
+            for &member_idx in &class_data.members.nodes {
+                let Some(member_name) = self.get_member_name(member_idx) else {
+                    continue;
+                };
+                if member_name != name {
+                    continue;
                 }
+
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let is_property_like = matches!(
+                    member_node.kind,
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION
+                        || k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR
+                );
+                if !is_property_like {
+                    continue;
+                }
+
+                if !self.member_is_abstract(member_idx) {
+                    return None;
+                }
+
+                let class_name = if class_data.name.is_some() {
+                    self.ctx
+                        .arena
+                        .get(class_data.name)
+                        .and_then(|node| self.ctx.arena.get_identifier(node))
+                        .map(|ident| ident.escaped_text.clone())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                return Some(class_name);
             }
+
+            let Some(base_idx) = self.get_base_class_idx(current) else {
+                break;
+            };
+            current = base_idx;
         }
+
+        None
+    }
+
+    /// Returns true when `idx` is inside an instance property initializer of the
+    /// enclosing class. Field initializers run in the same abstract-property
+    /// access context as constructors for TS2715.
+    pub(crate) fn is_in_instance_property_initializer(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut visited = 0usize;
+
+        while visited < 64 {
+            visited += 1;
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                return self
+                    .ctx
+                    .arena
+                    .get_property_decl(parent_node)
+                    .is_some_and(|prop| {
+                        prop.initializer.is_some() && !self.has_static_modifier(&prop.modifiers)
+                    });
+            }
+
+            if matches!(
+                parent_node.kind,
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+            ) {
+                return false;
+            }
+
+            current = parent;
+        }
+
         false
     }
 
