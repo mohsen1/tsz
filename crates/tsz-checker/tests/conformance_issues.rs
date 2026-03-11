@@ -10940,6 +10940,12 @@ async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookW
         0,
         "AsyncGenerator yield* contextual typing should preserve delegated return context.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| matches!(*code, 2504 | 2769)),
+        "Optional callback unions should preserve contextual signatures for generic mappers.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
