@@ -508,9 +508,10 @@ jobs:
 
           # CI runners are slower and noisier than local machines; use an
           # explicit timeout/workers config to avoid timeout-induced flake.
-          # ubuntu-latest has 4 cores; 4 workers avoids oversubscription,
-          # and 20s timeout matches local defaults to prevent false timeouts.
-          ./scripts/conformance/conformance.sh run --timeout 20 --workers 4 2>&1 | tee "$TMPOUT" || true
+          # ubuntu-latest has 4 cores; 4 workers avoids oversubscription.
+          # 30s timeout accommodates complex tests (JSX intrinsics, deep
+          # generic inference) that legitimately take 15-25s on CI hardware.
+          ./scripts/conformance/conformance.sh run --timeout 30 --workers 4 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           # Extract pass counters and percentage from final result line:
