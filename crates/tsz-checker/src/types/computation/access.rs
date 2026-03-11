@@ -606,18 +606,10 @@ impl<'a> CheckerState<'a> {
                         use_index_signature_check = false;
                         Some(TypeId::ERROR)
                     } else {
-                        // TS2339 parity for element access on `typeof const enum` with missing member.
-                        // Const enums do not have a reverse mapping, so they shouldn't fall back to
-                        // TS7053 string index signature checks like regular enums do.
-                        let mut is_const_enum = false;
-                        if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access)
-                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                            && symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
-                        {
-                            is_const_enum = true;
-                        }
-
-                        if is_const_enum {
+                        // TS2339 parity for element access on `typeof const enum` with a missing
+                        // string-literal member. Const enums do not have reverse mappings, so they
+                        // should not fall back to TS7053 string-index diagnostics.
+                        if const_enum_sym.is_some() {
                             self.error_property_not_exist_at(
                                 &property_name,
                                 object_type_for_access,
