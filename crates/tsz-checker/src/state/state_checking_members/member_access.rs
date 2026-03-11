@@ -397,10 +397,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn symbol_is_parameter_property_of_current_class(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-    ) -> bool {
+    fn symbol_is_parameter_property_of_current_class(&self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
             return false;
         };
@@ -502,7 +499,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        !(self.current_class_has_parameter_property_named(name) && self.ctx.binder.is_external_module())
+        !(self.current_class_has_parameter_property_named(name)
+            && self.ctx.binder.is_external_module())
     }
 
     fn collect_unqualified_identifier_references(
@@ -672,7 +670,8 @@ impl<'a> CheckerState<'a> {
                 if self.symbol_is_constructor_parameter_of_current_class(sym_id) {
                     let is_parameter_property =
                         self.symbol_is_parameter_property_of_current_class(sym_id);
-                    let error_code = if is_parameter_property && self.ctx.binder.is_external_module()
+                    let error_code = if is_parameter_property
+                        && self.ctx.binder.is_external_module()
                     {
                         diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
                     } else {
@@ -724,9 +723,8 @@ impl<'a> CheckerState<'a> {
                     &[member_name, &name],
                 );
             } else {
-                let is_parameter_property =
-                    self.current_class_has_parameter_property_named(&name)
-                        && self.ctx.binder.is_external_module();
+                let is_parameter_property = self.current_class_has_parameter_property_named(&name)
+                    && self.ctx.binder.is_external_module();
                 let error_code = if is_parameter_property {
                     diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS
                 } else {

@@ -161,7 +161,9 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get_method_decl(member_node)
                         .is_some_and(|method| self.has_static_modifier(&method.modifiers)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
                         self.ctx
                             .arena
                             .get_accessor(member_node)

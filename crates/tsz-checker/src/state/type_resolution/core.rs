@@ -1441,8 +1441,7 @@ impl<'a> CheckerState<'a> {
                         && !tsz_solver::type_queries::contains_type_parameters_db(
                             self.ctx.types,
                             structural_type,
-                        )
-                    {
+                        ) {
                         self.evaluate_type_with_env(structural_type)
                     } else {
                         structural_type
