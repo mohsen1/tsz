@@ -4584,7 +4584,7 @@ function f() {
 }
 
 #[test]
-fn test_import_equals_in_namespace_still_emits_ts2307() {
+fn test_import_equals_in_namespace_emits_only_ts1147() {
     let opts = CheckerOptions {
         no_implicit_any: true,
         ..CheckerOptions::default()
@@ -4622,9 +4622,12 @@ namespace myModule {
         has_error(&diagnostics, 1147),
         "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
     );
+    // tsc emits only TS1147 when import = require is inside a namespace —
+    // the namespace restriction already communicates the problem, so TS2307
+    // is suppressed.
     assert!(
-        has_error(&diagnostics, 2307),
-        "Expected TS2307 alongside TS1147 for unresolved module. Actual: {diagnostics:#?}"
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 alongside TS1147 for namespace import. Actual: {diagnostics:#?}"
     );
 }
 

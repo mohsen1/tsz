@@ -242,14 +242,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS1147: Only emit for namespaces (not ambient modules)
+            // TS1147: Only emit for namespaces (not ambient modules).
+            // tsc does not also emit TS2307 when TS1147 fires — the namespace
+            // import restriction already communicates the problem.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
                     diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                 );
-                force_module_not_found = true;
+                return;
             }
 
             // TS2439: Ambient modules cannot use relative imports
