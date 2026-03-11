@@ -13,7 +13,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! use wasm::solver::unsoundness_audit::UnsoundnessAudit;
 //!
 //! let audit = UnsoundnessAudit::new();

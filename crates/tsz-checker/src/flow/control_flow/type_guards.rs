@@ -273,7 +273,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Returns `None` if the expression is not a recognized guard pattern.
     ///
     /// # Examples
-    /// ```ignore
+    /// ```text
     /// // typeof x === "string" -> Some(TypeGuard::Typeof("string"), x_node, false)
     /// // x === null -> Some(TypeGuard::NullishEquality, x_node, false)
     /// // x.kind === "circle" -> Some(TypeGuard::Discriminant { ... }, x_node, false)
@@ -386,7 +386,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// For `asserts x` (no type annotation), returns `TypeGuard::Truthy`.
     ///
     /// # Examples
-    /// ```ignore
+    /// ```text
     /// // isString(x) where isString returns "x is string"
     /// // -> Some(TypeGuard::Predicate { type_id: Some(string), asserts: false }, x_node, false)
     ///

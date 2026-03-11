@@ -209,7 +209,7 @@ pub enum InterfaceMergeKind {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```text
 /// use crate::type_queries::{classify_for_interface_merge, InterfaceMergeKind};
 ///
 /// match classify_for_interface_merge(&db, type_id) {

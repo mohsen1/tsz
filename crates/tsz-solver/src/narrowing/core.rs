@@ -1335,7 +1335,7 @@ impl<'a> NarrowingContext<'a> {
     /// The narrowed type after applying the guard.
     ///
     /// # Examples
-    /// ```ignore
+    /// ```text
     /// // typeof x === "string"
     /// let guard = TypeGuard::Typeof(TypeofKind::String);
     /// let narrowed = narrowing.narrow_type(string_or_number, &guard, GuardSense::Positive);

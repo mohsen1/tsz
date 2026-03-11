@@ -13,7 +13,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! use crate::type_queries::*;
 //!
 //! // Check if a type is callable

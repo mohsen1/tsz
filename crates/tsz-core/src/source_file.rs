@@ -10,7 +10,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
+//! use tsz_core::source_file::SourceFile;
 //! let source = SourceFile::new("test.ts", "const x = 42;");
 //! assert_eq!(source.text(), "const x = 42;");
 //! assert_eq!(source.file_name(), "test.ts");

@@ -70,7 +70,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! use crate::state::CheckerState;
 //!
 //! let mut checker = CheckerState::new(&arena, &binder, &types, file_name, options);

@@ -13,7 +13,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```text
 //! let mut bag = DiagnosticBag::new();
 //! bag.error(span, "Cannot find name 'foo'", 2304);
 //! bag.warning(span, "Unused variable", 6133);
@@ -590,7 +590,8 @@ impl Extend<Diagnostic> for DiagnosticBag {
 /// Replaces {0}, {1}, etc. with the provided arguments.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use tsz_core::diagnostics::format_message;
 /// let msg = format_message("Type '{0}' is not assignable to type '{1}'.", &["number", "string"]);
 /// assert_eq!(msg, "Type 'number' is not assignable to type 'string'.");
 /// ```

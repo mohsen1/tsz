@@ -35,7 +35,7 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
+//! ```text
 //! let judge = Judge::new(&interner);
 //!
 //! // Pure subtype check (cached)
@@ -237,7 +237,7 @@ pub trait Judge {
     /// Uses coinductive semantics: cycles assume `true`.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// // number <: number | string
     /// assert!(judge.is_subtype(TypeId::NUMBER, union_type));
     /// ```
@@ -265,7 +265,7 @@ pub trait Judge {
     /// Instantiate a generic type with type arguments.
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// // Array<number> from Array<T> with T=number
     /// let array_number = judge.instantiate(array_generic, &[TypeId::NUMBER]);
     /// ```

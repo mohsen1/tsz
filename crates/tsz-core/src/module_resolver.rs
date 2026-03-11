@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 /// Example: `import { foo } from './missing-module'`
 ///
 /// Usage example:
-/// ```ignore
+/// ```text
 /// let mut resolver = ModuleResolver::new(&options);
 /// let mut diagnostics = DiagnosticBag::new();
 ///

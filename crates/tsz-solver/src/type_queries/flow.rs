@@ -363,7 +363,7 @@ pub fn extract_string_literal_keys(
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// let return_type = type_queries::get_return_type(&db, function_type_id);
 /// ```
 ///
@@ -426,7 +426,7 @@ use crate::operations::property::PropertyAccessEvaluator;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// // Promise<T> is promise-like
 /// assert!(is_promise_like(&db, &resolver, promise_type));
 ///

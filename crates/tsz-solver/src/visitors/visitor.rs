@@ -12,7 +12,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```text
 //! use crate::visitor::{TypeVisitor, TypeKind, is_type_kind};
 //! use crate::types::{IntrinsicKind, LiteralValue};
 //!
@@ -309,7 +309,7 @@ pub trait TypeVisitor: Sized {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```text
 /// use crate::visitor::for_each_child;
 ///
 /// for_each_child(types, &type_key, |child_id| {
@@ -805,7 +805,7 @@ where
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// use crate::visitor::{is_type_kind, TypeKind};
 ///
 /// let is_object = is_type_kind(&types, type_id, TypeKind::Object);
@@ -819,7 +819,7 @@ pub fn is_type_kind(types: &dyn TypeDatabase, type_id: TypeId, kind: TypeKind) -
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// use crate::visitor::collect_referenced_types;
 ///
 /// let types = collect_referenced_types(&type_interner, type_id);
@@ -832,7 +832,7 @@ pub fn collect_referenced_types(types: &dyn TypeDatabase, type_id: TypeId) -> Fx
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```text
 /// use crate::{TypeData, LiteralValue, visitor::test_type};
 ///
 /// let is_string_literal = test_type(&types, type_id, |key| {

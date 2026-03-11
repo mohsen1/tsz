@@ -115,7 +115,7 @@ fn js_number_to_string(value: f64) -> Cow<'static, str> {
 /// Reduces a vector of types to a union, single type, or NEVER.
 ///
 /// This helper eliminates the common pattern:
-/// ```ignore
+/// ```text
 /// if types.is_empty() {
 ///     TypeId::NEVER
 /// } else if types.len() == 1 {
@@ -127,7 +127,7 @@ fn js_number_to_string(value: f64) -> Cow<'static, str> {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// let narrowed = union_or_single(db, filtered_members);
 /// ```
 pub fn union_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
@@ -151,7 +151,7 @@ pub fn union_or_single_literal_reduce(db: &dyn TypeDatabase, types: Vec<TypeId>)
 /// Reduces a vector of types to an intersection, single type, or NEVER.
 ///
 /// This helper eliminates the common pattern:
-/// ```ignore
+/// ```text
 /// if types.is_empty() {
 ///     TypeId::NEVER
 /// } else if types.len() == 1 {
@@ -163,7 +163,7 @@ pub fn union_or_single_literal_reduce(db: &dyn TypeDatabase, types: Vec<TypeId>)
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// let narrowed = intersection_or_single(db, instance_types);
 /// ```
 pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
@@ -182,7 +182,7 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// // Filter out NEVER types in a map operation
 /// .filter_map(|&id| some_operation(id).non_never())
 /// ```
