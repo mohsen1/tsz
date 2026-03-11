@@ -10,11 +10,15 @@
 mod duplicate_identifiers_merge;
 
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+const INTERFACE_MEMBER_KIND_PROPERTY: u8 = 1;
+const INTERFACE_MEMBER_KIND_METHOD: u8 = 1 << 1;
+const CROSS_FILE_INTERFACE_MEMBER_CONFLICT_LIMIT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DuplicateDeclarationOrigin {
@@ -94,6 +98,8 @@ impl<'a> CheckerState<'a> {
             };
             let module_augmentation_declarations = self
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations =
+                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -106,7 +112,10 @@ impl<'a> CheckerState<'a> {
                         .get(&(sym_id, decl_idx))
                         .is_some_and(|arenas| arenas.len() > 1)
                 });
-                if !has_cross_file && module_augmentation_declarations.is_empty() {
+                if !has_cross_file
+                    && module_augmentation_declarations.is_empty()
+                    && script_scope_declarations.is_empty()
+                {
                     continue;
                 }
             }
@@ -149,7 +158,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !module_augmentation_declarations.is_empty() {
+            if !module_augmentation_declarations.is_empty() || !script_scope_declarations.is_empty()
+            {
                 has_remote = true;
             }
 
@@ -182,6 +192,8 @@ impl<'a> CheckerState<'a> {
             };
             let module_augmentation_declarations = self
                 .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
+            let script_scope_declarations =
+                self.same_name_top_level_script_declarations_for_current_file(&symbol.escaped_name);
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -200,7 +212,10 @@ impl<'a> CheckerState<'a> {
                         .get(&(sym_id, decl_idx))
                         .is_some_and(|arenas| arenas.len() > 1)
                 });
-                if !has_cross_file && module_augmentation_declarations.is_empty() {
+                if !has_cross_file
+                    && module_augmentation_declarations.is_empty()
+                    && script_scope_declarations.is_empty()
+                {
                     continue;
                 }
             }
@@ -284,6 +299,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let has_remote_symbol_decl =
+                declarations.iter().any(|(_, _, is_local, _, _)| !*is_local);
+            if !has_remote_symbol_decl {
+                declarations.extend(script_scope_declarations);
+            }
             declarations.extend(module_augmentation_declarations);
 
             if declarations.len() <= 1 {
@@ -1083,10 +1103,18 @@ impl<'a> CheckerState<'a> {
 
             let name = symbol.escaped_name.clone();
 
-            let has_enum_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
-                conflicts.contains(decl_idx)
-                    && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
-            });
+            let has_remote_declaration =
+                declarations.iter().any(|(_, _, is_local, _, _)| !*is_local);
+            let has_enum_conflict = if has_remote_declaration {
+                declarations.iter().any(|(_, flags, _, _, _)| {
+                    (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
+                })
+            } else {
+                declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                    conflicts.contains(decl_idx)
+                        && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
+                })
+            };
 
             let has_variable_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                 conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) != 0
@@ -1139,8 +1167,7 @@ impl<'a> CheckerState<'a> {
                 //   is block-scoped, matching tsc's binder processing order.
                 // - Cross-file: if ANY declaration is block-scoped → TS2451, because
                 //   each file's binder processes independently.
-                let has_remote = declarations.iter().any(|(_, _, is_local, _, _)| !*is_local);
-                let use_ts2451 = if has_remote {
+                let use_ts2451 = if has_remote_declaration {
                     // Cross-file: any block-scoped declaration in the merged symbol
                     // triggers TS2451, even when the current file's conflicting
                     // declaration is non-block-scoped (for example `class Bar {}` in
@@ -1186,6 +1213,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
+        self.check_cross_file_global_augmentation_member_conflicts();
+        self.check_cross_file_module_augmentation_member_conflicts();
     }
 
     fn get_enclosing_namespace(&self, decl_idx: NodeIndex) -> NodeIndex {
@@ -1273,6 +1303,108 @@ impl<'a> CheckerState<'a> {
                     DuplicateDeclarationOrigin::TargetedModuleAugmentation,
                 ));
             }
+        }
+
+        declarations
+    }
+
+    fn same_name_top_level_script_declarations_for_current_file(
+        &self,
+        name: &str,
+    ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return Vec::new();
+        };
+        if self.ctx.binder.is_external_module() {
+            return Vec::new();
+        }
+
+        let mut declarations = Vec::new();
+
+        for (file_idx, arena) in all_arenas.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx {
+                continue;
+            }
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                continue;
+            };
+            if binder.is_external_module() {
+                continue;
+            }
+
+            declarations.extend(self.top_level_script_declarations_in_arena(arena.as_ref(), name));
+        }
+
+        declarations
+    }
+
+    fn top_level_script_declarations_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        name: &str,
+    ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(source_file) = arena.source_files.first() else {
+            return Vec::new();
+        };
+
+        let mut declarations = Vec::new();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                export_decl.export_clause
+            } else {
+                stmt_idx
+            };
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+
+            let matches_name = match decl_node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION => arena
+                    .get_function(decl_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name),
+                syntax_kind_ext::CLASS_DECLARATION => arena
+                    .get_class(decl_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name),
+                syntax_kind_ext::INTERFACE_DECLARATION => arena
+                    .get_interface(decl_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name),
+                syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
+                    .get_type_alias(decl_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name),
+                syntax_kind_ext::ENUM_DECLARATION => arena
+                    .get_enum(decl_node)
+                    .and_then(|decl| arena.get_identifier_at(decl.name))
+                    .is_some_and(|ident| ident.escaped_text == name),
+                _ => false,
+            };
+            if !matches_name {
+                continue;
+            }
+
+            let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) else {
+                continue;
+            };
+            let is_exported = self.is_declaration_exported(arena, decl_idx);
+            declarations.push((
+                decl_idx,
+                flags,
+                false,
+                is_exported,
+                DuplicateDeclarationOrigin::SymbolDeclaration,
+            ));
         }
 
         declarations
@@ -1782,66 +1914,240 @@ impl<'a> CheckerState<'a> {
         local_interface_decls: &[NodeIndex],
         remote_interface_decls: &[NodeIndex],
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use rustc_hash::FxHashMap;
-        use tsz_parser::parser::syntax_kind_ext;
-
-        // Collect member names and whether they are methods from remote interfaces.
-        // Maps member name -> is_method
-        let mut remote_members: FxHashMap<String, bool> = FxHashMap::default();
+        let mut remote_members = FxHashMap::default();
 
         for &decl_idx in remote_interface_decls {
-            // Look up the remote arena for this declaration
-            let arenas = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx));
-            let remote_arenas: Vec<&tsz_parser::parser::NodeArena> = if let Some(arenas) = arenas {
-                arenas
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+            for remote_arena in arenas
+                .iter()
+                .filter(|arena| !std::ptr::eq(&***arena, self.ctx.arena))
+            {
+                self.collect_interface_member_kinds(remote_arena, decl_idx, &mut remote_members);
+            }
+        }
+
+        self.report_cross_file_interface_member_conflicts(local_interface_decls, &remote_members);
+    }
+
+    fn check_cross_file_global_augmentation_member_conflicts(&mut self) {
+        let Some(_arenas) = self.ctx.all_arenas.as_ref() else {
+            return;
+        };
+
+        let grouped_augmentations: Vec<
+            Vec<(
+                NodeIndex,
+                std::sync::Arc<tsz_parser::parser::node::NodeArena>,
+            )>,
+        > = self
+            .ctx
+            .binder
+            .global_augmentations
+            .values()
+            .map(|augmentations| {
+                augmentations
                     .iter()
-                    .filter(|a| !std::ptr::eq(&***a, self.ctx.arena))
-                    .map(|a| &**a)
+                    .filter_map(|augmentation| {
+                        Some((augmentation.node, augmentation.arena.as_ref()?.clone()))
+                    })
                     .collect()
-            } else {
+            })
+            .collect();
+
+        for augmentations in grouped_augmentations {
+            let mut local_interface_decls = Vec::new();
+            let mut remote_members = FxHashMap::default();
+
+            for (decl_idx, arena) in augmentations {
+                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                    local_interface_decls.push(decl_idx);
+                } else {
+                    self.collect_interface_member_kinds(
+                        arena.as_ref(),
+                        decl_idx,
+                        &mut remote_members,
+                    );
+                }
+            }
+
+            self.report_cross_file_interface_member_conflicts(
+                &local_interface_decls,
+                &remote_members,
+            );
+        }
+    }
+
+    fn check_cross_file_module_augmentation_member_conflicts(&mut self) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return;
+        };
+
+        let mut local_interface_decls_by_module = FxHashMap::default();
+        let mut remote_members_by_module = FxHashMap::default();
+
+        for arena in &*all_arenas {
+            let is_local = std::ptr::eq(arena.as_ref(), self.ctx.arena);
+            let Some(source_file) = arena.source_files.first() else {
                 continue;
             };
 
-            for remote_arena in remote_arenas {
-                let Some(node) = remote_arena.get(decl_idx) else {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(module_node) = arena.get(stmt_idx) else {
                     continue;
                 };
-                let Some(iface) = remote_arena.get_interface(node) else {
+                let Some(module_decl) = arena.get_module(module_node) else {
+                    continue;
+                };
+                if module_decl.body.is_none() {
+                    continue;
+                }
+
+                let Some(module_name_node) = arena.get(module_decl.name) else {
+                    continue;
+                };
+                if module_name_node.kind != SyntaxKind::StringLiteral as u16
+                    && module_name_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                {
+                    continue;
+                }
+                let Some(module_name_lit) = arena.get_literal(module_name_node) else {
+                    continue;
+                };
+                if module_name_lit.text.is_empty() {
+                    continue;
+                }
+                let module_spec = module_name_lit.text.clone();
+
+                let Some(body_node) = arena.get(module_decl.body) else {
+                    continue;
+                };
+                if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                    continue;
+                }
+                let Some(block) = arena.get_module_block(body_node) else {
+                    continue;
+                };
+                let Some(statements) = &block.statements else {
                     continue;
                 };
 
-                for &member_idx in &iface.members.nodes {
-                    let Some(member_node) = remote_arena.get(member_idx) else {
+                for &inner_idx in &statements.nodes {
+                    let Some(stmt_node) = arena.get(inner_idx) else {
+                        continue;
+                    };
+                    let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        let Some(export_decl) = arena.get_export_decl(stmt_node) else {
+                            continue;
+                        };
+                        export_decl.export_clause
+                    } else {
+                        inner_idx
+                    };
+                    let Some(inner_node) = arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(iface) = arena.get_interface(inner_node) else {
+                        continue;
+                    };
+                    if !self.is_declaration_exported(arena, decl_idx) {
+                        continue;
+                    }
+                    let Some(interface_name) = arena
+                        .get_identifier_at(iface.name)
+                        .map(|ident| ident.escaped_text.clone())
+                    else {
                         continue;
                     };
 
-                    if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
-                        || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
-                    {
-                        let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
-                        let Some(sig) = remote_arena.get_signature(member_node) else {
-                            continue;
-                        };
-                        let Some(name) =
-                            crate::types_domain::queries::core::get_literal_property_name(
-                                remote_arena,
-                                sig.name,
-                            )
-                        else {
-                            continue;
-                        };
-                        remote_members.insert(name, is_method);
+                    let key = (module_spec.clone(), interface_name);
+                    if is_local {
+                        local_interface_decls_by_module
+                            .entry(key)
+                            .or_insert_with(Vec::new)
+                            .push(decl_idx);
+                    } else {
+                        self.collect_interface_member_kinds(
+                            arena.as_ref(),
+                            decl_idx,
+                            remote_members_by_module.entry(key).or_default(),
+                        );
                     }
                 }
             }
         }
 
-        if remote_members.is_empty() {
+        for (key, local_interface_decls) in local_interface_decls_by_module {
+            let Some(remote_members) = remote_members_by_module.get(&key) else {
+                continue;
+            };
+            self.report_cross_file_interface_member_conflicts(
+                &local_interface_decls,
+                remote_members,
+            );
+        }
+    }
+
+    fn collect_interface_member_kinds(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+        members: &mut FxHashMap<String, u8>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = arena.get(decl_idx) else {
+            return;
+        };
+        let Some(iface) = arena.get_interface(node) else {
+            return;
+        };
+
+        for &member_idx in &iface.members.nodes {
+            let Some(member_node) = arena.get(member_idx) else {
+                continue;
+            };
+            let kind = match member_node.kind {
+                syntax_kind_ext::PROPERTY_SIGNATURE => INTERFACE_MEMBER_KIND_PROPERTY,
+                syntax_kind_ext::METHOD_SIGNATURE => INTERFACE_MEMBER_KIND_METHOD,
+                _ => continue,
+            };
+            let Some(sig) = arena.get_signature(member_node) else {
+                continue;
+            };
+            let Some(name) =
+                crate::types_domain::queries::core::get_literal_property_name(arena, sig.name)
+            else {
+                continue;
+            };
+            members
+                .entry(name)
+                .and_modify(|existing| *existing |= kind)
+                .or_insert(kind);
+        }
+    }
+
+    fn report_cross_file_interface_member_conflicts(
+        &mut self,
+        local_interface_decls: &[NodeIndex],
+        remote_members: &FxHashMap<String, u8>,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if local_interface_decls.is_empty() || remote_members.is_empty() {
             return;
         }
 
-        // Now check local interface members against remote members
+        let mut conflict_names = Vec::new();
+        let mut seen_conflict_names = FxHashSet::default();
+        let mut conflict_name_nodes = Vec::new();
+        let mut anchor_nodes = Vec::new();
+        let mut seen_anchor_nodes = FxHashSet::default();
+
         for &decl_idx in local_interface_decls {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
@@ -1849,37 +2155,80 @@ impl<'a> CheckerState<'a> {
             let Some(iface) = self.ctx.arena.get_interface(node) else {
                 continue;
             };
+            let anchor_node = self.interface_member_conflict_anchor_node(decl_idx);
+            let mut decl_has_conflict = false;
 
             for &member_idx in &iface.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
                 };
-
-                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
-                    || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
-                {
-                    let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
-                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name(sig.name) else {
-                        continue;
-                    };
-
-                    if let Some(&remote_is_method) = remote_members.get(&name)
-                        && is_method != remote_is_method
-                    {
-                        // Property-vs-method conflict across files
-                        let message =
-                            format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
-                        self.error_at_node(
-                            sig.name,
-                            &message,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        );
-                    }
+                let local_kind = match member_node.kind {
+                    syntax_kind_ext::PROPERTY_SIGNATURE => INTERFACE_MEMBER_KIND_PROPERTY,
+                    syntax_kind_ext::METHOD_SIGNATURE => INTERFACE_MEMBER_KIND_METHOD,
+                    _ => continue,
+                };
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name(sig.name) else {
+                    continue;
+                };
+                let Some(&remote_kinds) = remote_members.get(&name) else {
+                    continue;
+                };
+                let opposite_kind = if local_kind == INTERFACE_MEMBER_KIND_METHOD {
+                    INTERFACE_MEMBER_KIND_PROPERTY
+                } else {
+                    INTERFACE_MEMBER_KIND_METHOD
+                };
+                if (remote_kinds & opposite_kind) == 0 {
+                    continue;
                 }
+
+                decl_has_conflict = true;
+                if seen_conflict_names.insert(name.clone()) {
+                    conflict_names.push(name.clone());
+                }
+                conflict_name_nodes.push((name, sig.name));
             }
+
+            if decl_has_conflict && seen_anchor_nodes.insert(anchor_node) {
+                anchor_nodes.push(anchor_node);
+            }
+        }
+
+        if conflict_name_nodes.is_empty() {
+            return;
+        }
+
+        if conflict_names.len() >= CROSS_FILE_INTERFACE_MEMBER_CONFLICT_LIMIT {
+            let list = conflict_names.join(", ");
+            let message = format_message(
+                diagnostic_messages::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
+                &[&list],
+            );
+            for anchor_node in anchor_nodes {
+                self.error_at_node(
+                    anchor_node,
+                    &message,
+                    diagnostic_codes::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
+                );
+            }
+            return;
+        }
+
+        for (name, node_idx) in conflict_name_nodes {
+            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+            self.error_at_node(node_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+        }
+    }
+
+    fn interface_member_conflict_anchor_node(&self, decl_idx: NodeIndex) -> NodeIndex {
+        let enclosing_namespace = self.get_enclosing_namespace(decl_idx);
+        if enclosing_namespace.is_none() {
+            decl_idx
+        } else {
+            enclosing_namespace
         }
     }
 
