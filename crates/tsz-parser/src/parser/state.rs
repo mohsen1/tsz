@@ -1722,6 +1722,15 @@ impl ParserState {
         }
 
         if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
+            if suggestion == "this" && self.is_token(SyntaxKind::DotToken) {
+                self.parse_error_at(
+                    pos,
+                    len,
+                    diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+                return;
+            }
             if !self.should_suppress_type_or_keyword_suggestion_for_missing_semicolon(
                 suggestion.as_str(),
                 pos,
