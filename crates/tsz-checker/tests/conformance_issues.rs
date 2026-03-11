@@ -9523,6 +9523,10 @@ fn test_async_generator_type_references_preserve_all_type_params() {
         r#"
 type T = AsyncGenerator<string, number, unknown>;
 declare const g: <T, U, V>() => AsyncGenerator<T, U, V>;
+async function* f(): AsyncGenerator<"a", number, unknown> {
+    const x: number = yield* g();
+    return x;
+}
 "#,
         CheckerOptions {
             target: ScriptTarget::ESNext,
@@ -9533,6 +9537,11 @@ declare const g: <T, U, V>() => AsyncGenerator<T, U, V>;
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2314),
         "AsyncGenerator should retain its 3-parameter lib arity.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2322).count(),
+        0,
+        "AsyncGenerator yield* contextual typing should not cascade from bogus TS2314.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

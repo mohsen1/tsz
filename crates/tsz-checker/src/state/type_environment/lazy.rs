@@ -625,6 +625,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(def_id) = def_id
             && !type_params.is_empty()
+            && self.ctx.get_def_type_params(def_id).is_none()
         {
             self.ctx.insert_def_type_params(def_id, type_params.clone());
         }
