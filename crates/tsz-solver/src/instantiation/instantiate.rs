@@ -1069,6 +1069,17 @@ impl<'a> TypeInstantiator<'a> {
                 if self.preserve_meta_types {
                     return self.interner.keyof(inst_operand);
                 }
+                if matches!(
+                    self.interner.lookup(inst_operand),
+                    Some(
+                        TypeData::TypeQuery(_)
+                            | TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::IndexAccess(_, _)
+                    )
+                ) {
+                    return self.interner.keyof(inst_operand);
+                }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
                 crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand)
             }

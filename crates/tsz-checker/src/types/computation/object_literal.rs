@@ -187,33 +187,83 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn should_defer_optional_function_property_context(
+    fn precise_callable_context_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
+        if type_id == TypeId::UNDEFINED {
+            return None;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            let callable_members: Vec<_> = members
+                .into_iter()
+                .filter(|&member| member != TypeId::UNDEFINED)
+                .collect();
+            if !callable_members.is_empty()
+                && callable_members.iter().all(|&member| {
+                    tsz_solver::type_queries::is_callable_type(self.ctx.types, member)
+                })
+            {
+                return Some(
+                    self.ctx
+                        .types
+                        .factory()
+                        .union_preserve_members(callable_members),
+                );
+            }
+            return None;
+        }
+
+        tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id).then_some(type_id)
+    }
+
+    fn function_initializer_context_type(
         &mut self,
         contextual_type: Option<TypeId>,
+        property_name: &str,
         property_context_type: Option<TypeId>,
         initializer_idx: NodeIndex,
-    ) -> bool {
-        let Some(contextual_type) = contextual_type else {
-            return false;
-        };
-        let Some(property_context_type) = property_context_type else {
-            return false;
-        };
+    ) -> Option<TypeId> {
+        let property_context_type = property_context_type?;
         let Some(initializer_node) = self.ctx.arena.get(initializer_idx) else {
-            return false;
+            return Some(property_context_type);
         };
 
         if initializer_node.kind != syntax_kind_ext::ARROW_FUNCTION
             && initializer_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
         {
-            return false;
+            return Some(property_context_type);
         }
 
         if !tsz_solver::type_contains_undefined(self.ctx.types, property_context_type) {
-            return false;
+            return Some(property_context_type);
         }
 
-        self.union_with_non_nullish_non_object_member(contextual_type, 6)
+        if let Some(contextual_type) = contextual_type
+            && let tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id, ..
+            } = self.resolve_property_access_with_env(contextual_type, property_name)
+            && let Some(type_id) = self.precise_callable_context_type(type_id)
+        {
+            return Some(type_id);
+        }
+
+        if self
+            .precise_callable_context_type(property_context_type)
+            .is_some_and(|type_id| type_id != property_context_type)
+        {
+            return self.precise_callable_context_type(property_context_type);
+        }
+
+        let Some(contextual_type) = contextual_type else {
+            return Some(property_context_type);
+        };
+
+        if self.union_with_non_nullish_non_object_member(contextual_type, 6) {
+            None
+        } else {
+            Some(property_context_type)
+        }
     }
 
     fn contextual_property_presence(
@@ -447,6 +497,18 @@ impl<'a> CheckerState<'a> {
         };
         let original_contextual_type = contextual_type;
         let mut best_property_type = None;
+
+        if let Some(constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+            self.ctx.types,
+            original_contextual_type,
+        ) && constraint != original_contextual_type
+            && let Some(property_type) =
+                self.contextual_object_literal_property_type(constraint, property_name)
+        {
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
+        }
+
         let env_property_type = if matches!(
             self.resolve_property_access_with_env(original_contextual_type, property_name),
             tsz_solver::operations::property::PropertyAccessResult::Success { .. }
@@ -815,6 +877,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing object literal data - propagate error
         };
 
+        tracing::trace!(
+            idx = idx.0,
+            contextual_type = ?self.ctx.contextual_type.map(|t| t.0),
+            contextual_type_display = ?self.ctx.contextual_type.map(|t| self.format_type(t)),
+            "get_type_of_object_literal: entry"
+        );
+
         // Collect properties from the object literal (later entries override earlier ones)
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
@@ -912,7 +981,6 @@ impl<'a> CheckerState<'a> {
                     // - The @type type is used as contextual type so literals are preserved
                     // This matches tsc behavior for JS files with checkJs/ts-check.
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
-
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
@@ -923,15 +991,15 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let property_context_type = if jsdoc_declared_type.is_none()
-                        && self.should_defer_optional_function_property_context(
+                    let initializer_context_type = if jsdoc_declared_type.is_none() {
+                        self.function_initializer_context_type(
                             self.ctx.contextual_type,
+                            &name,
                             property_context_type,
                             prop.initializer,
-                        ) {
-                        None
+                        )
                     } else {
-                        property_context_type
+                        jsdoc_declared_type
                     };
                     let property_context_type = if property_context_type.is_none()
                         && let Some(ctx_type) = self.ctx.contextual_type
@@ -955,7 +1023,7 @@ impl<'a> CheckerState<'a> {
                     let prev_context = self.ctx.contextual_type;
                     let had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
-                        jsdoc_declared_type.or(property_context_type),
+                        jsdoc_declared_type.or(initializer_context_type),
                     );
                     // When the parser can't parse a value expression (e.g. `{ a: return; }`),
                     // it uses the property NAME node as the fallback initializer for error

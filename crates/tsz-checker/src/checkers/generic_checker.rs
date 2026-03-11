@@ -712,6 +712,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 constrained_index_type
             };
+            if let Some(indexed_value_type) = self.constraint_check_indexed_access_value_type(
+                resolved_object_type,
+                resolved_index_type,
+            ) {
+                return self.evaluate_type_for_assignability(indexed_value_type);
+            }
             if resolved_object_type == object_type && resolved_index_type == index_type {
                 type_id
             } else {
@@ -724,6 +730,91 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         }
+    }
+
+    fn constraint_check_indexed_access_value_type(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        use tsz_solver::type_queries::IndexKeyKind;
+
+        fn key_matches_string_index(
+            db: &dyn tsz_solver::TypeDatabase,
+            key_type: TypeId,
+            kind: &IndexKeyKind,
+        ) -> bool {
+            match kind {
+                IndexKeyKind::String
+                | IndexKeyKind::Number
+                | IndexKeyKind::StringLiteral
+                | IndexKeyKind::NumberLiteral
+                | IndexKeyKind::NumericStringLike
+                | IndexKeyKind::TemplateLiteralString => true,
+                IndexKeyKind::Union(members) => members.iter().all(|&member| {
+                    let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
+                    key_matches_string_index(db, member, &member_kind)
+                }),
+                IndexKeyKind::Other => {
+                    tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
+                        || tsz_solver::type_queries::is_keyof_type(db, key_type)
+                }
+            }
+        }
+
+        fn key_matches_number_index(
+            db: &dyn tsz_solver::TypeDatabase,
+            key_type: TypeId,
+            kind: &IndexKeyKind,
+        ) -> bool {
+            match kind {
+                IndexKeyKind::Number
+                | IndexKeyKind::NumberLiteral
+                | IndexKeyKind::NumericStringLike => true,
+                IndexKeyKind::Union(members) => members.iter().all(|&member| {
+                    let member_kind = tsz_solver::type_queries::classify_index_key(db, member);
+                    key_matches_number_index(db, member, &member_kind)
+                }),
+                IndexKeyKind::Other => {
+                    tsz_solver::type_queries::contains_type_parameters_db(db, key_type)
+                        || tsz_solver::type_queries::is_keyof_type(db, key_type)
+                }
+                _ => false,
+            }
+        }
+
+        let db = self.ctx.types.as_type_database();
+        let object_type = self.evaluate_type_for_assignability(object_type);
+        let key_type = self.evaluate_type_for_assignability(index_type);
+        let key_kind = tsz_solver::type_queries::classify_index_key(db, key_type);
+
+        if let Some(shape) = common_query::object_shape_for_type(db, object_type) {
+            if let Some(index) = &shape.string_index
+                && key_matches_string_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+            if let Some(index) = &shape.number_index
+                && key_matches_number_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+        }
+
+        if let Some(shape) = common_query::callable_shape_for_type(db, object_type) {
+            if let Some(index) = &shape.string_index
+                && key_matches_string_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+            if let Some(index) = &shape.number_index
+                && key_matches_number_index(db, key_type, &key_kind)
+            {
+                return Some(index.value_type);
+            }
+        }
+
+        None
     }
 
     /// Check if a type represents the global `Function` interface from lib.d.ts.
