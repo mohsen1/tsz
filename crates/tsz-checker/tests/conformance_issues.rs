@@ -7225,6 +7225,43 @@ test([
     );
 }
 
+#[test]
+fn test_union_call_signatures_with_mismatched_parameters_report_implicit_any() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+interface IWithCallSignatures {
+    (a: number): string;
+}
+interface IWithCallSignatures3 {
+    (b: string): number;
+}
+interface IWithCallSignatures4 {
+    (a: number): string;
+    (a: string, b: number): number;
+}
+
+var x3: IWithCallSignatures | IWithCallSignatures3 = a => a.toString();
+var x4: IWithCallSignatures | IWithCallSignatures4 = a => a.toString();
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7006 = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
+    assert_eq!(
+        ts7006, 2,
+        "Expected TS7006 for mismatched union call signatures. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Multiple type-only exports should all be filtered from the namespace.
 #[test]
 fn test_multiple_type_only_exports_filtered_from_namespace() {
