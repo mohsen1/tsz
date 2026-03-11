@@ -1065,6 +1065,9 @@ impl<'a> CheckerState<'a> {
         // Append type parameters to base class name for tsc parity: "A<T>"
         self.append_type_param_names(&mut base_class_name, &base_class.type_parameters);
 
+        let (_derived_type_params, derived_type_param_updates) =
+            self.push_type_parameters(&class_data.type_parameters);
+
         let mut type_args = Vec::new();
         if let Some(nodes) = base_type_argument_nodes.as_ref() {
             for arg_idx in nodes {
@@ -1102,6 +1105,9 @@ impl<'a> CheckerState<'a> {
             base_class_name.push_str(&arg_strs.join(", "));
             base_class_name.push('>');
         }
+
+        // Base type parameters are only needed to build the extends-clause substitution here.
+        self.pop_type_parameters(base_type_param_updates);
 
         let mut base_instance_member_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
@@ -1320,6 +1326,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let base_scope = self.push_type_parameters(&base_class.type_parameters);
+
             // Find matching member including private/protected members to detect
             // class-level visibility/branding incompatibilities (TS2415).
             let base_any_info = {
@@ -1349,6 +1357,7 @@ impl<'a> CheckerState<'a> {
                 && self
                     .class_member_visibility_conflicts(member_visibility, base_any_info.visibility)
             {
+                self.pop_type_parameters(base_scope.1);
                 if !class_extends_error_reported {
                     if is_static {
                         self.error_at_node(
@@ -1392,6 +1401,8 @@ impl<'a> CheckerState<'a> {
                 }
                 found
             };
+
+            self.pop_type_parameters(base_scope.1);
 
             let Some(base_info) = base_info else {
                 continue;
@@ -1558,7 +1569,7 @@ impl<'a> CheckerState<'a> {
             class_extends_error_reported,
         );
 
-        self.pop_type_parameters(base_type_param_updates);
+        self.pop_type_parameters(derived_type_param_updates);
     }
 
     /// Check constructor parameter properties against base class members for
