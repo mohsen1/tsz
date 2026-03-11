@@ -10068,3 +10068,34 @@ tt = ss;
         "Expected TS2322 to preserve the declared intersection source type for `ss`.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_assignment_to_any_array_rest_parameters_indexed_access_classification() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function bar<T extends string[], K extends number>() {
+    type T01 = string[]["0.0"];
+    type T02 = string[][K | "0"];
+    type T11 = T["0.0"];
+    type T12 = T[K | "0"];
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected exactly one TS2339 for string[][\"0.0\"].\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2536_count, 1,
+        "Expected exactly one TS2536 for generic T[\"0.0\"], and no TS2536 for K | \"0\" unions.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
