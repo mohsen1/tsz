@@ -70,7 +70,12 @@ The root cause was not missing literal type preservation in the solver — const
 already had correct literal types. The issue was in the TS2367 display path which
 unconditionally widened number/boolean literals via `widen_non_string_bigint_literal`.
 The fix uses a two-tier heuristic: same primitive family → preserve all literals;
-different family → widen only number/boolean (preserving string/bigint).
+different family → widen all literals to primitive types (string, number, etc.).
+**Updated** (2026-03-11): The different-family branch was originally only widening
+number/boolean but preserving string/bigint. Fixed to widen ALL literal types in
+the different-family case, matching tsc's behavior (e.g., `'"foo"'` → `'string'`
+when compared against `'number'`). Fixes `stringLiteralsAssertionsInEqualityComparisons02`
+and `stringEnumLiteralTypes3`.
 
 #### Sub-pattern B: String Literal / Union Widening (34 fingerprints)
 
