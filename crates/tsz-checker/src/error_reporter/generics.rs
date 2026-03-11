@@ -8,6 +8,7 @@ use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::{CallSignature, CallableShape, TypeSubstitution, instantiate_type};
 
@@ -274,9 +275,22 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(idx)?;
         let assertion = self.ctx.arena.get_type_assertion(node)?;
         let source = self.declared_type_annotation_text_for_expression(assertion.expression)?;
-        let target = self
+        let mut target = self
             .node_text(assertion.type_node)
             .and_then(sanitize_type_text)?;
+        // For angle-bracket assertions `<T>expr`, the parser's type_node span
+        // may include the closing `>`. Strip it if the node is TYPE_ASSERTION.
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION {
+            if let Some(stripped) = target.strip_suffix('>') {
+                // Only strip if brackets are unbalanced (more `>` than `<`),
+                // so legitimate generic types like `Array<T>` are preserved.
+                let open = stripped.chars().filter(|&c| c == '<').count();
+                let close = stripped.chars().filter(|&c| c == '>').count();
+                if close < open || (open == 0 && close == 0) {
+                    target = stripped.to_string();
+                }
+            }
+        }
         Some((source, target))
     }
 
