@@ -7767,6 +7767,40 @@ __test2__.__val__aa = __test1__.__val__obj4
 }
 
 #[test]
+fn test_assigning_to_class_symbol_does_not_contextually_type_rhs_as_constructor() {
+    let source = r#"
+namespace Test {
+    class Mocked {
+        myProp: string;
+    }
+
+    class Tester {
+        willThrowError() {
+            Mocked = Mocked || function () {
+                return { myProp: "test" };
+            };
+        }
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2629),
+        "Expected TS2629 for assignment to class symbol. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2741),
+        "Assignment to a class symbol should not contextually type the RHS as 'typeof Class': {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_array_from_assignment_context_does_not_overwrite_direct_type_arg_inference() {
     let source = r#"
 interface A { a: string; }

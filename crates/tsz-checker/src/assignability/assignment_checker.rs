@@ -844,6 +844,14 @@ impl<'a> CheckerState<'a> {
             left_type = jsdoc_left_type;
         }
 
+        if is_function_assignment {
+            // TS2629/TS2628/TS2630 are terminal for simple assignment targets in tsc.
+            // Do not contextually type the RHS against the class/function/enum object
+            // type, or we can produce spurious follow-on errors like missing
+            // `prototype` on a function expression assigned to a class symbol.
+            return self.get_type_of_node(right_idx);
+        }
+
         let prev_context = self.ctx.contextual_type;
         if left_type != TypeId::ANY
             && left_type != TypeId::NEVER
@@ -896,12 +904,6 @@ impl<'a> CheckerState<'a> {
         // No need to manually track freshness removal here.
 
         self.ctx.contextual_type = prev_context;
-
-        if is_function_assignment {
-            // TS2630 is terminal in TypeScript for simple assignment targets.
-            // Avoid cascading TS2322/other assignability diagnostics.
-            return right_type;
-        }
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
