@@ -1780,6 +1780,10 @@ impl ParserState {
         let name = if self.is_reserved_word() {
             use tsz_common::diagnostics::diagnostic_codes;
 
+            let name_start = self.token_pos();
+            let name_end = self.token_end();
+            let atom = self.scanner.get_token_atom();
+            let text = self.scanner.get_token_value_ref().to_string();
             self.error_reserved_word_identifier();
             if self.is_token(SyntaxKind::OpenParenToken) {
                 self.parse_error_at_current_token(
@@ -1787,7 +1791,17 @@ impl ParserState {
                     diagnostic_codes::IDENTIFIER_EXPECTED,
                 );
             }
-            NodeIndex::NONE
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                name_start,
+                name_end,
+                IdentifierData {
+                    atom,
+                    escaped_text: text,
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
         } else {
