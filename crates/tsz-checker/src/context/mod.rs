@@ -487,6 +487,12 @@ pub struct CheckerContext<'a> {
     /// O(1) lookup set for node resolution stack.
     pub node_resolution_set: FxHashSet<NodeIndex>,
 
+    /// Closures where implicit any (TS7006/TS7031) checks have already been performed.
+    /// Prevents duplicate diagnostics when `get_type_of_function` is called multiple
+    /// times for the same closure (e.g., once with contextual type during call
+    /// resolution, then again without context during body checking).
+    pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
+
     /// Set of class declaration nodes currently being checked.
     /// Used to prevent infinite recursion in `check_class_declaration` when
     /// class checking triggers type resolution that circles back to the same class.
