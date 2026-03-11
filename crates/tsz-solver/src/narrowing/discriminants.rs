@@ -14,6 +14,7 @@ use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult}
 use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
     LiteralValueKind, UnionMembersKind, classify_for_literal_value, classify_for_union_members,
+    get_tuple_elements,
 };
 use crate::types::{PropertyLookup, TypeId};
 use crate::visitor::{
@@ -199,10 +200,28 @@ impl<'a> NarrowingContext<'a> {
                 return Some(self.db.union(prop_types));
             }
 
-            // Use resolve_property_access for proper optional property handling
-            // This correctly handles properties that are optional (prop?: type)
+            // Tuple discriminants like `switch (pair[0])` narrow the base tuple/union,
+            // but the discriminant path is represented as string atoms (`"0"`, `"1"`).
+            // PropertyAccessEvaluator does not treat tuple elements as named properties,
+            // so handle that structural lookup directly here.
             let prop_name_arc = self.db.resolve_atom_ref(prop_name);
             let prop_name_str = prop_name_arc.as_ref();
+            if let Ok(index) = prop_name_str.parse::<usize>()
+                && let Some(elements) = get_tuple_elements(self.db, type_id)
+            {
+                if index < elements.len() {
+                    type_id = elements[index].type_id;
+                    continue;
+                }
+
+                if let Some(rest) = elements.iter().rev().find(|elem| elem.rest) {
+                    type_id = rest.type_id;
+                    continue;
+                }
+            }
+
+            // Use resolve_property_access for proper optional property handling
+            // This correctly handles properties that are optional (prop?: type)
             match evaluator.resolve_property_access(type_id, prop_name_str) {
                 PropertyAccessResult::Success {
                     type_id: prop_type_id,

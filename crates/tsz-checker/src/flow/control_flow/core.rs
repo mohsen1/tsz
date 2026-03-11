@@ -380,8 +380,8 @@ impl<'a> FlowAnalyzer<'a> {
 
         let affects = self.is_matching_reference(switch_expr, reference)
             || self
-                .discriminant_property_info(switch_expr, reference)
-                .is_some_and(|(_, _, base)| self.is_matching_reference(base, reference))
+                .relative_discriminant_path(switch_expr, reference)
+                .is_some_and(|(path, _)| !path.is_empty())
             // switch (typeof x) narrows x through typeof comparison
             || self.is_typeof_target(switch_expr, reference);
 

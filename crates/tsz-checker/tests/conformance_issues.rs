@@ -245,6 +245,86 @@ enum e5a { One }
 }
 
 #[test]
+fn test_switch_discriminant_narrows_nested_indexed_access_base() {
+    let source = r#"
+interface Square {
+    ["dash-ok"]: "square";
+    ["square-size"]: number;
+}
+interface Rectangle {
+    ["dash-ok"]: "rectangle";
+    width: number;
+    height: number;
+}
+interface Circle {
+    ["dash-ok"]: "circle";
+    radius: number;
+}
+type Shape = Square | Rectangle | Circle;
+interface Subshape {
+    "0": {
+        sub: {
+            under: {
+                shape: Shape;
+            }
+        }
+    }
+}
+
+function subarea(s: Subshape): number {
+    switch (s[0]["sub"].under["shape"]["dash-ok"]) {
+        case "square":
+            return s[0].sub.under.shape["square-size"] * s[0].sub.under.shape["square-size"];
+        case "rectangle":
+            return s[0]["sub"]["under"]["shape"]["width"] * s[0]["sub"]["under"]["shape"].height;
+        case "circle":
+            return Math.PI * s[0].sub.under["shape"].radius * s[0]["sub"].under.shape["radius"];
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| !matches!(*code, 2304 | 2318))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected nested discriminant switch to narrow the indexed-access base. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_switch_discriminant_narrows_tuple_union_siblings() {
+    let source = r#"
+type A = ["aa", number];
+type B = ["bb", string];
+type C = A | B;
+
+function check(c: C) {
+    switch (c[0]) {
+        case "aa":
+            var aa: number = c[1];
+            break;
+        case "bb":
+            var bb: string = c[1];
+            break;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected tuple-union discriminant switch to narrow sibling element access. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_destructuring_from_this_in_constructor_reports_ts2715_per_property() {
     let source = r#"
 abstract class C1 {
