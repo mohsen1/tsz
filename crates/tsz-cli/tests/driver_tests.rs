@@ -6816,6 +6816,96 @@ fn ts1079_emitted_for_declare_import_without_ts2304_on_declare() {
     );
 }
 
+#[test]
+fn ts2592_emitted_for_unresolved_jquery_global_without_ts2304() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2015", "lib": ["es5"] }, "files": ["test.ts"] }"#,
+    );
+    write_file(&base.join("test.ts"), "const value = $(\".thing\");\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2592_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_JQUERY_TRY_NPM_I_SA_2
+        })
+        .collect();
+    assert!(
+        !ts2592_diags.is_empty(),
+        "Expected TS2592 for unresolved jQuery global `$`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+
+    let jquery_ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("'$'"))
+        .collect();
+    assert!(
+        jquery_ts2304_diags.is_empty(),
+        "Unexpected TS2304 on `$`: {jquery_ts2304_diags:?}"
+    );
+}
+
+#[test]
+fn ts2552_emitted_for_type_only_export_typo() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2015", "strict": true, "module": "commonjs" }, "files": ["test.ts"] }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        "type RoomInterfae = {};\n\nexport type {\n    RoomInterface\n}\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2552_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+        })
+        .collect();
+    assert!(
+        !ts2552_diags.is_empty(),
+        "Expected TS2552 for the typo in `export type {{ RoomInterface }}`, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts2552_diags
+            .iter()
+            .any(|diag| diag.message_text.contains("RoomInterfae")),
+        "Expected TS2552 to suggest `RoomInterfae`, got: {ts2552_diags:?}"
+    );
+
+    let room_ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME
+                && d.message_text.contains("RoomInterface")
+        })
+        .collect();
+    assert!(
+        room_ts2304_diags.is_empty(),
+        "Unexpected TS2304 on `RoomInterface`: {room_ts2304_diags:?}"
+    );
+}
+
 /// TS8002: `export import x = require(...)` in a JS file should report at the
 /// `export` keyword (position 0), not the inner `import` keyword.
 #[test]
