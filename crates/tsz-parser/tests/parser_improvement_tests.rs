@@ -223,6 +223,36 @@ var value = (Math.random() ? {} : null);
 }
 
 #[test]
+fn test_named_tuple_member_rest_type_after_colon_does_not_emit_ts1005() {
+    let source = r#"
+type T = [first: string, rest: ...string[]?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code != 1005),
+        "Named tuple rest types after ':' should defer to later tuple diagnostics without TS1005: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_named_tuple_member_optional_type_after_colon_does_not_emit_ts1005() {
+    let source = r#"
+type T = [element: string?];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code != 1005),
+        "Named tuple members with a trailing '?' after the type should defer to later tuple diagnostics without TS1005: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_empty_element_access_reports_after_open_bracket() {
     let source = r#"
 class Z {
