@@ -1765,23 +1765,15 @@ impl ModuleResolver {
             });
         }
 
-        // Try types/typings field
+        // Try types/typings field. These entries are declaration-oriented and
+        // must not resolve to runtime JS files directly.
         if let Some(types) = package_json
             .types
             .clone()
             .or_else(|| package_json.typings.clone())
         {
             let types_path = package_dir.join(&types);
-            if let Some(resolved) = resolve_explicit_unknown_extension(&types_path) {
-                return Ok(ResolvedModule {
-                    resolved_path: resolved.clone(),
-                    is_external: true,
-                    package_name: Some(package_json.name.unwrap_or_default()),
-                    original_specifier: original_specifier.to_string(),
-                    extension: ModuleExtension::from_path(&resolved),
-                });
-            }
-            if let Some(resolved) = self.try_file_or_directory(&types_path) {
+            if let Some(resolved) = self.try_types_entry(&types_path) {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
@@ -2167,14 +2159,12 @@ impl ModuleResolver {
             if package_json_path.exists()
                 && let Ok(pj) = self.read_package_json(&package_json_path)
             {
-                // Try types/typings field first
+                // Try types/typings field first. These entries are
+                // declaration-oriented and must not resolve to runtime JS files.
                 if let Some(types) = pj.types.or(pj.typings) {
                     let types_path = path.join(&types);
-                    if let Some(resolved) = self.try_file(&types_path) {
+                    if let Some(resolved) = self.try_types_entry(&types_path) {
                         return Some(resolved);
-                    }
-                    if types_path.is_file() {
-                        return Some(types_path);
                     }
                 }
                 // Try main field with extension remapping
@@ -2227,6 +2217,45 @@ impl ModuleResolver {
             return self.try_file(&index);
         }
         None
+    }
+
+    fn try_types_entry(&self, path: &Path) -> Option<PathBuf> {
+        if let Some(resolved) = resolve_explicit_unknown_extension(path) {
+            return Some(resolved);
+        }
+
+        if let Some((base, extension)) = split_path_extension(path) {
+            if let Some(rewritten) = node16_extension_substitution(path, extension) {
+                for candidate in &rewritten {
+                    if let Some(resolved) = try_file_with_suffixes(candidate, &self.module_suffixes)
+                    {
+                        return Some(resolved);
+                    }
+                }
+            }
+
+            let explicit_extension = ModuleExtension::from_path(path);
+            if matches!(
+                explicit_extension,
+                ModuleExtension::Ts
+                    | ModuleExtension::Tsx
+                    | ModuleExtension::Dts
+                    | ModuleExtension::DmTs
+                    | ModuleExtension::DCts
+                    | ModuleExtension::Mts
+                    | ModuleExtension::Cts
+            ) {
+                return try_file_with_suffixes_and_extension(
+                    &base,
+                    extension,
+                    &self.module_suffixes,
+                );
+            }
+
+            return None;
+        }
+
+        self.try_file_or_directory(path)
     }
 
     /// Read and parse package.json
@@ -3625,7 +3654,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolver_package_types_with_unknown_extension() {
+    fn test_resolver_package_types_with_unknown_extension_is_ignored() {
         use std::fs;
         let dir = std::env::temp_dir().join("tsz_test_resolver_types_unknown");
         let _ = fs::remove_dir_all(&dir);
@@ -3646,15 +3675,15 @@ mod tests {
         let mut resolver = ModuleResolver::node_resolver();
         let result = resolver.resolve("foo", &dir.join("app.ts"), Span::new(0, 10));
         assert!(
-            result.is_ok(),
-            "Expected package types with unknown extension to resolve"
+            result.is_err(),
+            "Expected package types with runtime JS extension to be ignored"
         );
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn test_resolver_package_types_js_without_allow_js_resolves() {
+    fn test_resolver_package_types_js_without_allow_js_is_ignored() {
         use std::fs;
         let dir = std::env::temp_dir().join("tsz_test_resolver_types_js");
         let _ = fs::remove_dir_all(&dir);
@@ -3675,8 +3704,8 @@ mod tests {
         let mut resolver = ModuleResolver::node_resolver();
         let result = resolver.resolve("foo", &dir.join("app.ts"), Span::new(0, 10));
         assert!(
-            result.is_ok(),
-            "Expected types .js to resolve even without allowJs"
+            result.is_err(),
+            "Expected package types .js to be ignored without allowJs"
         );
 
         let _ = fs::remove_dir_all(&dir);

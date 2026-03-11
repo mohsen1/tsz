@@ -1550,22 +1550,77 @@ fn resolve_package_root(
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
 ) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-
     if let Some(package_json) = package_json {
-        candidates = collect_package_entry_candidates(package_json);
+        for entry in [package_json.types.as_ref(), package_json.typings.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(resolved) =
+                resolve_declaration_package_entry(package_root, entry, options, package_type)
+            {
+                return Some(resolved);
+            }
+        }
+
+        for entry in [package_json.module.as_ref(), package_json.main.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(resolved) =
+                resolve_package_entry(package_root, entry, options, package_type)
+            {
+                return Some(resolved);
+            }
+        }
     }
 
-    if !candidates
-        .iter()
-        .any(|entry| entry == "index" || entry == "./index")
+    if let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type) {
+        return Some(resolved);
+    }
+
+    None
+}
+
+fn resolve_declaration_package_entry(
+    package_root: &Path,
+    entry: &str,
+    options: &ResolvedCompilerOptions,
+    package_type: Option<PackageType>,
+) -> Option<PathBuf> {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return None;
+    }
+    let entry = entry.trim_start_matches("./");
+    let path = if Path::new(entry).is_absolute() {
+        PathBuf::from(entry)
+    } else {
+        package_root.join(entry)
+    };
+
+    for candidate in expand_module_path_candidates(&path, options, package_type) {
+        if candidate.is_file() && is_declaration_file(&candidate) {
+            return Some(canonicalize_or_owned(&candidate));
+        }
+    }
+
+    if path.is_file() && is_declaration_file(&path) {
+        return Some(canonicalize_or_owned(&path));
+    }
+
+    if path.is_dir()
+        && let Some(pj) = read_package_json(&path.join("package.json"))
     {
-        candidates.push("index".to_string());
-    }
-
-    for entry in candidates {
-        if let Some(resolved) = resolve_package_entry(package_root, &entry, options, package_type) {
-            return Some(resolved);
+        let sub_type = package_type_from_json(Some(&pj));
+        for entry in [pj.types.as_ref(), pj.typings.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(resolved) =
+                resolve_declaration_package_entry(&path, entry, options, sub_type)
+            {
+                return Some(resolved);
+            }
         }
     }
 
@@ -1605,15 +1660,14 @@ fn resolve_package_entry(
     {
         let sub_type = package_type_from_json(Some(&pj));
         // Try types/typings field
-        if let Some(types) = pj.types.or(pj.typings) {
-            let types_path = path.join(&types);
-            for candidate in expand_module_path_candidates(&types_path, options, sub_type) {
-                if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
-                    return Some(canonicalize_or_owned(&candidate));
-                }
-            }
-            if types_path.is_file() {
-                return Some(canonicalize_or_owned(&types_path));
+        for types in [pj.types.as_ref(), pj.typings.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(resolved) =
+                resolve_declaration_package_entry(&path, types, options, sub_type)
+            {
+                return Some(resolved);
             }
         }
         // Try main field
