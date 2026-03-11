@@ -1130,12 +1130,9 @@ impl<'a> CheckerState<'a> {
     /// The rest type is the parent type with all statically-named non-rest properties
     /// excluded (like `Omit<T, 'a' | 'b'>`). For union parent types, compute the rest
     /// for each member and union the results.
-    fn compute_object_rest_type(&self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
+    fn compute_object_rest_type(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
         // Collect the names of all non-rest sibling properties in this binding pattern.
         let excluded = self.collect_non_rest_property_names(pattern_idx);
-        if excluded.is_empty() {
-            return parent_type;
-        }
 
         // For union types, compute rest type for each member and union them.
         if let Some(members) = query::union_members(self.ctx.types, parent_type) {
@@ -1219,21 +1216,33 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Create a new object type from `type_id` with the given property names excluded.
-    fn omit_properties_from_type(&self, type_id: TypeId, excluded: &[String]) -> TypeId {
+    fn omit_properties_from_type(&mut self, type_id: TypeId, excluded: &[String]) -> TypeId {
+        if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return type_id;
+        }
+
+        let constraint = query::type_parameter_constraint(self.ctx.types, type_id);
         let shape = query::object_shape(self.ctx.types, type_id).or_else(|| {
             // For type parameters, use the constraint's shape so that
             // `{ a, ...rest } = obj` where `obj: T extends { a, b }` produces
             // rest without the excluded properties.  Without this, `rest` would
             // keep all of T's constraint properties and trigger false TS2783.
-            let constraint = query::type_parameter_constraint(self.ctx.types, type_id)?;
+            let constraint = constraint?;
             query::object_shape(self.ctx.types, constraint)
         });
-        let Some(shape) = shape else {
-            return type_id;
-        };
 
-        let remaining_props: Vec<_> = shape
-            .properties
+        // Object rest follows the same property-collection rules as object spread:
+        // drop readonly, prototype members, private/protected members, and
+        // compiler-only private-brand properties before excluding named siblings.
+        let mut remaining_props = self.collect_object_spread_properties(type_id);
+        if remaining_props.is_empty()
+            && query::object_shape(self.ctx.types, type_id).is_none()
+            && let Some(constraint) = constraint
+        {
+            remaining_props = self.collect_object_spread_properties(constraint);
+        }
+
+        let remaining_props: Vec<_> = remaining_props
             .iter()
             .filter(|prop| {
                 let name = self.ctx.types.resolve_atom_ref(prop.name);
@@ -1242,18 +1251,27 @@ impl<'a> CheckerState<'a> {
             .cloned()
             .collect();
 
-        // Preserve index signatures/flags/symbol for object-rest types.
-        // Dropping them causes false TS2339 on reads like `q.z` and suppresses
-        // downstream nullish diagnostics under noUncheckedIndexedAccess.
+        let Some(shape) = shape else {
+            return if tsz_solver::type_queries::is_object_like_type(self.ctx.types, type_id) {
+                self.ctx.types.factory().object(remaining_props)
+            } else {
+                type_id
+            };
+        };
+
+        // Preserve index signatures and object flags for object-rest types.
+        // Rest results are structural copies, so they must not retain the
+        // source type's nominal symbol (e.g. class identity).
         if shape.string_index.is_some() || shape.number_index.is_some() {
             let mut rest_shape = shape.as_ref().clone();
             rest_shape.properties = remaining_props;
+            rest_shape.symbol = None;
             self.ctx.types.factory().object_with_index(rest_shape)
         } else {
             self.ctx.types.factory().object_with_flags_and_symbol(
                 remaining_props,
                 shape.flags,
-                shape.symbol,
+                None,
             )
         }
     }

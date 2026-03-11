@@ -191,6 +191,28 @@ fn test_private_methods_create_brands() {
     );
 }
 
+/// Generic instantiations with the same ECMAScript private brand are still
+/// incompatible when the private member types differ.
+#[test]
+fn test_generic_private_identifiers_still_check_member_types() {
+    test_private_brands(
+        r#"
+        class C<T> {
+            #foo: T;
+            constructor(t: T) {
+                this.#foo = t;
+            }
+        }
+
+        let a = new C(3);
+        let b = new C("hello");
+        a = b;
+        b = a;
+        "#,
+        2,
+    );
+}
+
 /// Test that assigning object literal with extra property to class with private member.
 /// Object literals can't have private members, so this should fail with TS2353 (excess property).
 #[test]

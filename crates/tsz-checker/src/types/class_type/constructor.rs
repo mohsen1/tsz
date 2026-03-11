@@ -310,7 +310,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
                     let readonly = self.has_readonly_modifier(&prop.modifiers);
                     let type_id = if let Some(declared_type) =
                         self.effective_class_property_declared_type(member_idx, prop)
@@ -455,7 +455,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let visibility = self.get_visibility_from_modifiers(&method.modifiers);
+                    let visibility = self.get_member_visibility(&method.modifiers, method.name);
                     // For static methods, `this` refers to the constructor type
                     // Get it from the symbol if available
                     let prev_sym_cached =
@@ -526,7 +526,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
+                    let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
                         let getter_type = if accessor.type_annotation.is_some() {
@@ -844,7 +844,7 @@ impl<'a> CheckerState<'a> {
                         readonly: self.has_readonly_modifier(&prop.modifiers),
                         is_method: false,
                         is_class_prototype: false,
-                        visibility: self.get_visibility_from_modifiers(&prop.modifiers),
+                        visibility: self.get_member_visibility(&prop.modifiers, prop.name),
                         parent_id: current_sym,
                         declaration_order: 0,
                     });
