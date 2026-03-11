@@ -11,6 +11,49 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn check_excess_property_initializer_implicit_any(&mut self, elem_idx: NodeIndex) {
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return;
+        };
+
+        match elem_node.kind {
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                    self.check_for_nested_function_ts7006(prop.initializer);
+                }
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                    for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
+                        }
+                    }
+                    if method.body.is_some() {
+                        self.check_for_nested_function_ts7006(method.body);
+                    }
+                }
+            }
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
+                    for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
+                        }
+                    }
+                    if accessor.body.is_some() {
+                        self.check_for_nested_function_ts7006(accessor.body);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn nested_property_target_type(
         &mut self,
         owner_type: TypeId,
@@ -190,6 +233,7 @@ impl<'a> CheckerState<'a> {
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
                     self.error_excess_property_at(&prop_name, target, report_idx);
+                    self.check_excess_property_initializer_implicit_any(report_idx);
                 } else {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -308,6 +352,7 @@ impl<'a> CheckerState<'a> {
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
                     self.error_excess_property_at(&prop_name, target, report_idx);
+                    self.check_excess_property_initializer_implicit_any(report_idx);
                 } else {
                     // Combine named property types with index signature value types
                     // for the nested excess check. This ensures that for intersections
@@ -409,6 +454,7 @@ impl<'a> CheckerState<'a> {
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
                     self.error_excess_property_at(&prop_name, target, report_idx);
+                    self.check_excess_property_initializer_implicit_any(report_idx);
                 } else if let Some(target_prop) = target_prop {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -546,6 +592,7 @@ impl<'a> CheckerState<'a> {
         if let Some(earliest) = excess_candidates.iter().min_by_key(|c| c.2) {
             let prop_name = self.ctx.types.resolve_atom(earliest.0);
             self.error_excess_property_at(&prop_name, narrowed_member_type, earliest.1);
+            self.check_excess_property_initializer_implicit_any(earliest.1);
             true
         } else {
             false
@@ -972,6 +1019,7 @@ impl<'a> CheckerState<'a> {
             let target_prop = target_props.iter().find(|p| p.name == prop_atom);
             if target_prop.is_none() {
                 self.error_excess_property_at(&prop_name, effective_target_type, elem_idx);
+                self.check_excess_property_initializer_implicit_any(elem_idx);
             }
         }
     }
