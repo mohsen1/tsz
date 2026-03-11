@@ -595,6 +595,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let Some(global_sym_id) = self.resolve_global_value_symbol(&ident.escaped_text) else {
+            return false;
+        };
+
         if let Some(sym_id) = self.resolve_identifier_symbol(idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
@@ -616,7 +620,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        true
+        self.ctx.binder.get_symbol(global_sym_id).is_some()
     }
 
     /// Check if a name is a known global value (e.g., console, Math, JSON).

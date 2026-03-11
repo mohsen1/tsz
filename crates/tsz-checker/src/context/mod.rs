@@ -715,6 +715,14 @@ pub struct CheckerContext<'a> {
     /// user file contexts for cross-file type resolution in multi-file tests.
     pub actual_lib_file_count: usize,
 
+    /// Whether the driver loaded a project-local `@typescript/lib-dom` replacement package.
+    /// Used to report plain unresolved-name errors for omitted DOM globals like `window`.
+    pub typescript_dom_replacement_loaded: bool,
+    /// Whether the loaded replacement package explicitly declares a global `window` value.
+    pub typescript_dom_replacement_has_window: bool,
+    /// Whether the loaded replacement package explicitly declares a global `self` value.
+    pub typescript_dom_replacement_has_self: bool,
+
     /// Control flow graph for definite assignment analysis and type narrowing.
     /// This is built during the binding phase and used by the checker.
     pub flow_graph: Option<FlowGraph<'a>>,

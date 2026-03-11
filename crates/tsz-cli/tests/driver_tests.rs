@@ -6632,6 +6632,67 @@ export { _Default, _ImportRelative };
 }
 
 #[test]
+fn lib_replacement_honors_source_reference_subfiles() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/@typescript/lib-dom/index.d.ts"),
+        "// NOOP\n",
+    );
+    write_file(
+        &base.join("node_modules/@typescript/lib-dom/iterable.d.ts"),
+        "interface DOMIterable { abc: string }\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "libReplacement": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"/// <reference lib="dom.iterable" />
+const a: DOMIterable = { abc: "Hello" };
+
+window.localStorage;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2552_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+        .collect();
+    assert!(
+        ts2552_diags.is_empty(),
+        "Expected replacement dom.iterable lib to provide DOMIterable, got: {result:?}"
+    );
+
+    let ts2304_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME)
+        .collect();
+    assert_eq!(
+        ts2304_diags.len(),
+        1,
+        "Expected only the replaced-out window global to fail, got: {result:?}"
+    );
+    assert!(
+        ts2304_diags[0].message_text.contains("window"),
+        "Expected TS2304 to target window, got: {result:?}"
+    );
+}
+
+#[test]
 fn types_entry_resolves_direct_declaration_file_from_type_root() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;

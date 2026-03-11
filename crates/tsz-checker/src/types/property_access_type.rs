@@ -26,6 +26,23 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    fn missing_typescript_lib_dom_global_alias(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        let ident = self.ctx.arena.get_identifier(node)?;
+        let name = ident.escaped_text.as_str();
+        if !matches!(name, "window" | "self") {
+            return None;
+        }
+        if !self.ctx.typescript_dom_replacement_loaded {
+            return None;
+        }
+        match name {
+            "window" if !self.ctx.typescript_dom_replacement_has_window => Some(name.to_string()),
+            "self" if !self.ctx.typescript_dom_replacement_has_self => Some(name.to_string()),
+            _ => None,
+        }
+    }
+
     /// Inner implementation of property access type resolution.
     fn get_type_of_property_access_inner(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::operations::property::PropertyAccessResult;
@@ -72,6 +89,17 @@ impl<'a> CheckerState<'a> {
         {
             // Preserve diagnostics on the base expression when member name is missing.
             let _ = self.get_type_of_node(access.expression);
+            return TypeId::ERROR;
+        }
+
+        if let Some(missing_global) =
+            self.missing_typescript_lib_dom_global_alias(access.expression)
+        {
+            self.error_at_node_msg(
+                access.expression,
+                crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                &[&missing_global],
+            );
             return TypeId::ERROR;
         }
 
