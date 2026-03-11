@@ -1708,7 +1708,29 @@ impl ParserState {
             self.parse_diagnostics.len() > diagnostics_before_import_clause;
 
         // Parse module specifier
-        let module_specifier = if import_clause.is_none() {
+        let recovered_trailing_comma_before_from =
+            !import_clause_had_errors && self.is_token(SyntaxKind::CommaToken);
+        if recovered_trailing_comma_before_from {
+            self.parse_error_at_current_token(
+                "'from' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token();
+            if self.is_token(SyntaxKind::FromKeyword) {
+                self.next_token();
+                if self.is_token(SyntaxKind::StringLiteral) {
+                    self.parse_error_at_current_token(
+                        "';' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                    let _ = self.parse_string_literal();
+                }
+            }
+        }
+
+        let module_specifier = if recovered_trailing_comma_before_from {
+            NodeIndex::NONE
+        } else if import_clause.is_none() {
             self.parse_string_literal()
         } else if import_clause_had_errors
             && self.is_token(SyntaxKind::FromKeyword)
@@ -1771,7 +1793,8 @@ impl ParserState {
             && matches!(
                 self.token(),
                 SyntaxKind::CloseBraceToken | SyntaxKind::FromKeyword
-            );
+            )
+            || (recovered_trailing_comma_before_from && module_specifier.is_none());
         if !recover_as_statement_boundary {
             self.parse_semicolon();
         }
@@ -1990,6 +2013,12 @@ impl ParserState {
                 self.parse_namespace_import()
             } else if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_named_imports()
+            } else if self.is_token(SyntaxKind::FromKeyword) {
+                self.parse_error_at_current_token(
+                    "'{' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
+                NodeIndex::NONE
             } else {
                 NodeIndex::NONE
             }
@@ -2039,6 +2068,7 @@ impl ParserState {
 
         let mut elements = Vec::new();
         let mut leave_closing_brace_for_statement_recovery = false;
+        let mut consumed_closing_brace = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -2050,11 +2080,34 @@ impl ParserState {
                 break;
             }
 
+            if self.is_token(SyntaxKind::AsteriskToken) {
+                self.error_identifier_expected();
+                self.next_token();
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.parse_error_at_current_token(
+                        "Expression expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                    let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
+                    consumed_closing_brace = true;
+                    leave_closing_brace_for_statement_recovery = false;
+                    break;
+                }
+            }
+
             let element_start = self.token_pos();
             let diagnostics_before = self.parse_diagnostics.len();
             let spec = self.parse_import_specifier();
             elements.push(spec);
             let spec_had_errors = self.parse_diagnostics.len() > diagnostics_before;
+
+            if spec_had_errors && self.is_token(SyntaxKind::CloseBraceToken) {
+                self.error_expression_expected();
+                let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
+                consumed_closing_brace = true;
+                leave_closing_brace_for_statement_recovery = false;
+                break;
+            }
 
             if spec_had_errors
                 && !self.is_token(SyntaxKind::CommaToken)
@@ -2068,11 +2121,14 @@ impl ParserState {
                 {
                     self.next_token();
                 }
-                if self.is_token(SyntaxKind::CloseBraceToken)
-                    || self.is_token(SyntaxKind::FromKeyword)
-                {
-                    leave_closing_brace_for_statement_recovery =
-                        self.is_token(SyntaxKind::CloseBraceToken);
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.error_expression_expected();
+                    let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
+                    leave_closing_brace_for_statement_recovery = false;
+                    break;
+                }
+                if self.is_token(SyntaxKind::FromKeyword) {
+                    leave_closing_brace_for_statement_recovery = false;
                     break;
                 }
             }
@@ -2103,6 +2159,8 @@ impl ParserState {
         self.last_named_imports_consumed_closing_brace =
             if leave_closing_brace_for_statement_recovery {
                 false
+            } else if consumed_closing_brace {
+                true
             } else {
                 self.parse_expected(SyntaxKind::CloseBraceToken)
             };
