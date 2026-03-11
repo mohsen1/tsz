@@ -593,10 +593,26 @@ fn parse_lib_references(content: &str) -> Vec<String> {
 fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBuf> {
     let lib_dir = base_path.parent()?;
     let normalized = normalize_lib_reference_name(lib_name);
-    let candidates = [
-        lib_dir.join(format!("lib.{normalized}.d.ts")),
-        lib_dir.join(format!("{normalized}.d.ts")),
-    ];
+    let mut candidate_names = vec![normalized.clone()];
+    match normalized.as_str() {
+        // Source-tree libs use *.generated.d.ts while built/local and npm libs use plain names.
+        "dom" => candidate_names.push("dom.generated".to_string()),
+        "dom.iterable" => candidate_names.push("dom.iterable.generated".to_string()),
+        "dom.asynciterable" => candidate_names.push("dom.asynciterable.generated".to_string()),
+        "dom.generated" => candidate_names.push("dom".to_string()),
+        "dom.iterable.generated" => candidate_names.push("dom.iterable".to_string()),
+        "dom.asynciterable.generated" => candidate_names.push("dom.asynciterable".to_string()),
+        _ => {}
+    }
+    let candidates: Vec<PathBuf> = candidate_names
+        .into_iter()
+        .flat_map(|name| {
+            [
+                lib_dir.join(format!("lib.{name}.d.ts")),
+                lib_dir.join(format!("{name}.d.ts")),
+            ]
+        })
+        .collect();
     candidates.into_iter().find(|candidate| candidate.exists())
 }
 

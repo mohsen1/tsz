@@ -9,7 +9,14 @@ use crate::query_boundaries::checkers::call::{
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{AssignabilityChecker, CallResult, ContextualTypeContext, TypeId};
+use tsz_solver::{
+    AssignabilityChecker, CallResult, ContextualTypeContext, PendingDiagnosticBuilder, TypeId,
+};
+
+pub(crate) struct OverloadResolution {
+    pub(crate) arg_types: Vec<TypeId>,
+    pub(crate) result: CallResult,
+}
 
 struct CheckerCallAssignabilityAdapter<'s, 'ctx> {
     state: &'s mut CheckerState<'ctx>,
@@ -37,6 +44,25 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn overload_candidate_has_hard_non_callback_arg_errors(
+        &self,
+        args: &[NodeIndex],
+        diagnostics_checkpoint: usize,
+    ) -> bool {
+        self.ctx.diagnostics[diagnostics_checkpoint..]
+            .iter()
+            .any(|diag| {
+                args.iter().any(|&arg_idx| {
+                    let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                        return false;
+                    };
+                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    !is_callback_arg && diag.start >= arg_node.pos && diag.start < arg_node.end
+                })
+            })
+    }
+
     /// Nested calls/new expressions should infer from their own callee shapes during
     /// Round 1 generic inference. Applying the outer call's contextual parameter type
     /// at this stage can erase useful inference from the inner call.
@@ -845,15 +871,15 @@ impl<'a> CheckerState<'a> {
     /// - `signatures`: The overload signatures to try
     ///
     /// # Returns
-    /// - `Some(return_type)` if a matching overload was found
-    /// - `None` if no overload matched
+    /// - `Some(OverloadResolution)` if overload resolution was attempted
+    /// - `None` if there were no overload signatures to resolve
     pub(crate) fn resolve_overloaded_call_with_signatures(
         &mut self,
         args: &[NodeIndex],
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
         actual_this_type: Option<TypeId>,
-    ) -> Option<TypeId> {
+    ) -> Option<OverloadResolution> {
         use tsz_solver::FunctionShape;
         use tsz_solver::operations::CallResult;
 
@@ -965,6 +991,12 @@ impl<'a> CheckerState<'a> {
             }
             match result {
                 CallResult::Success(return_type) => {
+                    if self.overload_candidate_has_hard_non_callback_arg_errors(
+                        args,
+                        first_pass_diagnostics_checkpoint,
+                    ) {
+                        continue;
+                    }
                     // Merge the node types inferred during argument collection
                     self.ctx.node_types.extend(temp_node_types);
                     self.validate_non_tuple_spreads_for_signature(args, func_type);
@@ -981,7 +1013,10 @@ impl<'a> CheckerState<'a> {
                         matched_sig_helper.get_parameter_type_for_call(i, arg_count)
                     });
 
-                    return Some(return_type);
+                    return Some(OverloadResolution {
+                        arg_types: arg_types.clone(),
+                        result: CallResult::Success(return_type),
+                    });
                 }
                 CallResult::ArgumentTypeMismatch { index, .. } => {
                     if let Some(spread_idx) =
@@ -989,14 +1024,20 @@ impl<'a> CheckerState<'a> {
                     {
                         self.error_spread_must_be_tuple_or_rest_at(spread_idx);
                         self.ctx.node_types.extend(temp_node_types);
-                        return Some(sig.return_type);
+                        return Some(OverloadResolution {
+                            arg_types: arg_types.clone(),
+                            result: CallResult::Success(sig.return_type),
+                        });
                     }
                 }
                 CallResult::TypeParameterConstraintViolation { return_type, .. } => {
                     // Constraint violation from callback return - overload matched
                     // but with constraint error. Treat as match for overload resolution.
                     self.ctx.node_types.extend(temp_node_types);
-                    return Some(return_type);
+                    return Some(OverloadResolution {
+                        arg_types: arg_types.clone(),
+                        result: CallResult::Success(return_type),
+                    });
                 }
                 _ => {}
             }
@@ -1006,6 +1047,12 @@ impl<'a> CheckerState<'a> {
         // Some overload sets require contextual typing from a specific candidate to
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
+        let mut failures = Vec::new();
+        let mut all_arg_count_mismatches = true;
+        let mut any_has_rest = false;
+        let mut exact_expected_counts = std::collections::BTreeSet::new();
+        let mut min_expected = usize::MAX;
+        let mut max_expected = 0usize;
         for (sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -1048,6 +1095,13 @@ impl<'a> CheckerState<'a> {
 
             match result {
                 CallResult::Success(return_type) => {
+                    if self.overload_candidate_has_hard_non_callback_arg_errors(
+                        args,
+                        diagnostics_checkpoint,
+                    ) {
+                        self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+                        continue;
+                    }
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
                     self.ctx.node_types.extend(sig_node_types);
@@ -1059,7 +1113,10 @@ impl<'a> CheckerState<'a> {
                         |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                     );
 
-                    return Some(return_type);
+                    return Some(OverloadResolution {
+                        arg_types: sig_arg_types,
+                        result: CallResult::Success(return_type),
+                    });
                 }
                 CallResult::ArgumentTypeMismatch { index, .. } => {
                     if let Some(spread_idx) =
@@ -1067,10 +1124,53 @@ impl<'a> CheckerState<'a> {
                     {
                         self.ctx.node_types = std::mem::take(&mut original_node_types);
                         self.error_spread_must_be_tuple_or_rest_at(spread_idx);
-                        return Some(sig.return_type);
+                        return Some(OverloadResolution {
+                            arg_types: sig_arg_types,
+                            result: CallResult::Success(sig.return_type),
+                        });
+                    }
+
+                    all_arg_count_mismatches = false;
+                    if let CallResult::ArgumentTypeMismatch {
+                        expected, actual, ..
+                    } = result
+                    {
+                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
+                            actual, expected,
+                        ));
                     }
                 }
-                _ => {}
+                CallResult::ArgumentCountMismatch {
+                    expected_min,
+                    expected_max,
+                    actual,
+                } => {
+                    if expected_max.is_none() {
+                        any_has_rest = true;
+                    } else if expected_min == expected_max.unwrap_or(expected_min) {
+                        exact_expected_counts.insert(expected_min);
+                    }
+                    let max = expected_max.unwrap_or(expected_min);
+                    min_expected = min_expected.min(expected_min);
+                    max_expected = max_expected.max(max);
+                    failures.push(PendingDiagnosticBuilder::argument_count_mismatch(
+                        expected_min,
+                        max,
+                        actual,
+                    ));
+                }
+                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
+                    let sig_node_types = std::mem::take(&mut self.ctx.node_types);
+                    self.ctx.node_types = std::mem::take(&mut original_node_types);
+                    self.ctx.node_types.extend(sig_node_types);
+                    return Some(OverloadResolution {
+                        arg_types: sig_arg_types,
+                        result: CallResult::Success(return_type),
+                    });
+                }
+                _ => {
+                    all_arg_count_mismatches = false;
+                }
             }
 
             self.ctx.diagnostics.truncate(diagnostics_checkpoint);
@@ -1089,6 +1189,59 @@ impl<'a> CheckerState<'a> {
 
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;
-        None
+        if all_arg_count_mismatches && !failures.is_empty() {
+            if !any_has_rest
+                && !exact_expected_counts.is_empty()
+                && !exact_expected_counts.contains(&args.len())
+            {
+                let mut lower = None;
+                let mut upper = None;
+                for &count in &exact_expected_counts {
+                    if count < args.len() {
+                        lower = Some(lower.map_or(count, |prev: usize| prev.max(count)));
+                    } else if count > args.len() {
+                        upper = Some(upper.map_or(count, |prev: usize| prev.min(count)));
+                    }
+                }
+                if let (Some(expected_low), Some(expected_high)) = (lower, upper) {
+                    return Some(OverloadResolution {
+                        arg_types,
+                        result: CallResult::OverloadArgumentCountMismatch {
+                            actual: args.len(),
+                            expected_low,
+                            expected_high,
+                        },
+                    });
+                }
+            }
+
+            return Some(OverloadResolution {
+                arg_types,
+                result: CallResult::ArgumentCountMismatch {
+                    expected_min: min_expected,
+                    expected_max: if any_has_rest {
+                        None
+                    } else if max_expected > min_expected {
+                        Some(max_expected)
+                    } else {
+                        Some(min_expected)
+                    },
+                    actual: args.len(),
+                },
+            });
+        }
+
+        Some(OverloadResolution {
+            arg_types: arg_types.clone(),
+            result: CallResult::NoOverloadMatch {
+                func_type: TypeId::ANY,
+                arg_types,
+                failures,
+                fallback_return: signatures
+                    .first()
+                    .map(|sig| sig.return_type)
+                    .unwrap_or(TypeId::ANY),
+            },
+        })
     }
 }

@@ -8,6 +8,7 @@ use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -1276,9 +1277,33 @@ impl<'a> CheckerState<'a> {
         if let Some(args) = &call.arguments
             && let Some(&first) = args.nodes.first()
         {
+            if let Some(arg_node) = self.ctx.arena.get(first)
+                && arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && self.is_concat_call(call.expression)
+                && let Some(array) = self.ctx.arena.get_literal_expr(arg_node)
+                && let Some(&first_elem) = array.elements.nodes.first()
+            {
+                return first_elem;
+            }
             return first;
         }
         call_idx
+    }
+
+    fn is_concat_call(&self, expr: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "concat")
     }
 
     fn should_suppress_concat_overload_error(&mut self, idx: NodeIndex) -> bool {
