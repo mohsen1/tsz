@@ -1249,13 +1249,12 @@ impl<'a> CheckerState<'a> {
                                         expected_return_type,
                                     ) && expected_return_type != TypeId::SYMBOL)
                                     || expected_return_type == TypeId::NEVER;
-                            let concrete_return_context =
-                                expected_return_type != TypeId::ANY
-                                    && expected_return_type != TypeId::UNKNOWN
-                                    && !tsz_solver::type_queries::contains_type_parameters_db(
-                                        self.ctx.types,
-                                        expected_return_type,
-                                    );
+                            let concrete_return_context = expected_return_type != TypeId::ANY
+                                && expected_return_type != TypeId::UNKNOWN
+                                && !tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    expected_return_type,
+                                );
                             let keep_contextual_body = has_type_annotation
                                 || jsdoc_return_context.is_some()
                                 || literal_sensitive_return

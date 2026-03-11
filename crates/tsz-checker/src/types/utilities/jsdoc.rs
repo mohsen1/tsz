@@ -1,7 +1,7 @@
 //! JSDoc type annotation utilities for `CheckerState`.
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{
@@ -344,10 +344,8 @@ impl<'a> CheckerState<'a> {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             };
-            let arg_pos = comment_pos as usize
-                + type_expr_offset
-                + arg_search_offset
-                + arg_rel_in_expr;
+            let arg_pos =
+                comment_pos as usize + type_expr_offset + arg_search_offset + arg_rel_in_expr;
             self.ctx.error(
                 arg_pos as u32,
                 arg_str.trim().len() as u32,
@@ -1065,16 +1063,19 @@ impl<'a> CheckerState<'a> {
             sym_id
         } else {
             let symbols = self.ctx.binder.get_symbols();
-            symbols.find_all_by_name(base_name).into_iter().find(|sym_id| {
-                self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
-                    (symbol.flags
-                        & (symbol_flags::TYPE_ALIAS
-                            | symbol_flags::CLASS
-                            | symbol_flags::INTERFACE
-                            | symbol_flags::ENUM))
-                        != 0
-                })
-            })?
+            symbols
+                .find_all_by_name(base_name)
+                .into_iter()
+                .find(|sym_id| {
+                    self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
+                        (symbol.flags
+                            & (symbol_flags::TYPE_ALIAS
+                                | symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::ENUM))
+                            != 0
+                    })
+                })?
         };
 
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
