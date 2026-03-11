@@ -1412,23 +1412,14 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Step 1.5: Cache type parameters for generic interfaces (Promise<T>, Map<K,V>, etc.)
-                    // This enables the Solver to expand Application(Lazy(DefId), Args) by providing
-                    // the type parameters needed for generic substitution.
+                    // This must use canonical symbol-based extraction, not raw NodeIndex lookups
+                    // against the local arena. Lib and cross-file symbols can share NodeIndex values
+                    // with unrelated local declarations, which corrupts cached generic metadata.
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if self.ctx.get_def_type_params(def_id).is_none() {
-                        // Extract type params from first declaration
-                        let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                        if first_decl.is_some()
-                            && let Some(node) = self.ctx.arena.get(first_decl)
-                            && let Some(iface) = self.ctx.arena.get_interface(node)
-                            && let Some(ref type_params_list) = iface.type_parameters
-                        {
-                            let (params, updates) =
-                                self.push_type_parameters(&Some(type_params_list.clone()));
-                            self.pop_type_parameters(updates);
-                            if !params.is_empty() {
-                                self.ctx.insert_def_type_params(def_id, params);
-                            }
+                        let params = self.get_type_params_for_symbol(sym_id);
+                        if !params.is_empty() {
+                            self.ctx.insert_def_type_params(def_id, params);
                         }
                     }
 
@@ -1931,7 +1922,12 @@ impl<'a> CheckerState<'a> {
 
                 self.pop_type_parameters(updates);
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                    self.ctx.insert_def_type_params(def_id, params.clone());
+                    let canonical_params = self.get_type_params_for_symbol(sym_id);
+                    if !canonical_params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, canonical_params);
+                    } else {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
                 }
                 return (merged, params);
             }
