@@ -158,7 +158,20 @@ impl<'a> CheckerState<'a> {
         // resolve_type_for_property_access replaces it with its constraint. But for
         // generic indexed access (e.g., U[keyof T] where U extends T), we need to
         // keep the original type parameter to produce the correct deferred type.
-        let pre_resolution_object_type = object_type;
+        //
+        // Instance `this[K]` writes in class members need the same preservation:
+        // the expression `this` evaluates to the concrete class instance type, but
+        // generic writes like `this[key] = value` should still target deferred
+        // `this[K]` so the polymorphic `this` relationship survives assignability.
+        let pre_resolution_object_type = if self.is_this_expression(access.expression)
+            && self.ctx.enclosing_class.is_some()
+            && !self.is_this_in_nested_function_inside_class(idx)
+            && !self.is_this_in_static_class_member(idx)
+        {
+            self.ctx.types.this_type()
+        } else {
+            object_type
+        };
 
         let literal_string = self.get_literal_string_from_node(access.name_or_argument);
         let numeric_string_index = literal_string
@@ -303,8 +316,11 @@ impl<'a> CheckerState<'a> {
         // write target collapses to the constraint's index-signature value type
         // (e.g. `number`) and incorrectly accepts writes that should produce
         // generic TS2322 errors.
+        let is_generic_receiver =
+            tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+                || tsz_solver::visitor::is_this_type(self.ctx.types, pre_resolution_object_type);
         if self.ctx.skip_flow_narrowing
-            && tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+            && is_generic_receiver
             && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
         {
             return self

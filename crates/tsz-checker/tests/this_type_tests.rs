@@ -13,6 +13,13 @@ use tsz_solver::TypeInterner;
 
 /// Helper to compile TypeScript and get diagnostics
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_and_get_diagnostics_with_options(source, CheckerOptions::default())
+}
+
+fn compile_and_get_diagnostics_with_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -25,7 +32,7 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
@@ -157,5 +164,70 @@ var x = a.foo().nonExistent;
     assert!(
         has_error(&diagnostics, 2339),
         "Should get TS2339 for nonexistent property: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_this_index_assignment_in_class_method_has_no_false_ts2322() {
+    let source = r#"
+class C1 {
+    x: number;
+    get<K extends keyof this>(key: K) {
+        return this[key];
+    }
+    set<K extends keyof this>(key: K, value: this[K]) {
+        this[key] = value;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict_property_initialization: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Generic this-index assignment should not emit TS2322: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_this_index_assignment_in_base_class_has_no_false_ts2322() {
+    let source = r#"
+class Base {
+    get<K extends keyof this>(prop: K) {
+        return this[prop];
+    }
+    set<K extends keyof this>(prop: K, value: this[K]) {
+        this[prop] = value;
+    }
+}
+
+class Person extends Base {
+    parts: number;
+    constructor(parts: number) {
+        super();
+        this.set("parts", parts);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict_property_initialization: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Base-class generic this-index assignment should not emit TS2322: {diagnostics:?}"
     );
 }

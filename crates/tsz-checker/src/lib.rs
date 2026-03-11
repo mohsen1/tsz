@@ -83,6 +83,9 @@ pub mod test_utils;
 
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
+#[path = "../tests/circular_accessor_annotation_tests.rs"]
+mod circular_accessor_annotation_tests;
+#[cfg(test)]
 #[path = "../tests/conformance_issues.rs"]
 mod conformance_issues;
 #[cfg(test)]

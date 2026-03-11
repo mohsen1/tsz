@@ -1667,6 +1667,21 @@ impl<'a> CheckerState<'a> {
                             self.check_type_node(accessor.type_annotation);
                         }
                     }
+
+                    let is_type_alias_body = self
+                        .ctx
+                        .arena
+                        .get_extended(node_idx)
+                        .and_then(|ext| ext.parent.is_some().then_some(ext.parent))
+                        .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                        .is_some_and(|parent| {
+                            parent.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        });
+                    if is_type_alias_body
+                        && self.type_literal_has_circular_accessor_reference(node_idx)
+                    {
+                        let _ = self.get_type_from_type_literal(node_idx);
+                    }
                 }
             }
             k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
