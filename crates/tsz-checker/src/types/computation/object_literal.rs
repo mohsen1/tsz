@@ -944,7 +944,8 @@ impl<'a> CheckerState<'a> {
                                 !self.is_definitely_assigned_at_with_symbol(
                                     shorthand_name_idx,
                                     Some(sym_id),
-                                ) || (value_type == TypeId::ANY && has_uninitialized_value_decl)
+                                ) || has_uninitialized_value_decl
+                                    || (value_type == TypeId::ANY && has_uninitialized_value_decl)
                             })
                             .map(|_| TypeId::UNDEFINED)
                             .unwrap_or(value_type);

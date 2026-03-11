@@ -719,7 +719,11 @@ impl<'a> CheckerState<'a> {
                 }
                 Some(t)
             } else {
-                None
+                self.parameter_symbol_ids(param_idx, param.name)
+                    .into_iter()
+                    .flatten()
+                    .find_map(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+                    .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN && t != TypeId::ERROR)
             };
 
             let prev_context = self.ctx.contextual_type;

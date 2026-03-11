@@ -860,6 +860,18 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if source == TypeId::UNDEFINED
+            && self
+                .ctx
+                .arena
+                .get(anchor_idx)
+                .is_some_and(|node| {
+                    node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                })
+        {
+            return self.format_assignability_type_for_message(source, target);
+        }
+
         if let Some(display) = self.jsdoc_annotated_expression_display(anchor_idx, target) {
             return display;
         }
