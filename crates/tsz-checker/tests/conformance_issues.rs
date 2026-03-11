@@ -217,6 +217,50 @@ abstract class C1 {
 }
 
 #[test]
+fn test_switch_default_narrows_typeof_domains() {
+    let source = r#"
+type Basic = number | boolean | string | symbol | object | Function | undefined;
+
+function assertNever(x: never) { return x; }
+function acceptRemainder(x: string | object | undefined) { return x; }
+
+function exhaustive(x: Basic) {
+    switch (typeof x) {
+        case "number": return;
+        case "boolean": return;
+        case "function": return;
+        case "symbol": return;
+        case "object": return;
+        case "string": return;
+        case "undefined": return;
+    }
+    return assertNever(x);
+}
+
+function partial(x: Basic) {
+    switch (typeof x) {
+        case "number": return;
+        case "boolean": return;
+        case "function": return;
+        case "symbol": return;
+        default: return acceptRemainder(x);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected switch(typeof) defaults to narrow correctly. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_mixed_constructor_unions_still_report_ts2511() {
     let source = r#"
 class ConcreteA {}
