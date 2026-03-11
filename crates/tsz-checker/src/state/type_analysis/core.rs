@@ -1089,19 +1089,44 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_import_type_query(&self, expr_name: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(expr_name) else {
-            return false;
-        };
-        if node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
-            return false;
+        let mut current = expr_name;
+
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            match node.kind {
+                tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
+                    let Some(call_expr) = self.ctx.arena.get_call_expr(node) else {
+                        return false;
+                    };
+                    let Some(callee) = self.ctx.arena.get(call_expr.expression) else {
+                        return false;
+                    };
+                    return callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16;
+                }
+                tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                        return false;
+                    };
+                    current = access.expression;
+                }
+                tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME => {
+                    let Some(name) = self.ctx.arena.get_qualified_name(node) else {
+                        return false;
+                    };
+                    current = name.left;
+                }
+                tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                        return false;
+                    };
+                    current = paren.expression;
+                }
+                _ => return false,
+            }
         }
-        let Some(call_expr) = self.ctx.arena.get_call_expr(node) else {
-            return false;
-        };
-        let Some(callee) = self.ctx.arena.get(call_expr.expression) else {
-            return false;
-        };
-        callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
     }
 
     /// Push type parameters into scope for generic type resolution.

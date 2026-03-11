@@ -12,8 +12,12 @@ use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+fn get_diagnostics_with_module_and_file(
+    source: &str,
+    file_name: &str,
+    module: ModuleKind,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
@@ -24,7 +28,7 @@ fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, St
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
+        file_name.to_string(),
         CheckerOptions {
             module,
             ..Default::default()
@@ -39,6 +43,10 @@ fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, St
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+fn get_diagnostics_with_module(source: &str, module: ModuleKind) -> Vec<(u32, String)> {
+    get_diagnostics_with_module_and_file(source, "test.ts", module)
 }
 
 fn has_ts1323(source: &str, module: ModuleKind) -> bool {
@@ -90,5 +98,22 @@ fn message_text_matches_tsc() {
     assert!(
         msg.contains("'es2020'"),
         "Expected 'es2020' in message, got: {msg}"
+    );
+}
+
+#[test]
+fn import_type_query_member_access_does_not_emit_ts1323_for_es2015() {
+    let source = r#"
+export declare class A {
+    static foo(): void;
+}
+
+export const foo: typeof import("./a").A.foo;
+"#;
+
+    let diags = get_diagnostics_with_module_and_file(source, "index.d.ts", ModuleKind::ES2015);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 1323),
+        "Did not expect TS1323 for typeof import(\"./a\").A.foo in a declaration file, got: {diags:?}"
     );
 }
