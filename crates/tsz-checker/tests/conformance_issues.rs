@@ -268,6 +268,25 @@ enum Nums {
 }
 
 #[test]
+fn test_negative_infinity_string_enum_member_name_is_allowed() {
+    let source = r#"
+enum Nums {
+    "-Infinity",
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        !has_error(
+            &diagnostics,
+            tsz_common::diagnostics::diagnostic_codes::AN_ENUM_MEMBER_CANNOT_HAVE_A_NUMERIC_NAME,
+        ),
+        "Expected '-Infinity' string enum member names to be allowed. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
     let source = r#"
 enum Colors {
