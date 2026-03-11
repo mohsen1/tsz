@@ -6208,6 +6208,26 @@ var z1 = G[G.A];
 }
 
 #[test]
+fn test_regexp_literal_exec_preserves_nullability() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+let re = /\d{4}/;
+let result = re.exec("2015");
+let value = result[0];
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 18047),
+        "Expected TS18047 because RegExp#exec can return null.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_modules_imported_non_literal_string_enum_member_uses_ts18055() {
     let diagnostics = compile_two_files_get_diagnostics_with_options(
         r#"export const bar = "bar";"#,
