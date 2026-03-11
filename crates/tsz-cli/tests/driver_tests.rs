@@ -6566,6 +6566,72 @@ fn scoped_types_entry_loads_at_types_scoped_package_globals_while_preserving_ts2
 }
 
 #[test]
+fn type_query_on_import_type_value_binding_does_not_emit_ts2552() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("node_modules/@types/foo/package.json"),
+        r#"{
+          "name": "@types/foo",
+          "version": "1.0.0",
+          "exports": {
+            ".": {
+              "import": "./index.d.mts",
+              "require": "./index.d.cts"
+            }
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/@types/foo/index.d.mts"),
+        "export declare const x: \"module\";\n",
+    );
+    write_file(
+        &base.join("node_modules/@types/foo/index.d.cts"),
+        "export declare const x: \"script\";\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "declaration": true,
+            "emitDeclarationOnly": true
+          },
+          "files": ["app.ts", "other.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("app.ts"),
+        r#"import type { x as Default } from "foo";
+import type { x as ImportRelative } from "./other" with { "resolution-mode": "import" };
+
+type _Default = typeof Default;
+type _ImportRelative = typeof ImportRelative;
+
+export { _Default, _ImportRelative };
+"#,
+    );
+    write_file(&base.join("other.ts"), r#"export const x = "other";"#);
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2552_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN)
+        .collect();
+    assert!(
+        ts2552_diags.is_empty(),
+        "Expected typeof on import type bindings to avoid TS2552, got: {result:?}"
+    );
+}
+
+#[test]
 fn ts2307_emitted_for_commonjs_module() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
