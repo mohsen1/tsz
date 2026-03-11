@@ -292,6 +292,24 @@ Example: deleteExpressionMustBeOptional.ts
   `resolve_typeof_qualified_value_chain` helper that recursively resolves nested
   QualifiedName nodes as value property access chains instead of namespace lookups.
   Fixes 2 conformance tests (`uniqueSymbols`, `uniqueSymbolsDeclarations`).
+- ~~False positive TS18055 in `isolatedModules` enum member classification~~ **FIXED** (2026-03-11)
+  Fix: `classify_isolated_enum_initializer` in `declarations.rs` had two bugs:
+  (1) The `_` fallback branch called `variable_initializer_widened_kind` which returned
+  `NonLiteralString` based on TYPE rather than VALUE — runtime expressions like
+  `2..toFixed(0)` have string TYPE but no compile-time string VALUE, so tsc skips
+  TS18055 for them. Fixed by returning `Other` for unrecognized syntax.
+  (2) `classify_symbol_backed_enum_initializer` treated all symbols as cross-file in
+  project mode because `cross_file_symbol_targets` contains same-file symbols too.
+  Added `is_cross_file` check comparing `cross_file_idx != current_file_idx`. Same-file
+  const references like `const LOCAL = 'LOCAL'` are now traced through to their
+  initializer, matching tsc's `evaluateEntityNameExpression` behavior.
+  Fixes 1 conformance test (`computedEnumMemberSyntacticallyString`); also improves
+  3 net tests via removed false positives.
+  **Known remaining issue:** `computedEnumMemberSyntacticallyString2` still fails due
+  to a config coercion bug — our parser coerces `"isolatedModules": "true"` (string)
+  to boolean `true`, but tsc's `convertJsonOption` returns `undefined` for type
+  mismatches (TS5024) and does NOT apply the value. Fixing this properly requires
+  addressing 36+ non-strict-mode conformance gaps first.
 - ~~False positive TS2304 for class property and JSX attribute names~~ **FIXED** (2026-03-11)
   Fix: `direct_diagnostic_source_expression` in `error_reporter/core.rs` now returns
   `None` when the diagnostic anchor is a `PROPERTY_DECLARATION` or `JSX_ATTRIBUTE` name.
