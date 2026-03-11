@@ -301,7 +301,10 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
                 .join("lib.es2023.collection.d.ts")
                 .to_string_lossy()
                 .to_string(),
-            lib_dir.join("lib.esnext.d.ts").to_string_lossy().to_string(),
+            lib_dir
+                .join("lib.esnext.d.ts")
+                .to_string_lossy()
+                .to_string(),
         ]
     );
 }

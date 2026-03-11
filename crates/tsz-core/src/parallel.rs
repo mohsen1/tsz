@@ -580,7 +580,11 @@ fn parse_lib_references(content: &str) -> Vec<String> {
                     let quote_char = quote.unwrap();
                     let value_start = 1;
                     if let Some(end) = after_lib[value_start..].find(quote_char) {
-                        refs.push(after_lib[value_start..value_start + end].trim().to_lowercase());
+                        refs.push(
+                            after_lib[value_start..value_start + end]
+                                .trim()
+                                .to_lowercase(),
+                        );
                     }
                 }
             }
