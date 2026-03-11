@@ -927,6 +927,40 @@ o.y;
 }
 
 #[test]
+fn test_js_constructor_factory_call_does_not_keep_undefined_return() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+/** @param {number} x */
+function A(x) {
+    if (!(this instanceof A)) {
+        return new A(x);
+    }
+    this.x = x;
+}
+var k = A(1);
+var j = new A(2);
+k.x === j.x;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_this: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 18048 && message.contains("'k' is possibly 'undefined'")
+        }),
+        "Expected JS constructor-style factory call to return the instance type. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
