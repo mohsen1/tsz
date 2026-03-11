@@ -5,8 +5,10 @@ use super::driver::{
 use clap::Parser;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::diagnostics::diagnostic_codes;
 
 static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -54,6 +56,12 @@ fn write_file(path: &Path, contents: &str) {
 fn default_args() -> CliArgs {
     // Use clap's parser to create default args - this handles all the many fields automatically
     CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
+}
+
+fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
+    let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
+    let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+    tsz::parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs")
 }
 
 #[test]
@@ -218,6 +226,69 @@ fn compile_with_explicit_files_without_tsconfig() {
 
     assert!(result.diagnostics.is_empty());
     assert!(base.join("main.js").is_file());
+}
+
+#[test]
+fn compile_promise_is_assignable_to_promise_like_with_default_libs() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"
+declare const p: Promise<number>;
+const q: PromiseLike<number> = p;
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected Promise<T> to be assignable to PromiseLike<T>, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn merged_program_promise_is_assignable_to_promise_like_with_default_libs() {
+    let files = vec![(
+        "main.ts".to_string(),
+        r#"
+declare const p: Promise<number>;
+const q: PromiseLike<number> = p;
+"#
+        .to_string(),
+    )];
+    let lib_paths =
+        crate::config::resolve_default_lib_files(ScriptTarget::ES2015).expect("default libs");
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
+    let options = tsz::checker::context::CheckerOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        ..tsz::checker::context::CheckerOptions::default()
+    };
+    let result = tsz::parallel::check_files_parallel(&program, &options, &lib_files);
+
+    let diagnostics: Vec<_> = result
+        .file_results
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected merged-program Promise<T> to be assignable to PromiseLike<T>, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -7140,10 +7211,7 @@ before.toFixed();
         result.diagnostics
     );
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .all(|d| d.code != 7006),
+        result.diagnostics.iter().all(|d| d.code != 7006),
         "Unexpected TS7006 while contextual typing augmented `Observable.map`: {:?}",
         result.diagnostics
     );
