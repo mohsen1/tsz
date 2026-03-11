@@ -177,6 +177,14 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Resolve an identifier without mutating unused-reference tracking.
+    pub(crate) fn resolve_identifier_symbol_without_tracking(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        self.resolve_identifier_symbol_inner(idx)
+    }
+
     /// Resolve identifier for write context (assignment target).
     pub(crate) fn resolve_identifier_symbol_for_write(&self, idx: NodeIndex) -> Option<SymbolId> {
         let result = self.resolve_identifier_symbol_inner(idx);
@@ -375,6 +383,14 @@ impl<'a> CheckerState<'a> {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
         result
+    }
+
+    /// Resolve a type-position identifier without mutating unused-reference tracking.
+    pub(crate) fn resolve_identifier_symbol_in_type_position_without_tracking(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
+        self.resolve_identifier_symbol_in_type_position_inner(idx)
     }
 
     /// Resolve an identifier when it appears as the left-hand side of a

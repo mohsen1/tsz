@@ -1068,7 +1068,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                     // TSC checks arithmetic type BEFORE lvalue — if the type check
                     // fails (TS2356), the lvalue check (TS2357) is skipped.
-                    let operand_type = self.checker.get_type_of_node(unary.operand);
+                    let operand_raw = self.checker.get_type_of_node(unary.operand);
+                    let operand_type = self.checker.resolve_type_query_type(operand_raw);
                     // TS18046: postfix ++/-- on unknown is not allowed (strictNullChecks only).
                     // tsc emits TS18046 instead of TS2356 for unknown operands.
                     if operand_type == TypeId::UNKNOWN
@@ -1080,13 +1081,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     {
                         use tsz_solver::BinaryOpEvaluator;
                         let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
+                        let (non_nullish, nullish_cause) =
+                            self.checker.split_nullish_type(operand_type);
+                        let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
+                            let evaluated = self.checker.evaluate_type_with_env(ty);
+                            evaluator.is_arithmetic_operand(evaluated)
+                                || self.checker.is_enum_like_type(ty)
+                        });
+                        if self.checker.ctx.strict_null_checks()
+                            && let Some(cause) = nullish_cause
+                            && nullish_can_flow_to_number
+                        {
+                            arithmetic_ok = false;
+                            self.checker
+                                .emit_nullish_operand_error(unary.operand, cause);
+                        }
+
                         // Evaluate the type to resolve Lazy(DefId) aliases before checking.
                         // Type aliases like `YesNo = Choice.Yes | Choice.No` may stay as
                         // Lazy(DefId) which the visitor can't recurse into.
                         let resolved_type = self.checker.evaluate_type_with_env(operand_type);
                         let is_valid = evaluator.is_arithmetic_operand(resolved_type)
                             || self.checker.is_enum_like_type(operand_type);
-                        if !is_valid {
+                        if arithmetic_ok && !is_valid {
                             arithmetic_ok = false;
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.checker.error_at_node(

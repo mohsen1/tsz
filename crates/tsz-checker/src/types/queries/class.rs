@@ -168,6 +168,29 @@ impl<'a> CheckerState<'a> {
 
         let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx, _)| *idx).collect();
         let mut used = vec![false; params.len()];
+        let is_identifier_in_type_context =
+            |arena: &tsz_parser::parser::NodeArena, idx: NodeIndex, stop_at: NodeIndex| {
+                let mut current = idx;
+                for _ in 0..20 {
+                    let Some(ext) = arena.get_extended(current) else {
+                        return false;
+                    };
+                    let parent = ext.parent;
+                    if parent.is_none() || parent == stop_at {
+                        return false;
+                    }
+                    let Some(parent_node) = arena.get(parent) else {
+                        return false;
+                    };
+                    if parent_node.is_type_node()
+                        || parent_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                    {
+                        return true;
+                    }
+                    current = parent;
+                }
+                false
+            };
 
         // Scan all nodes in the LOCAL arena for identifiers within the declaration range
         let arena_len = self.ctx.arena.len();
@@ -184,6 +207,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if node.kind == SyntaxKind::Identifier as u16
+                && is_identifier_in_type_context(self.ctx.arena, idx, body_root)
                 && let Some(ident) = self.ctx.arena.get_identifier(node)
             {
                 let name_str = ident.escaped_text.as_str();
@@ -235,6 +259,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if node.kind == SyntaxKind::Identifier as u16
+                            && is_identifier_in_type_context(remote_arena, idx, *remote_decl_idx)
                             && let Some(ident) = remote_arena.get_identifier(node)
                         {
                             let name_str = ident.escaped_text.as_str();
