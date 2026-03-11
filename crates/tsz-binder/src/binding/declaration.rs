@@ -1387,7 +1387,7 @@ impl BinderState {
                 self.create_flow_condition(flow_flags::TRUE_CONDITION, after_left_flow, left);
             self.current_flow = true_condition;
             self.bind_expression(arena, right);
-            if is_assignment {
+            if is_assignment && !Self::is_inside_class_member_computed_property_name(arena, idx) {
                 self.current_flow = self.create_flow_assignment(idx);
             }
             let after_right_flow = self.current_flow;
@@ -1407,7 +1407,7 @@ impl BinderState {
                 self.create_flow_condition(flow_flags::FALSE_CONDITION, after_left_flow, left);
             self.current_flow = false_condition;
             self.bind_expression(arena, right);
-            if is_assignment {
+            if is_assignment && !Self::is_inside_class_member_computed_property_name(arena, idx) {
                 self.current_flow = self.create_flow_assignment(idx);
             }
             let after_right_flow = self.current_flow;
@@ -1498,8 +1498,10 @@ impl BinderState {
                     self.bind_expression(arena, idx);
                 }
                 WorkItem::PostAssign(idx) => {
-                    let flow = self.create_flow_assignment(idx);
-                    self.current_flow = flow;
+                    if !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                        let flow = self.create_flow_assignment(idx);
+                        self.current_flow = flow;
+                    }
                 }
             }
         }
@@ -1536,8 +1538,10 @@ impl BinderState {
                     self.record_flow(idx);
                     self.bind_expression(arena, bin.left);
                     self.bind_expression(arena, bin.right);
-                    let flow = self.create_flow_assignment(idx);
-                    self.current_flow = flow;
+                    if !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                        let flow = self.create_flow_assignment(idx);
+                        self.current_flow = flow;
+                    }
                     // Detect expando property assignments (X.prop = value)
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
                         self.detect_expando_assignment(arena, bin.left);
@@ -1583,8 +1587,10 @@ impl BinderState {
                     if unary.operator == SyntaxKind::PlusPlusToken as u16
                         || unary.operator == SyntaxKind::MinusMinusToken as u16
                     {
-                        let flow = self.create_flow_assignment(idx);
-                        self.current_flow = flow;
+                        if !Self::is_inside_class_member_computed_property_name(arena, idx) {
+                            let flow = self.create_flow_assignment(idx);
+                            self.current_flow = flow;
+                        }
                     }
                 }
                 return;
