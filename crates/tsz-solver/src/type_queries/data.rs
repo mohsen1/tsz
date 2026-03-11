@@ -1021,7 +1021,6 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
-
 /// Instantiate a mapped type template for a specific property key, handling
 /// name collisions between the mapped key parameter and outer type parameters.
 ///
@@ -1211,7 +1210,11 @@ fn specialize_mapped_property_value_type_for_key(
                 .params
                 .iter()
                 .map(|param| crate::ParamInfo {
-                    type_id: specialize_mapped_property_value_type_for_key(db, param.type_id, key_literal),
+                    type_id: specialize_mapped_property_value_type_for_key(
+                        db,
+                        param.type_id,
+                        key_literal,
+                    ),
                     ..param.clone()
                 })
                 .collect();

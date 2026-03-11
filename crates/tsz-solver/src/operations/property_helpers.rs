@@ -25,9 +25,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         let mapped = self.interner().mapped_type(mapped_id);
 
-        if let Some(property_type) =
-            crate::type_queries::get_finite_mapped_property_type(self.interner(), mapped_id, prop_name)
-        {
+        if let Some(property_type) = crate::type_queries::get_finite_mapped_property_type(
+            self.interner(),
+            mapped_id,
+            prop_name,
+        ) {
             return Some(PropertyAccessResult::simple(property_type));
         }
 

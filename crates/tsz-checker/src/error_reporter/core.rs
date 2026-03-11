@@ -67,15 +67,18 @@ impl<'a> CheckerState<'a> {
                 {
                     ty
                 } else {
-                    self.ctx.types.factory().function(tsz_solver::FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params,
-                        this_type: shape.this_type,
-                        return_type,
-                        type_predicate: shape.type_predicate.clone(),
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    })
+                    self.ctx
+                        .types
+                        .factory()
+                        .function(tsz_solver::FunctionShape {
+                            type_params: shape.type_params.clone(),
+                            params,
+                            this_type: shape.this_type,
+                            return_type,
+                            type_predicate: shape.type_predicate.clone(),
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        })
                 }
             }
             Some(tsz_solver::TypeData::Union(list_id)) => {

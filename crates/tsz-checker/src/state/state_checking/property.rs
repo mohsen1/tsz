@@ -365,11 +365,8 @@ impl<'a> CheckerState<'a> {
                     }
                     let nested_target =
                         tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
-                    let nested_target = self.nested_property_target_type(
-                        target,
-                        source_prop.name,
-                        nested_target,
-                    );
+                    let nested_target =
+                        self.nested_property_target_type(target, source_prop.name, nested_target);
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
                         Some(nested_target),
@@ -1357,10 +1354,9 @@ impl<'a> CheckerState<'a> {
         // For non-literal/complex constraints, fall back to full expansion.
         if !query::is_string_type(self.ctx.types, constraint) {
             let keys = query::extract_string_literal_keys(self.ctx.types, constraint);
-            if !keys.is_empty()
-                && keys.contains(&prop_atom) {
-                    matching_source_keys.push(prop_atom);
-                }
+            if !keys.is_empty() && keys.contains(&prop_atom) {
+                matching_source_keys.push(prop_atom);
+            }
             if !keys.is_empty() && matching_source_keys.is_empty() {
                 if can_cache {
                     self.ctx
