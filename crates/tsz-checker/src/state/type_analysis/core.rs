@@ -854,6 +854,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn resolve_type_query_import_type_symbol(&self, idx: NodeIndex) -> Option<u32> {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return None;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let local_sym_id = self.resolve_identifier_symbol(idx)?;
+        if !self.alias_resolves_to_type_only(local_sym_id) {
+            return None;
+        }
+
+        match self.resolve_identifier_symbol_in_type_position_without_tracking(idx) {
+            TypeSymbolResolution::Type(sym_id) | TypeSymbolResolution::ValueOnly(sym_id) => {
+                Some(sym_id.0)
+            }
+            TypeSymbolResolution::NotFound => Some(local_sym_id.0),
+        }
+    }
+
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::SymbolRef;
         trace!(idx = idx.0, "ENTER get_type_from_type_query");
@@ -1111,8 +1132,9 @@ impl<'a> CheckerState<'a> {
             let typequery_type = factory.type_query(SymbolRef(sym_id));
             trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
             typequery_type
-        } else if let Some(type_sym_id) =
-            self.resolve_type_symbol_for_lowering(type_query.expr_name)
+        } else if let Some(type_sym_id) = self
+            .resolve_type_symbol_for_lowering(type_query.expr_name)
+            .or_else(|| self.resolve_type_query_import_type_symbol(type_query.expr_name))
         {
             // Check if this is a type-only import (import type { A }).
             // tsc allows `typeof A` on type-only imports in type annotations
