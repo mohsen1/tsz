@@ -267,6 +267,7 @@ impl ParserState {
         let mut brace_depth: u32 = 0;
         let mut bracket_depth: u32 = 0;
         let mut saw_parameter_syntax = false;
+        let mut saw_top_level_initializer = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             if depth == 1
@@ -278,6 +279,9 @@ impl ParserState {
                 )
             {
                 saw_parameter_syntax = true;
+                if self.is_token(SyntaxKind::EqualsToken) {
+                    saw_top_level_initializer = true;
+                }
             }
             if self.is_token(SyntaxKind::OpenParenToken) {
                 // `(` at the start of a top-level parameter slot is not a valid
@@ -390,6 +394,7 @@ impl ParserState {
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
                 || (saw_parameter_syntax
+                    && !saw_top_level_initializer
                     && matches!(
                         self.token(),
                         SyntaxKind::SemicolonToken
