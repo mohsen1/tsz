@@ -6,6 +6,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
@@ -587,11 +588,13 @@ impl<'a> CheckerState<'a> {
                     // of the initializer against the declared type, and use the
                     // declared type as the property type (not the initializer type).
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
+                        let declared_check_type =
+                            tsz_solver::remove_undefined(self.ctx.types, declared_type);
                         // Check initializer assignability against @type (TS2322)
                         if prop.initializer != prop.name {
-                            self.check_assignable_or_report_at(
+                            self.check_assignable_or_report_at_exact_anchor(
                                 value_type,
-                                declared_type,
+                                declared_check_type,
                                 prop.initializer,
                                 prop.name,
                             );
@@ -906,12 +909,52 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type = prev_context;
 
                     let value_type = if let Some(declared_type) = jsdoc_declared_type {
-                        self.check_assignable_or_report_at(
-                            value_type,
-                            declared_type,
-                            shorthand_name_idx,
-                            elem_idx,
-                        );
+                        let shorthand_sym = self.resolve_identifier_symbol(shorthand_name_idx);
+                        let has_uninitialized_value_decl = shorthand_sym.is_some_and(|sym_id| {
+                            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                                return false;
+                            };
+                            let declaration_lacks_initializer = |decl_id| {
+                                let Some(mut decl_node) = self.ctx.arena.get(decl_id) else {
+                                    return false;
+                                };
+                                if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                                    decl_node = self
+                                        .ctx
+                                        .arena
+                                        .node_info(decl_id)
+                                        .and_then(|info| self.ctx.arena.get(info.parent))
+                                        .unwrap_or(decl_node);
+                                }
+                                self.ctx
+                                    .arena
+                                    .get_variable_declaration(decl_node)
+                                    .is_some_and(|var_data| var_data.initializer.is_none())
+                            };
+
+                            declaration_lacks_initializer(symbol.value_declaration)
+                                || symbol
+                                    .declarations
+                                    .iter()
+                                    .copied()
+                                    .any(declaration_lacks_initializer)
+                        });
+                        let check_value_type = shorthand_sym
+                            .filter(|&sym_id| {
+                                !self.is_definitely_assigned_at_with_symbol(
+                                    shorthand_name_idx,
+                                    Some(sym_id),
+                                ) || (value_type == TypeId::ANY && has_uninitialized_value_decl)
+                            })
+                            .map(|_| TypeId::UNDEFINED)
+                            .unwrap_or(value_type);
+                        if !self.is_assignable_to(check_value_type, declared_type) {
+                            self.error_type_not_assignable_at_with_anchor(
+                                check_value_type,
+                                declared_type,
+                                elem_idx,
+                            );
+                        }
                         declared_type
                     } else {
                         // Apply bidirectional type inference - use contextual type to narrow the value type
