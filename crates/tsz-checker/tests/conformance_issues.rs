@@ -897,6 +897,33 @@ export type Type = { x?: { [Foo.Enum]: 0 } };
 }
 
 #[test]
+fn test_object_literal_computed_enum_member_keys_preserve_named_properties() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+export const enum TestEnum {
+    Test1 = '123123',
+    Test2 = '12312312312',
+}
+
+export interface ITest {
+    [TestEnum.Test1]: string;
+    [TestEnum.Test2]: string;
+}
+
+const value: ITest = {
+    [TestEnum.Test1]: '123',
+    [TestEnum.Test2]: '123',
+};
+"#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2739),
+        "Did not expect TS2739 when computed enum-member keys exactly satisfy the target interface.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
     let source = r#"
 enum Colors {

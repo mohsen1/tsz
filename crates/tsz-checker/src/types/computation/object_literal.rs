@@ -498,11 +498,6 @@ impl<'a> CheckerState<'a> {
 
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                let is_computed_name =
-                    self.ctx.arena.get(prop.name).is_some_and(|prop_name_node| {
-                        prop_name_node.kind
-                            == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                    });
                 if let Some(prop_name_node) = self.ctx.arena.get(prop.name)
                     && prop_name_node.kind
                         == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
@@ -513,7 +508,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let name_opt = self.get_property_name_resolved(prop.name);
-                if !is_computed_name && let Some(name) = name_opt.clone() {
+                if let Some(name) = name_opt.clone() {
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
