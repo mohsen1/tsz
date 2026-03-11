@@ -1393,27 +1393,21 @@ pub(crate) fn evaluate_const_enum_initializer(
         }
         k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
             let prop = arena.get_access_expr(node)?;
-            let left_node = arena.get(prop.expression)?;
-            if left_node.kind == SyntaxKind::Identifier as u16 {
-                let left_name = arena.get_identifier_text(prop.expression)?;
-                if Some(left_name) == enum_name {
-                    let member_name = arena.get_identifier_text(prop.name_or_argument)?;
-                    return resolve_enum_member_value(arena, member_name, enum_data, depth);
-                }
+            if expression_ends_with_identifier(arena, prop.expression, enum_name) {
+                let member_name = arena.get_identifier_text(prop.name_or_argument)?;
+                return resolve_enum_member_value(arena, member_name, enum_data, depth);
             }
             None
         }
         k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
             let elem = arena.get_access_expr(node)?;
-            let left_node = arena.get(elem.expression)?;
-            if left_node.kind == SyntaxKind::Identifier as u16 {
-                let left_name = arena.get_identifier_text(elem.expression)?;
-                if Some(left_name) == enum_name {
-                    let arg_node = arena.get(elem.name_or_argument)?;
-                    if arg_node.kind == SyntaxKind::StringLiteral as u16 {
-                        let lit = arena.get_literal(arg_node)?;
-                        return resolve_enum_member_value(arena, &lit.text, enum_data, depth);
-                    }
+            if expression_ends_with_identifier(arena, elem.expression, enum_name) {
+                let arg_node = arena.get(elem.name_or_argument)?;
+                if arg_node.kind == SyntaxKind::StringLiteral as u16
+                    || arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                {
+                    let lit = arena.get_literal(arg_node)?;
+                    return resolve_enum_member_value(arena, &lit.text, enum_data, depth);
                 }
             }
             None
@@ -1482,6 +1476,30 @@ pub(crate) fn evaluate_const_enum_initializer(
     }
 }
 
+fn expression_ends_with_identifier(
+    arena: &tsz_parser::parser::NodeArena,
+    expr_idx: NodeIndex,
+    expected: Option<&str>,
+) -> bool {
+    let Some(expected) = expected else {
+        return false;
+    };
+    let Some(node) = arena.get(expr_idx) else {
+        return false;
+    };
+
+    match node.kind {
+        k if k == SyntaxKind::Identifier as u16 => arena
+            .get_identifier_text(expr_idx)
+            .is_some_and(|name| name == expected),
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => arena
+            .get_access_expr(node)
+            .and_then(|access| arena.get_identifier_text(access.name_or_argument))
+            .is_some_and(|name| name == expected),
+        _ => false,
+    }
+}
+
 /// Resolve a member name to its computed value within an enum.
 ///
 /// For members with explicit initializers, evaluates the initializer directly.
@@ -1493,18 +1511,11 @@ fn resolve_enum_member_value(
     enum_data: &tsz_parser::parser::node::EnumData,
     depth: u32,
 ) -> Option<f64> {
-    let enum_name = arena.get_identifier_text(enum_data.name);
-
-    // Find the target member's index
-    let target_idx = enum_data.members.nodes.iter().position(|&m_idx| {
-        arena
-            .get(m_idx)
-            .and_then(|m_node| arena.get_enum_member(m_node))
-            .and_then(|m_data| arena.get_identifier_text(m_data.name))
-            .is_some_and(|m_name| m_name == name)
-    })?;
-
-    let m_idx = enum_data.members.nodes[target_idx];
+    let enum_name = arena.get_identifier_text(enum_data.name)?;
+    let (target_enum_decl_idx, target_idx) =
+        find_enum_member_decl(arena, enum_data, &enum_name, name)?;
+    let target_enum_data = arena.get_enum_at(target_enum_decl_idx)?;
+    let m_idx = target_enum_data.members.nodes[target_idx];
     let m_node = arena.get(m_idx)?;
     let m_data = arena.get_enum_member(m_node)?;
 
@@ -1513,8 +1524,8 @@ fn resolve_enum_member_value(
         return evaluate_const_enum_initializer(
             arena,
             m_data.initializer,
-            enum_data,
-            enum_name,
+            target_enum_data,
+            Some(enum_name),
             depth + 1,
         );
     }
@@ -1523,15 +1534,15 @@ fn resolve_enum_member_value(
     // and count the offset
     let mut offset = 1u32;
     for i in (0..target_idx).rev() {
-        let prev_idx = enum_data.members.nodes[i];
+        let prev_idx = target_enum_data.members.nodes[i];
         let prev_node = arena.get(prev_idx)?;
         let prev_data = arena.get_enum_member(prev_node)?;
         if prev_data.initializer.is_some() {
             let base = evaluate_const_enum_initializer(
                 arena,
                 prev_data.initializer,
-                enum_data,
-                enum_name,
+                target_enum_data,
+                Some(enum_name),
                 depth + 1,
             )?;
             return Some(base + offset as f64);
@@ -1541,4 +1552,75 @@ fn resolve_enum_member_value(
 
     // No prior initializer found — auto-increment from 0
     Some(target_idx as f64)
+}
+
+fn find_enum_member_decl(
+    arena: &tsz_parser::parser::NodeArena,
+    enum_data: &tsz_parser::parser::node::EnumData,
+    enum_name: &str,
+    member_name: &str,
+) -> Option<(NodeIndex, usize)> {
+    let current_enum_decl_idx = arena.get_extended(enum_data.name)?.parent;
+
+    if let Some(target_idx) = enum_member_index(arena, enum_data, member_name) {
+        return Some((current_enum_decl_idx, target_idx));
+    }
+
+    let namespace_path = enum_namespace_path(arena, current_enum_decl_idx);
+    let source_file_idx = source_file_ancestor(arena, current_enum_decl_idx)?;
+    let mut stack = vec![source_file_idx];
+    while let Some(node_idx) = stack.pop() {
+        if node_idx != current_enum_decl_idx
+            && let Some(candidate_enum) = arena.get_enum_at(node_idx)
+            && arena.get_identifier_text(candidate_enum.name) == Some(enum_name)
+            && enum_namespace_path(arena, node_idx) == namespace_path
+            && let Some(target_idx) = enum_member_index(arena, candidate_enum, member_name)
+        {
+            return Some((node_idx, target_idx));
+        }
+        for child_idx in arena.get_children(node_idx) {
+            stack.push(child_idx);
+        }
+    }
+
+    None
+}
+
+fn source_file_ancestor(arena: &tsz_parser::parser::NodeArena, mut node_idx: NodeIndex) -> Option<NodeIndex> {
+    loop {
+        let node = arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::SOURCE_FILE {
+            return Some(node_idx);
+        }
+        node_idx = arena.get_extended(node_idx)?.parent;
+    }
+}
+
+fn enum_namespace_path(arena: &tsz_parser::parser::NodeArena, mut enum_decl_idx: NodeIndex) -> Vec<String> {
+    let mut path = Vec::new();
+    while let Some(parent_idx) = arena.get_extended(enum_decl_idx).map(|ext| ext.parent) {
+        enum_decl_idx = parent_idx;
+        let Some(module_decl) = arena.get_module_at(enum_decl_idx) else {
+            continue;
+        };
+        if let Some(name) = arena.get_identifier_text(module_decl.name) {
+            path.push(name.to_string());
+        }
+    }
+    path.reverse();
+    path
+}
+
+fn enum_member_index(
+    arena: &tsz_parser::parser::NodeArena,
+    enum_data: &tsz_parser::parser::node::EnumData,
+    member_name: &str,
+) -> Option<usize> {
+    enum_data.members.nodes.iter().position(|&m_idx| {
+        arena
+            .get(m_idx)
+            .and_then(|m_node| arena.get_enum_member(m_node))
+            .and_then(|m_data| arena.get_identifier_text(m_data.name))
+            .is_some_and(|m_name| m_name == member_name)
+    })
 }
