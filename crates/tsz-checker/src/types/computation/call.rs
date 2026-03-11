@@ -836,6 +836,8 @@ impl<'a> CheckerState<'a> {
                     );
                     let mut round2_substitution = substitution.clone();
                     if let Some(ctx_type) = generic_inference_contextual_type {
+                        let tracked_type_params: FxHashSet<_> =
+                            shape.type_params.iter().map(|tp| tp.name).collect();
                         let return_context_substitution = self
                             .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
                         trace!(
@@ -871,9 +873,9 @@ impl<'a> CheckerState<'a> {
                         for (&name, &ty) in return_context_substitution.map().iter() {
                             if ty == TypeId::UNKNOWN
                                 || ty == TypeId::ERROR
-                                || tsz_solver::type_queries::contains_non_infer_type_parameters_db(
-                                    self.ctx.types,
+                                || self.target_contains_blocking_return_context_type_params(
                                     ty,
+                                    &tracked_type_params,
                                 )
                             {
                                 continue;
@@ -885,6 +887,7 @@ impl<'a> CheckerState<'a> {
                                 Some(existing) => {
                                     let mut visited = FxHashSet::default();
                                     existing == TypeId::UNKNOWN
+                                        || existing == TypeId::ERROR
                                         || self.inference_type_is_anyish(existing, &mut visited)
                                         || tsz_solver::type_queries::contains_type_parameters_db(
                                             self.ctx.types,
@@ -1188,9 +1191,9 @@ impl<'a> CheckerState<'a> {
                                     };
                                     if ty == TypeId::UNKNOWN
                                         || ty == TypeId::ERROR
-                                        || tsz_solver::type_queries::contains_non_infer_type_parameters_db(
-                                            self.ctx.types,
+                                        || self.target_contains_blocking_return_context_type_params(
                                             ty,
+                                            &tracked_type_params,
                                         )
                                     {
                                         continue;

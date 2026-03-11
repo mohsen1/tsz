@@ -112,6 +112,21 @@ fn instantiate_function_shape_with_substitution(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn target_contains_blocking_return_context_type_params(
+        &self,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<Atom>,
+    ) -> bool {
+        if tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, target) {
+            return true;
+        }
+
+        tsz_solver::collect_referenced_types(self.ctx.types, target)
+            .into_iter()
+            .filter_map(|ty| tsz_solver::type_param_info(self.ctx.types, ty))
+            .any(|info| tracked_type_params.contains(&info.name))
+    }
+
     fn instantiate_contextual_constraint_without_unresolved_self(
         &mut self,
         type_param_type: TypeId,
@@ -215,9 +230,9 @@ impl<'a> CheckerState<'a> {
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
-            && !tsz_solver::type_queries::contains_non_infer_type_parameters_db(
-                self.ctx.types,
+            && !self.target_contains_blocking_return_context_type_params(
                 target,
+                tracked_type_params,
             )
         {
             if substitution.get(tp.name).is_none() {
@@ -1042,11 +1057,18 @@ impl<'a> CheckerState<'a> {
             let kept_new_diags: Vec<_> = new_diags
                 .into_iter()
                 .filter(|diag| {
+                    let is_provisional_implicit_any = matches!(
+                        diag.code,
+                        diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                            | diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                            | diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                            | diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                    );
                     let is_assignability = diag.code
                         == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                         || diag.code
                             == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
-                    !is_assignability
+                    (!is_assignability && !is_provisional_implicit_any)
                         || callback_body_start.is_some_and(|start| diag.start == start)
                 })
                 .collect();
