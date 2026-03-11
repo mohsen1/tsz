@@ -261,6 +261,9 @@ mod conditional_keyof_test;
 #[path = "../tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
+#[path = "tests/dispatch_tests.rs"]
+mod dispatch_tests;
+#[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
