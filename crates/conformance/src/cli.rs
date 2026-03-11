@@ -82,6 +82,12 @@ pub struct Args {
     #[arg(long)]
     pub no_batch: bool,
 
+    /// Max compilations per batch worker before recycling (0 = no limit).
+    /// Recycling kills the worker process and spawns a fresh one, returning all
+    /// accumulated memory (global caches, arena fragmentation) to the OS.
+    #[arg(long, default_value_t = 250)]
+    pub max_compilations_per_worker: usize,
+
     /// Write structured parity diff artifacts for failed tests.
     #[arg(long)]
     pub write_diff_artifacts: bool,
