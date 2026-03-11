@@ -141,9 +141,9 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .resolve_import_target_from_file(file_idx, import_module)
                     && let Some(origin) = self.trace_export_origin(source_idx, import_name, visited)
-                    {
-                        return Some(origin);
-                    }
+                {
+                    return Some(origin);
+                }
             }
             // Not an alias, or couldn't follow — this file is the origin
             return Some(file_idx);
@@ -157,9 +157,10 @@ impl<'a> CheckerState<'a> {
             if let Some(source_idx) = self
                 .ctx
                 .resolve_import_target_from_file(file_idx, source_module)
-                && let Some(origin) = self.trace_export_origin(source_idx, name, visited) {
-                    return Some(origin);
-                }
+                && let Some(origin) = self.trace_export_origin(source_idx, name, visited)
+            {
+                return Some(origin);
+            }
         }
 
         // Check wildcard re-exports
@@ -170,9 +171,9 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
                     && let Some(origin) = self.trace_export_origin(source_idx, export_name, visited)
-                    {
-                        return Some(origin);
-                    }
+                {
+                    return Some(origin);
+                }
             }
         }
 
