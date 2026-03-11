@@ -467,7 +467,32 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn extract_non_sensitive_object_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
         use super::complex::is_contextually_sensitive;
 
+        let mut object_idx = idx;
+        let mut wrap_in_zero_arg_function = false;
         let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                object_idx = self.ctx.arena.get_parenthesized(node)?.expression;
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                let func = self.ctx.arena.get_function(node)?;
+                if !func.parameters.nodes.is_empty() {
+                    return None;
+                }
+                wrap_in_zero_arg_function = true;
+                object_idx = func.body;
+                if let Some(body_node) = self.ctx.arena.get(object_idx)
+                    && body_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                {
+                    object_idx = self.ctx.arena.get_parenthesized(body_node)?.expression;
+                }
+            }
+            _ => {}
+        }
+
+        let node = self.ctx.arena.get(object_idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             return None;
         }
@@ -515,6 +540,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.ctx.types.factory().object(properties))
+        let object_type = self.ctx.types.factory().object(properties);
+        if wrap_in_zero_arg_function {
+            Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape::new(Vec::new(), object_type)),
+            )
+        } else {
+            Some(object_type)
+        }
     }
 }
