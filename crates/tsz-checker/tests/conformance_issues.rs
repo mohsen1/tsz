@@ -11183,6 +11183,78 @@ const unexpectedlyFailingExample: Mapped = {
 }
 
 #[test]
+fn test_contextual_property_of_generic_filtering_mapped_type_preserves_literal_keys() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function f1<T extends object>(
+  data: T,
+  handlers: { [P in keyof T as P]: (value: T[P], prop: P) => void },
+): void;
+
+f1(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    foo: (value, key) => {},
+    bar: (value, key) => {},
+  },
+);
+
+declare function f2<T extends object>(
+  data: T,
+  handlers: { [P in keyof T as T[P] extends string ? P : never]: (value: T[P], prop: P) => void },
+): void;
+
+f2(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    bar: (value, key) => {},
+  },
+);
+
+f2(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    foo: (value, key) => {
+      // implicit `any`s
+    },
+  },
+);
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    let ts2353_count = diagnostics.iter().filter(|(code, _)| *code == 2353).count();
+    let ts7006_count = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
+
+    assert_eq!(
+        ts2322_count, 0,
+        "Did not expect false TS2322 diagnostics for contextually typed mapped callbacks.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2353_count, 1,
+        "Expected one TS2353 for the filtered-out 'foo' handler.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts7006_count, 2,
+        "Expected two TS7006 diagnostics for the filtered-out callback parameters.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"

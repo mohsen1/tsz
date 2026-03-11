@@ -280,18 +280,21 @@ createMachine2({
 "#;
 
     let diagnostics = check_default(source);
-    let relevant: Vec<_> = diagnostics
+    let mut relevant: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
         .collect();
+    relevant.sort_by_key(|diag| (diag.code, diag.start, diag.message_text.clone()));
+    relevant.dedup_by(|a, b| {
+        a.code == b.code && a.start == b.start && a.message_text == b.message_text
+    });
 
-    // Current behavior: the compiler preserves enough contextual typing through the
-    // mapped-type intersection that the invalid lowercase handler no longer falls back
-    // to implicit `any`; only the real excess-property error remains.
+    // tsc reports both the real excess-property error and an implicit-any on the
+    // uncontextualized callback parameter at the filtered lowercase key site.
     assert_eq!(
         relevant.iter().filter(|diag| diag.code == 7006).count(),
-        0,
-        "Expected no implicit-any diagnostics for the invalid lowercase handler, got diagnostics={relevant:?}"
+        1,
+        "Expected one implicit-any diagnostic for the invalid lowercase handler, got diagnostics={relevant:?}"
     );
     assert_eq!(
         relevant.iter().filter(|diag| diag.code == 2353).count(),
@@ -406,18 +409,21 @@ createMachine2({
 "#;
 
     let diagnostics = check_default(source);
-    let relevant: Vec<_> = diagnostics
+    let mut relevant: Vec<_> = diagnostics
         .iter()
         .filter(|diag| diag.code == 2353 || diag.code == 7006)
         .collect();
+    relevant.sort_by_key(|diag| (diag.code, diag.start, diag.message_text.clone()));
+    relevant.dedup_by(|a, b| {
+        a.code == b.code && a.start == b.start && a.message_text == b.message_text
+    });
 
-    // Current behavior: the compiler preserves enough contextual typing through the
-    // mapped-type intersection that the lowercase excess-property site no longer falls
-    // back to implicit `any`; only the real excess-property error remains.
+    // tsc reports both the real excess-property error and an implicit-any on the
+    // uncontextualized callback parameter at the filtered lowercase key site.
     assert_eq!(
         relevant.iter().filter(|diag| diag.code == 7006).count(),
-        0,
-        "Expected no implicit-any diagnostics in the full sequence, got diagnostics={relevant:?}"
+        1,
+        "Expected one implicit-any diagnostic in the full sequence, got diagnostics={relevant:?}"
     );
     assert_eq!(
         relevant.iter().filter(|diag| diag.code == 2353).count(),

@@ -2185,9 +2185,7 @@ arr.filter(x => x > 1);
 }
 
 /// TODO: Array.reduce overload resolution picks wrong overload for callback type inference.
-/// Currently emits TS2365 ("Operator '+' cannot be applied to types 'number | U' and 'number'")
-/// because the wrong overload is selected. When overload resolution is fixed, update to
-/// expect 0 diagnostics.
+/// The callback should be contextually typed from the correct `Array.reduce` overload.
 #[test]
 fn test_overload_call_array_reduce() {
     use crate::parser::ParserState;
@@ -2216,14 +2214,11 @@ arr.reduce((a, b) => a + b, 0);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // TODO: Should be 0 diagnostics once overload resolution picks the right overload.
-    // Currently emits TS2365 due to wrong overload selection for Array.reduce.
     assert_eq!(
         codes.len(),
-        1,
-        "Expected 1 diagnostic (TS2365 from wrong overload), got: {codes:?}"
+        0,
+        "Expected no diagnostics once overload resolution picks the right Array.reduce overload, got: {codes:?}"
     );
-    assert_eq!(codes[0], 2365, "Expected TS2365, got: {codes:?}");
 }
 
 #[test]

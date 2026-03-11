@@ -644,7 +644,7 @@ impl<'a> CheckerState<'a> {
             // Create the key literal type
             let key_literal = self.ctx.types.literal_string_atom(key_name);
 
-            // Substitute the type parameter with the key
+            // Instantiate the template without recursively expanding nested applications.
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
 

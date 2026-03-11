@@ -143,6 +143,8 @@ impl<'a> CheckerState<'a> {
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
+        let closure_already_checked =
+            is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
         let mut has_jsdoc_type_function = false;
@@ -516,11 +518,6 @@ impl<'a> CheckerState<'a> {
                 // re-entrant closure resolution (first call handles diagnostics),
                 // and ambient declarations (declare class/module private members).
                 let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
-                // If this closure was already checked for implicit any (e.g., during
-                // call resolution with contextual type), skip the re-check to avoid
-                // false TS7006/TS7031 when the second call lacks contextual type.
-                let is_reentrant_closure =
-                    is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
                 // In ambient contexts (declare class, .d.ts), tsc suppresses
                 // TS7006/TS7031 for private members since they're excluded from
                 // .d.ts output. check_method_declaration in ambient_signature_checks.rs
@@ -535,7 +532,7 @@ impl<'a> CheckerState<'a> {
                 let skip_implicit_any = is_setter
                     || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
                     || (is_in_decorator && !has_contextual_type)
-                    || is_reentrant_closure
+                    || closure_already_checked
                     || is_ambient_private;
                 if !skip_implicit_any {
                     self.maybe_report_implicit_any_parameter(
@@ -543,12 +540,6 @@ impl<'a> CheckerState<'a> {
                         has_contextual_type || has_jsdoc_param,
                         contextual_index,
                     );
-                }
-                // Record that we've checked this closure for implicit any,
-                // so subsequent calls to get_type_of_function for the same
-                // node won't re-emit TS7006/TS7031.
-                if is_closure && !skip_implicit_any {
-                    self.ctx.implicit_any_checked_closures.insert(idx);
                 }
                 // In JS files, params without type annotations are implicitly optional
                 // unless a JSDoc @param tag or @type function annotation exists.
@@ -621,6 +612,13 @@ impl<'a> CheckerState<'a> {
                 destructuring_context_param_types.push(Some(effective_binding_context_type));
                 contextual_index += 1;
             }
+        }
+
+        // Record that we've checked this closure for implicit-any diagnostics so
+        // later re-entrant passes do not re-emit TS7006/TS7031. Do this after the
+        // full parameter walk so sibling parameters in the same closure are all checked.
+        if is_closure && !closure_already_checked {
+            self.ctx.implicit_any_checked_closures.insert(idx);
         }
 
         // Check for parameter properties (error 2369)

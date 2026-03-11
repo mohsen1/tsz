@@ -709,23 +709,12 @@ fn test_contextual_union_function_different_params_unions_types() {
 
     let ctx = ContextualTypeContext::with_expected(&interner, union);
 
-    // Should return a union of string | number
+    // tsc does not provide a contextual parameter type when union callable members
+    // disagree on the parameter type at the same position.
     let param_type = ctx.get_parameter_type(0);
     assert!(
-        param_type.is_some(),
-        "Should provide contextual type for union callable params"
-    );
-    let param = param_type.unwrap();
-    let members = crate::type_queries::get_union_members(&interner, param);
-    assert!(members.is_some(), "Parameter type should be a union");
-    let members = members.unwrap();
-    assert!(
-        members.contains(&TypeId::STRING),
-        "Union should contain string"
-    );
-    assert!(
-        members.contains(&TypeId::NUMBER),
-        "Union should contain number"
+        param_type.is_none(),
+        "Differing union callable params should not provide contextual typing"
     );
 }
 
