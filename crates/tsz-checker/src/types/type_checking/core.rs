@@ -1078,21 +1078,20 @@ impl<'a> CheckerState<'a> {
             && expected_type != TypeId::UNKNOWN
             && !self.type_contains_error(expected_type)
             && return_data.expression.is_some()
+            && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
         {
-            if let Some(expr_node) = self.ctx.arena.get(return_data.expression) {
-                if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                    self.check_object_literal_excess_properties(
-                        return_type,
-                        expected_type,
-                        return_data.expression,
-                    );
-                } else if expr_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-                    self.check_conditional_return_branches_against_type(
-                        return_data.expression,
-                        expected_type,
-                        self.ctx.in_async_context(),
-                    );
-                }
+            if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                self.check_object_literal_excess_properties(
+                    return_type,
+                    expected_type,
+                    return_data.expression,
+                );
+            } else if expr_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+                self.check_conditional_return_branches_against_type(
+                    return_data.expression,
+                    expected_type,
+                    self.ctx.in_async_context(),
+                );
             }
         }
     }
