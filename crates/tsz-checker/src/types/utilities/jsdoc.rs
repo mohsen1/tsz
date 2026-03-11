@@ -1,6 +1,7 @@
 //! JSDoc type annotation utilities for `CheckerState`.
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{
@@ -26,6 +27,25 @@ pub(crate) struct JsdocCallbackInfo {
 }
 
 impl<'a> CheckerState<'a> {
+    fn source_file_data_for_node(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::SourceFileData> {
+        let mut current = idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if let Some(source_file) = self.ctx.arena.get_source_file(node) {
+                return Some(source_file);
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
     /// Resolve `typeof X` type queries to the type of symbol X.
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
@@ -103,16 +123,24 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let sf = self.ctx.arena.source_files.first()?;
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
+        let sf = self.source_file_data_for_node(idx)?;
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
         let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)?;
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, &comments, &source_text)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
+        self.validate_jsdoc_generic_constraints_at_node(
+            idx,
+            node.pos,
+            type_expr,
+            &jsdoc,
+            &comments,
+            &source_text,
+        );
 
         self.resolve_jsdoc_type_str(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, comments, source_text)
+            self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
                 .or_else(|| {
                     if let Some((module_specifier, member_name)) =
                         Self::parse_jsdoc_import_type(type_expr)
@@ -142,6 +170,194 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn jsdoc_template_constraints(jsdoc: &str) -> Vec<(String, Option<String>)> {
+        let mut out = Vec::new();
+        for raw_line in jsdoc.lines() {
+            let trimmed = raw_line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed.strip_prefix("@template") else {
+                continue;
+            };
+            let rest = rest.trim();
+            let (constraint, names_str) = if let Some(rest) = rest.strip_prefix('{') {
+                if let Some(close_idx) = rest.find('}') {
+                    (
+                        Some(rest[..close_idx].trim().to_string()),
+                        rest[close_idx + 1..].trim(),
+                    )
+                } else {
+                    (None, rest)
+                }
+            } else {
+                (None, rest)
+            };
+            for token in names_str.split([',', ' ', '\t']) {
+                let name = token.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                if name
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                {
+                    out.push((name.to_string(), constraint.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    fn jsdoc_typedef_template_constraints_before(
+        &mut self,
+        typedef_name: &str,
+        anchor_pos: u32,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Vec<Option<TypeId>> {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let mut result = Vec::new();
+        for comment in comments {
+            if comment.end > anchor_pos || !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, source_text);
+            if !Self::parse_jsdoc_typedefs(&content)
+                .iter()
+                .any(|(name, _)| name == typedef_name)
+            {
+                continue;
+            }
+            result = Self::jsdoc_template_constraints(&content)
+                .into_iter()
+                .map(|(_, constraint)| {
+                    constraint.and_then(|expr| self.resolve_jsdoc_type_str(&expr))
+                })
+                .collect();
+        }
+        result
+    }
+
+    fn validate_jsdoc_generic_constraints_at_node(
+        &mut self,
+        idx: NodeIndex,
+        anchor_pos: u32,
+        type_expr: &str,
+        _jsdoc: &str,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) {
+        let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') else {
+            return;
+        };
+        if !type_expr.ends_with('>') {
+            return;
+        }
+
+        let base_name = type_expr[..angle_idx].trim();
+        let args_str = &type_expr[angle_idx + 1..type_expr.len() - 1];
+        let arg_strs = Self::split_type_args_respecting_nesting(args_str);
+        if arg_strs.is_empty() {
+            return;
+        }
+
+        let symbol_constraints = self
+            .ctx
+            .binder
+            .file_locals
+            .get(base_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbols()
+                    .find_all_by_name(base_name)
+                    .into_iter()
+                    .find(|sym_id| {
+                        self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
+                            (symbol.flags
+                                & (symbol_flags::TYPE_ALIAS
+                                    | symbol_flags::CLASS
+                                    | symbol_flags::INTERFACE
+                                    | symbol_flags::ENUM))
+                                != 0
+                        })
+                    })
+            })
+            .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
+            .unwrap_or_default();
+
+        let typedef_constraints = if symbol_constraints.is_empty() {
+            self.jsdoc_typedef_template_constraints_before(
+                base_name,
+                anchor_pos,
+                comments,
+                source_text,
+            )
+        } else {
+            Vec::new()
+        };
+
+        let constraints: Vec<Option<TypeId>> = if !symbol_constraints.is_empty() {
+            symbol_constraints
+                .into_iter()
+                .map(|param| param.constraint)
+                .collect()
+        } else {
+            typedef_constraints
+        };
+        if constraints.is_empty() {
+            return;
+        }
+
+        let Some((_, comment_pos)) =
+            self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
+        else {
+            return;
+        };
+        let raw_comment = &source_text[comment_pos as usize..anchor_pos as usize];
+        let Some(type_expr_offset) = raw_comment.find(type_expr) else {
+            return;
+        };
+
+        let mut arg_search_offset = angle_idx + 1;
+        for (arg_str, constraint) in arg_strs.iter().zip(constraints.iter()) {
+            let Some(constraint) = constraint else {
+                arg_search_offset += arg_str.len() + 1;
+                continue;
+            };
+            let Some(type_arg) = self.resolve_jsdoc_type_str(arg_str.trim()) else {
+                arg_search_offset += arg_str.len() + 1;
+                continue;
+            };
+            if self.is_assignable_to(type_arg, *constraint) {
+                arg_search_offset += arg_str.len() + 1;
+                continue;
+            }
+            let widened_arg = tsz_solver::widen_literal_type(self.ctx.types, type_arg);
+            let message = format_message(
+                diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                &[
+                    &self.format_type_diagnostic(widened_arg),
+                    &self.format_type_diagnostic(*constraint),
+                ],
+            );
+            let Some(arg_rel_in_expr) = type_expr[arg_search_offset..].find(arg_str.trim()) else {
+                arg_search_offset += arg_str.len() + 1;
+                continue;
+            };
+            let arg_pos = comment_pos as usize
+                + type_expr_offset
+                + arg_search_offset
+                + arg_rel_in_expr;
+            self.ctx.error(
+                arg_pos as u32,
+                arg_str.trim().len() as u32,
+                message,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            );
+            arg_search_offset += arg_str.len() + 1;
+        }
+    }
+
     /// Resolve a direct leading JSDoc `@type` annotation (no parent fallback).
     pub(crate) fn jsdoc_type_annotation_for_node_direct(
         &mut self,
@@ -151,16 +367,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let sf = self.ctx.arena.source_files.first()?;
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
+        let sf = self.source_file_data_for_node(idx)?;
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
         let node = self.ctx.arena.get(idx)?;
-        let jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text)?;
+        let jsdoc = self.try_leading_jsdoc(&comments, node.pos, &source_text)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
         self.jsdoc_type_from_expression(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, comments, source_text)
+            self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
                 .or_else(|| {
                     if let Some((module_specifier, member_name)) =
                         Self::parse_jsdoc_import_type(type_expr)
@@ -201,11 +417,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let sf = self.ctx.arena.source_files.first()?;
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
+        let sf = self.source_file_data_for_node(idx)?;
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
         let (jsdoc, jsdoc_start) =
-            self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)?;
+            self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)?;
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
@@ -835,17 +1051,31 @@ impl<'a> CheckerState<'a> {
         type_args: Vec<TypeId>,
     ) -> Option<TypeId> {
         // Look up the base type in file_locals (includes merged lib types like Partial, Record)
-        let sym_id = self.ctx.binder.file_locals.get(base_name)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags
-            & (symbol_flags::TYPE_ALIAS
-                | symbol_flags::CLASS
-                | symbol_flags::INTERFACE
-                | symbol_flags::ENUM))
-            == 0
-        {
-            return None;
-        }
+        let sym_id = if let Some(sym_id) = self.ctx.binder.file_locals.get(base_name) {
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if (symbol.flags
+                & (symbol_flags::TYPE_ALIAS
+                    | symbol_flags::CLASS
+                    | symbol_flags::INTERFACE
+                    | symbol_flags::ENUM))
+                == 0
+            {
+                return None;
+            }
+            sym_id
+        } else {
+            let symbols = self.ctx.binder.get_symbols();
+            symbols.find_all_by_name(base_name).into_iter().find(|sym_id| {
+                self.ctx.binder.get_symbol(*sym_id).is_some_and(|symbol| {
+                    (symbol.flags
+                        & (symbol_flags::TYPE_ALIAS
+                            | symbol_flags::CLASS
+                            | symbol_flags::INTERFACE
+                            | symbol_flags::ENUM))
+                        != 0
+                })
+            })?
+        };
 
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         if body_type == TypeId::ERROR {
