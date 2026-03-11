@@ -701,6 +701,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         match node.kind {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => self.checker.get_type_of_identifier(idx),
+            k if k == SyntaxKind::RegularExpressionLiteral as u16 => self
+                .checker
+                .resolve_lib_type_by_name("RegExp")
+                .unwrap_or(TypeId::ANY),
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
