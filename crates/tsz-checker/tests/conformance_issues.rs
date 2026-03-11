@@ -173,6 +173,47 @@ z = false;
 }
 
 #[test]
+fn test_non_ambient_class_function_merge_also_reports_duplicate_identifier() {
+    let source = r#"
+class c2 { public foo() { } }
+function c2() { }
+var c2 = () => { }
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2300_count = diagnostics.iter().filter(|(code, _)| *code == 2300).count();
+
+    assert_eq!(
+        ts2300_count, 3,
+        "Expected duplicate-identifier diagnostics on the class, function, and variable declarations. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2813),
+        "Expected TS2813 on the class declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2814),
+        "Expected TS2814 on the function declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_merged_enum_duplicate_member_reports_all_occurrences() {
+    let source = r#"
+enum e5a { One }
+enum e5a { One }
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2300_count = diagnostics.iter().filter(|(code, _)| *code == 2300).count();
+
+    assert_eq!(
+        ts2300_count, 2,
+        "Expected duplicate-identifier diagnostics on both merged enum members. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_destructuring_from_this_in_constructor_reports_ts2715_per_property() {
     let source = r#"
 abstract class C1 {
