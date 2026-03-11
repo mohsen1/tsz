@@ -1122,15 +1122,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 self.ctx.types,
                                 key_type,
                             );
-                        if !is_valid_index_type
-                            && let Some(pnode) = self.ctx.arena.get(param_idx) {
-                                self.ctx.error(
+                        if !is_valid_index_type && let Some(pnode) = self.ctx.arena.get(param_idx) {
+                            self.ctx.error(
                                     pnode.pos,
                                     pnode.end - pnode.pos,
                                     "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.".to_string(),
                                     1268,
                                 );
-                            }
+                        }
                     }
                 }
 
@@ -1897,19 +1896,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Type references: check if they resolve to type parameters
         if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-                && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    // Check the type parameter scope (covers generic type params from
-                    // type aliases, functions, classes, etc.)
-                    if self
-                        .ctx
-                        .type_parameter_scope
-                        .contains_key(ident.escaped_text.as_str())
-                    {
-                        return true;
-                    }
-                }
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            // Check the type parameter scope (covers generic type params from
+            // type aliases, functions, classes, etc.)
+            if self
+                .ctx
+                .type_parameter_scope
+                .contains_key(ident.escaped_text.as_str())
+            {
+                return true;
+            }
+        }
 
         false
     }
