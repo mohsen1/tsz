@@ -17,32 +17,18 @@ pub(super) fn load_lib_files_for_contexts(lib_files: &[Arc<LibFile>]) -> Vec<Lib
         return Vec::new();
     }
 
-    let lib_contexts: Vec<LibContext> = lib_files
+    // Keep the original lib binders/arenas for checker-side lookups. The source-file
+    // binder already merged lib symbols into a canonical SymbolId space during binding.
+    // Building a second independently merged lib binder here creates a different
+    // SymbolId universe for the same lib names, which breaks merged-lib lookup paths
+    // that mix source-binder SymbolIds with checker lib-context binders.
+    lib_files
         .iter()
         .map(|lib| LibContext {
             arena: Arc::clone(&lib.arena),
             binder: Arc::clone(&lib.binder),
         })
-        .collect();
-
-    // Merge all lib binders into a single binder to avoid duplicate SymbolIds
-    // (e.g., "Intl" declarations across multiple lib files).
-    use tsz::binder::state::LibContext as BinderLibContext;
-    let mut merged_binder = tsz::binder::BinderState::new();
-    let binder_lib_contexts: Vec<_> = lib_contexts
-        .iter()
-        .map(|ctx| BinderLibContext {
-            arena: Arc::clone(&ctx.arena),
-            binder: Arc::clone(&ctx.binder),
-        })
-        .collect();
-    merged_binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
-
-    vec![LibContext {
-        // Keep a lib arena available for declaration lookups.
-        arena: Arc::clone(&lib_contexts[0].arena),
-        binder: Arc::new(merged_binder),
-    }]
+        .collect()
 }
 
 fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
