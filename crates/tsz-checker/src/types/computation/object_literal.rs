@@ -945,7 +945,6 @@ impl<'a> CheckerState<'a> {
                                     shorthand_name_idx,
                                     Some(sym_id),
                                 ) || has_uninitialized_value_decl
-                                    || (value_type == TypeId::ANY && has_uninitialized_value_decl)
                             })
                             .map(|_| TypeId::UNDEFINED)
                             .unwrap_or(value_type);
