@@ -1227,20 +1227,16 @@ impl<'a> CheckerState<'a> {
                             // expression instead of a nested contextualized subexpression.
                             let prev_ctx = self.ctx.contextual_type;
                             let can_apply_contextual_body =
-                                !tsz_solver::type_queries::contains_type_parameters_db(
-                                    self.ctx.types,
-                                    expected_return_type,
-                                ) && !tsz_solver::type_queries::contains_infer_types_db(
-                                    self.ctx.types,
-                                    expected_return_type,
-                                );
+                                !self.type_has_unresolved_inference_holes(expected_return_type);
+                            let is_conditional_body =
+                                self.ctx.arena.get(body).is_some_and(|body_node| {
+                                    body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                                });
                             let keep_contextual_body = has_type_annotation
                                 || jsdoc_return_context.is_some()
                                 || (can_apply_contextual_body
-                                    && self.ctx.arena.get(body).is_some_and(|body_node| {
-                                        body_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION
-                                    })
-                                    && is_contextually_sensitive(self, body));
+                                    && (is_contextually_sensitive(self, body)
+                                        || is_conditional_body));
                             self.ctx.contextual_type =
                                 keep_contextual_body.then_some(expected_return_type);
                             self.clear_type_cache_recursive(body);
@@ -1262,18 +1258,13 @@ impl<'a> CheckerState<'a> {
                     };
                     let suppress_contextual_return_check = !has_type_annotation
                         && jsdoc_return_context.is_none()
-                        && (tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            expected_return_type,
-                        ) || tsz_solver::type_queries::contains_infer_types_db(
-                            self.ctx.types,
-                            expected_return_type,
-                        ));
+                        && self.type_has_unresolved_inference_holes(expected_return_type);
                     let use_generic_return_mismatch = !has_type_annotation
                         && jsdoc_return_context.is_none()
                         && self.ctx.arena.get(body).is_some_and(|body_node| {
                             body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                        });
+                        })
+                        && self.type_has_unresolved_inference_holes(expected_return_type);
                     if contextual_void_return_exception {
                         // Contextual `() => void` callbacks may return a value.
                         // Don't report a direct body-vs-void mismatch here.
@@ -1291,40 +1282,39 @@ impl<'a> CheckerState<'a> {
                                 let prev_ctx = self.ctx.contextual_type;
                                 let diag_len = self.ctx.diagnostics.len();
                                 let emitted_before = self.ctx.emitted_diagnostics.clone();
-                                self.ctx.contextual_type = None;
+                                self.ctx.contextual_type = Some(expected_return_type);
                                 self.clear_type_cache_recursive(cond.when_true);
                                 self.clear_type_cache_recursive(cond.when_false);
-                                let when_true = self.get_type_of_node(cond.when_true);
-                                let when_false = self.get_type_of_node(cond.when_false);
+                                let mut when_true = self.get_type_of_node(cond.when_true);
+                                let mut when_false = self.get_type_of_node(cond.when_false);
                                 self.ctx.contextual_type = prev_ctx;
                                 self.ctx.diagnostics.truncate(diag_len);
                                 self.ctx.emitted_diagnostics = emitted_before;
+                                if is_async_for_context {
+                                    when_true =
+                                        self.unwrap_promise_type(when_true).unwrap_or(when_true);
+                                    when_false =
+                                        self.unwrap_promise_type(when_false).unwrap_or(when_false);
+                                }
                                 !self.is_assignable_to(when_true, expected_return_type)
                                     || !self.is_assignable_to(when_false, expected_return_type)
                             });
-                        if conditional_branch_mismatch {
-                            if let Some(loc) = self.get_source_location(body) {
-                                let src_str = self.format_type(actual_return);
-                                let tgt_str = self.format_type(expected_return_type);
-                                let message = format_message(
+                        if conditional_branch_mismatch
+                            && let Some(loc) = self.get_source_location(body)
+                        {
+                            let src_str = self.format_type(actual_return);
+                            let tgt_str = self.format_type(expected_return_type);
+                            let message = format_message(
                                     crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                                     &[&src_str, &tgt_str],
                                 );
-                                self.ctx.diagnostics.push(crate::diagnostics::Diagnostic::error(
+                            self.ctx.diagnostics.push(crate::diagnostics::Diagnostic::error(
                                     self.ctx.file_name.clone(),
                                     loc.start,
                                     loc.length(),
                                     message,
                                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                                 ));
-                            }
-                        } else {
-                            self.check_assignable_or_report_generic_at(
-                                actual_return,
-                                expected_return_type,
-                                body,
-                                body,
-                            );
                         }
                     } else {
                         let assignability_ok = self.check_assignable_or_report(
@@ -1371,9 +1361,6 @@ impl<'a> CheckerState<'a> {
                     && body_node.kind != syntax_kind_ext::BLOCK
                     && !has_type_annotation
                 {
-                    let suppress_contextual_return_for_conditional_body = jsdoc_return_context
-                        .is_none()
-                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION;
                     let body_return_context = ctx_helper
                         .as_ref()
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
@@ -1381,6 +1368,12 @@ impl<'a> CheckerState<'a> {
                             self.ctx.contextual_type.and_then(|ty| {
                                 tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
                             })
+                        });
+                    let suppress_contextual_return_for_conditional_body = jsdoc_return_context
+                        .is_none()
+                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        && body_return_context.is_some_and(|return_type| {
+                            self.type_has_unresolved_inference_holes(return_type)
                         });
                     if body_return_context.is_some()
                         && !suppress_contextual_return_for_conditional_body
@@ -1394,6 +1387,9 @@ impl<'a> CheckerState<'a> {
                         body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
                             && !has_type_annotation
                             && jsdoc_return_context.is_none()
+                            && self.ctx.contextual_type.is_some_and(|return_type| {
+                                self.type_has_unresolved_inference_holes(return_type)
+                            })
                     });
                 let diag_len = self.ctx.diagnostics.len();
                 let emitted_before = suppress_expression_body_diagnostics

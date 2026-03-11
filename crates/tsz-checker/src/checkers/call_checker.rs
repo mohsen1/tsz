@@ -632,8 +632,12 @@ impl<'a> CheckerState<'a> {
                             == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                             || diag.code
                                 == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
-                        !is_provisional_assignability
-                            || callback_body_start.is_some_and(|start| diag.start == start)
+                        let is_provisional_implicit_any =
+                            diag.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE;
+                        let is_callback_body_diag =
+                            callback_body_start.is_some_and(|start| diag.start >= start);
+                        (!is_provisional_assignability && !is_provisional_implicit_any)
+                            || !is_callback_body_diag
                     })
                     .collect();
                 self.ctx.diagnostics.extend(kept_new_diags);
