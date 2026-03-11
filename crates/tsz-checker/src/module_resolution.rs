@@ -35,6 +35,40 @@ fn strip_ts_extension(path: &str) -> &str {
     path
 }
 
+fn relative_directory_chain_alias(specifier: &str) -> Option<String> {
+    let trimmed = specifier.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() || trimmed == specifier {
+        return None;
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+    if normalized
+        .split('/')
+        .all(|segment| segment == "." || segment == "..")
+    {
+        return Some(normalized);
+    }
+
+    None
+}
+
+fn relative_directory_chain_with_separator(specifier: &str) -> Option<String> {
+    let normalized = specifier.replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed != normalized {
+        return None;
+    }
+
+    if trimmed
+        .split('/')
+        .all(|segment| segment == "." || segment == "..")
+    {
+        return Some(format!("{trimmed}/"));
+    }
+
+    None
+}
+
 /// Compute a relative path from `from_dir` to `to_path`, returning a string
 /// suitable for use as a module specifier (with `./` or `../` prefix).
 ///
@@ -127,6 +161,11 @@ pub fn build_module_resolution_maps(
                     resolved_module_paths.insert((src_idx, dir_specifier.clone()), tgt_idx);
                     resolved_modules.insert(dir_specifier.clone());
 
+                    if let Some(alias) = relative_directory_chain_alias(&dir_specifier) {
+                        resolved_module_paths.insert((src_idx, alias.clone()), tgt_idx);
+                        resolved_modules.insert(alias);
+                    }
+
                     if let Some(bare) = dir_specifier.strip_prefix("./") {
                         resolved_module_paths.insert((src_idx, bare.to_string()), tgt_idx);
                         resolved_modules.insert(bare.to_string());
@@ -162,6 +201,16 @@ pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
         push_unique(format!("'{trimmed}'"));
         if trimmed.contains('\\') {
             push_unique(trimmed.replace('\\', "/"));
+        }
+        if let Some(alias) = relative_directory_chain_alias(trimmed) {
+            push_unique(alias.clone());
+            push_unique(format!("\"{alias}\""));
+            push_unique(format!("'{alias}'"));
+        }
+        if let Some(alias) = relative_directory_chain_with_separator(trimmed) {
+            push_unique(alias.clone());
+            push_unique(format!("\"{alias}\""));
+            push_unique(format!("'{alias}'"));
         }
 
         let without_ext = strip_ts_extension(trimmed);

@@ -301,6 +301,63 @@ fn check_with_resolved_modules_opts(
         .collect()
 }
 
+#[test]
+fn module_specifier_candidates_alias_directory_dot_chains() {
+    use crate::checker::module_resolution::module_specifier_candidates;
+
+    let dot = module_specifier_candidates(".");
+    assert!(dot.contains(&".".to_string()));
+    assert!(dot.contains(&"./".to_string()));
+
+    let parent = module_specifier_candidates("../..");
+    assert!(parent.contains(&"../..".to_string()));
+    assert!(parent.contains(&"../../".to_string()));
+
+    let with_slash = module_specifier_candidates("../");
+    assert!(with_slash.contains(&"../".to_string()));
+    assert!(with_slash.contains(&"..".to_string()));
+}
+
+#[test]
+fn index_import_dot_aliases_resolve_in_module_maps() {
+    use crate::checker::module_resolution::build_module_resolution_maps;
+
+    let files = vec![
+        "/tmp/test/a.ts".to_string(),
+        "/tmp/test/a/index.ts".to_string(),
+        "/tmp/test/a/test.ts".to_string(),
+        "/tmp/test/a/b/test.ts".to_string(),
+    ];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(
+        paths.get(&(2, ".".to_string())),
+        Some(&1),
+        "Expected '.' to resolve to a/index.ts from a/test.ts"
+    );
+    assert_eq!(
+        paths.get(&(2, "./".to_string())),
+        Some(&1),
+        "Expected './' to resolve to a/index.ts from a/test.ts"
+    );
+    assert_eq!(
+        paths.get(&(3, "..".to_string())),
+        Some(&1),
+        "Expected '..' to resolve to a/index.ts from a/b/test.ts"
+    );
+    assert_eq!(
+        paths.get(&(3, "../".to_string())),
+        Some(&1),
+        "Expected '../' to resolve to a/index.ts from a/b/test.ts"
+    );
+
+    assert!(modules.contains("."));
+    assert!(modules.contains("./"));
+    assert!(modules.contains(".."));
+    assert!(modules.contains("../"));
+}
+
 /// Helper to simply parse, bind, and check a file with no cross-file context.
 fn check_single_file(source: &str, file_name: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());

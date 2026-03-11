@@ -420,6 +420,133 @@ const y = x.get("a");
 }
 
 #[test]
+fn test_check_files_parallel_default_import_of_object_literal_keeps_export_type() {
+    let files = vec![
+        (
+            "/file1.ts".to_string(),
+            r#"
+export default { answer: 1 };
+"#
+            .to_string(),
+        ),
+        (
+            "/file2.ts".to_string(),
+            r#"
+import value from "./file1";
+value.missing;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "/file2.ts")
+        .expect("expected importer file result");
+    let codes: Vec<u32> = file.diagnostics.iter().map(|diag| diag.code).collect();
+    assert_eq!(
+        codes,
+        vec![2339],
+        "Expected exactly TS2339 in /file2.ts. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert!(
+        file.diagnostics[0]
+            .message_text
+            .contains("Property 'missing' does not exist on type '{ answer: number; }'."),
+        "Expected TS2339 to target the default-export object literal. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_dot_and_trailing_slash_directory_imports_keep_ts2339() {
+    let files = vec![
+        (
+            "/a.ts".to_string(),
+            r#"
+export default { a: 0 };
+"#
+            .to_string(),
+        ),
+        (
+            "/a/index.ts".to_string(),
+            r#"
+export default { aIndex: 0 };
+"#
+            .to_string(),
+        ),
+        (
+            "/a/test.ts".to_string(),
+            r#"
+import a from ".";
+import aIndex from "./";
+a.a;
+aIndex.aIndex;
+"#
+            .to_string(),
+        ),
+        (
+            "/a/b/test.ts".to_string(),
+            r#"
+import a from "..";
+import aIndex from "../";
+a.a;
+aIndex.aIndex;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    for file_name in ["/a/test.ts", "/a/b/test.ts"] {
+        let file = result
+            .file_results
+            .iter()
+            .find(|file| file.file_name == file_name)
+            .expect("expected test file result");
+        let codes: Vec<u32> = file.diagnostics.iter().map(|diag| diag.code).collect();
+        assert_eq!(
+            codes,
+            vec![2339],
+            "Expected exactly TS2339 in {file_name}. Actual diagnostics: {:#?}",
+            file.diagnostics
+        );
+        assert!(
+            file.diagnostics[0]
+                .message_text
+                .contains("Property 'a' does not exist on type '{ aIndex: number; }'."),
+            "Expected TS2339 to target the index export object in {file_name}. Actual diagnostics: {:#?}",
+            file.diagnostics
+        );
+    }
+}
+
+#[test]
 fn test_check_files_parallel_preserves_ts2454_for_umd_namespace_qualified_type_member() {
     let files = vec![
         (

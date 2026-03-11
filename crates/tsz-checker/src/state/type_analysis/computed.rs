@@ -340,6 +340,44 @@ impl<'a> CheckerState<'a> {
         self.ctx.binder.node_symbols.get(&clause_idx.0).copied()
     }
 
+    fn compute_local_export_value_wrapper_type(
+        &mut self,
+        sym_id: SymbolId,
+        value_decl: NodeIndex,
+        escaped_name: &str,
+    ) -> Option<TypeId> {
+        if value_decl.is_none() {
+            return None;
+        }
+
+        if let Some(local_name) = self.get_declaration_name_text(value_decl)
+            && local_name != escaped_name
+            && let Some(local_sym_id) = self.ctx.binder.file_locals.get(&local_name)
+            && local_sym_id != sym_id
+        {
+            return Some(self.get_type_of_symbol(local_sym_id));
+        }
+
+        let node = self.ctx.arena.get(value_decl)?;
+        if let Some(exported_ident) = self.ctx.arena.get_identifier(node)
+            && exported_ident.escaped_text != escaped_name
+            && let Some(local_sym_id) = self
+                .ctx
+                .binder
+                .file_locals
+                .get(&exported_ident.escaped_text)
+            && local_sym_id != sym_id
+        {
+            return Some(self.get_type_of_symbol(local_sym_id));
+        }
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        Some(self.get_type_of_node(value_decl))
+    }
+
     /// Compute type of a symbol (internal, not cached).
     ///
     /// Uses `TypeLowering` to bridge symbol declarations to solver types.
@@ -411,6 +449,14 @@ impl<'a> CheckerState<'a> {
             && target_sym_id != sym_id
         {
             return (self.get_type_of_symbol(target_sym_id), Vec::new());
+        }
+        if flags & symbol_flags::EXPORT_VALUE != 0
+            && flags & symbol_flags::ALIAS != 0
+            && import_module.is_none()
+            && let Some(wrapped_type) =
+                self.compute_local_export_value_wrapper_type(sym_id, value_decl, &escaped_name)
+        {
+            return (wrapped_type, Vec::new());
         }
 
         // Class - return class constructor type (merging namespace exports when present)
