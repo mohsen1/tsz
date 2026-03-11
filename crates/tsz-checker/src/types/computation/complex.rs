@@ -1771,6 +1771,7 @@ impl<'a> CheckerState<'a> {
                         param_type_map,
                         stmt_idx,
                     )
+                    && rhs_type != TypeId::UNDEFINED
                 {
                     let name_atom = self.ctx.types.intern_string(&prop_name);
                     properties.entry(name_atom).or_insert(PropertyInfo {
@@ -1800,6 +1801,9 @@ impl<'a> CheckerState<'a> {
                 let prop_name = ident.escaped_text.clone();
                 // Check for @type annotation on the expression statement
                 if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+                    if jsdoc_type == TypeId::UNDEFINED {
+                        continue;
+                    }
                     let name_atom = self.ctx.types.intern_string(&prop_name);
                     properties.entry(name_atom).or_insert(PropertyInfo {
                         name: name_atom,

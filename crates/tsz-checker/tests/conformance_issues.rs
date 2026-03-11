@@ -826,6 +826,46 @@ exports.x;
 }
 
 #[test]
+fn test_js_constructor_void_zero_assignment_does_not_create_member() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "a.js",
+        r#"
+function C() {
+    this.p = 1;
+    this.q = void 0;
+}
+var c = new C();
+c.p + c.q;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code == 2339 || *code == 18048)
+        .collect();
+    let ts2339 = diagnostic_message(&relevant, 2339)
+        .expect("expected TS2339 when reading a void-zero constructor property");
+
+    assert_eq!(relevant.len(), 1, "unexpected diagnostics: {relevant:#?}");
+    assert!(
+        ts2339.contains("Property 'q' does not exist on type 'C'.")
+            || ts2339.contains("Property 'q' does not exist on type '{ p: number; }'."),
+        "Expected TS2339 for missing constructor property. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        !has_error(&relevant, 18048),
+        "Did not expect TS18048 once the void-zero constructor property is skipped. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_callback_typedef_contextually_types_closure_parameters() {
     let source = r#"
 /** @callback Sid
