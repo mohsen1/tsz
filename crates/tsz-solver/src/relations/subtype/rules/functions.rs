@@ -250,7 +250,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         match self.interner.lookup(type_id) {
-            Some(TypeData::Array(_)) => 0,
             Some(TypeData::Tuple(elements_id)) => {
                 let elements = self.interner.tuple_list(elements_id);
                 self.tuple_min_required_args(&elements)

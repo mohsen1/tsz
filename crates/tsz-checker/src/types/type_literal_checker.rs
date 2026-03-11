@@ -987,13 +987,13 @@ impl<'a> CheckerState<'a> {
         for (name, accessor) in accessors {
             let getter_requires_ts2502 = accessor.getter.as_ref().is_some_and(|getter| {
                 getter.circular_self_reference
-                    && accessor.setter.as_ref().map_or(true, |setter| {
+                    && accessor.setter.as_ref().is_none_or(|setter| {
                         setter.type_annotation.is_none() || setter.circular_self_reference
                     })
             });
             let setter_requires_ts2502 = accessor.setter.as_ref().is_some_and(|setter| {
                 setter.circular_self_reference
-                    && accessor.getter.as_ref().map_or(true, |getter| {
+                    && accessor.getter.as_ref().is_none_or(|getter| {
                         getter.type_annotation.is_none() || getter.circular_self_reference
                     })
             });
