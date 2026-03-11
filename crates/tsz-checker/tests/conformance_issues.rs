@@ -1680,6 +1680,32 @@ var obj = {
 }
 
 #[test]
+fn test_jsdoc_object_literal_property_allows_undefined_when_annotation_includes_it() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+var obj = {
+  /** @type {string|undefined} */
+  foo: undefined,
+};
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 when a JSDoc property type already includes undefined. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",
@@ -1813,6 +1839,39 @@ const { a: objA, b: objB = objA } = objectFallback ?? {};
     assert!(
         !has_error(&diagnostics, 2739),
         "Did not expect TS2739 from destructuring fallback literals. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_property_errors_use_named_generic_type_display_for_element_access_receivers() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface A<T> { x: T; }
+interface B { m: string; }
+
+var x: any;
+var y = x as A<B>[];
+var z = y[0].m;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'm' does not exist on type 'A<B>'.")
+        }),
+        "Expected TS2339 to display the named generic type instead of Lazy(def) internals. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("Lazy(")),
+        "Did not expect Lazy(def) internals in TS2339 output. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

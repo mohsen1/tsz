@@ -828,10 +828,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
-        let mut formatter =
-            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
-                .with_namespace_module_names(&self.ctx.namespace_module_names)
-                .with_diagnostic_mode();
+        let mut formatter = self.ctx.create_diagnostic_type_formatter();
         formatter.format(ty).into_owned()
     }
 
