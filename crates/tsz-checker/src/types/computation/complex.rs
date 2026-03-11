@@ -1155,9 +1155,9 @@ impl<'a> CheckerState<'a> {
 
                 // TS7009: 'new' expression whose target lacks a construct signature
                 // implicitly has an 'any' type (only under noImplicitAny).
-                // Suppress in JS files: tsc treats functions that assign to `this`
-                // as JSDoc constructors (isJSConstructor) and doesn't emit TS7009.
-                if self.ctx.no_implicit_any() && !self.ctx.is_js_file() {
+                // In JS/checkJs, suppress only when we successfully recognized the
+                // target as a JS constructor via `this`-property synthesis above.
+                if self.ctx.no_implicit_any() {
                     self.error_at_node(
                         idx,
                         crate::diagnostics::diagnostic_messages::NEW_EXPRESSION_WHOSE_TARGET_LACKS_A_CONSTRUCT_SIGNATURE_IMPLICITLY_HAS_AN_ANY_TY,
