@@ -1,5 +1,6 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
+use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -457,6 +458,29 @@ impl<'a> CheckerState<'a> {
                             && base != TypeId::UNKNOWN
                             && base != type_arg
                         {
+                            let base_still_unresolved =
+                                query::contains_type_parameters(self.ctx.types, base);
+                            let defer_composite_check = if base_still_unresolved {
+                                if let Some((base_object, _)) = query::index_access_components(
+                                    self.ctx.types.as_type_database(),
+                                    base,
+                                ) {
+                                    let resolved_object =
+                                        self.evaluate_type_for_assignability(base_object);
+                                    common_query::is_mapped_type(self.ctx.types, resolved_object)
+                                        || query::is_bare_type_parameter(
+                                            self.ctx.types.as_type_database(),
+                                            base_object,
+                                        )
+                                } else {
+                                    true
+                                }
+                            } else {
+                                false
+                            };
+                            if defer_composite_check {
+                                continue;
+                            }
                             let constraint_resolved = self.resolve_lazy_type(constraint);
                             let mut subst = tsz_solver::TypeSubstitution::new();
                             for (j, p) in type_params.iter().enumerate() {
@@ -671,14 +695,30 @@ impl<'a> CheckerState<'a> {
             return self.evaluate_type_for_assignability(base);
         }
         if let Some((object_type, index_type)) = query::index_access_components(db, type_id) {
+            let constrained_object_type =
+                if query::is_bare_type_parameter(self.ctx.types.as_type_database(), object_type) {
+                    self.constraint_check_base_type(object_type)
+                } else {
+                    object_type
+                };
             let constrained_index_type = self.constraint_check_base_type(index_type);
-            if constrained_index_type == TypeId::UNKNOWN || constrained_index_type == index_type {
+            let resolved_object_type = if constrained_object_type == TypeId::UNKNOWN {
+                object_type
+            } else {
+                constrained_object_type
+            };
+            let resolved_index_type = if constrained_index_type == TypeId::UNKNOWN {
+                index_type
+            } else {
+                constrained_index_type
+            };
+            if resolved_object_type == object_type && resolved_index_type == index_type {
                 type_id
             } else {
                 let constrained_access = self
                     .ctx
                     .types
-                    .index_access(object_type, constrained_index_type);
+                    .index_access(resolved_object_type, resolved_index_type);
                 self.evaluate_type_for_assignability(constrained_access)
             }
         } else {
