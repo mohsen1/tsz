@@ -33,6 +33,31 @@ impl ParserState {
         count
     }
 
+    fn look_ahead_question_is_optional_parameter_marker(
+        &mut self,
+        previous_top_level_can_end_parameter_name: bool,
+    ) -> bool {
+        if !previous_top_level_can_end_parameter_name {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+
+        let is_optional_parameter = matches!(
+            self.token(),
+            SyntaxKind::ColonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::EqualsToken
+        );
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_optional_parameter
+    }
+
     // =========================================================================
     // Parse Methods - Expressions
     // =========================================================================
@@ -267,15 +292,17 @@ impl ParserState {
         let mut brace_depth: u32 = 0;
         let mut bracket_depth: u32 = 0;
         let mut saw_parameter_syntax = false;
-        let mut saw_top_level_initializer = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
+        let mut previous_top_level_can_end_parameter_name = false;
+        let mut previous_top_level_was_optional_parameter = false;
+        let mut saw_top_level_conditional_operator = false;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            if depth == 1
-                && brace_depth == 0
-                && bracket_depth == 0
+            let token = self.token();
+            let at_top_level = depth == 1 && brace_depth == 0 && bracket_depth == 0;
+            if at_top_level
                 && at_param_start
                 && !matches!(
-                    self.token(),
+                    token,
                     SyntaxKind::CloseParenToken
                         | SyntaxKind::AtToken
                         | SyntaxKind::DotDotDotToken
@@ -288,20 +315,28 @@ impl ParserState {
                 self.current_token = current;
                 return false;
             }
-            if depth == 1
-                && brace_depth == 0
-                && bracket_depth == 0
-                && matches!(
-                    self.token(),
-                    SyntaxKind::ColonToken | SyntaxKind::QuestionToken
-                )
+            let saw_optional_parameter_marker = at_top_level
+                && token == SyntaxKind::QuestionToken
+                && self.look_ahead_question_is_optional_parameter_marker(
+                    previous_top_level_can_end_parameter_name,
+                );
+
+            if at_top_level && token == SyntaxKind::QuestionToken && !saw_optional_parameter_marker
+            {
+                saw_top_level_conditional_operator = true;
+            }
+
+            if at_top_level
+                && (saw_optional_parameter_marker
+                    || (token == SyntaxKind::ColonToken
+                        && !saw_top_level_conditional_operator
+                        && (previous_top_level_can_end_parameter_name
+                            || previous_top_level_was_optional_parameter)))
             {
                 saw_parameter_syntax = true;
-                if self.is_token(SyntaxKind::EqualsToken) {
-                    saw_top_level_initializer = true;
-                }
             }
-            if self.is_token(SyntaxKind::OpenParenToken) {
+
+            if token == SyntaxKind::OpenParenToken {
                 // `(` at the start of a top-level parameter slot is not a valid
                 // parameter pattern. Reject early so the expression is NOT parsed
                 // as an arrow function (avoiding false TS1003 in parse_parameter).
@@ -312,22 +347,22 @@ impl ParserState {
                 }
                 depth += 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::OpenBraceToken) {
+            } else if token == SyntaxKind::OpenBraceToken {
                 brace_depth += 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CloseBraceToken) {
+            } else if token == SyntaxKind::CloseBraceToken {
                 brace_depth = brace_depth.saturating_sub(1);
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::OpenBracketToken) {
+            } else if token == SyntaxKind::OpenBracketToken {
                 bracket_depth += 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CloseBracketToken) {
+            } else if token == SyntaxKind::CloseBracketToken {
                 bracket_depth = bracket_depth.saturating_sub(1);
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CloseParenToken) {
+            } else if token == SyntaxKind::CloseParenToken {
                 depth -= 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CommaToken)
+            } else if token == SyntaxKind::CommaToken
                 && depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0
@@ -340,6 +375,17 @@ impl ParserState {
                 // means we've moved past the start of this parameter slot.
                 at_param_start = false;
             }
+
+            previous_top_level_can_end_parameter_name = depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
+                && ((self.is_identifier_or_keyword() && token != SyntaxKind::QuestionToken)
+                    || token == SyntaxKind::CloseBraceToken
+                    || token == SyntaxKind::CloseBracketToken);
+            previous_top_level_was_optional_parameter = depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
+                && saw_optional_parameter_marker;
             self.next_token();
         }
 
@@ -412,7 +458,6 @@ impl ParserState {
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
                 || (saw_parameter_syntax
-                    && !saw_top_level_initializer
                     && matches!(
                         self.token(),
                         SyntaxKind::SemicolonToken

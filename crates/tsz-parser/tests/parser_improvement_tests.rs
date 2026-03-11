@@ -169,6 +169,60 @@ class C {
 }
 
 #[test]
+fn test_parenthesized_conditional_expression_is_not_treated_as_missing_arrow() {
+    let source = r#"
+var x: boolean = (true ? 1 : "");
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.message.contains("';' expected"))),
+        "Parenthesized ternaries should not trigger typed-arrow recovery: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.message.contains("',' expected"))),
+        "Parenthesized ternaries should not trigger comma recovery from typed-arrow parsing: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_conditional_comma_expression_is_not_treated_as_missing_arrow() {
+    let source = r#"
+let xx: any;
+xx = (xx ? 3 : 4, 10);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Conditional comma expressions should parse without missing-arrow recovery: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_parenthesized_conditional_object_literal_true_branch_is_not_treated_as_missing_arrow() {
+    let source = r#"
+var value = (Math.random() ? {} : null);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Conditional branches with object literals should not trigger missing-arrow recovery: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_empty_element_access_reports_after_open_bracket() {
     let source = r#"
 class Z {
