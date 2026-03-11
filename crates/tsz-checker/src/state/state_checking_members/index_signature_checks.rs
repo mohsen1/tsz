@@ -859,57 +859,58 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
     ) -> Option<(TypeId, TypeId, bool)> {
         let member_node = self.ctx.arena.get(member_idx)?;
-        let (name_idx, value_type, is_static) = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-            let prop = self.ctx.arena.get_property_decl(member_node)?;
-            let is_static = self.has_static_modifier(&prop.modifiers);
-            let value_type = if let Some(declared_type) =
-                self.effective_class_property_declared_type(member_idx, prop)
-            {
-                declared_type
-            } else {
-                self.get_type_of_node(member_idx)
-            };
-            (prop.name, value_type, is_static)
-        } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-            let method = self.ctx.arena.get_method_decl(member_node)?;
-            (
-                method.name,
-                self.get_type_of_function(member_idx),
-                self.has_static_modifier(&method.modifiers),
-            )
-        } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-        {
-            let accessor = self.ctx.arena.get_accessor(member_node)?;
-            let value_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if accessor.type_annotation.is_some() {
-                    self.get_type_from_type_node(accessor.type_annotation)
-                } else {
-                    self.infer_getter_return_type(accessor.body)
-                }
-            } else {
-                let type_ann = accessor
-                    .parameters
-                    .nodes
-                    .first()
-                    .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                    .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                    .map(|param| param.type_annotation)
-                    .unwrap_or(NodeIndex::NONE);
-                if type_ann.is_some() {
-                    self.get_type_from_type_node(type_ann)
+        let (name_idx, value_type, is_static) =
+            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let prop = self.ctx.arena.get_property_decl(member_node)?;
+                let is_static = self.has_static_modifier(&prop.modifiers);
+                let value_type = if let Some(declared_type) =
+                    self.effective_class_property_declared_type(member_idx, prop)
+                {
+                    declared_type
                 } else {
                     self.get_type_of_node(member_idx)
-                }
+                };
+                (prop.name, value_type, is_static)
+            } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                let method = self.ctx.arena.get_method_decl(member_node)?;
+                (
+                    method.name,
+                    self.get_type_of_function(member_idx),
+                    self.has_static_modifier(&method.modifiers),
+                )
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                let accessor = self.ctx.arena.get_accessor(member_node)?;
+                let value_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    if accessor.type_annotation.is_some() {
+                        self.get_type_from_type_node(accessor.type_annotation)
+                    } else {
+                        self.infer_getter_return_type(accessor.body)
+                    }
+                } else {
+                    let type_ann = accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .map(|param| param.type_annotation)
+                        .unwrap_or(NodeIndex::NONE);
+                    if type_ann.is_some() {
+                        self.get_type_from_type_node(type_ann)
+                    } else {
+                        self.get_type_of_node(member_idx)
+                    }
+                };
+                (
+                    accessor.name,
+                    value_type,
+                    self.has_static_modifier(&accessor.modifiers),
+                )
+            } else {
+                return None;
             };
-            (
-                accessor.name,
-                value_type,
-                self.has_static_modifier(&accessor.modifiers),
-            )
-        } else {
-            return None;
-        };
 
         let name_node = self.ctx.arena.get(name_idx)?;
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
