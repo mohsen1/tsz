@@ -85,6 +85,189 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2341/TS2445: Check private/protected accessibility for properties
+    /// accessed in destructuring assignment patterns.
+    ///
+    /// In `{ o: target } = source`, property `o` is accessed on the source type
+    /// and must respect visibility modifiers. This walks the destructuring
+    /// pattern recursively and checks each property name against the source type.
+    fn check_destructuring_property_accessibility(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_type: TypeId,
+    ) {
+        if source_type == TypeId::ANY || source_type == TypeId::ERROR {
+            return;
+        }
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+
+        if pattern_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let Some(obj) = self.ctx.arena.get_literal_expr(pattern_node) else {
+                return;
+            };
+
+            for &elem_idx in &obj.elements.nodes {
+                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                    continue;
+                };
+
+                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                    // Property assignment: { name: target }
+                    if let Some(name) = self.get_property_name_resolved(prop.name) {
+                        self.check_property_accessibility(
+                            NodeIndex::NONE,
+                            &name,
+                            prop.name,
+                            source_type,
+                        );
+
+                        // Recurse into nested patterns: resolve property type from source
+                        if let Some(value_node) = self.ctx.arena.get(prop.initializer) {
+                            if value_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || value_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            {
+                                let prop_type = self
+                                    .resolve_property_type_for_destructuring(source_type, &name);
+                                if let Some(prop_type) = prop_type {
+                                    self.check_destructuring_property_accessibility(
+                                        prop.initializer,
+                                        prop_type,
+                                    );
+                                }
+                            } else if value_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                                // { name: pattern = default } — check the LHS of the assignment
+                                if let Some(bin) = self.ctx.arena.get_binary_expr(value_node)
+                                    && bin.operator_token == SyntaxKind::EqualsToken as u16
+                                {
+                                    if let Some(lhs_node) = self.ctx.arena.get(bin.left) {
+                                        if lhs_node.kind
+                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                            || lhs_node.kind
+                                                == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        {
+                                            let prop_type = self
+                                                .resolve_property_type_for_destructuring(
+                                                    source_type,
+                                                    &name,
+                                                );
+                                            if let Some(prop_type) = prop_type {
+                                                self.check_destructuring_property_accessibility(
+                                                    bin.left, prop_type,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    // Shorthand: { x } — property name is the identifier
+                    if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                        && let Some(name_node) = self.ctx.arena.get(shorthand.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        self.check_property_accessibility(
+                            NodeIndex::NONE,
+                            &ident.escaped_text,
+                            shorthand.name,
+                            source_type,
+                        );
+                    }
+                }
+            }
+        } else if pattern_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            // Array destructuring: recurse into elements with element types
+            let Some(array_lit) = self.ctx.arena.get_literal_expr(pattern_node) else {
+                return;
+            };
+
+            for (index, &elem_idx) in array_lit.elements.nodes.iter().enumerate() {
+                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                    continue;
+                };
+                if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                    continue;
+                }
+
+                // Get element type from the source array/tuple
+                let elem_type = self.resolve_element_type_for_destructuring(source_type, index);
+                let Some(elem_type) = elem_type else {
+                    continue;
+                };
+
+                // Handle spread elements
+                let target_idx = if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                    if let Some(spread) = self.ctx.arena.get_spread(elem_node) {
+                        spread.expression
+                    } else {
+                        continue;
+                    }
+                } else {
+                    elem_idx
+                };
+
+                if let Some(target_node) = self.ctx.arena.get(target_idx) {
+                    if target_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || target_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    {
+                        self.check_destructuring_property_accessibility(target_idx, elem_type);
+                    } else if target_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                        // element = default — check LHS
+                        if let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
+                            && bin.operator_token == SyntaxKind::EqualsToken as u16
+                        {
+                            if let Some(lhs_node) = self.ctx.arena.get(bin.left) {
+                                if lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                {
+                                    self.check_destructuring_property_accessibility(
+                                        bin.left, elem_type,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resolve the type of a property on an object type for destructuring checks.
+    fn resolve_property_type_for_destructuring(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use tsz_solver::operations::property::PropertyAccessResult;
+        match self.resolve_property_access_with_env(object_type, property_name) {
+            PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+            _ => None,
+        }
+    }
+
+    /// Resolve the element type at a given index from an array/tuple type.
+    fn resolve_element_type_for_destructuring(
+        &mut self,
+        source_type: TypeId,
+        index: usize,
+    ) -> Option<TypeId> {
+        // Try tuple element type first
+        if let Some(elems) =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, source_type)
+        {
+            if index < elems.len() {
+                return Some(elems[index].type_id);
+            }
+            return None;
+        }
+        // Fall back to array element type
+        tsz_solver::type_queries::get_array_element_type(self.ctx.types, source_type)
+    }
+
     // =========================================================================
     // Assignment Operator Utilities
     // =========================================================================
@@ -674,6 +857,7 @@ impl<'a> CheckerState<'a> {
 
             if is_destructuring {
                 self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
+                self.check_destructuring_property_accessibility(left_idx, right_type);
             }
 
             if check_assignability {
