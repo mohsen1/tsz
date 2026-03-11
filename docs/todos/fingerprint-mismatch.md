@@ -347,6 +347,18 @@ Example: deleteExpressionMustBeOptional.ts
   and removes false TS2351 from `ModuleAndClassWithSameNameAndCommonRoot` (still fails
   for other reasons).
 
+- ~~Cascading TS1128 false positives from orphaned `)` and `]` tokens~~ **FIXED** (2026-03-11)
+  Fix: Widened the `is_stray_close` detection in `parse_source_file_statements`
+  (`state_statements.rs`) to suppress TS1128 "Declaration or statement expected" for
+  `CloseParenToken` and `CloseBracketToken` whenever ANY prior parse error exists,
+  regardless of distance. These tokens can never start a valid statement, so after a
+  prior error they are always artifacts of bracket-mismatch recovery. Previously the
+  suppression required distance ≤ 3 characters from the last error, which was too
+  restrictive when the parser advanced past intermediate tokens before reaching the
+  orphaned close token. Fixes ~8 conformance tests including
+  `templateStringInFunctionParameterType`, `templateStringInFunctionParameterTypeES6`,
+  and several parser error recovery tests.
+
 - ~~Missing TS2300 for cross-file TYPE_ALIAS + INTERFACE conflicts~~ **FIXED** (2026-03-11)
   Fix: `can_merge_symbols_cross_file` in `parallel.rs` was missing the TYPE_ALIAS +
   INTERFACE merge case. When `type A = {}` in one file conflicts with `interface A {}`

@@ -6,7 +6,7 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, Visibility};
 impl<'a> CheckerState<'a> {
     pub(crate) fn commonjs_define_property_namespace_type(
         &mut self,
