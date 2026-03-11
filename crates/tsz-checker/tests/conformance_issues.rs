@@ -5226,6 +5226,39 @@ b({ callback: (x) => {} });
     );
 }
 
+#[test]
+fn test_optional_function_property_in_union_with_primitive_does_not_contextually_type_callback() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Validate = (text: string, pos: number, self: Rule) => number | boolean;
+interface FullRule {
+    validate: string | RegExp | Validate;
+    normalize?: (match: {x: string}) => void;
+}
+
+type Rule = string | FullRule;
+
+const obj: {field: Rule} = {
+    field: {
+        validate: (_t, _p, _s) => false,
+        normalize: match => match.x,
+    }
+};
+        "#,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 when optional callback property comes from a primitive-containing union.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // TS7022: Variable implicitly has type 'any' because it does not have a type annotation
 // and is referenced directly or indirectly in its own initializer.
 
