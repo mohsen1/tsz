@@ -210,7 +210,10 @@ impl<'a> CheckerState<'a> {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
                     if should_try_deferred_elaboration
                         && !self.should_suppress_weak_key_arg_mismatch(
-                            callee_expr, args, index, actual,
+                            callee_expr,
+                            args,
+                            index,
+                            actual,
                         )
                     {
                         elaborated = self.try_elaborate_object_literal_arg_error(arg_idx, expected);
@@ -237,10 +240,14 @@ impl<'a> CheckerState<'a> {
                     let last_arg = args[args.len() - 1];
                     if should_try_deferred_elaboration
                         && !self.should_suppress_weak_key_arg_mismatch(
-                            callee_expr, args, index, actual,
+                            callee_expr,
+                            args,
+                            index,
+                            actual,
                         )
                     {
-                        elaborated = self.try_elaborate_object_literal_arg_error(last_arg, expected);
+                        elaborated =
+                            self.try_elaborate_object_literal_arg_error(last_arg, expected);
                     }
                     if !elaborated
                         && self.should_defer_contextual_argument_mismatch(actual, expected)

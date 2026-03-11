@@ -477,7 +477,10 @@ export const clientSlice = createSlice({
 "#;
 
     let diagnostics = check_default(source);
-    let overload_errors: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 2769).collect();
+    let overload_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2769)
+        .collect();
 
     assert!(
         overload_errors.is_empty(),

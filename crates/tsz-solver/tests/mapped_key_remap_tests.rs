@@ -341,8 +341,14 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
 
     let names =
         collect_finite_mapped_property_names(&interner, mapped_id).expect("expected finite keys");
-    assert!(names.contains(&a_name), "expected A in finite keys, got {names:?}");
-    assert!(names.contains(&b_name), "expected B in finite keys, got {names:?}");
+    assert!(
+        names.contains(&a_name),
+        "expected A in finite keys, got {names:?}"
+    );
+    assert!(
+        names.contains(&b_name),
+        "expected B in finite keys, got {names:?}"
+    );
 
     let a_type =
         get_finite_mapped_property_type(&interner, mapped_id, "A").expect("expected A property");
@@ -352,15 +358,19 @@ fn test_finite_mapped_property_type_resolves_infer_conditional_keys() {
         .into_iter()
         .find(|&member| member != TypeId::UNDEFINED)
         .expect("expected callable member");
-    let TypeData::Function(shape_id) =
-        interner.lookup(function_type).expect("expected function type")
+    let TypeData::Function(shape_id) = interner
+        .lookup(function_type)
+        .expect("expected function type")
     else {
-        panic!("expected function type, got {:?}", interner.lookup(function_type));
+        panic!(
+            "expected function type, got {:?}",
+            interner.lookup(function_type)
+        );
     };
     let param_type = interner.function_shape(shape_id).params[0].type_id;
     let param_type = evaluate_type(&interner, param_type);
-    let members =
-        crate::type_queries::get_union_members(&interner, param_type).unwrap_or_else(|| vec![param_type]);
+    let members = crate::type_queries::get_union_members(&interner, param_type)
+        .unwrap_or_else(|| vec![param_type]);
     assert_eq!(members, vec![a_value]);
 }
 

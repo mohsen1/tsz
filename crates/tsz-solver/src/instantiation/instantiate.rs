@@ -406,8 +406,10 @@ impl<'a> TypeInstantiator<'a> {
         let type_params = self.instantiate_type_params(&sig.type_params);
         let local_start = self.local_type_params.len();
         for type_param in &type_params {
-            self.local_type_params
-                .push((type_param.name, self.interner.type_param(type_param.clone())));
+            self.local_type_params.push((
+                type_param.name,
+                self.interner.type_param(type_param.clone()),
+            ));
         }
         let type_predicate = sig
             .type_predicate
@@ -594,8 +596,10 @@ impl<'a> TypeInstantiator<'a> {
                 let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
                 let local_start = self.local_type_params.len();
                 for type_param in &instantiated_type_params {
-                    self.local_type_params
-                        .push((type_param.name, self.interner.type_param(type_param.clone())));
+                    self.local_type_params.push((
+                        type_param.name,
+                        self.interner.type_param(type_param.clone()),
+                    ));
                 }
                 let type_predicate = shape
                     .type_predicate
