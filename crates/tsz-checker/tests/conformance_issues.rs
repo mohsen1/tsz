@@ -7782,6 +7782,58 @@ class Derived2 extends Base<{ bar: string; }> {
     );
 }
 
+#[test]
+fn test_ts2416_uses_derived_constraint_not_shadowed_base_type_param() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Foo { foo: number = 1; }
+class Base<T> { foo: T; }
+class Derived<T extends Foo> extends Base<Foo> {
+    [x: string]: Foo;
+    foo: T;
+}
+        "#,
+    );
+
+    let ts2416_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2416_messages.is_empty(),
+        "Derived constrained type parameter should remain in scope during override checks.\nActual TS2416 diagnostics: {ts2416_messages:?}"
+    );
+}
+
+#[test]
+fn test_ts2416_respects_transitive_class_type_parameter_constraints() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class C3<T> { foo: T; }
+class D7<T extends U, U extends V, V> extends C3<V> {
+    [x: string]: V;
+    foo: T;
+}
+class D14<T extends U, U extends V, V extends Date> extends C3<Date> {
+    [x: string]: Date;
+    foo: T;
+}
+        "#,
+    );
+
+    let ts2411_or_ts2416: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2411 | 2416))
+        .collect();
+
+    assert!(
+        ts2411_or_ts2416.is_empty(),
+        "Transitive type-parameter constraints should satisfy inherited property and index-signature checks.\nActual diagnostics: {ts2411_or_ts2416:?}"
+    );
+}
+
 /// Verify that private name access works correctly for instance members accessed
 /// via parameters typed as the same class (e.g., `a.#x` where `a: A` inside class A).
 ///

@@ -1229,112 +1229,132 @@ impl<'a> CheckerState<'a> {
             param_indices.push(param_idx);
         }
 
-        // Second pass: Now resolve constraints and defaults with all type parameters in scope
-        for &param_idx in &param_indices {
-            let Some(node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
-                continue;
-            };
+        // Second pass: iteratively refine constraints/defaults against the evolving scope.
+        // A single forward pass leaves transitive chains like `T extends U, U extends V`
+        // pointing at the original unconstrained placeholders. Re-resolving until the
+        // scope stabilizes preserves the full local constraint graph.
+        let max_refinement_passes = param_indices.len().max(1);
+        for _ in 0..max_refinement_passes {
+            let mut changed = false;
+            let mut next_params = Vec::with_capacity(param_indices.len());
 
-            let name = self
-                .ctx
-                .arena
-                .get(data.name)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
-            let atom = self.ctx.types.intern_string(&name);
+            for &param_idx in &param_indices {
+                let Some(node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                    continue;
+                };
 
-            let constraint = if data.constraint != NodeIndex::NONE {
-                // Check for circular constraint: T extends T
-                // First get the constraint type ID
-                let constraint_type = self.get_type_from_type_node(data.constraint);
+                let name = self
+                    .ctx
+                    .arena
+                    .get(data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                let atom = self.ctx.types.intern_string(&name);
 
-                // Check if the constraint references the same type parameter
-                let is_circular =
-                    if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
-                        // Check if constraint_type is the same as the type parameter
-                        // or if it's a TypeReference that resolves to this type parameter
-                        self.is_same_type_parameter(constraint_type, param_type_id, &name)
+                let constraint = if data.constraint != NodeIndex::NONE {
+                    let constraint_type = self.get_type_from_type_node(data.constraint);
+                    let is_circular =
+                        if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
+                            self.is_same_type_parameter(constraint_type, param_type_id, &name)
+                        } else {
+                            false
+                        };
+
+                    if is_circular {
+                        self.error_at_node_msg(
+                            data.constraint,
+                            crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_CONSTRAINT,
+                            &[&name],
+                        );
+                        Some(TypeId::UNKNOWN)
                     } else {
-                        false
-                    };
-
-                if is_circular {
-                    // TS2313: Type parameter 'T' has a circular constraint
-                    self.error_at_node_msg(
-                        data.constraint,
-                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_CONSTRAINT,
-                        &[&name],
-                    );
-                    Some(TypeId::UNKNOWN)
+                        Some(constraint_type)
+                    }
                 } else {
-                    // Note: Even if constraint_type is ERROR, we don't emit an error here
-                    // because the error for the unresolved type was already emitted by get_type_from_type_node.
-                    // This prevents duplicate error messages.
-                    Some(constraint_type)
-                }
-            } else {
-                None
-            };
-
-            let default = if data.default != NodeIndex::NONE {
-                let default_type = self.get_type_from_type_node(data.default);
-                // Validate that default satisfies constraint if present
-                if let Some(constraint_type) = constraint
-                    && default_type != TypeId::ERROR
-                    && !crate::query_boundaries::checkers::generic::contains_type_parameters(
-                        self.ctx.types,
-                        constraint_type,
-                    )
-                    && !crate::query_boundaries::checkers::generic::contains_type_parameters(
-                        self.ctx.types,
-                        default_type,
-                    )
-                    && !self.is_assignable_to(default_type, constraint_type)
-                {
-                    let type_str = self.format_type(default_type);
-                    let constraint_str = self.format_type(constraint_type);
-                    self.error_at_node_msg(
-                        data.default,
-                        crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-                        &[&type_str, &constraint_str],
-                    );
-                }
-                if default_type == TypeId::ERROR {
                     None
+                };
+
+                let default = if data.default != NodeIndex::NONE {
+                    let default_type = self.get_type_from_type_node(data.default);
+                    (default_type != TypeId::ERROR).then_some(default_type)
                 } else {
-                    Some(default_type)
+                    None
+                };
+
+                let is_const = self
+                    .ctx
+                    .arena
+                    .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+                let info = tsz_solver::TypeParamInfo {
+                    name: atom,
+                    constraint,
+                    default,
+                    is_const,
+                };
+
+                let constrained_type_id = factory.type_param(info.clone());
+                if self.ctx.type_parameter_scope.get(&name).copied() != Some(constrained_type_id) {
+                    self.ctx
+                        .type_parameter_scope
+                        .insert(name.clone(), constrained_type_id);
+                    changed = true;
                 }
-            } else {
-                None
-            };
+                next_params.push(info);
+            }
 
-            let is_const = self
-                .ctx
-                .arena
-                .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
-            let info = tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default,
-                is_const,
-            };
-            params.push(info.clone());
-
-            // UPDATE: Create a new TypeParameter with constraints and update the scope
-            // This ensures that when function parameters reference these type parameters,
-            // they get the constrained version, not the unconstrained placeholder
-            let constrained_type_id = factory.type_param(info);
-            self.ctx
-                .type_parameter_scope
-                .insert(name.clone(), constrained_type_id);
+            params = next_params;
+            if !changed {
+                break;
+            }
         }
 
         // Third pass: Detect indirect circular constraints (e.g., T extends U, U extends T)
         // Build a constraint graph among type parameters in this list and detect cycles.
         self.check_indirect_circular_constraints(&params, &param_indices);
+
+        // Validate defaults against the stabilized constraints.
+        for (&param_idx, param) in param_indices.iter().zip(params.iter()) {
+            let Some(default_type) = param.default else {
+                continue;
+            };
+            let Some(constraint_type) = param.constraint else {
+                continue;
+            };
+            let constraint_has_type_params =
+                crate::query_boundaries::checkers::generic::contains_type_parameters(
+                    self.ctx.types,
+                    constraint_type,
+                );
+            let default_has_type_params =
+                crate::query_boundaries::checkers::generic::contains_type_parameters(
+                    self.ctx.types,
+                    default_type,
+                );
+            if constraint_has_type_params
+                || default_has_type_params
+                || !self.is_assignable_to(default_type, constraint_type)
+            {
+                if constraint_has_type_params || default_has_type_params {
+                    continue;
+                }
+                let Some(node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                    continue;
+                };
+                let type_str = self.format_type(default_type);
+                let constraint_str = self.format_type(constraint_type);
+                self.error_at_node_msg(
+                    data.default,
+                    crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                    &[&type_str, &constraint_str],
+                );
+            }
+        }
 
         self.ctx.leave_recursion();
         (params, updates)
