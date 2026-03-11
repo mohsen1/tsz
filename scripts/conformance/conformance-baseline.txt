@@ -5,7 +5,6 @@ FAIL TypeScript/tests/cases/compiler/arrayCast.ts | expected:[TS2352] actual:[TS
 FAIL TypeScript/tests/cases/compiler/arrayFrom.ts | expected:[TS2322] actual:[TS2322,TS2769]
 FAIL TypeScript/tests/cases/compiler/arrowExpressionBodyJSDoc.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/arrowFunctionsMissingTokens.ts | expected:[TS1005,TS1109,TS1128] actual:[TS1005,TS1109,TS1128]
-FAIL TypeScript/tests/cases/compiler/assertionFunctionWildcardImport1.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/assignmentCompat1.ts | expected:[TS2322,TS2741] actual:[TS2322,TS2741]
 FAIL TypeScript/tests/cases/compiler/assignmentCompatBug2.ts | expected:[TS2353,TS2741] actual:[TS2353,TS2741]
 FAIL TypeScript/tests/cases/compiler/assignmentToAnyArrayRestParameters.ts | expected:[TS2339,TS2536] actual:[TS2536]
@@ -58,7 +57,6 @@ FAIL TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[
 FAIL TypeScript/tests/cases/compiler/complicatedGenericRecursiveBaseClassReference.ts | expected:[TS2339,TS2506,TS2554] actual:[TS2339,TS2506,TS2554]
 FAIL TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts | expected:[TS2322] actual:[TS2322,TS2339,TS2345]
 FAIL TypeScript/tests/cases/compiler/complicatedIndexesOfIntersectionsAreInferencable.ts | expected:[] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/computedEnumMemberSyntacticallyString.ts | expected:[TS5024,TS18033] actual:[TS5024,TS18033,TS18055]
 FAIL TypeScript/tests/cases/compiler/computedEnumMemberSyntacticallyString2.ts | expected:[TS5024,TS18033] actual:[TS5024,TS18033,TS18055]
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts | expected:[TS2339,TS2349,TS2365,TS2537,TS2538] actual:[TS2339,TS2349,TS2365,TS2537,TS2538]
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1_ES6.ts | expected:[TS2339,TS2349,TS2365,TS2537,TS2538] actual:[TS2339,TS2349,TS2365,TS2537,TS2538]
@@ -184,7 +182,6 @@ FAIL TypeScript/tests/cases/compiler/divergentAccessorsTypes2.ts | expected:[TS2
 FAIL TypeScript/tests/cases/compiler/divergentAccessorsTypes6.ts | expected:[TS2322,TS2344] actual:[TS2322,TS2344]
 FAIL TypeScript/tests/cases/compiler/divergentAccessorsTypes8.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/divergentAccessorsVisibility1.ts | expected:[TS2341,TS2445,TS2808] actual:[TS2445,TS2808]
-FAIL TypeScript/tests/cases/compiler/divideAndConquerIntersections.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/doNotWidenAtObjectLiteralPropertyAssignment.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/dontShowCompilerGeneratedMembers.ts | expected:[TS1109,TS1139] actual:[TS1003]
 FAIL TypeScript/tests/cases/compiler/duplicateErrorNameNotFound.ts | expected:[TS2552] actual:[TS2304]
@@ -567,7 +564,7 @@ FAIL TypeScript/tests/cases/compiler/mappedTypeAsStringTemplate.ts | expected:[T
 FAIL TypeScript/tests/cases/compiler/mappedTypeGenericIndexedAccess.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/compiler/mappedTypeGenericWithKnownKeys.ts | expected:[TS2551,TS2862] actual:[]
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccess.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccessConstraint.ts | expected:[TS2532,TS2722,TS18048] actual:[TS2349,TS2739]
+FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccessConstraint.ts | expected:[TS2532,TS2722,TS18048] actual:[TS2345,TS2739]
 FAIL TypeScript/tests/cases/compiler/mappedTypeNotMistakenlyHomomorphic.ts | expected:[TS2741] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts | expected:[TS2345] actual:[TS18046]
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference2.ts | expected:[] actual:[TS7006]
@@ -603,7 +600,6 @@ FAIL TypeScript/tests/cases/compiler/moduleAsBaseType.ts | expected:[TS2708,TS27
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDeclarationEmit1.ts | expected:[TS2454] actual:[TS2339,TS2454,TS7006]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDeclarationEmit2.ts | expected:[TS2454] actual:[TS2339,TS2454,TS7006]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexport.ts | expected:[] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceEnumMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule1.ts | expected:[TS2454] actual:[TS2339,TS2454,TS7006]
@@ -1826,6 +1822,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAndUnionT
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTypeSource.ts | expected:[TS2559,TS2739] actual:[TS2559,TS2739]
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts | expected:[TS2322,TS2741] actual:[TS2322,TS2741]
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts | expected:[] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts | expected:[TS2322,TS2339] actual:[TS2322,TS7053]
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts | expected:[TS2313,TS2502,TS2536,TS2564,TS2589] actual:[TS2564]
@@ -2022,7 +2019,7 @@ FAIL TypeScript/tests/cases/conformance/types/union/unionTypeWithIndexSignature.
 FAIL TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbolsPropertyNames.ts | expected:[TS1117,TS1166,TS2300] actual:[TS1117,TS1166]
 FAIL TypeScript/tests/cases/conformance/types/unknown/unknownControlFlow.ts | expected:[TS2322,TS2345,TS2367,TS2536] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/conformance/types/unknown/unknownType1.ts | expected:[TS2322,TS2355,TS2564,TS2698,TS2700,TS18046] actual:[TS2322,TS2564,TS2698,TS18046]
-FAIL TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts | expected:[TS2322] actual:[TS2322,TS2344]
+FAIL TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/typings/typingsLookup1.ts | expected:[TS5024] actual:[]
 FAIL TypeScript/tests/cases/conformance/typings/typingsLookup3.ts | expected:[TS2688,TS5024] actual:[]
 FAIL TypeScript/tests/cases/projects/NestedLocalModule-SimpleCase/test1.ts | expected:[TS1147] actual:[TS1147,TS2307]
@@ -2315,6 +2312,7 @@ PASS TypeScript/tests/cases/compiler/asiInES6Classes.ts
 PASS TypeScript/tests/cases/compiler/asiPublicPrivateProtected.ts
 PASS TypeScript/tests/cases/compiler/asiReturn.ts
 PASS TypeScript/tests/cases/compiler/assertInWrapSomeTypeParameter.ts
+PASS TypeScript/tests/cases/compiler/assertionFunctionWildcardImport1.ts
 PASS TypeScript/tests/cases/compiler/assertionFunctionWildcardImport2.ts
 PASS TypeScript/tests/cases/compiler/assertionFunctionsCanNarrowByDiscriminant.ts
 PASS TypeScript/tests/cases/compiler/assign1.ts
@@ -3002,6 +3000,7 @@ PASS TypeScript/tests/cases/compiler/compositeContextualSignature.ts
 PASS TypeScript/tests/cases/compiler/compositeGenericFunction.ts
 PASS TypeScript/tests/cases/compiler/compositeWithNodeModulesSourceFile.ts
 PASS TypeScript/tests/cases/compiler/compoundVarDecl1.ts
+PASS TypeScript/tests/cases/compiler/computedEnumMemberSyntacticallyString.ts
 PASS TypeScript/tests/cases/compiler/computedEnumTypeWidening.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring2.ts
 PASS TypeScript/tests/cases/compiler/computedPropertiesInDestructuring2_ES6.ts
@@ -3801,6 +3800,7 @@ PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes3.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes4.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes5.ts
 PASS TypeScript/tests/cases/compiler/divergentAccessorsTypes7.ts
+PASS TypeScript/tests/cases/compiler/divideAndConquerIntersections.ts
 PASS TypeScript/tests/cases/compiler/doNotElaborateAssignabilityToTypeParameters.ts
 PASS TypeScript/tests/cases/compiler/doNotEmitDetachedComments.ts
 PASS TypeScript/tests/cases/compiler/doNotEmitDetachedCommentsAtStartOfConstructor.ts
@@ -5579,6 +5579,7 @@ PASS TypeScript/tests/cases/compiler/moduleAssignmentCompat3.ts
 PASS TypeScript/tests/cases/compiler/moduleAssignmentCompat4.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationCollidingNamesInAugmentation1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDisallowedExtensions.ts
+PASS TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceEnumMergeOfReexport.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationDuringSyntheticDefaultCheck.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal2.ts
@@ -11752,7 +11753,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
