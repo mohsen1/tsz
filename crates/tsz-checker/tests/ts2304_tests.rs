@@ -131,6 +131,55 @@ fn check_with_lib(source: &str) -> Vec<Diagnostic> {
     checker.ctx.diagnostics.clone()
 }
 
+fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&lib_contexts);
+    }
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        check_js: true,
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| CheckerLibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
+
 #[test]
 fn test_ts2304_emitted_for_undefined_name() {
     let diagnostics = check_without_lib(r#"const x = undefinedName;"#);
@@ -188,6 +237,22 @@ interface RpcGroup<in out R extends RpcAny> {
     assert!(
         ts2304_errors.is_empty(),
         "Expected no TS2304 for outer interface type parameter captured by method constraint, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2304_not_emitted_for_js_prototype_assignment_root() {
+    let diagnostics = check_js_without_lib(
+        r#"
+C.prototype = {};
+C.prototype.bar.foo = {};
+"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        ts2304_errors.is_empty(),
+        "Expected no TS2304 for JS prototype assignment root, got: {diagnostics:?}"
     );
 }
 
