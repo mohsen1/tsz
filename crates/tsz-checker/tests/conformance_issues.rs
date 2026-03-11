@@ -3949,6 +3949,57 @@ class Derived extends Base {
     );
 }
 
+#[test]
+fn test_class_implements_class_instance_members_report_ts2416() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    n: Base | string;
+    fn() {
+        return 10;
+    }
+}
+
+class DerivedInterface implements Base {
+    n: DerivedInterface | string;
+    fn() {
+        return 10 as number | string;
+    }
+}
+        ",
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318 && *code != 2564)
+        .cloned()
+        .collect();
+
+    let ts2416_messages: Vec<_> = relevant_diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .map(|(_, message)| message.clone())
+        .collect();
+
+    assert_eq!(
+        ts2416_messages.len(),
+        2,
+        "Expected TS2416 for both incompatible implemented class members.\nActual errors: {relevant_diagnostics:#?}"
+    );
+    assert!(
+        ts2416_messages
+            .iter()
+            .any(|message| message.contains("Property 'n'")),
+        "Expected TS2416 for property 'n'. Actual TS2416 diagnostics: {ts2416_messages:#?}"
+    );
+    assert!(
+        ts2416_messages
+            .iter()
+            .any(|message| message.contains("Property 'fn'")),
+        "Expected TS2416 for method 'fn'. Actual TS2416 diagnostics: {ts2416_messages:#?}"
+    );
+}
+
 /// Seam test: TS2430 should be reported for incompatible interface member types.
 ///
 /// Guards `class_checker` interface-extension compatibility after relation-helper refactors.
