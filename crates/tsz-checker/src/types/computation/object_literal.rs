@@ -11,6 +11,68 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn union_with_non_nullish_non_object_member(&mut self, type_id: TypeId, depth: usize) -> bool {
+        use crate::query_boundaries::assignability::ExcessPropertiesKind;
+
+        if depth == 0 {
+            return false;
+        }
+
+        let evaluated_type = self.evaluate_type_with_env(type_id);
+        let evaluated_type = self.resolve_type_for_property_access(evaluated_type);
+        let evaluated_type = self.resolve_lazy_type(evaluated_type);
+        let evaluated_type = self.evaluate_application_type(evaluated_type);
+
+        if self.ctx.types.is_nullish_type(evaluated_type) {
+            return false;
+        }
+
+        match crate::query_boundaries::assignability::classify_for_excess_properties(
+            self.ctx.types,
+            evaluated_type,
+        ) {
+            ExcessPropertiesKind::Object(_) | ExcessPropertiesKind::ObjectWithIndex(_) => false,
+            ExcessPropertiesKind::Union(members) => members
+                .iter()
+                .copied()
+                .any(|member| self.union_with_non_nullish_non_object_member(member, depth - 1)),
+            ExcessPropertiesKind::Intersection(members) => members
+                .iter()
+                .copied()
+                .any(|member| self.union_with_non_nullish_non_object_member(member, depth - 1)),
+            ExcessPropertiesKind::NotObject => true,
+        }
+    }
+
+    fn should_defer_optional_function_property_context(
+        &mut self,
+        contextual_type: Option<TypeId>,
+        property_context_type: Option<TypeId>,
+        initializer_idx: NodeIndex,
+    ) -> bool {
+        let Some(contextual_type) = contextual_type else {
+            return false;
+        };
+        let Some(property_context_type) = property_context_type else {
+            return false;
+        };
+        let Some(initializer_node) = self.ctx.arena.get(initializer_idx) else {
+            return false;
+        };
+
+        if initializer_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && initializer_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+
+        if !tsz_solver::type_contains_undefined(self.ctx.types, property_context_type) {
+            return false;
+        }
+
+        self.union_with_non_nullish_non_object_member(contextual_type, 6)
+    }
+
     fn contextual_property_presence(
         &mut self,
         type_id: TypeId,
@@ -633,6 +695,14 @@ impl<'a> CheckerState<'a> {
 
                 let name_opt = self.get_property_name_resolved(prop.name);
                 if let Some(name) = name_opt.clone() {
+                    // JSDoc @type on object literal properties acts as the declared
+                    // type for the property. When present:
+                    // - The property type in the resulting object is the @type type
+                    // - The initializer is checked for assignability against it
+                    // - The @type type is used as contextual type so literals are preserved
+                    // This matches tsc behavior for JS files with checkJs/ts-check.
+                    let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
+
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
@@ -643,14 +713,16 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-
-                    // JSDoc @type on object literal properties acts as the declared
-                    // type for the property. When present:
-                    // - The property type in the resulting object is the @type type
-                    // - The initializer is checked for assignability against it
-                    // - The @type type is used as contextual type so literals are preserved
-                    // This matches tsc behavior for JS files with checkJs/ts-check.
-                    let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
+                    let property_context_type = if jsdoc_declared_type.is_none()
+                        && self.should_defer_optional_function_property_context(
+                            self.ctx.contextual_type,
+                            property_context_type,
+                            prop.initializer,
+                        ) {
+                        None
+                    } else {
+                        property_context_type
+                    };
 
                     // Set contextual type for property value.
                     // When a JSDoc @type is present, use it as the contextual type
