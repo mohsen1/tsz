@@ -10481,3 +10481,47 @@ export function withInstall<C extends Component, T extends WithInstallPlugin>(
         "Did not expect TS2322 inside a plain `as T` assertion operand.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_narrowing_by_typeof_switch_chunk_matches_real_file() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function assertNever(x: never): never;
+type L = (x: number) => string;
+type R = { x: string, y: number };
+
+function multipleGeneric<X extends L, Y extends R>(xy: X | Y): [X, string] | [Y, number] {
+    switch (typeof xy) {
+        case 'function': return [xy, xy(42)];
+        case 'object': return [xy, xy.y];
+        default: return assertNever(xy);
+    }
+}
+
+function multipleGenericFuse<X extends L | number, Y extends R | number>(xy: X | Y): [X, number] | [Y, string] | [(X | Y)] {
+    switch (typeof xy) {
+        case 'function': return [xy, 1];
+        case 'object': return [xy, 'two'];
+        case 'number': return [xy];
+    }
+}
+
+function multipleGenericExhaustive<X extends L, Y extends R>(xy: X | Y): [X, string] | [Y, number] {
+    switch (typeof xy) {
+        case 'object': return [xy, xy.y];
+        case 'function': return [xy, xy(42)];
+    }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Did not expect diagnostics for the narrowingByTypeofInSwitch generic chunk.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

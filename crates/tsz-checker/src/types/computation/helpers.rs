@@ -66,6 +66,29 @@ impl<'a> CheckerState<'a> {
         applicable_shapes.len() > 1
     }
 
+    fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        else {
+            return false;
+        };
+
+        let mut saw_tuple = false;
+        for member in members {
+            let Some(applicable) =
+                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
+            else {
+                return false;
+            };
+
+            if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
+                return false;
+            }
+            saw_tuple = true;
+        }
+
+        saw_tuple
+    }
+
     // =========================================================================
     pub(crate) fn is_identifier_reference_to_global_nan(&self, node_idx: NodeIndex) -> bool {
         let mut current_idx = node_idx;
@@ -474,6 +497,12 @@ impl<'a> CheckerState<'a> {
                 )
             });
 
+        let force_tuple_for_union_context = tuple_context.is_none()
+            && !force_tuple_for_mapped
+            && resolved_contextual_type.is_some_and(|resolved| {
+                self.union_context_for_array_literal_prefers_tuple(resolved)
+            });
+
         // When a type parameter constraint is a union containing a tuple member
         // (the `T extends readonly unknown[] | []` pattern), force tuple inference.
         // The `| []` is a deliberate hint in TypeScript to infer tuple types from
@@ -675,13 +704,20 @@ impl<'a> CheckerState<'a> {
                     optional,
                     rest: false,
                 });
+            } else if force_tuple_for_union_context {
+                tuple_elements.push(TupleElement {
+                    type_id: elem_type,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                });
             } else {
                 element_types.push(elem_type);
                 element_nodes.push(elem_idx);
             }
         }
 
-        if tuple_context.is_some() {
+        if tuple_context.is_some() || force_tuple_for_union_context {
             return factory.tuple(tuple_elements);
         }
 

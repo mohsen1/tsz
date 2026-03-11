@@ -129,16 +129,24 @@ impl<'a> NarrowingContext<'a> {
 
         // Check type data for structural types
         if let Some(data) = self.db.lookup(type_id) {
-            // Object, intersection, mapped, tuple, array: typeof === "object"
-            matches!(
-                data,
+            match data {
+                TypeData::Intersection(list_id) => {
+                    let members = self.db.type_list(list_id);
+                    // Intersections like `L & { tag: string }` are still functions at runtime
+                    // when any member contributes call signatures, so `typeof` is "function",
+                    // not "object".
+                    !members
+                        .iter()
+                        .copied()
+                        .any(|member| crate::type_queries::is_invokable_type(self.db, member))
+                }
                 TypeData::Object(_)
-                    | TypeData::ObjectWithIndex(_)
-                    | TypeData::Intersection(_)
-                    | TypeData::Mapped(_)
-                    | TypeData::Tuple(_)
-                    | TypeData::Array(_)
-            )
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Mapped(_)
+                | TypeData::Tuple(_)
+                | TypeData::Array(_) => true,
+                _ => false,
+            }
         } else {
             false
         }
