@@ -9479,6 +9479,30 @@ test4({
 }
 
 #[test]
+fn test_async_generator_type_references_preserve_all_type_params() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type T = AsyncGenerator<string, number, unknown>;
+declare const g: <T, U, V>() => AsyncGenerator<T, U, V>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2314),
+        "AsyncGenerator should retain its 3-parameter lib arity.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+
+#[test]
 fn test_isolated_declarations_reports_computed_object_literal_exports() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
