@@ -209,12 +209,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // Check if JSDoc provides a @param type for this parameter,
                 // or if the parameter has an inline /** @type {T} */ annotation,
                 // or if the function has a @type tag declaring its full type.
+                let has_callable_jsdoc_type = func_decl_jsdoc.as_ref().is_some_and(|jsdoc| {
+                    Self::jsdoc_type_tag_declares_callable(jsdoc)
+                        || self
+                            .jsdoc_type_annotation_for_node(func_idx)
+                            .is_some_and(|ty| {
+                                tsz_solver::type_queries::is_callable_type(self.ctx.types, ty)
+                            })
+                });
                 let has_jsdoc_param = if param.type_annotation.is_none() {
                     let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
                         let pname =
                             self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
                         Self::jsdoc_has_param_type(jsdoc, &pname)
-                            || Self::jsdoc_type_tag_declares_callable(jsdoc)
+                            || has_callable_jsdoc_type
                             || self.ctx.arena.get(param.name).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                                     || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN

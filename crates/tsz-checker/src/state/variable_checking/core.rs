@@ -626,6 +626,10 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .is_some_and(|jsdoc| {
                                 !CheckerState::jsdoc_type_tag_declares_callable(jsdoc)
+                                    && !tsz_solver::type_queries::is_callable_type(
+                                        checker.ctx.types,
+                                        evaluated_type,
+                                    )
                             });
                     if evaluated_type != TypeId::ANY && !jsdoc_blocks_callable_context {
                         checker.ctx.contextual_type = Some(evaluated_type);

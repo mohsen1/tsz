@@ -189,11 +189,8 @@ impl<'a> CheckerState<'a> {
         } else if self.is_js_file() && is_function_declaration {
             // For function declarations in JS files with @type {FunctionType},
             // use the function type as contextual type for parameter typing.
-            if self
-                .get_jsdoc_for_function(idx)
-                .as_ref()
-                .is_some_and(|jsdoc| Self::jsdoc_type_tag_declares_callable(jsdoc))
-                && let Some(func_type) = self.jsdoc_type_annotation_for_node(idx)
+            if let Some(func_type) = self.jsdoc_type_annotation_for_node(idx)
+                && tsz_solver::type_queries::is_callable_type(self.ctx.types, func_type)
             {
                 let evaluated_type = self.evaluate_contextual_type(func_type);
                 contextual_signature_type_params =
