@@ -1194,7 +1194,22 @@ impl<'a> CheckerState<'a> {
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
             {
-                let expected_return_type = expected_expression_return_type.unwrap();
+                let raw_expected_return_type = expected_expression_return_type.unwrap();
+                let expected_return_type = if self
+                    .ctx
+                    .types
+                    .lookup(raw_expected_return_type)
+                    .is_some_and(|data| matches!(data, tsz_solver::types::TypeData::IndexAccess(_, _)))
+                {
+                    let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
+                    if evaluated != TypeId::ERROR {
+                        evaluated
+                    } else {
+                        raw_expected_return_type
+                    }
+                } else {
+                    raw_expected_return_type
+                };
                 if expected_return_type != TypeId::ANY
                     && !self.type_contains_error(expected_return_type)
                 {

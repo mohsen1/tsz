@@ -10094,3 +10094,31 @@ function bar<T extends string[], K extends number>() {
         "Expected exactly one TS2536 for generic T[\"0.0\"], and no TS2536 for K | \"0\" unions.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_contextual_computed_non_bindable_property_type_mapped_callback_literal_return() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Original = { foo: 'expects a string literal', baz: boolean, bar: number };
+type Mapped = {
+  [prop in keyof Original]: (arg: Original[prop]) => Original[prop]
+};
+
+const unexpectedlyFailingExample: Mapped = {
+  foo: (arg) => 'expects a string literal',
+  baz: (arg) => true,
+  bar: (arg) => 51345
+};
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Did not expect a false TS2322 when a mapped callback returns the exact contextual literal type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
