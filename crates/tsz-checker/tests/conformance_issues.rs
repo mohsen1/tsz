@@ -4281,11 +4281,14 @@ good2({ when: value => false });
         .cloned()
         .collect();
 
-    // TODO: tsc contextually types 'value' as string from the mapped type
-    // constraint. We currently emit TS7006 because contextual typing through
-    // mapped types is not yet fully implemented. Track and re-tighten once
-    // mapped-type contextual inference is landed.
-    let _ = relevant;
+    // tsc does not emit TS7006 here — the callback parameter `value` gets its type
+    // from contextual typing through the mapped type generic param. Our fix to
+    // track implicit-any-checked closures prevents the false positive on re-entry.
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 for 'value' — contextual typing resolves it.\
+         \nActual errors: {relevant:#?}"
+    );
 }
 
 /// Issue: TS2344 reported twice for the same type argument

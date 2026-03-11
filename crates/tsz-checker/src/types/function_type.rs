@@ -512,17 +512,43 @@ impl<'a> CheckerState<'a> {
                     false
                 };
                 // Skip TS7006 for setters (handled by caller), closures during
-                // build_type_environment (no contextual type), and decorator closures.
+                // build_type_environment (no contextual type), decorator closures,
+                // re-entrant closure resolution (first call handles diagnostics),
+                // and ambient declarations (declare class/module private members).
                 let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
+                // If this closure was already checked for implicit any (e.g., during
+                // call resolution with contextual type), skip the re-check to avoid
+                // false TS7006/TS7031 when the second call lacks contextual type.
+                let is_reentrant_closure =
+                    is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
+                // In ambient contexts (declare class, .d.ts), tsc suppresses
+                // TS7006/TS7031 for private members since they're excluded from
+                // .d.ts output. check_method_declaration in ambient_signature_checks.rs
+                // handles this for the method-checking path, but get_type_of_function
+                // also processes these methods and must skip as well.
+                let is_ambient_private = self.ctx.is_ambient_declaration(idx)
+                    && self
+                        .ctx
+                        .enclosing_class
+                        .as_ref()
+                        .is_some_and(|c| c.is_declared);
                 let skip_implicit_any = is_setter
                     || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
-                    || (is_in_decorator && !has_contextual_type);
+                    || (is_in_decorator && !has_contextual_type)
+                    || is_reentrant_closure
+                    || is_ambient_private;
                 if !skip_implicit_any {
                     self.maybe_report_implicit_any_parameter(
                         param,
                         has_contextual_type || has_jsdoc_param,
                         contextual_index,
                     );
+                }
+                // Record that we've checked this closure for implicit any,
+                // so subsequent calls to get_type_of_function for the same
+                // node won't re-emit TS7006/TS7031.
+                if is_closure && !skip_implicit_any {
+                    self.ctx.implicit_any_checked_closures.insert(idx);
                 }
                 // In JS files, params without type annotations are implicitly optional
                 // unless a JSDoc @param tag or @type function annotation exists.

@@ -383,6 +383,19 @@ Example: deleteExpressionMustBeOptional.ts
   tsc reports TS2300 on ALL declarations of a poisoned merged symbol, but our pairwise
   conflict checker only reports on the directly conflicting pair.
 
+- ~~False positive TS7031/TS7006 for contextually-typed callback destructuring parameters~~ **FIXED** (2026-03-11)
+  Fix: `get_type_of_function` in `function_type.rs` is called multiple times for the same
+  closure — once during call resolution (with contextual type, so TS7006/TS7031 is correctly
+  suppressed) and again during body checking (without contextual type, falsely emitting
+  TS7006/TS7031). Added `implicit_any_checked_closures: FxHashSet<NodeIndex>` to
+  `CheckerContext` that tracks closures whose implicit-any checks have already run. On the
+  second call, the check is skipped. Also added `is_ambient_private` guard for `declare class`
+  private members whose TS7031 should be suppressed (matching tsc behavior).
+  Fixes 23 conformance tests (+23 net improvement, 10518 → 10541, 83.6% → 83.8%), including
+  `controlFlowDestructuringParameters`, `noImplicitAnyDestructuringInPrivateMethod`,
+  `typeofObjectInference`, `intersectionOfTypeVariableHasApparentSignatures`, and many others
+  where callback arrow functions had destructuring parameters.
+
 ---
 
 ### RC-5: Entity Name Resolution (~6%)
