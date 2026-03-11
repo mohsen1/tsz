@@ -258,10 +258,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 _ => self.expand_type_param(arg_type_for_check),
             };
 
-            if expanded_arg_type == param_type {
-                continue;
-            }
-
             // When the parameter is optional, implicitly include `undefined`
             // in the parameter type. This ensures `SomeType | undefined` can be
             // passed to an optional parameter of type `SomeType | null`, since
@@ -274,6 +270,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     param_type
                 }
             };
+
+            // Fast-path: skip the full assignability check when the arg type
+            // matches either the declared or effective param type by identity.
+            if expanded_arg_type == effective_param_type || expanded_arg_type == param_type {
+                continue;
+            }
 
             let use_bivariant_callbacks = (allow_bivariant_callbacks
                 || self.force_bivariant_callbacks)
