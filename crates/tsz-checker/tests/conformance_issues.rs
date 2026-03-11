@@ -9131,3 +9131,36 @@ class Test {
         "Expected TS2345 for computed object literal mismatch in class field arrow Object.entries path.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_literal_computed_object_properties_report_ts1117_duplicates() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+const t1 = {
+    1: 1,
+    [1]: 0
+}
+
+const t2 = {
+    "1": 1,
+    [+1]: 0
+}
+
+const t3 = {
+    "-1": 1,
+    [-1]: 0
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts1117 = diagnostics.iter().filter(|(code, _)| *code == 1117).count();
+    assert_eq!(
+        ts1117, 3,
+        "Expected TS1117 for literal computed object property duplicates.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

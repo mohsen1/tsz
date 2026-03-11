@@ -629,9 +629,6 @@ impl<'a> CheckerState<'a> {
 
                     // Check for duplicate property (skip in destructuring targets).
                     // TS1117: duplicate properties are an error in object literals.
-                    // Skip for computed property names — tsc only checks static names.
-                    // Computed names like [Symbol.xxx] or [variable] may legitimately
-                    // appear multiple times (e.g., value + getter/setter for same symbol).
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
@@ -705,6 +702,35 @@ impl<'a> CheckerState<'a> {
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
                         resolved_computed_name = self.get_property_name_resolved(prop.name);
+                        let literal_computed_name = crate::types_domain::queries::core::get_literal_property_name(
+                            self.ctx.arena,
+                            computed.expression,
+                        );
+                        let handled_by_name = literal_computed_name.is_some()
+                            || resolved_computed_name.is_some();
+                        if let Some(name) = literal_computed_name
+                            .or_else(|| resolved_computed_name.clone())
+                        {
+                            let atom = self.ctx.types.intern_string(&name);
+                            if !skip_duplicate_check
+                                && explicit_property_names.contains(&atom)
+                                && !self.ctx.has_parse_errors
+                                && (!self.is_js_file()
+                                    || self.ctx.js_strict_mode_diagnostics_enabled())
+                            {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let message = crate::diagnostics::format_message(
+                                    diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                    &[&name],
+                                );
+                                self.error_at_node(
+                                    prop.name,
+                                    &message,
+                                    diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                );
+                            }
+                            explicit_property_names.insert(atom);
+                        }
                         if let Some(atom) =
                             crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
@@ -715,25 +741,27 @@ impl<'a> CheckerState<'a> {
                                 resolved_computed_name =
                                     Some(self.ctx.types.resolve_atom(atom).to_string());
                             }
-                            if !skip_duplicate_check
-                                && explicit_property_names.contains(&atom)
-                                && !self.ctx.has_parse_errors
-                                && (!self.is_js_file()
-                                    || self.ctx.js_strict_mode_diagnostics_enabled())
-                            {
-                                let name = self.ctx.types.resolve_atom(atom).to_string();
-                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                let message = crate::diagnostics::format_message(
-                                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
-                                            &[&name],
-                                        );
-                                self.error_at_node(
-                                            prop.name,
-                                            &message,
-                                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
-                                        );
+                            if !handled_by_name {
+                                if !skip_duplicate_check
+                                    && explicit_property_names.contains(&atom)
+                                    && !self.ctx.has_parse_errors
+                                    && (!self.is_js_file()
+                                        || self.ctx.js_strict_mode_diagnostics_enabled())
+                                {
+                                    let name = self.ctx.types.resolve_atom(atom).to_string();
+                                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                    let message = crate::diagnostics::format_message(
+                                                diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                                &[&name],
+                                            );
+                                    self.error_at_node(
+                                                prop.name,
+                                                &message,
+                                                diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                            );
+                                }
+                                explicit_property_names.insert(atom);
                             }
-                            explicit_property_names.insert(atom);
                         }
                     }
                     let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
