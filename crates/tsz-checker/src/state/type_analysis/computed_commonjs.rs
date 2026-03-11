@@ -5,6 +5,160 @@ use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
 impl<'a> CheckerState<'a> {
+    fn infer_commonjs_export_rhs_type(
+        &mut self,
+        target_file_idx: usize,
+        rhs_expr: NodeIndex,
+    ) -> TypeId {
+        if target_file_idx == self.ctx.current_file_idx {
+            return self.get_type_of_node(rhs_expr);
+        }
+
+        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(all_binders) = self.ctx.all_binders.clone() else {
+            return TypeId::ANY;
+        };
+        let Some(arena) = all_arenas.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(binder) = all_binders.get(target_file_idx) else {
+            return TypeId::ANY;
+        };
+        let Some(source_file) = arena.source_files.first() else {
+            return TypeId::ANY;
+        };
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            arena.as_ref(),
+            binder.as_ref(),
+            self.ctx.types,
+            source_file.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        checker.ctx.all_arenas = Some(all_arenas.clone());
+        checker.ctx.all_binders = Some(all_binders.clone());
+        checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+        checker.ctx.module_specifiers = self.ctx.module_specifiers.clone();
+        checker.ctx.current_file_idx = target_file_idx;
+        if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
+            *checker.ctx.cross_file_symbol_targets.borrow_mut() =
+                self.ctx.cross_file_symbol_targets.borrow().clone();
+        }
+
+        let ty = checker.get_type_of_node(rhs_expr);
+        for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(sym_id, target_idx);
+        }
+        ty
+    }
+
+    fn augment_namespace_props_with_direct_assignment_exports_for_file(
+        &mut self,
+        target_file_idx: usize,
+        props: &mut Vec<tsz_solver::PropertyInfo>,
+    ) {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return;
+        };
+        let mut pending_props: Vec<(String, NodeIndex)> = Vec::new();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = target_arena.get(stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = target_arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            let Some(left_node) = target_arena.get(binary.left) else {
+                continue;
+            };
+            if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(left_access) = target_arena.get_access_expr(left_node) else {
+                continue;
+            };
+
+            let direct_exports_name = target_arena.get_identifier_at(left_access.expression).and_then(
+                |ident| (ident.escaped_text == "exports").then(|| {
+                    target_arena
+                        .get_identifier_at(left_access.name_or_argument)
+                        .map(|name| name.escaped_text.to_string())
+                }),
+            ).flatten();
+            let module_exports_name =
+                target_arena.get(left_access.expression).and_then(|target_node| {
+                    if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                        return None;
+                    }
+                    let target_access = target_arena.get_access_expr(target_node)?;
+                    let is_module_exports = target_arena
+                        .get_identifier_at(target_access.expression)
+                        .is_some_and(|ident| ident.escaped_text == "module")
+                        && target_arena
+                            .get_identifier_at(target_access.name_or_argument)
+                            .is_some_and(|ident| ident.escaped_text == "exports");
+                    is_module_exports.then(|| {
+                        target_arena
+                            .get_identifier_at(left_access.name_or_argument)
+                            .map(|name| name.escaped_text.to_string())
+                    })?
+                });
+            let Some(name_text) = direct_exports_name.or(module_exports_name) else {
+                continue;
+            };
+
+            let name_atom = self.ctx.types.intern_string(&name_text);
+            if props.iter().any(|prop| prop.name == name_atom)
+                || pending_props.iter().any(|(pending_name, _)| pending_name == &name_text)
+            {
+                continue;
+            }
+            pending_props.push((name_text, binary.right));
+        }
+
+        for (name_text, rhs_expr) in pending_props {
+            let name_atom = self.ctx.types.intern_string(&name_text);
+            let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+            props.push(tsz_solver::PropertyInfo {
+                name: name_atom,
+                type_id: rhs_type,
+                write_type: rhs_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: props.len() as u32,
+            });
+        }
+    }
+
     pub(super) fn resolve_define_property_descriptor_object_literal(
         &self,
         target_file_idx: usize,
@@ -204,5 +358,23 @@ impl<'a> CheckerState<'a> {
                 declaration_order: props.len() as u32,
             });
         }
+    }
+
+    pub(crate) fn augment_namespace_props_with_commonjs_exports_for_file(
+        &mut self,
+        target_file_idx: usize,
+        props: &mut Vec<tsz_solver::PropertyInfo>,
+    ) {
+        self.augment_namespace_props_with_direct_assignment_exports_for_file(target_file_idx, props);
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return;
+        };
+        let module_name = source_file.file_name.clone();
+        self.augment_namespace_props_with_define_property_exports(
+            &module_name,
+            Some(target_file_idx),
+            props,
+        );
     }
 }

@@ -729,6 +729,11 @@ impl<'a> CheckerState<'a> {
                         && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
                         && ident.escaped_text == "module"
                     {
+                        if let Some(namespace_type) =
+                            self.commonjs_namespace_type_for_file(self.ctx.current_file_idx)
+                        {
+                            return namespace_type;
+                        }
                         return TypeId::ANY;
                     }
                     // Check for expando property reads: X.prop where X.prop = value was assigned
