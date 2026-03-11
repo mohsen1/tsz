@@ -61,6 +61,10 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
+
+            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
+                return true;
+            }
         }
 
         applicable_shapes.len() > 1

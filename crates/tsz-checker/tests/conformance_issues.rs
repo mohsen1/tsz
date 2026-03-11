@@ -7226,6 +7226,36 @@ test([
 }
 
 #[test]
+fn test_array_literal_union_context_ignores_non_object_non_array_members() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function test(arg: ((arg: number) => void)[] | string): void;
+
+test([
+  (arg) => {
+    arg.toFixed();
+  },
+]);
+"#,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 when the non-array union member is a primitive. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_union_call_signatures_with_mismatched_parameters_report_implicit_any() {
     if !lib_files_available() {
         return;
