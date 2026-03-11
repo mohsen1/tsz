@@ -390,6 +390,40 @@ class C {
 }
 
 #[test]
+fn test_jsdoc_template_brace_form_reports_ts1069_and_ts2304() {
+    let source = r#"
+/** @template {T} */
+class Baz {
+    m() {
+        class Bar {
+            static bar() { this.prototype.foo(); }
+        }
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1069),
+        "Expected TS1069 for invalid JSDoc @template brace syntax. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2304),
+        "Expected TS2304 for the unresolved JSDoc template name inside braces. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_assignment_preserves_numeric_literal_source_display() {
     let source = r#"
 enum E {

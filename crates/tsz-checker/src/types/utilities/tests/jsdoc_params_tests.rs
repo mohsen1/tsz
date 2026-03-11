@@ -545,6 +545,13 @@ fn jsdoc_template_with_underscores() {
     assert_eq!(params, vec!["_T", "$U"]);
 }
 
+#[test]
+fn jsdoc_template_ignores_brace_form_for_binding() {
+    let jsdoc = "* @template {T}";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert!(params.is_empty());
+}
+
 // =========================================================================
 // jsdoc_returns_type_name
 // =========================================================================

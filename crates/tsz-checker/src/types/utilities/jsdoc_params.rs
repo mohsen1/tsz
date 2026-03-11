@@ -1364,6 +1364,67 @@ impl<'a> CheckerState<'a> {
         out
     }
 
+    /// Emit JSDoc `@template` syntax diagnostics for invalid brace forms like
+    /// `@template {T}`. tsc reports both TS1069 at `{` and TS2304 at `T`.
+    pub(crate) fn validate_jsdoc_template_tag_syntax_at_decl(&mut self, decl_idx: NodeIndex) {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+        let Some((_, comment_pos)) =
+            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
+        else {
+            return;
+        };
+        let comment_end = node.pos.min(source_text.len() as u32);
+        let comment_range = &source_text[comment_pos as usize..comment_end as usize];
+
+        let mut scan_start = 0usize;
+        while let Some(template_offset) = comment_range[scan_start..].find("@template") {
+            let template_start = scan_start + template_offset;
+            let rest = &comment_range[template_start + "@template".len()..];
+            let trimmed = rest.trim_start();
+            if !trimmed.starts_with('{') {
+                scan_start = template_start + "@template".len();
+                continue;
+            }
+
+            let leading_ws = rest.len() - trimmed.len();
+            let brace_rel = template_start + "@template".len() + leading_ws;
+            let after_brace = &trimmed[1..];
+            let name_len = after_brace
+                .chars()
+                .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
+                .count();
+            let error_rel = brace_rel
+                + 1
+                + name_len
+                + usize::from(
+                    after_brace
+                        .get(name_len..)
+                        .is_some_and(|rest| rest.starts_with('}')),
+                );
+            let brace_pos = comment_pos + error_rel as u32;
+            self.ctx.error(
+                brace_pos,
+                1,
+                crate::diagnostics::diagnostic_messages::UNEXPECTED_TOKEN_A_TYPE_PARAMETER_NAME_WAS_EXPECTED_WITHOUT_CURLY_BRACES.to_string(),
+                crate::diagnostics::diagnostic_codes::UNEXPECTED_TOKEN_A_TYPE_PARAMETER_NAME_WAS_EXPECTED_WITHOUT_CURLY_BRACES,
+            );
+
+            if name_len > 0 {
+                let name = &after_brace[..name_len];
+                self.emit_jsdoc_cannot_find_name(name, comment_pos, comment_end, source_text);
+            }
+
+            scan_start = brace_rel + 1;
+        }
+    }
+
     /// Extract a simple identifier from `@returns {T}` / `@return {T}`.
     ///
     /// Returns `None` for complex type expressions.
