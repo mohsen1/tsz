@@ -626,7 +626,7 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .is_some_and(|jsdoc| {
                                 !CheckerState::jsdoc_type_tag_declares_callable(jsdoc)
-                                    && !tsz_solver::type_queries::is_callable_type(
+                                    && !crate::query_boundaries::state::checking::is_callable_type(
                                         checker.ctx.types,
                                         evaluated_type,
                                     )
