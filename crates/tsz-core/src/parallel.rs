@@ -253,7 +253,7 @@ pub struct BindResult {
     pub is_external_module: bool,
     /// Expando property assignments detected during binding
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
-    /// Per-file alias partners from binder (TYPE_ALIAS → ALIAS mapping, pre-remap)
+    /// Per-file alias partners from binder (`TYPE_ALIAS` → `ALIAS` mapping, pre-remap)
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 
@@ -501,47 +501,118 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
 pub fn load_lib_files_for_binding_strict(
     lib_files: &[&Path],
 ) -> Result<Vec<Arc<lib_loader::LibFile>>> {
-    use crate::parser::ParserState;
-    use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
-
     if lib_files.is_empty() {
         return Ok(Vec::new());
     }
 
-    lib_files
-        .par_iter()
-        .map(|path| {
-            let lib_path = path.to_path_buf();
-            if !lib_path.exists() {
-                bail!("lib file not found on disk: {}", lib_path.display());
+    let mut loaded = FxHashSet::default();
+    let mut result = Vec::new();
+    for path in lib_files {
+        load_lib_file_recursive(path, &mut loaded, &mut result)?;
+    }
+    Ok(result)
+}
+
+fn load_lib_file_recursive(
+    path: &Path,
+    loaded: &mut FxHashSet<PathBuf>,
+    result: &mut Vec<Arc<lib_loader::LibFile>>,
+) -> Result<()> {
+    let lib_path = path.to_path_buf();
+    if !loaded.insert(lib_path.clone()) {
+        return Ok(());
+    }
+    if !lib_path.exists() {
+        bail!("lib file not found on disk: {}", lib_path.display());
+    }
+
+    let source_text = std::fs::read_to_string(&lib_path)
+        .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
+
+    for ref_lib in parse_lib_references(&source_text) {
+        let ref_path = resolve_lib_reference_path(&lib_path, &ref_lib).ok_or_else(|| {
+            anyhow::anyhow!(
+                "failed to resolve referenced lib '{}' from {}",
+                ref_lib,
+                lib_path.display()
+            )
+        })?;
+        load_lib_file_recursive(&ref_path, loaded, result)?;
+    }
+
+    let file_name = lib_path.to_string_lossy().to_string();
+    let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+    let source_file_idx = lib_parser.parse_source_file();
+    let diagnostics = lib_parser.get_diagnostics();
+    if !diagnostics.is_empty() {
+        let first = &diagnostics[0];
+        bail!(
+            "failed to parse lib file {} ({}:{}): {}",
+            lib_path.display(),
+            first.start,
+            first.length,
+            first.message
+        );
+    }
+
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+
+    let arena = Arc::new(lib_parser.into_arena());
+    let binder = Arc::new(lib_binder);
+    result.push(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)));
+    Ok(())
+}
+
+fn parse_lib_references(content: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("///") {
+            continue;
+        }
+        if let Some(start) = trimmed.find("<reference") {
+            let rest = &trimmed[start..];
+            if let Some(lib_start) = rest.find("lib=") {
+                let after_lib = &rest[lib_start + 4..];
+                let quote = after_lib.chars().next();
+                if quote == Some('"') || quote == Some('\'') {
+                    let quote_char = quote.unwrap();
+                    let value_start = 1;
+                    if let Some(end) = after_lib[value_start..].find(quote_char) {
+                        refs.push(after_lib[value_start..value_start + end].trim().to_lowercase());
+                    }
+                }
             }
+        }
+    }
+    refs
+}
 
-            let source_text = std::fs::read_to_string(&lib_path)
-                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
+fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBuf> {
+    let lib_dir = base_path.parent()?;
+    let normalized = normalize_lib_reference_name(lib_name);
+    let candidates = [
+        lib_dir.join(format!("lib.{normalized}.d.ts")),
+        lib_dir.join(format!("{normalized}.d.ts")),
+    ];
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
 
-            let file_name = lib_path.to_string_lossy().to_string();
-            let mut lib_parser = ParserState::new(file_name.clone(), source_text);
-            let source_file_idx = lib_parser.parse_source_file();
-            let diagnostics = lib_parser.get_diagnostics();
-            if !diagnostics.is_empty() {
-                let first = &diagnostics[0];
-                bail!(
-                    "failed to parse lib file {} ({}:{}): {}",
-                    lib_path.display(),
-                    first.start,
-                    first.length,
-                    first.message
-                );
-            }
-
-            let mut lib_binder = BinderState::new();
-            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-            let arena = Arc::new(lib_parser.into_arena());
-            let binder = Arc::new(lib_binder);
-            Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
-        })
-        .collect()
+fn normalize_lib_reference_name(name: &str) -> String {
+    match name.to_lowercase().trim() {
+        "es6" => "es6".to_string(),
+        "es7" => "es2016".to_string(),
+        "lib" | "lib.d.ts" => "es5".to_string(),
+        "dom" => "dom.generated".to_string(),
+        "dom.iterable" => "dom.iterable.generated".to_string(),
+        "dom.asynciterable" => "dom.asynciterable.generated".to_string(),
+        s if s.starts_with("lib.") && s.ends_with(".d.ts") => {
+            let inner = &s[4..s.len() - 5];
+            normalize_lib_reference_name(inner)
+        }
+        other => other.to_string(),
+    }
 }
 
 /// Parse and bind multiple files in parallel with lib symbol injection.
@@ -784,7 +855,7 @@ pub struct MergedProgram {
     pub lib_symbol_ids: FxHashSet<SymbolId>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
-    /// Alias partners: maps TYPE_ALIAS SymbolId → ALIAS SymbolId for merged type+namespace exports.
+    /// Alias partners: maps `TYPE_ALIAS` `SymbolId` → `ALIAS` `SymbolId` for merged type+namespace exports.
     /// When `export type X = ...` and `export * as X from "..."` coexist, the exports table
     /// holds the `TYPE_ALIAS` symbol and this map links it to the ALIAS symbol for value resolution.
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
