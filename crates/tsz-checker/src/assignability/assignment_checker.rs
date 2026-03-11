@@ -853,7 +853,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY
+        if !is_destructuring
+            && left_type != TypeId::ANY
             && left_type != TypeId::NEVER
             && left_type != TypeId::UNKNOWN
             && !self.type_contains_error(left_type)
