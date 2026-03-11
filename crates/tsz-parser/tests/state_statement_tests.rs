@@ -52,7 +52,10 @@ let b: number;
                 == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I
         })
         .count();
-    assert_eq!(ts2809_count, 2, "expected two TS2809 diagnostics, got {codes:?}");
+    assert_eq!(
+        ts2809_count, 2,
+        "expected two TS2809 diagnostics, got {codes:?}"
+    );
     assert!(
         !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "should not fall back to generic TS1128, got {codes:?}"
@@ -89,7 +92,10 @@ fn parse_mid_file_shebang_reports_ts18026_and_argument_semicolon_error() {
         !codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "should not fall back to TS1128, got {codes:?}"
     );
-    assert!(!codes.contains(&1499), "should not emit regex flag errors, got {codes:?}");
+    assert!(
+        !codes.contains(&1499),
+        "should not emit regex flag errors, got {codes:?}"
+    );
 }
 
 #[test]

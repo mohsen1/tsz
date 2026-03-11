@@ -114,10 +114,22 @@ impl<'a> FlowAnalyzer<'a> {
         narrowing: &NarrowingContext,
     ) -> TypeId {
         let Some(case_block_node) = self.arena.get(case_block) else {
-            return self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing);
+            return self.narrow_by_switch_clause(
+                type_id,
+                switch_expr,
+                case_expr,
+                target,
+                narrowing,
+            );
         };
         let Some(case_block_data) = self.arena.get_block(case_block_node) else {
-            return self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing);
+            return self.narrow_by_switch_clause(
+                type_id,
+                switch_expr,
+                case_expr,
+                target,
+                narrowing,
+            );
         };
 
         if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
