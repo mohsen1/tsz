@@ -647,12 +647,14 @@ pub(super) fn read_source_files(
 
     let mut list: Vec<SourceEntry> = sources
         .into_iter()
-        .map(|(path, (text, is_binary, suppress_parser_diagnostics))| SourceEntry {
-            path,
-            text,
-            is_binary,
-            suppress_parser_diagnostics,
-        })
+        .map(
+            |(path, (text, is_binary, suppress_parser_diagnostics))| SourceEntry {
+                path,
+                text,
+                is_binary,
+                suppress_parser_diagnostics,
+            },
+        )
         .collect();
     list.sort_by(|left, right| {
         left.path
