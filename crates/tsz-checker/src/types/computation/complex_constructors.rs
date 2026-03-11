@@ -4,7 +4,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn is_property_like_access_kind(kind: u16) -> bool {
+    const fn is_property_like_access_kind(kind: u16) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
