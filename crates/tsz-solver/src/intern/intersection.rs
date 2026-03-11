@@ -138,18 +138,12 @@ impl TypeInterner {
         //
         // Preserve these intersections as-is so the checker's resolver/evaluator can
         // expand them with full symbol information later.
-        let has_unresolved = flat
-            .iter()
-            .any(|&id| {
-                matches!(
-                    self.lookup(id),
-                    Some(
-                        TypeData::Lazy(_)
-                            | TypeData::Application(_)
-                            | TypeData::Mapped(_)
-                    )
-                )
-            });
+        let has_unresolved = flat.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeData::Lazy(_) | TypeData::Application(_) | TypeData::Mapped(_))
+            )
+        });
         if has_unresolved {
             let list_id = self.intern_type_list(flat.into_vec());
             return self.intern(TypeData::Intersection(list_id));
