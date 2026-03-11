@@ -276,13 +276,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            if let Some(decl) = self.ctx.arena.get_variable_declaration(node)
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.ctx.arena.get_variable_declaration(node)
                 && let Some(name) = self.get_node_text(decl.name)
             {
                 names.insert(name);
             }
-        }
 
         for child_idx in self.ctx.arena.get_children(node_idx) {
             self.collect_declared_names_in_subtree(child_idx, names);
