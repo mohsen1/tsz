@@ -142,22 +142,20 @@ impl<'a> CheckerState<'a> {
                                 if let Some(bin) = self.ctx.arena.get_binary_expr(value_node)
                                     && bin.operator_token == SyntaxKind::EqualsToken as u16
                                     && let Some(lhs_node) = self.ctx.arena.get(bin.left)
-                                        && (lhs_node.kind
-                                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                            || lhs_node.kind
-                                                == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
-                                        {
-                                            let prop_type = self
-                                                .resolve_property_type_for_destructuring(
-                                                    source_type,
-                                                    &name,
-                                                );
-                                            if let Some(prop_type) = prop_type {
-                                                self.check_destructuring_property_accessibility(
-                                                    bin.left, prop_type,
-                                                );
-                                            }
-                                        }
+                                    && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        || lhs_node.kind
+                                            == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                                {
+                                    let prop_type = self.resolve_property_type_for_destructuring(
+                                        source_type,
+                                        &name,
+                                    );
+                                    if let Some(prop_type) = prop_type {
+                                        self.check_destructuring_property_accessibility(
+                                            bin.left, prop_type,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -217,13 +215,11 @@ impl<'a> CheckerState<'a> {
                         if let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
                             && bin.operator_token == SyntaxKind::EqualsToken as u16
                             && let Some(lhs_node) = self.ctx.arena.get(bin.left)
-                                && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                    || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
-                                {
-                                    self.check_destructuring_property_accessibility(
-                                        bin.left, elem_type,
-                                    );
-                                }
+                            && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                        {
+                            self.check_destructuring_property_accessibility(bin.left, elem_type);
+                        }
                     }
                 }
             }
