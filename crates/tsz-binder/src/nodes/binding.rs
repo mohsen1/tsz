@@ -310,7 +310,13 @@ impl BinderState {
                     if method.asterisk_token {
                         self.file_features.set(FileFeatures::GENERATORS);
                     }
-                    self.bind_callable_body(arena, &method.parameters, method.body, idx);
+                    self.bind_callable_body_with_type_params(
+                        arena,
+                        &method.parameters,
+                        method.body,
+                        idx,
+                        method.type_parameters.as_ref(),
+                    );
                 }
             }
 

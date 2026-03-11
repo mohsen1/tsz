@@ -401,8 +401,23 @@ impl BinderState {
         body: NodeIndex,
         idx: NodeIndex,
     ) {
+        self.bind_callable_body_with_type_params(arena, parameters, body, idx, None);
+    }
+
+    pub(crate) fn bind_callable_body_with_type_params(
+        &mut self,
+        arena: &NodeArena,
+        parameters: &NodeList,
+        body: NodeIndex,
+        idx: NodeIndex,
+        type_parameters: Option<&NodeList>,
+    ) {
         self.enter_scope(ContainerKind::Function, idx);
         self.declare_arguments_symbol();
+
+        // Bind type parameters into the function scope so they're visible
+        // in parameter types, return types, and body type references.
+        self.bind_type_parameters(arena, type_parameters);
 
         // Capture enclosing flow so that const variables narrowed in an outer scope
         // preserve their narrowing inside method/accessor/constructor bodies.
@@ -545,7 +560,13 @@ impl BinderState {
                             let sym_id = self.declare_symbol(&name, flags, idx, false);
                             self.node_symbols.insert(method.name.0, sym_id);
                         }
-                        self.bind_callable_body(arena, &method.parameters, method.body, idx);
+                        self.bind_callable_body_with_type_params(
+                            arena,
+                            &method.parameters,
+                            method.body,
+                            idx,
+                            method.type_parameters.as_ref(),
+                        );
                     }
                 }
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {

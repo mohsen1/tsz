@@ -280,15 +280,15 @@ impl<'a> CheckerState<'a> {
             .and_then(sanitize_type_text)?;
         // For angle-bracket assertions `<T>expr`, the parser's type_node span
         // may include the closing `>`. Strip it if the node is TYPE_ASSERTION.
-        if node.kind == syntax_kind_ext::TYPE_ASSERTION {
-            if let Some(stripped) = target.strip_suffix('>') {
-                // Only strip if brackets are unbalanced (more `>` than `<`),
-                // so legitimate generic types like `Array<T>` are preserved.
-                let open = stripped.chars().filter(|&c| c == '<').count();
-                let close = stripped.chars().filter(|&c| c == '>').count();
-                if close < open || (open == 0 && close == 0) {
-                    target = stripped.to_string();
-                }
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+            && let Some(stripped) = target.strip_suffix('>')
+        {
+            // Only strip if brackets are unbalanced (more `>` than `<`),
+            // so legitimate generic types like `Array<T>` are preserved.
+            let open = stripped.chars().filter(|&c| c == '<').count();
+            let close = stripped.chars().filter(|&c| c == '>').count();
+            if close < open || (open == 0 && close == 0) {
+                target = stripped.to_string();
             }
         }
         Some((source, target))

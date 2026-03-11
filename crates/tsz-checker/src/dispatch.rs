@@ -1935,4 +1935,28 @@ class C2 {
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn type_params_in_object_literal_methods_no_ts2304() {
+        // Type parameters in object literal method shorthands must be in scope
+        // for parameter types, return types, and body type references.
+        let diags = check_source_diagnostics(
+            r#"
+let a = {
+    test<K>(x: K): K { return x; }
+};
+interface Bar { bar: number; }
+let b = {
+    test<K extends keyof Bar>(a: K, b: Bar[K]) { }
+};
+"#,
+        );
+        let ts2304: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+        assert_eq!(
+            ts2304.len(),
+            0,
+            "Expected no TS2304 for type params in object literal methods, got: {:?}",
+            ts2304.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        );
+    }
 }
