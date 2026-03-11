@@ -309,7 +309,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 } else {
                     self.checker.ctx.contextual_type = Some(yield_ctx);
                 }
-                self.checker.clear_type_cache_recursive(yield_expr.expression);
+                self.checker
+                    .clear_type_cache_recursive(yield_expr.expression);
             }
             let expression_type = self.checker.get_type_of_node(yield_expr.expression);
             self.checker.ctx.contextual_type = prev_contextual;
