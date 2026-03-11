@@ -9,9 +9,206 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::operations::property::PropertyAccessResult;
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn class_declaration_display_name(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> String {
+        let base_name = if class_data.name.is_some() {
+            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    ident.escaped_text.clone()
+                } else {
+                    String::from("<anonymous>")
+                }
+            } else {
+                String::from("<anonymous>")
+            }
+        } else {
+            String::from("<anonymous>")
+        };
+
+        let Some(type_params) = class_data.type_parameters.as_ref() else {
+            return base_name;
+        };
+
+        let param_names: Vec<&str> = type_params
+            .nodes
+            .iter()
+            .filter_map(|&idx| {
+                let tp = self.ctx.arena.get_type_parameter_at(idx)?;
+                let ident = self.ctx.arena.get_identifier_at(tp.name)?;
+                Some(ident.escaped_text.as_str())
+            })
+            .collect();
+
+        if param_names.is_empty() {
+            base_name
+        } else {
+            format!("{base_name}<{}>", param_names.join(", "))
+        }
+    }
+
+    fn implemented_interface_members(
+        &mut self,
+        interface_name: &str,
+        interface_type: TypeId,
+        type_args: &[TypeId],
+        interface_declarations: &[NodeIndex],
+        substitution: &tsz_solver::TypeSubstitution,
+    ) -> (Vec<PropertyInfo>, bool, String) {
+        let array_display_name = |state: &Self| format!("{}[]", state.format_type(type_args[0]));
+
+        if interface_name == "Array" && type_args.len() == 1 {
+            let display_name = array_display_name(self);
+
+            if let Some(array_base) = self.ctx.types.get_array_base_type()
+                && let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, array_base)
+            {
+                let substitution = tsz_solver::TypeSubstitution::from_args(
+                    self.ctx.types,
+                    self.ctx.types.get_array_base_type_params(),
+                    type_args,
+                );
+                let properties = shape
+                    .properties
+                    .iter()
+                    .cloned()
+                    .map(|mut prop| {
+                        prop.type_id = tsz_solver::instantiate_type(
+                            self.ctx.types,
+                            prop.type_id,
+                            &substitution,
+                        );
+                        prop
+                    })
+                    .collect();
+                let has_index_signature =
+                    shape.string_index.is_some() || shape.number_index.is_some();
+                return (properties, has_index_signature, display_name);
+            }
+        }
+
+        let display_name = if !type_args.is_empty() {
+            self.format_type(interface_type)
+        } else {
+            interface_name.to_string()
+        };
+
+        if let Some(shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
+        {
+            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
+            if !shape.properties.is_empty() {
+                return (
+                    shape.properties.to_vec(),
+                    has_index_signature,
+                    display_name,
+                );
+            }
+        }
+
+        let mut properties = Vec::new();
+        let mut has_index_signature = false;
+
+        for &decl_idx in interface_declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface_decl) = self.ctx.arena.get_interface(decl_node) else {
+                continue;
+            };
+
+            for &member_idx in &interface_decl.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                    has_index_signature = true;
+                    continue;
+                }
+                if member_node.kind != syntax_kind_ext::METHOD_SIGNATURE
+                    && member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
+                {
+                    continue;
+                }
+
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name(sig.name) else {
+                    continue;
+                };
+
+                let member_type = match self.resolve_property_access_with_env(interface_type, &name)
+                {
+                    PropertyAccessResult::Success {
+                        type_id,
+                        write_type,
+                        ..
+                    } => write_type.unwrap_or(type_id),
+                    _ => {
+                        let member_type = self.get_type_of_interface_member_simple(member_idx);
+                        tsz_solver::instantiate_type(self.ctx.types, member_type, substitution)
+                    }
+                };
+
+                properties.push(PropertyInfo {
+                    name: self.ctx.types.intern_string(&name),
+                    type_id: member_type,
+                    write_type: member_type,
+                    optional: sig.question_token,
+                    readonly: false,
+                    is_method: member_node.kind == syntax_kind_ext::METHOD_SIGNATURE,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: properties.len() as u32,
+                });
+            }
+        }
+
+        (properties, has_index_signature, display_name)
+    }
+
+    fn implemented_interface_display_name_from_syntax(
+        &self,
+        type_idx: NodeIndex,
+        fallback: &str,
+    ) -> String {
+        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+            return fallback.to_string();
+        };
+
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+            && let Some(type_name) = self.node_text(type_ref.type_name)
+            && type_name == "Array"
+            && let Some(type_args) = type_ref.type_arguments.as_ref()
+            && type_args.nodes.len() == 1
+            && let Some(arg_text) = self.node_text(type_args.nodes[0])
+        {
+            return format!("{}[]", arg_text.trim().trim_end_matches('>'));
+        }
+
+        if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(type_ref) = self.ctx.arena.get_expr_type_args(type_node)
+            && let Some(type_name) = self.node_text(type_ref.expression)
+            && type_name == "Array"
+            && let Some(type_args) = type_ref.type_arguments.as_ref()
+            && type_args.nodes.len() == 1
+            && let Some(arg_text) = self.node_text(type_args.nodes[0])
+        {
+            return format!("{}[]", arg_text.trim().trim_end_matches('>'));
+        }
+
+        fallback.to_string()
+    }
+
     pub(crate) fn report_type_not_assignable_detail(
         &mut self,
         node_idx: NodeIndex,
@@ -467,19 +664,7 @@ impl<'a> CheckerState<'a> {
         );
 
         // Get the class name for error messages
-        let class_name = if class_data.name.is_some() {
-            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.clone()
-                } else {
-                    String::from("<anonymous>")
-                }
-            } else {
-                String::from("<anonymous>")
-            }
-        } else {
-            String::from("<anonymous>")
-        };
+        let class_name = self.class_declaration_display_name(class_data);
         let class_error_idx = if class_data.name.is_some() {
             class_data.name
         } else {
@@ -506,13 +691,20 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // Get the expression and type arguments from ExpressionWithTypeArguments
+                // Get the expression and type arguments from either
+                // ExpressionWithTypeArguments or TypeReference.
                 let (expr_idx, type_arguments) =
                     if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
                         (
                             expr_type_args.expression,
                             expr_type_args.type_arguments.as_ref(),
                         )
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                            (type_ref.type_name, type_ref.type_arguments.as_ref())
+                        } else {
+                            (type_idx, None)
+                        }
                     } else {
                         (type_idx, None)
                     };
@@ -595,8 +787,6 @@ impl<'a> CheckerState<'a> {
                     let mut missing_members: Vec<String> = Vec::new();
                     let mut incompatible_members: Vec<(NodeIndex, String, String, String)> =
                         Vec::new(); // (node_idx, name, expected_type, actual_type)
-                    let mut interface_has_index_signature = false;
-
                     // Build type arguments vector from implements clause (e.g., A<boolean> -> [boolean])
                     let mut type_args = Vec::new();
                     if let Some(args) = type_arguments {
@@ -638,131 +828,137 @@ impl<'a> CheckerState<'a> {
                         &substitution,
                     );
                     let interface_type = self.evaluate_type_for_assignability(interface_type);
+                    let (
+                        interface_properties,
+                        interface_has_index_signature,
+                        interface_display_name,
+                    ) = self.implemented_interface_members(
+                        &interface_name,
+                        interface_type,
+                        &type_args,
+                        &symbol.declarations,
+                        &substitution,
+                    );
+                    let interface_display_name = self
+                        .implemented_interface_display_name_from_syntax(
+                            type_idx,
+                            &interface_display_name,
+                        );
+                    for prop in &interface_properties {
+                        let member_name = self.ctx.types.resolve_atom(prop.name);
+                        let interface_member_type = prop.type_id;
 
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
-                    {
-                        if shape.string_index.is_some() || shape.number_index.is_some() {
-                            interface_has_index_signature = true;
+                        // Skip optional properties
+                        if prop.optional {
+                            continue;
                         }
 
-                        for prop in &shape.properties {
-                            let member_name = self.ctx.types.resolve_atom(prop.name);
-                            let interface_member_type = prop.type_id;
+                        // Check if class has this member
+                        if let Some(&class_member_idx) = class_members.get(&member_name) {
+                            // For overloaded methods, use the combined type from the
+                            // class instance type (all overload signatures merged).
+                            // For non-overloaded members, use the single declaration type.
+                            let class_member_type = if let Some(&overloaded_type) =
+                                overloaded_member_types.get(&member_name)
+                            {
+                                overloaded_type
+                            } else if let Some(&cached) = class_member_types.get(&class_member_idx)
+                            {
+                                cached
+                            } else {
+                                let computed = self.get_type_of_class_member(class_member_idx);
+                                class_member_types.insert(class_member_idx, computed);
+                                computed
+                            };
 
-                            // Skip optional properties
-                            if prop.optional {
+                            // Check visibility (TS2420)
+                            let sym_flags = self
+                                .ctx
+                                .binder
+                                .get_node_symbol(class_member_idx)
+                                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                .map(|s| s.flags)
+                                .unwrap_or(0);
+                            let is_class_member_private =
+                                (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0;
+                            let is_class_member_protected =
+                                (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
+                            if is_class_member_private {
+                                self.error_at_node(
+                                        class_error_idx,
+                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_display_name}'."),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                continue;
+                            }
+                            if is_class_member_protected {
+                                self.error_at_node(
+                                        class_error_idx,
+                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_display_name}'."),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
                                 continue;
                             }
 
-                            // Check if class has this member
-                            if let Some(&class_member_idx) = class_members.get(&member_name) {
-                                // For overloaded methods, use the combined type from the
-                                // class instance type (all overload signatures merged).
-                                // For non-overloaded members, use the single declaration type.
-                                let class_member_type = if let Some(&overloaded_type) =
-                                    overloaded_member_types.get(&member_name)
-                                {
-                                    overloaded_type
-                                } else if let Some(&cached) =
-                                    class_member_types.get(&class_member_idx)
-                                {
-                                    cached
-                                } else {
-                                    let computed = self.get_type_of_class_member(class_member_idx);
-                                    class_member_types.insert(class_member_idx, computed);
-                                    computed
-                                };
-
-                                // Check visibility (TS2420)
-                                let sym_flags = self
-                                    .ctx
-                                    .binder
-                                    .get_node_symbol(class_member_idx)
-                                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                                    .map(|s| s.flags)
-                                    .unwrap_or(0);
-                                let is_class_member_private =
-                                    (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0;
-                                let is_class_member_protected =
-                                    (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
-                                if is_class_member_private {
-                                    self.error_at_node(
-                                        class_error_idx,
-                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_name}'."),
-                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                                    );
-                                    continue;
-                                }
-                                if is_class_member_protected {
-                                    self.error_at_node(
-                                        class_error_idx,
-                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_name}'."),
-                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                                    );
-                                    continue;
-                                }
-
-                                // Check type compatibility.
-                                // Methods use bivariant relation (covariant returns);
-                                // properties use regular assignability.
-                                let mismatch_fn = if prop.is_method {
-                                    should_report_member_type_mismatch_bivariant
-                                } else {
-                                    should_report_member_type_mismatch
-                                };
-                                if interface_member_type != tsz_solver::TypeId::ANY
-                                    && class_member_type != tsz_solver::TypeId::ANY
-                                    && interface_member_type != tsz_solver::TypeId::ERROR
-                                    && class_member_type != tsz_solver::TypeId::ERROR
-                                    && mismatch_fn(
-                                        self,
-                                        class_member_type,
-                                        interface_member_type,
-                                        class_member_idx,
-                                    )
-                                {
-                                    let expected_str = self.format_type(interface_member_type);
-                                    let actual_str = self.format_type(class_member_type);
-                                    incompatible_members.push((
-                                        class_member_idx,
-                                        member_name.clone(),
-                                        expected_str,
-                                        actual_str,
-                                    ));
-                                }
-                            } else if let Some(&inherited_type) =
-                                inherited_member_types.get(&member_name)
-                            {
-                                // Member inherited from base class — check type compatibility
-                                let mismatch_fn = if prop.is_method {
-                                    should_report_member_type_mismatch_bivariant
-                                } else {
-                                    should_report_member_type_mismatch
-                                };
-                                if interface_member_type != tsz_solver::TypeId::ANY
-                                    && inherited_type != tsz_solver::TypeId::ANY
-                                    && interface_member_type != tsz_solver::TypeId::ERROR
-                                    && inherited_type != tsz_solver::TypeId::ERROR
-                                    && mismatch_fn(
-                                        self,
-                                        inherited_type,
-                                        interface_member_type,
-                                        class_idx,
-                                    )
-                                {
-                                    let expected_str = self.format_type(interface_member_type);
-                                    let actual_str = self.format_type(inherited_type);
-                                    incompatible_members.push((
-                                        class_error_idx,
-                                        member_name.clone(),
-                                        expected_str,
-                                        actual_str,
-                                    ));
-                                }
+                            // Check type compatibility.
+                            // Methods use bivariant relation (covariant returns);
+                            // properties use regular assignability.
+                            let mismatch_fn = if prop.is_method {
+                                should_report_member_type_mismatch_bivariant
                             } else {
-                                missing_members.push(member_name);
+                                should_report_member_type_mismatch
+                            };
+                            if interface_member_type != tsz_solver::TypeId::ANY
+                                && class_member_type != tsz_solver::TypeId::ANY
+                                && interface_member_type != tsz_solver::TypeId::ERROR
+                                && class_member_type != tsz_solver::TypeId::ERROR
+                                && mismatch_fn(
+                                    self,
+                                    class_member_type,
+                                    interface_member_type,
+                                    class_member_idx,
+                                )
+                            {
+                                let expected_str = self.format_type(interface_member_type);
+                                let actual_str = self.format_type(class_member_type);
+                                incompatible_members.push((
+                                    class_member_idx,
+                                    member_name.clone(),
+                                    expected_str,
+                                    actual_str,
+                                ));
                             }
+                        } else if let Some(&inherited_type) =
+                            inherited_member_types.get(&member_name)
+                        {
+                            // Member inherited from base class — check type compatibility
+                            let mismatch_fn = if prop.is_method {
+                                should_report_member_type_mismatch_bivariant
+                            } else {
+                                should_report_member_type_mismatch
+                            };
+                            if interface_member_type != tsz_solver::TypeId::ANY
+                                && inherited_type != tsz_solver::TypeId::ANY
+                                && interface_member_type != tsz_solver::TypeId::ERROR
+                                && inherited_type != tsz_solver::TypeId::ERROR
+                                && mismatch_fn(
+                                    self,
+                                    inherited_type,
+                                    interface_member_type,
+                                    class_idx,
+                                )
+                            {
+                                let expected_str = self.format_type(interface_member_type);
+                                let actual_str = self.format_type(inherited_type);
+                                incompatible_members.push((
+                                    class_error_idx,
+                                    member_name.clone(),
+                                    expected_str,
+                                    actual_str,
+                                ));
+                            }
+                        } else {
+                            missing_members.push(member_name);
                         }
                     }
 
@@ -778,14 +974,16 @@ impl<'a> CheckerState<'a> {
                                 }
                             });
 
-                        if !class_has_index_signature {
+                        if !class_has_index_signature && missing_members.is_empty() {
                             self.error_at_node(
                                 class_error_idx,
                                 &format!(
-                                    "Class '{class_name}' incorrectly implements interface '{interface_name}'. Index signature for type 'number' is missing in type '{class_name}'."
+                                    "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
                                 ),
                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                             );
+                            self.pop_type_parameters(interface_type_param_updates);
+                            continue;
                         }
                     }
 
@@ -800,7 +998,7 @@ impl<'a> CheckerState<'a> {
                         let missing_message = if missing_members.len() == 1 {
                             format!(
                                 "Property '{}' is missing in type '{}' but required in type '{}'.",
-                                missing_members[0], class_name, interface_name
+                                missing_members[0], class_name, interface_display_name
                             )
                         } else {
                             let missing_list = missing_members.clone();
@@ -816,7 +1014,7 @@ impl<'a> CheckerState<'a> {
                                 missing_list.join(", ")
                             };
                             format!(
-                                "Type '{class_name}' is missing the following properties from type '{interface_name}': {formatted_list}"
+                                "Type '{class_name}' is missing the following properties from type '{interface_display_name}': {formatted_list}"
                             )
                         };
 
@@ -826,35 +1024,40 @@ impl<'a> CheckerState<'a> {
                             )
                         } else {
                             format!(
-                                "Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  {missing_message}"
+                                "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  {missing_message}"
                             )
                         };
 
                         self.error_at_node(class_error_idx, &full_message, diagnostic_code);
                     }
 
-                    // Report error for incompatible member types
-                    for (class_member_idx, member_name, expected, actual) in incompatible_members {
-                        let error_node_idx =
-                            if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
-                                self.get_member_name_node(member_node)
-                                    .unwrap_or(class_member_idx)
-                            } else {
-                                class_member_idx
-                            };
-                        self.error_at_node(
-                            error_node_idx,
-                            &format!(
-                                "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_name}'."
-                            ),
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                        );
-                        self.report_type_not_assignable_detail(
-                            error_node_idx,
-                            &actual,
-                            &expected,
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                        );
+                    // TypeScript prioritizes the top-level TS2420 missing-members diagnostic
+                    // over per-member TS2416 reports for the same implemented interface.
+                    if missing_members.is_empty() {
+                        for (class_member_idx, member_name, expected, actual) in
+                            incompatible_members
+                        {
+                            let error_node_idx =
+                                if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
+                                    self.get_member_name_node(member_node)
+                                        .unwrap_or(class_member_idx)
+                                } else {
+                                    class_member_idx
+                                };
+                            self.error_at_node(
+                                error_node_idx,
+                                &format!(
+                                    "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_display_name}'."
+                                ),
+                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            );
+                            self.report_type_not_assignable_detail(
+                                error_node_idx,
+                                &actual,
+                                &expected,
+                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            );
+                        }
                     }
 
                     // Pop interface type parameters from scope
