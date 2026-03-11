@@ -1765,12 +1765,13 @@ impl<'a> CheckerState<'a> {
             if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
                 if let Some(binary) = self.ctx.arena.get_binary_expr(expr_node)
                     && binary.operator_token == SyntaxKind::EqualsToken as u16
-                    && let Some((prop_name, rhs_type, report_idx)) = self.extract_generic_this_assignment(
-                        binary.left,
-                        binary.right,
-                        param_type_map,
-                        stmt_idx,
-                    )
+                    && let Some((prop_name, rhs_type, report_idx)) = self
+                        .extract_generic_this_assignment(
+                            binary.left,
+                            binary.right,
+                            param_type_map,
+                            stmt_idx,
+                        )
                 {
                     if rhs_type == TypeId::UNDEFINED {
                         if let Some(parent_sym) = parent_sym
