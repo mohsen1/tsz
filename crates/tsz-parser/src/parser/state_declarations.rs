@@ -1663,8 +1663,15 @@ impl ParserState {
         // Restore context flags
         self.context_flags = saved_flags;
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-        let end_pos = self.token_end();
+        let end_pos = if self.deferred_module_close_braces > 0
+            && self.is_token(SyntaxKind::CloseBraceToken)
+        {
+            self.deferred_module_close_braces -= 1;
+            self.token_pos()
+        } else {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            self.token_end()
+        };
 
         self.arena.add_module_block(
             syntax_kind_ext::MODULE_BLOCK,
