@@ -34,7 +34,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    fn shared_application_base_def_id(&self, source_base: TypeId, target_base: TypeId) -> Option<DefId> {
+    fn shared_application_base_def_id(
+        &self,
+        source_base: TypeId,
+        target_base: TypeId,
+    ) -> Option<DefId> {
         let source_def = self.application_base_def_id(source_base)?;
         let target_def = self.application_base_def_id(target_base)?;
         (source_def == target_def).then_some(source_def)
