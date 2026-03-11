@@ -797,6 +797,96 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check heritage clauses for primitive type keywords only (TS2863/TS2864).
+    /// This is a lighter-weight check than `check_heritage_clauses_for_unresolved_names` and is
+    /// safe to call for class expressions without triggering side effects like constructor
+    /// accessibility checking (TS2675) that `get_type_of_node` would cause.
+    pub(crate) fn check_heritage_clauses_for_primitive_types(
+        &mut self,
+        heritage_clauses: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext::HERITAGE_CLAUSE;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(clauses) = heritage_clauses else {
+            return;
+        };
+
+        for &clause_idx in &clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+
+            if clause_node.kind != HERITAGE_CLAUSE {
+                continue;
+            }
+
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            let is_extends_clause = heritage.token == SyntaxKind::ExtendsKeyword as u16;
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+
+                if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                    && expr_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                {
+                    let name = ident.escaped_text.as_str();
+                    if matches!(
+                        name,
+                        "number"
+                            | "string"
+                            | "boolean"
+                            | "symbol"
+                            | "bigint"
+                            | "any"
+                            | "unknown"
+                            | "never"
+                            | "object"
+                    ) {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+
+                        if is_extends_clause {
+                            let message = format_message(
+                                diagnostic_messages::A_CLASS_CANNOT_EXTEND_A_PRIMITIVE_TYPE_LIKE_CLASSES_CAN_ONLY_EXTEND_CONSTRUCTABL,
+                                &[name],
+                            );
+                            self.error_at_node(
+                                expr_idx,
+                                &message,
+                                diagnostic_codes::A_CLASS_CANNOT_EXTEND_A_PRIMITIVE_TYPE_LIKE_CLASSES_CAN_ONLY_EXTEND_CONSTRUCTABL,
+                            );
+                        } else {
+                            let message = format_message(
+                                diagnostic_messages::A_CLASS_CANNOT_IMPLEMENT_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_IMPLEMENT_OTHER_NAMED,
+                                &[name],
+                            );
+                            self.error_at_node(
+                                expr_idx,
+                                &message,
+                                diagnostic_codes::A_CLASS_CANNOT_IMPLEMENT_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_IMPLEMENT_OTHER_NAMED,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Find a reference to an enclosing class type parameter inside a base class expression.
     ///
     /// This traverses the runtime expression tree and only inspects embedded type nodes
