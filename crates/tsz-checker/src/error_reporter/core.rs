@@ -861,13 +861,9 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) -> String {
         if source == TypeId::UNDEFINED
-            && self
-                .ctx
-                .arena
-                .get(anchor_idx)
-                .is_some_and(|node| {
-                    node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
-                })
+            && self.ctx.arena.get(anchor_idx).is_some_and(|node| {
+                node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            })
         {
             return self.format_assignability_type_for_message(source, target);
         }
