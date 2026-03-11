@@ -2179,6 +2179,10 @@ class Test {
         !has_error(&diagnostics, 2301),
         "Did not expect TS2301 for locally shadowed identifier in initializer. Actual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2403),
+        "Did not expect TS2403 for the hoisted local var inside the initializer lambda. Actual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
