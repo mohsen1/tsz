@@ -1835,6 +1835,11 @@ impl<'a> CheckerState<'a> {
                             if let Some(prop_type) = found_via_export_equals_type {
                                 return (prop_type, Vec::new());
                             }
+                            let import_specifier_decl = declarations.iter().copied().find(|&decl| {
+                                self.ctx.arena.get(decl).is_some_and(|node| {
+                                    node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
+                                })
+                            });
                             if self.ctx.arena.get(value_decl).is_some_and(|node| {
                                 node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_SPECIFIER
                             }) {
@@ -1843,7 +1848,7 @@ impl<'a> CheckerState<'a> {
                             self.emit_no_exported_member_error(
                                 module_name,
                                 export_name,
-                                value_decl,
+                                import_specifier_decl.unwrap_or(value_decl),
                             );
                         }
                     }
