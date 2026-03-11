@@ -491,6 +491,14 @@ impl<'a> CheckerState<'a> {
 
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
 
+        if result
+            && self
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+        {
+            return false;
+        }
+
         // Post-check: keyof type checking logic
         if let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
             && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
@@ -1519,6 +1527,14 @@ impl<'a> CheckerState<'a> {
             sound_mode: self.ctx.sound_mode(),
         };
         let gate = check_assignable_gate_with_overrides(&inputs, &overrides, Some(&self.ctx), true);
+        if gate.related
+            && let Some(reason) = self.checker_only_assignability_failure_reason(source, target)
+        {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
         if gate.related {
             return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
@@ -1553,5 +1569,48 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
         self.analyze_assignability_failure(source, target)
             .weak_union_violation
+    }
+
+    fn checker_only_assignability_failure_reason(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<tsz_solver::SubtypeFailureReason> {
+        self.missing_number_index_signature_reason(source, target)
+    }
+
+    fn missing_number_index_signature_reason(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<tsz_solver::SubtypeFailureReason> {
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+        let resolved_target = self.resolve_type_for_property_access(target);
+
+        let source_shape = object_shape_for_type(self.ctx.types, source)?;
+        let target_shape = object_shape_for_type(self.ctx.types, resolved_target)?;
+
+        if target_shape.number_index.is_none()
+            || target_shape.string_index.is_some()
+            || source_shape.number_index.is_some()
+            || source_shape.string_index.is_some()
+            || source_shape.properties.is_empty()
+        {
+            return None;
+        }
+
+        let has_numeric_property = source_shape.properties.iter().any(|prop| {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            tsz_solver::utils::is_numeric_literal_name(prop_name.as_ref())
+        });
+
+        if has_numeric_property {
+            return None;
+        }
+
+        Some(tsz_solver::SubtypeFailureReason::MissingIndexSignature {
+            index_kind: "number",
+        })
     }
 }

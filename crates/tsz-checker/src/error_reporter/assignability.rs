@@ -1129,6 +1129,31 @@ impl<'a> CheckerState<'a> {
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
+            SubtypeFailureReason::MissingIndexSignature { index_kind } => {
+                if depth == 0 {
+                    let source_str =
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                    let target_str = self.format_assignability_type_for_message(target, source);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+                let source_str = self.format_type_diagnostic(source);
+                let message = format_message(
+                    diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
+                    &[index_kind, &source_str],
+                );
+                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+            }
+
             SubtypeFailureReason::NoUnionMemberMatches {
                 source_type,
                 target_union_members: _,
