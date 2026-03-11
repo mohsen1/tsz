@@ -4,10 +4,11 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeData, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn elaboration_source_expression_type(&mut self, expr_idx: NodeIndex) -> TypeId {
@@ -246,49 +247,40 @@ impl<'a> CheckerState<'a> {
         rest_type: TypeId,
         rest_index: usize,
     ) -> Option<String> {
-        match self.ctx.types.lookup(rest_type) {
-            Some(TypeData::ReadonlyType(inner)) => {
-                self.rest_union_member_display(inner, rest_index)
-            }
-            Some(TypeData::Union(members)) => {
-                let members = self.ctx.types.type_list(members);
-                let displays: Vec<String> = members
+        let unwrapped = query_common::unwrap_readonly(self.ctx.types, rest_type);
+        if let Some(members) = query_common::union_members(self.ctx.types, unwrapped) {
+            let displays: Vec<String> = members
+                .iter()
+                .rev()
+                .filter_map(|&member| self.rest_tuple_member_display(member, rest_index))
+                .collect();
+            let is_numeric_literal_union = displays.len() > 1
+                && displays
                     .iter()
-                    .rev()
-                    .filter_map(|&member| self.rest_tuple_member_display(member, rest_index))
-                    .collect();
-                let is_numeric_literal_union = displays.len() > 1
-                    && displays
-                        .iter()
-                        .all(|display| display.parse::<f64>().is_ok());
-                if !is_numeric_literal_union {
-                    return None;
-                }
-                Some(displays.join(" | "))
+                    .all(|display| display.parse::<f64>().is_ok());
+            if !is_numeric_literal_union {
+                return None;
             }
-            _ => None,
+            Some(displays.join(" | "))
+        } else {
+            None
         }
     }
 
     fn rest_tuple_member_display(&mut self, member: TypeId, rest_index: usize) -> Option<String> {
-        match self.ctx.types.lookup(member) {
-            Some(TypeData::ReadonlyType(inner)) => {
-                self.rest_tuple_member_display(inner, rest_index)
+        let unwrapped = query_common::unwrap_readonly(self.ctx.types, member);
+        if let Some(elements) = query_common::tuple_elements(self.ctx.types, unwrapped) {
+            if let Some(element) = elements.get(rest_index) {
+                return Some(self.format_type_for_assignability_message(element.type_id));
             }
-            Some(TypeData::Tuple(elements)) => {
-                let elements = self.ctx.types.tuple_list(elements);
-                if let Some(element) = elements.get(rest_index) {
-                    return Some(self.format_type_for_assignability_message(element.type_id));
-                }
-                let last = elements.last()?;
-                last.rest
-                    .then(|| self.format_type_for_assignability_message(last.type_id))
-            }
-            Some(TypeData::Array(element)) => {
-                Some(self.format_type_for_assignability_message(element))
-            }
-            _ => None,
+            let last = elements.last()?;
+            return last
+                .rest
+                .then(|| self.format_type_for_assignability_message(last.type_id));
         }
+
+        query_common::array_element_type(self.ctx.types, unwrapped)
+            .map(|element| self.format_type_for_assignability_message(element))
     }
 
     fn format_call_parameter_type_for_diagnostic(

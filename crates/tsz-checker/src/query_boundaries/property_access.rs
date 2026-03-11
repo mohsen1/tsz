@@ -39,6 +39,17 @@ pub(crate) fn def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_solve
     tsz_solver::type_queries::get_def_id(db, type_id)
 }
 
+pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
+pub(crate) fn enum_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::def::DefId> {
+    tsz_solver::type_queries::get_enum_def_id(db, type_id)
+}
+
 pub(crate) fn function_shape(
     db: &dyn TypeDatabase,
     type_id: TypeId,
