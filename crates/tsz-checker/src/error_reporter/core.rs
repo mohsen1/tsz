@@ -637,6 +637,11 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         fn sanitize_type_annotation_text(text: String) -> Option<String> {
             let mut text = text.trim().trim_start_matches(':').trim().to_string();
+            // If the extracted text contains a newline, take only the first line —
+            // the node span may extend past the declaration.
+            if let Some(nl) = text.find('\n') {
+                text = text[..nl].trim_end().to_string();
+            }
             while matches!(text.chars().last(), Some(',') | Some(';')) {
                 text.pop();
                 text = text.trim_end().to_string();
@@ -797,9 +802,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
-            if let Some(display) = self.literal_expression_display(expr_idx)
-                && (self.assignment_source_is_return_expression(anchor_idx)
-                    || self.is_literal_sensitive_assignment_target(target))
+            if (self.is_literal_sensitive_assignment_target(target)
+                || (self.assignment_source_is_return_expression(anchor_idx)
+                    && tsz_solver::type_queries::contains_type_parameters_db(
+                        self.ctx.types,
+                        target,
+                    )))
+                && let Some(display) = self.literal_expression_display(expr_idx)
                 && !self.is_property_assignment_initializer(expr_idx)
             {
                 return display;
