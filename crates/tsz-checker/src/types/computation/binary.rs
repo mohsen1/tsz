@@ -720,8 +720,13 @@ impl<'a> CheckerState<'a> {
                 let (left_display, right_display) = if left_base == right_base {
                     // Same primitive family: preserve all literals
                     (left_narrow, right_narrow)
+                } else if left_base == left_narrow || right_base == right_narrow {
+                    // One side is non-literal (type parameter, object, etc.):
+                    // preserve both as-is. tsc only widens when both sides are
+                    // literals from different primitive families.
+                    (left_narrow, right_narrow)
                 } else {
-                    // Different families: widen all literals to primitive types.
+                    // Different families, both literal: widen to primitive types.
                     // tsc widens both sides (e.g., '"foo"' → 'string', '0' → 'number')
                     // when the operands are from different primitive families.
                     (left_base, right_base)
