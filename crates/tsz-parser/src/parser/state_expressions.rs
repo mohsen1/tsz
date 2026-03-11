@@ -274,9 +274,7 @@ impl ParserState {
                 && bracket_depth == 0
                 && matches!(
                     self.token(),
-                    SyntaxKind::ColonToken
-                        | SyntaxKind::QuestionToken
-                        | SyntaxKind::EqualsToken
+                    SyntaxKind::ColonToken | SyntaxKind::QuestionToken | SyntaxKind::EqualsToken
                 )
             {
                 saw_parameter_syntax = true;
@@ -586,10 +584,10 @@ impl ParserState {
             if expr.is_none() {
                 self.error_expression_expected();
                 if self.is_token(SyntaxKind::CloseBraceToken) {
-                    let deferred_close_braces = self.count_following_close_braces().saturating_sub(1);
-                    self.deferred_module_close_braces = self
-                        .deferred_module_close_braces
-                        .max(deferred_close_braces);
+                    let deferred_close_braces =
+                        self.count_following_close_braces().saturating_sub(1);
+                    self.deferred_module_close_braces =
+                        self.deferred_module_close_braces.max(deferred_close_braces);
                     self.next_token();
                 }
             }
