@@ -270,7 +270,6 @@ mod contextual_return_wrapper_tests;
 #[path = "../tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
-#[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]

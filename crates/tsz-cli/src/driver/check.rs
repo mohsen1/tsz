@@ -53,11 +53,18 @@ fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
         .any(|diag| is_real_syntax_error(diag.code))
 }
 
+fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
+    matches!(code, 2427 | 2457)
+}
+
 fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> bool {
     // tsc suppresses type-level semantic diagnostics when any source file in the
-    // program has a real syntax error, but it still reports checker grammar
-    // diagnostics such as TS2457 alongside parse errors.
-    code < 2000 || (8000..9000).contains(&code) || code == 2457
+    // program has a real syntax error, but it still reports declaration-name
+    // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
+    // accepts those names and defers validation to the checker.
+    code < 2000
+        || (8000..9000).contains(&code)
+        || is_reserved_type_name_declaration_diagnostic(code)
 }
 
 fn post_process_checker_diagnostics(
@@ -113,9 +120,10 @@ fn post_process_checker_diagnostics(
             }
             // Some semantic errors are deliberately emitted alongside
             // structural parse errors and must not be suppressed.
-            // TS2457: "Type alias name cannot be 'void'" — TSC emits
-            // this alongside TS1109 for `type void = ...`.
-            if diag.code == 2457 {
+            // TS2427 / TS2457 are checker-side validation for reserved type names
+            // in interface/type-alias declarations. TSC keeps them even when the
+            // surrounding file also has structural parse errors.
+            if is_reserved_type_name_declaration_diagnostic(diag.code) {
                 return true;
             }
             // Suppress if a structural parse error is within the cascade window
@@ -1300,6 +1308,21 @@ let __: B = new B();"#
                 .iter()
                 .any(|diag| diag.file == "/b.ts" && diag.code == 2457),
             "expected TS2457 to survive program-level syntax suppression: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn real_syntax_errors_preserve_reserved_interface_name_diagnostics() {
+        let diagnostics = collect_test_diagnostics(&[
+            ("/a.ts", "const x =\n"),
+            ("/b.ts", "function function() {}\ninterface void {}\n"),
+        ]);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.file == "/b.ts" && diag.code == 2427),
+            "expected TS2427 to survive parse-error suppression: {diagnostics:?}"
         );
     }
 }
