@@ -1192,8 +1192,11 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                let source_str =
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                let source_str = if depth == 0 {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_nested_assignment_source_type_for_diagnostic(source, target, idx)
+                };
                 let target_str = self.format_type_for_assignability_message(target);
 
                 if depth == 0

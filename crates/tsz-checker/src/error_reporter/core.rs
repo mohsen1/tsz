@@ -251,6 +251,38 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn is_property_assignment_initializer(&self, anchor_idx: NodeIndex) -> bool {
+        let mut current = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        let mut guard = 0;
+
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                && let Some(prop) = self.ctx.arena.get_property_assignment(parent)
+                && prop.initializer == current
+            {
+                return true;
+            }
+            current = parent_idx;
+        }
+
+        false
+    }
+
     fn direct_diagnostic_source_expression(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -431,6 +463,7 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) -> String {
         if self.is_literal_sensitive_assignment_target(target)
+            && !self.is_property_assignment_initializer(anchor_idx)
             && let Some(display) = self.literal_expression_display(anchor_idx)
         {
             return display;
@@ -438,6 +471,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if self.is_literal_sensitive_assignment_target(target)
+                && !self.is_property_assignment_initializer(expr_idx)
                 && let Some(display) = self.literal_expression_display(expr_idx)
             {
                 return display;
@@ -474,6 +508,7 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.literal_expression_display(expr_idx)
                 && (self.assignment_source_is_return_expression(anchor_idx)
                     || self.is_literal_sensitive_assignment_target(target))
+                && !self.is_property_assignment_initializer(expr_idx)
             {
                 return display;
             }
@@ -554,6 +589,65 @@ impl<'a> CheckerState<'a> {
                 return self.format_annotation_like_type(&display);
             }
             return formatted;
+        }
+
+        self.format_assignability_type_for_message(source, target)
+    }
+
+    pub(super) fn format_nested_assignment_source_type_for_diagnostic(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> String {
+        if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
+            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            let expr_type = self.get_type_of_node(expr_idx);
+            if expr_type != TypeId::ERROR {
+                let display_type =
+                    if self.should_widen_enum_member_assignment_source(expr_type, target) {
+                        self.widen_enum_member_type(expr_type)
+                    } else if self.literal_expression_display(expr_idx).is_some() {
+                        self.widen_literal_type(expr_type)
+                    } else {
+                        expr_type
+                    };
+                return self.format_assignability_type_for_message(display_type, target);
+            }
+        }
+
+        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
+            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            let expr_type = self.get_type_of_node(expr_idx);
+            let display_type = if expr_type != TypeId::ERROR {
+                let widened_expr_type = if self.literal_expression_display(expr_idx).is_some() {
+                    self.widen_literal_type(expr_type)
+                } else {
+                    expr_type
+                };
+                if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
+                    self.widen_enum_member_type(widened_expr_type)
+                } else {
+                    widened_expr_type
+                }
+            } else {
+                source
+            };
+            return self.format_assignability_type_for_message(display_type, target);
         }
 
         self.format_assignability_type_for_message(source, target)
