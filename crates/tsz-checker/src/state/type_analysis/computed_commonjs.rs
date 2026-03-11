@@ -1,16 +1,85 @@
 use crate::state::CheckerState;
+use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
 impl<'a> CheckerState<'a> {
+    fn collect_direct_commonjs_assignment_exports(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+        pending_props: &mut FxHashMap<String, NodeIndex>,
+        ordered_names: &mut Vec<String>,
+    ) {
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return;
+        }
+        let Some(binary) = arena.get_binary_expr(expr_node) else {
+            return;
+        };
+        if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+            return;
+        }
+
+        let Some(left_node) = arena.get(binary.left) else {
+            return;
+        };
+        if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(left_access) = arena.get_access_expr(left_node)
+        {
+            let direct_exports_name = arena.get_identifier_at(left_access.expression).and_then(
+                |ident| (ident.escaped_text == "exports").then(|| {
+                    arena
+                        .get_identifier_at(left_access.name_or_argument)
+                        .map(|name| name.escaped_text.to_string())
+                }),
+            ).flatten();
+            let module_exports_name = arena.get(left_access.expression).and_then(|target_node| {
+                if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    return None;
+                }
+                let target_access = arena.get_access_expr(target_node)?;
+                let is_module_exports = arena
+                    .get_identifier_at(target_access.expression)
+                    .is_some_and(|ident| ident.escaped_text == "module")
+                    && arena
+                        .get_identifier_at(target_access.name_or_argument)
+                        .is_some_and(|ident| ident.escaped_text == "exports");
+                is_module_exports.then(|| {
+                    arena.get_identifier_at(left_access.name_or_argument)
+                        .map(|name| name.escaped_text.to_string())
+                })?
+            });
+            if let Some(name_text) = direct_exports_name.or(module_exports_name) {
+                if !pending_props.contains_key(&name_text) {
+                    ordered_names.push(name_text.clone());
+                }
+                pending_props.insert(name_text, binary.right);
+            }
+        }
+
+        self.collect_direct_commonjs_assignment_exports(
+            arena,
+            binary.right,
+            pending_props,
+            ordered_names,
+        );
+    }
+
     fn infer_commonjs_export_rhs_type(
         &mut self,
         target_file_idx: usize,
         rhs_expr: NodeIndex,
     ) -> TypeId {
         if target_file_idx == self.ctx.current_file_idx {
+            if let Some(literal_type) = self.literal_type_from_initializer(rhs_expr) {
+                return literal_type;
+            }
             return self.get_type_of_node(rhs_expr);
         }
 
@@ -49,7 +118,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.cross_file_symbol_targets.borrow().clone();
         }
 
-        let ty = checker.get_type_of_node(rhs_expr);
+        let ty = checker
+            .literal_type_from_initializer(rhs_expr)
+            .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
         for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
             self.ctx
                 .cross_file_symbol_targets
@@ -68,7 +139,8 @@ impl<'a> CheckerState<'a> {
         let Some(source_file) = target_arena.source_files.first() else {
             return;
         };
-        let mut pending_props: Vec<(String, NodeIndex)> = Vec::new();
+        let mut pending_props: FxHashMap<String, NodeIndex> = FxHashMap::default();
+        let mut ordered_names: Vec<String> = Vec::new();
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = target_arena.get(stmt_idx) else {
@@ -80,69 +152,22 @@ impl<'a> CheckerState<'a> {
             let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
                 continue;
             };
-            let Some(expr_node) = target_arena.get(stmt.expression) else {
-                continue;
-            };
-            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
-            }
-            let Some(binary) = target_arena.get_binary_expr(expr_node) else {
-                continue;
-            };
-            if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
-                continue;
-            }
-
-            let Some(left_node) = target_arena.get(binary.left) else {
-                continue;
-            };
-            if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                continue;
-            }
-            let Some(left_access) = target_arena.get_access_expr(left_node) else {
-                continue;
-            };
-
-            let direct_exports_name = target_arena.get_identifier_at(left_access.expression).and_then(
-                |ident| (ident.escaped_text == "exports").then(|| {
-                    target_arena
-                        .get_identifier_at(left_access.name_or_argument)
-                        .map(|name| name.escaped_text.to_string())
-                }),
-            ).flatten();
-            let module_exports_name =
-                target_arena.get(left_access.expression).and_then(|target_node| {
-                    if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                        return None;
-                    }
-                    let target_access = target_arena.get_access_expr(target_node)?;
-                    let is_module_exports = target_arena
-                        .get_identifier_at(target_access.expression)
-                        .is_some_and(|ident| ident.escaped_text == "module")
-                        && target_arena
-                            .get_identifier_at(target_access.name_or_argument)
-                            .is_some_and(|ident| ident.escaped_text == "exports");
-                    is_module_exports.then(|| {
-                        target_arena
-                            .get_identifier_at(left_access.name_or_argument)
-                            .map(|name| name.escaped_text.to_string())
-                    })?
-                });
-            let Some(name_text) = direct_exports_name.or(module_exports_name) else {
-                continue;
-            };
-
-            let name_atom = self.ctx.types.intern_string(&name_text);
-            if props.iter().any(|prop| prop.name == name_atom)
-                || pending_props.iter().any(|(pending_name, _)| pending_name == &name_text)
-            {
-                continue;
-            }
-            pending_props.push((name_text, binary.right));
+            self.collect_direct_commonjs_assignment_exports(
+                target_arena,
+                stmt.expression,
+                &mut pending_props,
+                &mut ordered_names,
+            );
         }
 
-        for (name_text, rhs_expr) in pending_props {
+        for name_text in ordered_names {
             let name_atom = self.ctx.types.intern_string(&name_text);
+            if props.iter().any(|prop| prop.name == name_atom) {
+                continue;
+            }
+            let Some(rhs_expr) = pending_props.get(&name_text).copied() else {
+                continue;
+            };
             let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
             props.push(tsz_solver::PropertyInfo {
                 name: name_atom,
