@@ -156,6 +156,99 @@ abc = secondAbcd;
 }
 
 #[test]
+fn test_unambiguous_namespaced_enum_assignability_uses_simple_names() {
+    let source = r#"
+namespace First {
+    export enum E {
+        a, b, c,
+    }
+}
+namespace Abc {
+    export enum Nope {
+        a, b, c,
+    }
+}
+declare let abc: First.E;
+declare let nope: Abc.Nope;
+abc = nope;
+nope = abc;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type 'Nope' is not assignable to type 'E'.")),
+        "Expected unambiguous namespaced enum display to use simple names. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type 'E' is not assignable to type 'Nope'.")),
+        "Expected unambiguous reverse enum display to use simple names. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_merged_enum_assignability_uses_all_merged_members() {
+    let source = r#"
+namespace First {
+    export enum E {
+        a, b, c,
+    }
+}
+namespace Merged {
+    export enum E {
+        a, b,
+    }
+    export enum E {
+        c = 3, d,
+    }
+}
+declare let abc: First.E;
+declare let merged: Merged.E;
+abc = merged;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2322)
+        .expect("expected TS2322 for assigning merged enum to First.E");
+
+    assert!(
+        message.contains("Type 'Merged.E' is not assignable to type 'First.E'."),
+        "Expected merged enum assignability to consider all merged members. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespaced_enum_object_property_access_uses_typeof_enum_name() {
+    let source = r#"
+namespace second {
+    export enum E {
+        A = 2,
+    }
+}
+
+const value = second.E.B;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2339)
+        .expect("expected TS2339 for missing enum object property");
+
+    assert!(
+        message.contains("Property 'B' does not exist on type 'typeof E'."),
+        "Expected namespaced enum object property access to display 'typeof E'. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
     let source = r#"
 enum Colors {

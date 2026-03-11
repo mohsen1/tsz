@@ -586,6 +586,10 @@ impl<'a> CheckerState<'a> {
                 && !display.contains("[P in ")
                 && !display.contains("[K in ")
             {
+                if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, display_type).is_some()
+                {
+                    return self.format_assignability_type_for_message(display_type, target);
+                }
                 return self.format_annotation_like_type(&display);
             }
             return formatted;
@@ -983,8 +987,8 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         other: TypeId,
     ) -> Option<String> {
-        let ty_sym = self.enum_symbol_from_full_enum_type(ty)?;
-        let other_sym = self.enum_symbol_from_full_enum_type(other)?;
+        let ty_sym = self.enum_symbol_from_enumish_type(ty)?;
+        let other_sym = self.enum_symbol_from_enumish_type(other)?;
         let ty_symbol = self.ctx.binder.get_symbol(ty_sym)?;
         let other_symbol = self.ctx.binder.get_symbol(other_sym)?;
 
@@ -992,49 +996,45 @@ impl<'a> CheckerState<'a> {
             return Some(ty_symbol.escaped_name.clone());
         }
 
-        if self.is_top_level_module_enum_symbol(ty_sym) {
-            let module_name = self.ctx.module_specifiers.get(&ty_symbol.decl_file_idx)?;
+        if self.is_exported_external_module_enum_symbol(ty_sym)
+            && let Some(module_name) = self.module_specifier_for_symbol(ty_sym)
+        {
             return Some(format!(
                 "import(\"{module_name}\").{}",
                 ty_symbol.escaped_name
             ));
         }
 
-        if self.is_ambient_namespace_enum_symbol(ty_sym) {
-            return Some(ty_symbol.escaped_name.clone());
-        }
-
         self.format_qualified_enum_name_for_message(ty)
     }
 
-    fn is_top_level_module_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    fn is_exported_external_module_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        symbol.declarations.iter().copied().any(|decl_idx| {
-            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
-                return false;
-            };
-            self.ctx
-                .arena
-                .get(ext.parent)
-                .is_some_and(|parent| parent.kind == syntax_kind_ext::SOURCE_FILE)
-        })
+        symbol.is_exported
+            && symbol.decl_file_idx != u32::MAX
+            && self
+                .ctx
+                .get_binder_for_file(symbol.decl_file_idx as usize)
+                .is_some_and(tsz_binder::BinderState::is_external_module)
     }
 
-    fn is_ambient_namespace_enum_symbol(&self, sym_id: tsz_binder::SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        symbol.declarations.iter().copied().any(|decl_idx| {
-            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
-                return false;
-            };
-            self.ctx.arena.has_modifier(
-                &enum_decl.modifiers,
-                tsz_scanner::SyntaxKind::DeclareKeyword,
-            )
-        })
+    fn module_specifier_for_symbol(&self, sym_id: tsz_binder::SymbolId) -> Option<String> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if let Some(specifier) = self.ctx.module_specifiers.get(&symbol.decl_file_idx) {
+            return Some(specifier.clone());
+        }
+
+        let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
+        let source_file = arena.source_files.first()?;
+        let file_name = &source_file.file_name;
+        let stem = file_name.rsplit_once('.').map(|(base, _)| base).unwrap_or(file_name);
+        let basename = stem
+            .rsplit_once('/')
+            .map(|(_, name)| name)
+            .unwrap_or(stem);
+        Some(basename.to_string())
     }
 
     fn is_function_like_type(&mut self, ty: TypeId) -> bool {
