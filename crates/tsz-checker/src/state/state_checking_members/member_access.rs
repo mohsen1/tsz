@@ -1289,6 +1289,41 @@ impl<'a> CheckerState<'a> {
         Some((name, method.name, type_id))
     }
 
+    fn get_class_member_name_info(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, bool)> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let prop = self.ctx.arena.get_property_decl(member_node)?;
+                Some((
+                    self.get_member_name_text(prop.name)?,
+                    prop.name,
+                    self.has_static_modifier(&prop.modifiers),
+                ))
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.ctx.arena.get_method_decl(member_node)?;
+                Some((
+                    self.get_member_name_text(method.name)?,
+                    method.name,
+                    self.has_static_modifier(&method.modifiers),
+                ))
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let accessor = self.ctx.arena.get_accessor(member_node)?;
+                Some((
+                    self.get_member_name_text(accessor.name)?,
+                    accessor.name,
+                    self.has_static_modifier(&accessor.modifiers),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// Extract type info for a class accessor declaration.
     /// For getters, use explicit return annotation if present, otherwise infer from body.
     /// For setters, use the first parameter type annotation (or `any` if omitted).
@@ -1342,7 +1377,7 @@ impl<'a> CheckerState<'a> {
     ///   foo(x: string): void;    // overload signature  
     ///   foo(x: any) { }          // implementation - this is valid!
     pub(crate) fn check_duplicate_class_members(&mut self, members: &[NodeIndex]) {
-        use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use rustc_hash::FxHashMap;
 
         // Track member names with their info
@@ -1353,13 +1388,18 @@ impl<'a> CheckerState<'a> {
             is_static: Vec<bool>,
         }
 
+        struct AccessorInfo {
+            indices: Vec<NodeIndex>,
+            is_private: bool,
+        }
+
         let mut seen_names: FxHashMap<String, MemberInfo> = FxHashMap::default();
         let mut constructor_declarations: Vec<NodeIndex> = Vec::new();
         let mut constructor_implementations: Vec<NodeIndex> = Vec::new();
 
         // Track accessor occurrences for duplicate detection
         // Key: "get:name" or "set:name" (with "static:" prefix for static members)
-        let mut seen_accessors: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        let mut seen_accessors: FxHashMap<String, AccessorInfo> = FxHashMap::default();
 
         // Track accessor plain names (without get/set prefix) for cross-checking
         // against properties/methods. Key: "name" or "static:name"
@@ -1400,6 +1440,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(name) = self.get_member_name_text(accessor.name)
                     {
                         let is_static = self.has_static_modifier(&accessor.modifiers);
+                        let is_private = self.is_private_identifier_name(accessor.name);
                         let kind = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
                             "get"
                         } else {
@@ -1410,7 +1451,12 @@ impl<'a> CheckerState<'a> {
                         } else {
                             format!("{kind}:{name}")
                         };
-                        seen_accessors.entry(key).or_default().push(member_idx);
+                        let info = seen_accessors.entry(key).or_insert(AccessorInfo {
+                            indices: Vec::new(),
+                            is_private,
+                        });
+                        info.indices.push(member_idx);
+                        info.is_private |= is_private;
 
                         // Also track plain name for cross-checking with properties/methods
                         let plain_key = if is_static {
@@ -1610,29 +1656,91 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name)
-        // tsc only reports on subsequent (second+) declarations, not the first
-        for indices in seen_accessors.values() {
-            if indices.len() <= 1 {
+        // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name).
+        // Private names report on all same-kind accessor declarations; regular names only on the
+        // subsequent declaration(s).
+        for info in seen_accessors.values() {
+            if info.indices.len() <= 1 {
                 continue;
             }
-            for &idx in indices.iter().skip(1) {
+            let start = if info.is_private { 0 } else { 1 };
+            for &idx in info.indices.iter().skip(start) {
                 self.report_duplicate_class_member_ts2300(idx);
+            }
+        }
+
+        // TS2804: static and instance members cannot share the same private name.
+        // Report on the later conflicting declaration only, matching tsc.
+        let mut seen_private_name_staticness: FxHashMap<String, (bool, bool)> =
+            FxHashMap::default();
+        for &member_idx in members {
+            let Some((name, name_idx, is_static)) = self.get_class_member_name_info(member_idx)
+            else {
+                continue;
+            };
+            if !self.is_private_identifier_name(name_idx) {
+                continue;
+            }
+
+            let seen = seen_private_name_staticness
+                .entry(name.clone())
+                .or_insert((false, false));
+            let has_opposite = if is_static { seen.0 } else { seen.1 };
+            if has_opposite {
+                let message = format_message(
+                    diagnostic_messages::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
+                    &[&name],
+                );
+                self.error_at_node(
+                    name_idx,
+                    &message,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
+                );
+            }
+
+            if is_static {
+                seen.1 = true;
+            } else {
+                seen.0 = true;
             }
         }
 
         // Cross-check accessors against properties/methods for TS2300
         // A field+getter, field+setter, or method+getter/setter conflict is TS2300
-        // tsc reports on BOTH the accessor and the conflicting property/method
+        // Method conflicts report on both declarations. Field conflicts are order-sensitive:
+        // if the accessor comes first, only the later field gets TS2300.
         for (key, accessor_indices) in &accessor_plain_names {
             if let Some(member_info) = seen_names.get(key) {
                 // Report TS2300 on the conflicting property/method declarations
                 for &idx in &member_info.indices {
                     self.report_duplicate_class_member_ts2300(idx);
                 }
-                // Report TS2300 on the accessor declarations
-                for &idx in accessor_indices {
-                    self.report_duplicate_class_member_ts2300(idx);
+
+                let has_method = member_info
+                    .is_property
+                    .iter()
+                    .any(|is_property| !*is_property);
+                let should_report_accessors = if has_method {
+                    true
+                } else {
+                    let first_member_pos = member_info
+                        .indices
+                        .first()
+                        .and_then(|&idx| self.ctx.arena.get(idx))
+                        .map(|node| node.pos)
+                        .unwrap_or(u32::MAX);
+                    let first_accessor_pos = accessor_indices
+                        .first()
+                        .and_then(|&idx| self.ctx.arena.get(idx))
+                        .map(|node| node.pos)
+                        .unwrap_or(u32::MAX);
+                    first_member_pos <= first_accessor_pos
+                };
+
+                if should_report_accessors {
+                    for &idx in accessor_indices {
+                        self.report_duplicate_class_member_ts2300(idx);
+                    }
                 }
             }
         }
