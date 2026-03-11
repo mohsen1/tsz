@@ -759,6 +759,7 @@ impl<'a> CheckerState<'a> {
 
             // No type annotation - infer from initializer
             if var_decl.initializer.is_some() {
+                checker.report_malformed_jsdoc_satisfies_tags(decl_idx);
                 checker.report_duplicate_jsdoc_satisfies_tags(decl_idx);
                 // JSDoc @satisfies on variable declarations: provide contextual type
                 // for the initializer so that object literal methods and arrow function
