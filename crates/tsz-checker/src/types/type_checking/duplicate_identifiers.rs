@@ -971,6 +971,11 @@ impl<'a> CheckerState<'a> {
                                     &message,
                                     diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
                                 );
+                                self.error_at_node_msg(
+                                    error_node,
+                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                    &[name.as_str()],
+                                );
                             }
                         }
                         for &(decl_idx, flags, is_local, _) in &declarations {
@@ -984,6 +989,11 @@ impl<'a> CheckerState<'a> {
                                     error_node,
                                     diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
                                     diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                                );
+                                self.error_at_node_msg(
+                                    error_node,
+                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                    &[name.as_str()],
                                 );
                             }
                         }
@@ -1221,7 +1231,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut first_member_without_initializer = Vec::new();
-        let mut first_decl_for_member_by_name: FxHashMap<String, NodeIndex> = FxHashMap::default();
+        let mut first_member_by_name: FxHashMap<String, (NodeIndex, NodeIndex, bool)> =
+            FxHashMap::default();
 
         for &enum_decl_idx in &enum_declarations {
             let Some(enum_decl_node) = self.ctx.arena.get(enum_decl_idx) else {
@@ -1259,8 +1270,25 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                if let Some(&first_decl_idx) = first_decl_for_member_by_name.get(&member_name) {
-                    if first_decl_idx != enum_decl_idx {
+                if let Some((first_member_idx, first_decl_idx, first_reported)) =
+                    first_member_by_name.get_mut(&member_name)
+                {
+                    if *first_decl_idx != enum_decl_idx {
+                        if !*first_reported {
+                            let first_name_idx = self
+                                .ctx
+                                .arena
+                                .get(*first_member_idx)
+                                .and_then(|node| self.ctx.arena.get_enum_member(node))
+                                .map(|member| member.name)
+                                .unwrap_or(*first_member_idx);
+                            self.error_at_node_msg(
+                                first_name_idx,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                &[&member_name],
+                            );
+                            *first_reported = true;
+                        }
                         self.error_at_node_msg(
                             member.name,
                             diagnostic_codes::DUPLICATE_IDENTIFIER,
@@ -1268,7 +1296,8 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 } else {
-                    first_decl_for_member_by_name.insert(member_name.clone(), enum_decl_idx);
+                    first_member_by_name
+                        .insert(member_name.clone(), (member_idx, enum_decl_idx, false));
                 }
             }
         }
