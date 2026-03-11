@@ -260,8 +260,8 @@ impl<'a> CheckerState<'a> {
                         let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
                         let right_ctx_idx =
                             self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
-                        let right_accepts_context = self.ctx.arena.get(right_ctx_idx).is_some_and(
-                            |right_node| {
+                        let right_accepts_context =
+                            self.ctx.arena.get(right_ctx_idx).is_some_and(|right_node| {
                                 matches!(
                                     right_node.kind,
                                     syntax_kind_ext::ARROW_FUNCTION
@@ -270,8 +270,7 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                         | syntax_kind_ext::CONDITIONAL_EXPRESSION
                                 )
-                            },
-                        );
+                            });
                         if right_accepts_context
                             && non_nullish != TypeId::NEVER
                             && non_nullish != TypeId::UNKNOWN
