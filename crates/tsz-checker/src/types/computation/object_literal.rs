@@ -486,11 +486,8 @@ impl<'a> CheckerState<'a> {
 
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                let is_computed_name = self
-                    .ctx
-                    .arena
-                    .get(prop.name)
-                    .is_some_and(|prop_name_node| {
+                let is_computed_name =
+                    self.ctx.arena.get(prop.name).is_some_and(|prop_name_node| {
                         prop_name_node.kind
                             == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                     });
@@ -976,10 +973,9 @@ impl<'a> CheckerState<'a> {
                     if let Some(ctx_type) = prev_context {
                         let method_context_type =
                             self.contextual_object_literal_property_type(ctx_type, &name);
-                        self.ctx.contextual_type =
-                            self.contextual_type_option_for_expression(
-                                jsdoc_declared_type.or(method_context_type),
-                            );
+                        self.ctx.contextual_type = self.contextual_type_option_for_expression(
+                            jsdoc_declared_type.or(method_context_type),
+                        );
                     } else if jsdoc_declared_type.is_some() {
                         self.ctx.contextual_type =
                             self.contextual_type_option_for_expression(jsdoc_declared_type);
@@ -1013,27 +1009,24 @@ impl<'a> CheckerState<'a> {
                                             .nodes
                                             .iter()
                                             .filter_map(|&param_idx| {
-                                                let param = self
-                                                    .ctx
-                                                    .arena
-                                                    .get(param_idx)
-                                                    .and_then(|param_node| {
-                                                        self.ctx.arena.get_parameter(param_node)
-                                                    })?;
+                                                let param =
+                                                    self.ctx.arena.get(param_idx).and_then(
+                                                        |param_node| {
+                                                            self.ctx.arena.get_parameter(param_node)
+                                                        },
+                                                    )?;
                                                 Some(tsz_solver::ParamInfo {
                                                     name: self
                                                         .ctx
                                                         .arena
                                                         .get(param.name)
                                                         .and_then(|name_node| {
-                                                            self.ctx
-                                                                .arena
-                                                                .get_identifier(name_node)
+                                                            self.ctx.arena.get_identifier(name_node)
                                                         })
                                                         .map(|ident| {
-                                                            self.ctx.types.intern_string(
-                                                                &ident.escaped_text,
-                                                            )
+                                                            self.ctx
+                                                                .types
+                                                                .intern_string(&ident.escaped_text)
                                                         }),
                                                     type_id: if param.type_annotation.is_some() {
                                                         self.get_type_from_type_node(
