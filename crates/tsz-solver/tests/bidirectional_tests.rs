@@ -149,7 +149,10 @@ fn test_contextual_property_type_specializes_unique_symbol_mapped_keys() {
         .get_property_type("__unique_101")
         .expect("expected contextual property type");
     let Some(crate::TypeData::Function(shape_id)) = interner.lookup(prop_ty) else {
-        panic!("expected function property type, got {:?}", interner.lookup(prop_ty));
+        panic!(
+            "expected function property type, got {:?}",
+            interner.lookup(prop_ty)
+        );
     };
     let shape = interner.function_shape(shape_id);
     assert_eq!(shape.params[0].type_id, key_a);

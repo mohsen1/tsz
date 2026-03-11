@@ -18,7 +18,10 @@ impl<'a> CheckerState<'a> {
             .and_then(|info| self.ctx.arena.get(info.parent))
             .and_then(|parent| self.ctx.arena.get_access_expr(parent))
             .is_some_and(|access| {
-                let expr = self.ctx.arena.skip_parenthesized_and_assertions(access.expression);
+                let expr = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression);
                 self.ctx
                     .arena
                     .get(expr)

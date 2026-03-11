@@ -797,7 +797,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let display_type = self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
+        let display_type =
+            self.widen_function_like_display_type(self.widen_type_for_display(expr_type));
         let formatted = self.format_type_for_assignability_message(display_type);
         let resolved = self.resolve_type_for_property_access(display_type);
         let evaluated = self.judge_evaluate(resolved);
@@ -827,18 +828,20 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
-        let mut formatter = tsz_solver::TypeFormatter::with_symbols(
-            self.ctx.types,
-            &self.ctx.binder.symbols,
-        )
-        .with_namespace_module_names(&self.ctx.namespace_module_names)
-        .with_diagnostic_mode();
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_namespace_module_names(&self.ctx.namespace_module_names)
+                .with_diagnostic_mode();
         formatter.format(ty).into_owned()
     }
 
     pub(crate) fn format_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
         if self.ctx.definition_store.find_def_for_type(ty).is_none()
-            && self.ctx.definition_store.find_type_alias_by_body(ty).is_some()
+            && self
+                .ctx
+                .definition_store
+                .find_type_alias_by_body(ty)
+                .is_some()
         {
             return self.format_type_diagnostic_structural(ty);
         }
