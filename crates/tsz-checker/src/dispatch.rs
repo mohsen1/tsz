@@ -1032,6 +1032,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Postfix unary expression - ++ and -- require numeric operand and valid l-value
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
+                    self.checker
+                        .check_strict_mode_eval_or_arguments_assignment(unary.operand);
+                    if self.checker.check_function_assignment(unary.operand) {
+                        return TypeId::NUMBER;
+                    }
+
                     // TSC checks arithmetic type BEFORE lvalue — if the type check
                     // fails (TS2356), the lvalue check (TS2357) is skipped.
                     let operand_type = self.checker.get_type_of_node(unary.operand);

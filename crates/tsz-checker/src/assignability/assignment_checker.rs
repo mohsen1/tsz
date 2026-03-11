@@ -295,7 +295,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS1100: Cannot assign to `eval` or `arguments` in strict mode.
-    fn check_strict_mode_eval_or_arguments_assignment(&mut self, target_idx: NodeIndex) {
+    pub(crate) fn check_strict_mode_eval_or_arguments_assignment(&mut self, target_idx: NodeIndex) {
         let inner = self.ctx.arena.skip_parenthesized(target_idx);
         let Some(node) = self.ctx.arena.get(inner) else {
             return;
