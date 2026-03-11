@@ -1,5 +1,7 @@
 //! Function, method, and arrow function type resolution.
-use crate::computation::complex::is_contextually_sensitive;
+use crate::computation::complex::{
+    expression_needs_contextual_return_type, is_contextually_sensitive,
+};
 use crate::diagnostics::format_message;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -1234,20 +1236,45 @@ impl<'a> CheckerState<'a> {
                             let prev_ctx = self.ctx.contextual_type;
                             let can_apply_contextual_body =
                                 !self.type_has_unresolved_inference_holes(expected_return_type);
-                            let is_conditional_body =
-                                self.ctx.arena.get(body).is_some_and(|body_node| {
-                                    body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                                });
+                            let literal_sensitive_return =
+                                tsz_solver::literal_value(self.ctx.types, expected_return_type)
+                                    .is_some()
+                                    || tsz_solver::type_queries::get_enum_def_id(
+                                        self.ctx.types,
+                                        expected_return_type,
+                                    )
+                                    .is_some()
+                                    || (tsz_solver::type_queries::is_symbol_or_unique_symbol(
+                                        self.ctx.types,
+                                        expected_return_type,
+                                    ) && expected_return_type != TypeId::SYMBOL)
+                                    || expected_return_type == TypeId::NEVER;
+                            let concrete_return_context =
+                                expected_return_type != TypeId::ANY
+                                    && expected_return_type != TypeId::UNKNOWN
+                                    && !tsz_solver::type_queries::contains_type_parameters_db(
+                                        self.ctx.types,
+                                        expected_return_type,
+                                    );
                             let keep_contextual_body = has_type_annotation
                                 || jsdoc_return_context.is_some()
+                                || literal_sensitive_return
                                 || (can_apply_contextual_body
                                     && (is_contextually_sensitive(self, body)
-                                        || is_conditional_body));
+                                        || (concrete_return_context
+                                            && expression_needs_contextual_return_type(
+                                                self, body,
+                                            ))));
                             self.ctx.contextual_type =
                                 keep_contextual_body.then_some(expected_return_type);
+                            let prev_preserve_literals = self.ctx.preserve_literal_types;
+                            if keep_contextual_body {
+                                self.ctx.preserve_literal_types = true;
+                            }
                             self.clear_type_cache_recursive(body);
                             let t = self.get_type_of_node(body);
                             self.ctx.contextual_type = prev_ctx;
+                            self.ctx.preserve_literal_types = prev_preserve_literals;
                             t
                         });
                     // For async expression-bodied arrows, unwrap Promise from the

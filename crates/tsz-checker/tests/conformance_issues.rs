@@ -8778,3 +8778,52 @@ type T = string[][string];
         "Did not expect TS2536 for `string[][string]` once concrete classifier applies.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_contextual_intersection_callback_return_preserves_object_literal_members() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare function test4(
+  arg: { a: () => { prop: "foo" } } & {
+    [k: string]: () => { prop: any };
+  },
+): unknown;
+
+test4({
+  a: () => ({ prop: "foo" }),
+  b: () => ({ prop: "bar" }),
+});
+
+test4({
+  a: () => ({ prop: "bar" }),
+});
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    let bar_errors = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2322 && message.contains("Type '\"bar\"' is not assignable to type '\"foo\"'")
+        })
+        .count();
+
+    assert_eq!(
+        bar_errors, 2,
+        "Expected exactly the two invalid callback-return literal mismatches.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && (message.contains("Type 'string' is not assignable to type '\"foo\"'")
+                    || message
+                        .contains("Type '{ prop: string; }' is not assignable to type '{ prop: \"foo\"; }'"))
+        }),
+        "Did not expect widened callback-return diagnostics once contextual return typing is preserved.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
