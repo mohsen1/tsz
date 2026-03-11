@@ -831,6 +831,51 @@ const c = E["has space"];
 }
 
 #[test]
+fn test_const_enum_initializers_allow_merged_and_qualified_element_access() {
+    let source = r#"
+const enum Enum1 {
+    A0 = 100,
+}
+
+const enum Enum1 {
+    W1 = A0,
+    W2 = Enum1.A0,
+    W3 = Enum1["A0"],
+    W4 = Enum1[`W2`],
+}
+
+namespace A {
+    export namespace B {
+        export namespace C {
+            export const enum E {
+                V1 = 1,
+                V2 = A.B.C.E.V1 | 100
+            }
+        }
+    }
+}
+
+namespace A {
+    export namespace B {
+        export namespace C {
+            export const enum E {
+                V3 = A.B.C.E["V2"] & 200,
+                V4 = A.B.C.E[`V1`] << 1,
+            }
+        }
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        !has_error(&diagnostics, 2474),
+        "Expected merged and qualified const enum initializer references to remain constant expressions.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_constrained_type_parameter_property_access_uses_enum_apparent_type() {
     let source = r#"
 enum Colors {
