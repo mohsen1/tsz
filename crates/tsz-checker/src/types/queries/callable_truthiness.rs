@@ -119,9 +119,7 @@ impl<'a> CheckerState<'a> {
         node_idx: NodeIndex,
         ty: TypeId,
     ) -> Option<&'static str> {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(node_idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             let paren = self.ctx.arena.get_parenthesized(node)?;
