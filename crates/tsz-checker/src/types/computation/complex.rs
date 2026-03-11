@@ -2133,7 +2133,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the class name as a string if the type represents a class,
     /// or None if the type doesn't represent a class or the class has no name.
     pub(crate) fn get_class_name_from_type(&self, type_id: TypeId) -> Option<String> {
-        self.get_class_decl_from_type(type_id)
-            .map(|class_idx| self.get_class_name_from_decl(class_idx))
+        self.get_class_decl_for_display_type(type_id)
+            .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
     }
 }

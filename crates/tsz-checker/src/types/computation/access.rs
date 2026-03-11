@@ -214,9 +214,11 @@ impl<'a> CheckerState<'a> {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
                 // Find the class that declares this private member (walk up hierarchy)
-                let class_name = self
-                    .get_declaring_class_name_for_private_member(object_type, prop_name)
-                    .unwrap_or_else(|| "the class".to_string());
+                let class_name = self.get_private_identifier_declaring_class_name(
+                    object_type,
+                    access.expression,
+                    prop_name,
+                );
 
                 let message = format_message(
                         diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
