@@ -5320,6 +5320,41 @@ const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 1
     );
 }
 
+#[test]
+fn test_array_missing_property_diagnostic_preserves_es5_prefix_under_es2015_target() {
+    let source = r"
+class C1 {
+    x = 1;
+}
+let arr_any: any[] = [];
+let c1: C1 = new C1();
+arr_any = c1;
+";
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let message = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2740)
+        .map(|(_, message)| message.as_str())
+        .expect("expected TS2740 diagnostic");
+
+    assert!(
+        message.contains("length, pop, push, concat"),
+        "Expected TS2740 to start with ES5 array members, got: {message}"
+    );
+    assert!(
+        !message.contains("[Symbol.iterator]"),
+        "Expected TS2740 to avoid Symbol.iterator in the displayed prefix, got: {message}"
+    );
+}
+
 /// Issue: false-positive TS2345 in contextual signature instantiation chain.
 ///
 /// Mirrors: contextualSignatureInstantiation2.ts
