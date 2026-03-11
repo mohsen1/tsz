@@ -914,15 +914,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         &source_shape.call_signatures
                     };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty()
-                        || !other_sigs.is_empty()
-                        || !source_shape.properties.is_empty()
-                    {
+                    if source_sigs.is_empty() {
                         return false;
                     }
                     let Some(source_sig) = source_sigs.last() else {
@@ -961,15 +953,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 } else {
                                     &source_shape.call_signatures
                                 };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty()
-                                    || !other_sigs.is_empty()
-                                    || !source_shape.properties.is_empty()
-                                {
+                                if source_sigs.is_empty() {
                                     return false;
                                 }
                                 let Some(source_sig) = source_sigs.last() else {
@@ -1047,15 +1031,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         &source_shape.call_signatures
                     };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty()
-                        || !other_sigs.is_empty()
-                        || !source_shape.properties.is_empty()
-                    {
+                    if source_sigs.is_empty() {
                         return false;
                     }
                     let Some(source_sig) = source_sigs.last() else {
@@ -1083,15 +1059,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 } else {
                                     &source_shape.call_signatures
                                 };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty()
-                                    || !other_sigs.is_empty()
-                                    || !source_shape.properties.is_empty()
-                                {
+                                if source_sigs.is_empty() {
                                     return false;
                                 }
                                 let Some(source_sig) = source_sigs.last() else {
