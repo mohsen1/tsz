@@ -131,6 +131,22 @@ namespace N {
 }
 
 #[test]
+fn test_parenthesized_object_literal_after_arrow_is_not_treated_as_missing_arrow() {
+    let source = r"
+/** @template T @param {T|undefined} value @returns {T} */
+const cloneObjectGood = value => /** @type {T} */({ ...value });
+";
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "Parenthesized object literal bodies after arrows should not trigger missing-arrow recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parameters_with_line_break_no_comma() {
     // Function parameters without comma but with line break
     // Should be more permissive to avoid false positives

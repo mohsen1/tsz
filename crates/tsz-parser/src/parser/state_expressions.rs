@@ -264,15 +264,18 @@ impl ParserState {
         // a valid arrow function parameter list — e.g., `(a, (b, c)) =>` or `((a)) =>`.
         // This matches tsc's behavior of rejecting nested-paren parameter patterns.
         let mut depth = 1;
+        let mut brace_depth: u32 = 0;
+        let mut bracket_depth: u32 = 0;
         let mut saw_parameter_syntax = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             if depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
                 && matches!(
                     self.token(),
                     SyntaxKind::ColonToken
                         | SyntaxKind::QuestionToken
-                        | SyntaxKind::DotDotDotToken
                         | SyntaxKind::EqualsToken
                 )
             {
@@ -289,10 +292,26 @@ impl ParserState {
                 }
                 depth += 1;
                 at_param_start = false;
+            } else if self.is_token(SyntaxKind::OpenBraceToken) {
+                brace_depth += 1;
+                at_param_start = false;
+            } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                brace_depth = brace_depth.saturating_sub(1);
+                at_param_start = false;
+            } else if self.is_token(SyntaxKind::OpenBracketToken) {
+                bracket_depth += 1;
+                at_param_start = false;
+            } else if self.is_token(SyntaxKind::CloseBracketToken) {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                at_param_start = false;
             } else if self.is_token(SyntaxKind::CloseParenToken) {
                 depth -= 1;
                 at_param_start = false;
-            } else if self.is_token(SyntaxKind::CommaToken) && depth == 1 {
+            } else if self.is_token(SyntaxKind::CommaToken)
+                && depth == 1
+                && brace_depth == 0
+                && bracket_depth == 0
+            {
                 // A comma at the top level separates parameters; the next token
                 // starts a new parameter slot.
                 at_param_start = true;
