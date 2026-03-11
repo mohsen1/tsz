@@ -15,6 +15,8 @@ pub(crate) mod access;
 pub(crate) mod binary;
 pub(crate) mod call;
 pub(crate) mod call_helpers;
+pub(crate) mod call_inference;
+pub(crate) mod call_result;
 pub(crate) mod complex;
 pub(crate) mod complex_constructors;
 pub mod helpers;

@@ -5,221 +5,22 @@
 //! Identifier resolution is in `identifier.rs` and tagged
 //! template expression handling is in `tagged_template.rs`.
 
-use super::complex::is_contextually_sensitive;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{CallResult, ContextualTypeContext, TypeId};
 
-/// Count the number of non-`any` parameter types in a callable type.
-///
-/// Used to compare contextual type candidates: whichever has more specific
-/// (non-`any`) parameter types provides better contextual typing for callbacks.
-/// Returns 0 for non-callable types.
-fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) -> usize {
-    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, ty) {
-        shape
-            .params
-            .iter()
-            .filter(|p| p.type_id != TypeId::ANY)
-            .count()
-    } else {
-        0
-    }
-}
-
-fn sanitize_function_shape_binding_pattern_params(
-    shape: &tsz_solver::FunctionShape,
-    binding_pattern_param_positions: &[usize],
-) -> tsz_solver::FunctionShape {
-    let mut params = shape.params.clone();
-    for &index in binding_pattern_param_positions {
-        if let Some(param) = params.get_mut(index) {
-            param.type_id = TypeId::UNKNOWN;
-        }
-    }
-    tsz_solver::FunctionShape {
-        type_params: shape.type_params.clone(),
-        params,
-        this_type: shape.this_type,
-        return_type: shape.return_type,
-        type_predicate: shape.type_predicate.clone(),
-        is_constructor: shape.is_constructor,
-        is_method: shape.is_method,
-    }
-}
-
-struct CallResultContext<'a> {
-    callee_expr: NodeIndex,
-    call_idx: NodeIndex,
-    args: &'a [NodeIndex],
-    arg_types: &'a [TypeId],
-    callee_type: TypeId,
-    is_super_call: bool,
-    is_optional_chain: bool,
-}
+use super::call_inference::should_preserve_contextual_application_shape;
+use super::call_result::CallResultContext;
+use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
-    fn sanitize_generic_inference_arg_type(
-        &mut self,
-        arg_idx: NodeIndex,
-        arg_type: TypeId,
-    ) -> TypeId {
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return arg_type;
-        };
-        if arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-            && arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
-        {
-            return arg_type;
-        }
-
-        let Some(func) = self.ctx.arena.get_function(arg_node) else {
-            return arg_type;
-        };
-
-        let mut binding_pattern_param_positions = Vec::new();
-        for (index, &param_idx) in func.parameters.nodes.iter().enumerate() {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if param.type_annotation.is_some() {
-                continue;
-            }
-            let Some(name_node) = self.ctx.arena.get(param.name) else {
-                continue;
-            };
-            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            {
-                binding_pattern_param_positions.push(index);
-            }
-        }
-
-        if binding_pattern_param_positions.is_empty() {
-            return arg_type;
-        }
-
-        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, arg_type)
-        {
-            let sanitized = sanitize_function_shape_binding_pattern_params(
-                &shape,
-                &binding_pattern_param_positions,
-            );
-            self.ctx.types.factory().function(sanitized)
-        } else if let Some(shape) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, arg_type)
-        {
-            let mut sanitized = shape.as_ref().clone();
-            sanitized.call_signatures = sanitized
-                .call_signatures
-                .iter()
-                .map(|sig| tsz_solver::CallSignature {
-                    type_params: sig.type_params.clone(),
-                    params: sanitize_function_shape_binding_pattern_params(
-                        &tsz_solver::FunctionShape {
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
-                            is_constructor: false,
-                            is_method: sig.is_method,
-                        },
-                        &binding_pattern_param_positions,
-                    )
-                    .params,
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_predicate: sig.type_predicate.clone(),
-                    is_method: sig.is_method,
-                })
-                .collect();
-            self.ctx.types.factory().callable(sanitized)
-        } else {
-            arg_type
-        }
-    }
-
-    fn sanitize_generic_inference_arg_types(
-        &mut self,
-        args: &[NodeIndex],
-        arg_types: &[TypeId],
-    ) -> (Vec<TypeId>, bool) {
-        let mut changed = false;
-        let sanitized = args
-            .iter()
-            .zip(arg_types.iter().copied())
-            .map(|(&arg_idx, arg_type)| {
-                let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
-                if sanitized != arg_type {
-                    changed = true;
-                }
-                sanitized
-            })
-            .collect();
-        (sanitized, changed)
-    }
-
-    fn recheck_generic_call_arguments_with_real_types(
-        &mut self,
-        result: CallResult,
-        instantiated_params: &[tsz_solver::ParamInfo],
-        arg_types: &[TypeId],
-    ) -> CallResult {
-        if !matches!(result, CallResult::Success(_)) {
-            return result;
-        }
-
-        for (index, &actual) in arg_types.iter().enumerate() {
-            let expected = instantiated_params
-                .get(index)
-                .map(|param| {
-                    let evaluated = self.evaluate_type_with_env(param.type_id);
-                    if param.rest {
-                        tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
-                    } else {
-                        evaluated
-                    }
-                })
-                .or_else(|| {
-                    let last = instantiated_params.last()?;
-                    if !last.rest {
-                        return None;
-                    }
-                    let evaluated = self.evaluate_type_with_env(last.type_id);
-                    Some(tsz_solver::rest_argument_element_type(
-                        self.ctx.types,
-                        evaluated,
-                    ))
-                });
-
-            let Some(expected) = expected else {
-                break;
-            };
-
-            if !assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected) {
-                return CallResult::ArgumentTypeMismatch {
-                    index,
-                    expected,
-                    actual,
-                    fallback_return: TypeId::ERROR,
-                };
-            }
-        }
-
-        result
-    }
-
     /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
     ///
     /// Computes the return type of function/method calls.
@@ -246,8 +47,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::instantiate_type;
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -386,11 +185,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_node(call.expression)
         };
-
-        // Restore original contextual type after IIFE callee evaluation
-        if let Some(original_ctx) = saved_contextual_for_iife {
-            self.ctx.contextual_type = Some(original_ctx);
-        }
 
         trace!(
             callee_type = ?callee_type,
@@ -664,21 +458,6 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Resolve Ref types to get the actual callable for FunctionShape extraction
-        // This is needed before we can check if the callee is generic
-        let callee_type_for_shape = self.resolve_ref_type(callee_type_for_resolution);
-
-        // Extract function shape to check if this is a generic call that needs two-pass inference
-        let callee_shape = call_checker::get_contextual_signature_for_arity(
-            self.ctx.types,
-            callee_type_for_shape,
-            args.len(),
-        );
-        let is_generic_call = callee_shape
-            .as_ref()
-            .is_some_and(|s| !s.type_params.is_empty())
-            && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
-
         // Resolve Lazy/Application types before creating the contextual context.
         // This ensures that when the callee is an interface type (stored as Lazy(DefId))
         // or a generic interface application (Application(Lazy, args)), the contextual
@@ -696,6 +475,19 @@ impl<'a> CheckerState<'a> {
         //   fn(x => {});  // x was typed as any (false positive)
         let callee_type_for_context = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
+        // Extract the shape from the same resolved callee type used for contextual typing.
+        // Using a less-resolved form here can make Round 2 infer from a pre-instantiation
+        // method signature even though callback contextual typing is based on the fully
+        // resolved receiver-specific callable type.
+        let callee_shape = call_checker::get_contextual_signature_for_arity(
+            self.ctx.types,
+            callee_type_for_context,
+            args.len(),
+        );
+        let is_generic_call = callee_shape
+            .as_ref()
+            .is_some_and(|s| !s.type_params.is_empty())
+            && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
         // Create contextual context from resolved callee type
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
@@ -720,41 +512,50 @@ impl<'a> CheckerState<'a> {
                 // For example, `(value: string) => U` <: `(value: never) => U`, so
                 // evaluation would reduce the union to just the never-parameterized
                 // callback, losing contextual type information.
-                let evaluated = if let Some(members) =
-                    tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
-                {
-                    let evaluated_members: Vec<_> = members
-                        .iter()
-                        .map(|&m| this.evaluate_type_with_env(m))
-                        .collect();
-                    // If evaluation didn't change any member, preserve the original
-                    // TypeId so that type alias name resolution still works.
-                    if evaluated_members
-                        .iter()
-                        .zip(members.iter())
-                        .all(|(e, m)| e == m)
-                    {
+                let evaluated =
+                    if should_preserve_contextual_application_shape(this.ctx.types, param_type) {
                         param_type
-                    } else {
-                        let reduced = this.ctx.types.union_literal_reduce(evaluated_members);
-                        // Propagate type alias name mapping to the evaluated TypeId.
-                        // When a union type alias (e.g., `ExoticAnimal = CatDog | ManBearPig`)
-                        // is stored with Lazy members, evaluation resolves each member,
-                        // producing a new union TypeId. Transfer the DefId mapping so
-                        // diagnostics can still display the alias name.
-                        if reduced != param_type
-                            && let Some(def_id) =
-                                this.ctx.definition_store.find_def_for_type(param_type)
+                    } else if let Some(members) =
+                        tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
+                    {
+                        let evaluated_members: Vec<_> = members
+                            .iter()
+                            .map(|&m| {
+                                if should_preserve_contextual_application_shape(this.ctx.types, m) {
+                                    m
+                                } else {
+                                    this.evaluate_type_with_env(m)
+                                }
+                            })
+                            .collect();
+                        // If evaluation didn't change any member, preserve the original
+                        // TypeId so that type alias name resolution still works.
+                        if evaluated_members
+                            .iter()
+                            .zip(members.iter())
+                            .all(|(e, m)| e == m)
                         {
-                            this.ctx
-                                .definition_store
-                                .register_type_to_def(reduced, def_id);
+                            param_type
+                        } else {
+                            let reduced = this.ctx.types.union_literal_reduce(evaluated_members);
+                            // Propagate type alias name mapping to the evaluated TypeId.
+                            // When a union type alias (e.g., `ExoticAnimal = CatDog | ManBearPig`)
+                            // is stored with Lazy members, evaluation resolves each member,
+                            // producing a new union TypeId. Transfer the DefId mapping so
+                            // diagnostics can still display the alias name.
+                            if reduced != param_type
+                                && let Some(def_id) =
+                                    this.ctx.definition_store.find_def_for_type(param_type)
+                            {
+                                this.ctx
+                                    .definition_store
+                                    .register_type_to_def(reduced, def_id);
+                            }
+                            reduced
                         }
-                        reduced
-                    }
-                } else {
-                    this.evaluate_type_with_env(param_type)
-                };
+                    } else {
+                        this.evaluate_type_with_env(param_type)
+                    };
                 if helper.is_rest_parameter_position(index, arg_count) {
                     tsz_solver::rest_argument_element_type(this.ctx.types, evaluated)
                 } else {
@@ -774,7 +575,7 @@ impl<'a> CheckerState<'a> {
         if is_generic_call {
             self.ctx.preserve_literal_types = true;
         }
-        let arg_types = if is_generic_call {
+        let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
@@ -829,6 +630,25 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&arg| is_contextually_sensitive(self, arg))
                     .collect();
+                let suppress_generic_return_context = args
+                    .iter()
+                    .copied()
+                    .any(|arg| self.suppress_generic_return_context_for_arg(arg));
+                let generic_inference_contextual_type = if suppress_generic_return_context {
+                    None
+                } else {
+                    self.ctx.contextual_type
+                };
+                trace!(
+                    type_params = ?shape
+                        .type_params
+                        .iter()
+                        .map(|tp| self.ctx.types.resolve_atom(tp.name))
+                        .collect::<Vec<_>>(),
+                    generic_inference_contextual_type = ?generic_inference_contextual_type.map(|t| t.0),
+                    suppress_generic_return_context,
+                    "Generic call contextual type gate"
+                );
                 let round1_skip_outer_context: Vec<bool> = args
                     .iter()
                     .map(|&arg| self.round1_should_skip_outer_contextual_type(arg))
@@ -876,6 +696,24 @@ impl<'a> CheckerState<'a> {
                                 "Round 1: extracted non-sensitive partial type for object literal"
                             );
                             round1_arg_types[i] = partial;
+                        }
+                    }
+                    // Nested calls whose outer contextual type was intentionally skipped in
+                    // Round 1 should not poison outer inference with provisional `error` or
+                    // `__infer_*` results. Leave them for Round 2 unless they resolved cleanly.
+                    for (i, arg_type) in round1_arg_types.iter_mut().enumerate() {
+                        if !round1_skip_outer_context.get(i).copied().unwrap_or(false) {
+                            continue;
+                        }
+                        let unresolved = *arg_type == TypeId::ERROR
+                            || tsz_solver::type_queries::contains_infer_types_db(
+                                self.ctx.types,
+                                *arg_type,
+                            )
+                            || tsz_solver::collect_referenced_types(self.ctx.types, *arg_type)
+                                .contains(&TypeId::ERROR);
+                        if unresolved {
+                            *arg_type = TypeId::UNKNOWN;
                         }
                     }
                     // === Perform Round 1 Inference ===
@@ -937,13 +775,9 @@ impl<'a> CheckerState<'a> {
                             &env,
                             &evaluated_shape,
                             &round1_arg_types,
-                            self.ctx.contextual_type,
+                            generic_inference_contextual_type,
                         )
                     };
-                    trace!(
-                        substitution_is_empty = substitution.is_empty(),
-                        "Round 1 inference: substitution computed"
-                    );
                     let inferred_type_params_by_name: Vec<_> = shape
                         .type_params
                         .iter()
@@ -953,7 +787,83 @@ impl<'a> CheckerState<'a> {
                                 .map(|ty| (self.ctx.types.resolve_atom(tp.name), ty))
                         })
                         .collect();
+                    trace!(
+                        substitution_is_empty = substitution.is_empty(),
+                        "Round 1 inference: substitution computed"
+                    );
                     let mut round2_substitution = substitution.clone();
+                    if let Some(ctx_type) = generic_inference_contextual_type {
+                        let return_context_substitution = self
+                            .compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
+                        trace!(
+                            type_params = ?shape
+                                .type_params
+                                .iter()
+                                .map(|tp| self.ctx.types.resolve_atom(tp.name))
+                                .collect::<Vec<_>>(),
+                            contextual_type = ctx_type.0,
+                            contextual_type_key = ?self.ctx.types.lookup(ctx_type),
+                            contextual_type_display = %self.format_type(ctx_type),
+                            contextual_type_union_members = ?tsz_solver::type_queries::get_union_members(
+                                self.ctx.types,
+                                ctx_type,
+                            )
+                            .map(|members| members
+                                .into_iter()
+                                .map(|member| (
+                                    self.format_type(member),
+                                    self.ctx.types.lookup(member),
+                                    tsz_solver::type_queries::get_application_info(self.ctx.types, member)
+                                        .map(|(_, args)| args),
+                                ))
+                                .collect::<Vec<_>>()),
+                            return_type_display = %self.format_type(shape.return_type),
+                            return_context_substitution = ?return_context_substitution
+                                .map()
+                                .iter()
+                                .map(|(name, ty)| (self.ctx.types.resolve_atom(*name), ty.0))
+                                .collect::<Vec<_>>(),
+                            "Round 2 return-context substitution"
+                        );
+                        for (&name, &ty) in return_context_substitution.map().iter() {
+                            if ty == TypeId::UNKNOWN
+                                || ty == TypeId::ERROR
+                                || tsz_solver::type_queries::contains_non_infer_type_parameters_db(
+                                    self.ctx.types,
+                                    ty,
+                                )
+                            {
+                                continue;
+                            }
+
+                            let should_update = match round2_substitution.get(name) {
+                                None => true,
+                                Some(existing) if existing == ty => false,
+                                Some(existing) => {
+                                    let mut visited = FxHashSet::default();
+                                    existing == TypeId::UNKNOWN
+                                        || self.inference_type_is_anyish(existing, &mut visited)
+                                        || tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            existing,
+                                        )
+                                        || tsz_solver::type_queries::contains_infer_types_db(
+                                            self.ctx.types,
+                                            existing,
+                                        )
+                                        || !assign_query::is_fresh_subtype_of(
+                                            self.ctx.types,
+                                            existing,
+                                            ty,
+                                        )
+                                }
+                            };
+
+                            if should_update {
+                                round2_substitution.insert(name, ty);
+                            }
+                        }
+                    }
                     for param in &evaluated_shape.params {
                         for referenced in
                             tsz_solver::collect_referenced_types(self.ctx.types, param.type_id)
@@ -972,6 +882,7 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    trace!("Round 2 substitution prepared");
 
                     // === Pre-inference from annotated callback parameters ===
                     // When a callback is context-sensitive (has unannotated params) AND has
@@ -1084,7 +995,7 @@ impl<'a> CheckerState<'a> {
                             callee_type_for_context,
                             &sanitized_arg_types,
                             force_bivariant_callbacks,
-                            self.ctx.contextual_type,
+                            generic_inference_contextual_type,
                             actual_this_type,
                         )
                         .2;
@@ -1097,211 +1008,285 @@ impl<'a> CheckerState<'a> {
                     // Use evaluate_type_with_env which resolves Lazy types via the
                     // TypeEnvironment before evaluation.
                     let arg_count = args.len();
-                    let mut round2_contextual_types: Vec<Option<TypeId>> =
-                        Vec::with_capacity(arg_count);
-                    for i in 0..arg_count {
-                        let round2_param = round1_instantiated_params
-                            .as_ref()
-                            .and_then(|params| {
-                                params.get(i).map(|p| (p.type_id, p.rest)).or_else(|| {
-                                    let last = params.last()?;
-                                    last.rest.then_some((last.type_id, true))
-                                })
-                            })
-                            .or_else(|| {
-                                shape
-                                    .params
-                                    .get(i)
-                                    .map(|p| (p.type_id, p.rest))
-                                    .or_else(|| {
-                                        let last = shape.params.last()?;
-                                        last.rest.then_some((last.type_id, true))
-                                    })
-                            });
-                        // For sensitive argument positions, check if the round1-
-                        // instantiated param is a Callable with multiple call
-                        // signatures (a sign of placeholder pollution from the
-                        // `__sensitive_arg__` placeholder). When this happens, fall
-                        // back to the original shape param to avoid conflicting
-                        // contextual types that suppress parameter typing.
-                        let is_sensitive = i < sensitive_args.len() && sensitive_args[i];
-                        let round2_param =
-                            if is_sensitive {
-                                if let Some((param_type, _)) = round2_param {
-                                    let is_polluted = tsz_solver::type_queries::get_callable_shape(
+                    let has_spread_args = args.iter().any(|&arg_idx| {
+                        self.ctx
+                            .arena
+                            .get(arg_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                    });
+
+                    if !has_spread_args {
+                        let mut progressive_arg_types = round1_arg_types.clone();
+                        let mut round2_arg_types = Vec::with_capacity(arg_count);
+
+                        for (i, &arg_idx) in args.iter().enumerate() {
+                            if sensitive_args.get(i).copied().unwrap_or(false)
+                                && let Some(first_branch_idx) =
+                                    self.zero_param_callback_first_conditional_branch(arg_idx)
+                                && let Some(param_type) = shape.params.get(i).map(|p| p.type_id)
+                                && let Some(callback_shape) =
+                                    tsz_solver::type_queries::get_function_shape(
                                         self.ctx.types,
                                         param_type,
                                     )
-                                    .is_some_and(|shape| shape.call_signatures.len() > 1);
-                                    if is_polluted {
-                                        shape.params.get(i).map(|p| (p.type_id, p.rest)).or_else(
-                                            || {
-                                                let last = shape.params.last()?;
-                                                last.rest.then_some((last.type_id, true))
-                                            },
-                                        )
-                                    } else {
-                                        round2_param
-                                    }
-                                } else {
-                                    round2_param
-                                }
-                            } else {
-                                round2_param
-                            };
-                        let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
-                            let instantiated = if round1_instantiated_params.is_some() {
-                                // Round 1 already instantiated the params, but for
-                                // constrained type parameters whose constraint only
-                                // references type params from the SAME call signature
-                                // (e.g., TCallback extends Callback<TFoo, TBar>), the
-                                // solver resolved them to degraded constraint types with
-                                // `any` params. Check the ORIGINAL shape param — if it's a
-                                // TypeParameter with a constraint that becomes fully
-                                // resolved after instantiation, use that instead.
-                                //
-                                // When the solver correctly inferred T from the return
-                                // type context (e.g., `deprecate<T extends Function>(fn: T,
-                                // msg: string): T` with contextual type `MyCallback`), the
-                                // Round 1 param type may already have specific callable
-                                // parameter types. Compare both options (constraint-derived
-                                // vs Round 1 result) and pick whichever provides more
-                                // specific callable parameter types for contextual typing.
-                                let original_param = shape.params.get(i).map(|p| p.type_id);
-                                if let Some(orig) = original_param
-                                    && let Some(tp_info) =
-                                        tsz_solver::type_param_info(self.ctx.types, orig)
-                                    && let Some(constraint) = tp_info.constraint
-                                {
-                                    let instantiated_constraint = instantiate_type(
-                                        self.ctx.types,
-                                        constraint,
-                                        &round2_substitution,
-                                    );
-                                    let evaluated_constraint =
-                                        self.evaluate_type_with_env(instantiated_constraint);
-                                    // Only consider the constraint if it's fully resolved
-                                    // (no remaining type parameters from outer scopes).
-                                    if !tsz_solver::type_queries::contains_type_parameters_db(
-                                        self.ctx.types,
-                                        evaluated_constraint,
-                                    ) {
-                                        // Pick whichever provides more specific callable
-                                        // parameter types. The constraint-derived type may
-                                        // have specific params (e.g., Callback<number, string>)
-                                        // while Round 1 may have degraded `any` params from
-                                        // the sensitive placeholder. Conversely, the Round 1
-                                        // result may have specific params from return type
-                                        // inference while the constraint is broad (e.g.,
-                                        // `Function`).
-                                        let constraint_specificity = callable_param_specificity(
-                                            self.ctx.types,
-                                            evaluated_constraint,
-                                        );
-                                        let round1_specificity =
-                                            callable_param_specificity(self.ctx.types, param_type);
-                                        if constraint_specificity >= round1_specificity {
-                                            evaluated_constraint
-                                        } else {
-                                            param_type
-                                        }
-                                    } else {
-                                        param_type
-                                    }
-                                } else {
-                                    param_type
-                                }
-                            } else {
-                                let inst = instantiate_type(
-                                    self.ctx.types,
-                                    param_type,
-                                    &round2_substitution,
+                            {
+                                let first_branch_type = self.get_type_of_node(first_branch_idx);
+                                let tracked_type_params: FxHashSet<_> =
+                                    shape.type_params.iter().map(|tp| tp.name).collect();
+                                let mut first_branch_substitution =
+                                    tsz_solver::TypeSubstitution::new();
+                                let mut visited = FxHashSet::default();
+                                self.collect_return_context_substitution(
+                                    callback_shape.return_type,
+                                    first_branch_type,
+                                    &tracked_type_params,
+                                    &mut first_branch_substitution,
+                                    &mut visited,
                                 );
-                                // When the instantiated type is still a bare TypeParameter
-                                // (not in the substitution), resolve to its CONSTRAINT for
-                                // contextual typing. This matches tsc where
-                                // `TCallback extends Callback<TFoo, TBar>` uses
-                                // `Callback<TFoo, TBar>` as contextual type.
-                                if let Some(tp_info) =
-                                    tsz_solver::type_param_info(self.ctx.types, inst)
-                                    && let Some(constraint) = tp_info.constraint
-                                {
-                                    let instantiated_constraint = instantiate_type(
-                                        self.ctx.types,
-                                        constraint,
-                                        &round2_substitution,
-                                    );
-                                    let evaluated =
-                                        self.evaluate_type_with_env(instantiated_constraint);
-                                    if !tsz_solver::type_queries::contains_type_parameters_db(
-                                        self.ctx.types,
-                                        evaluated,
-                                    ) {
-                                        evaluated
-                                    } else {
-                                        inst
+                                for (&name, &ty) in first_branch_substitution.map().iter() {
+                                    let should_update = match round2_substitution.get(name) {
+                                        None => true,
+                                        Some(existing) if existing == ty => false,
+                                        Some(existing) => existing == TypeId::UNKNOWN
+                                            || tsz_solver::type_queries::contains_type_parameters_db(
+                                                self.ctx.types,
+                                                existing,
+                                            )
+                                            || tsz_solver::type_queries::contains_infer_types_db(
+                                                self.ctx.types,
+                                                existing,
+                                            ),
+                                    };
+                                    if ty != TypeId::UNKNOWN
+                                        && ty != TypeId::ERROR
+                                        && !tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            ty,
+                                        )
+                                        && !tsz_solver::type_queries::contains_infer_types_db(
+                                            self.ctx.types,
+                                            ty,
+                                        )
+                                        && should_update
+                                    {
+                                        round2_substitution.insert(name, ty);
                                     }
-                                } else {
-                                    inst
                                 }
-                            };
-                            let evaluated = self.evaluate_type_with_env(instantiated);
+                            }
+                            if sensitive_args.get(i).copied().unwrap_or(false) {
+                                self.clear_type_cache_recursive(arg_idx);
+                            }
+                            let round2_contextual_types = self.compute_round2_contextual_types(
+                                &shape,
+                                round1_instantiated_params.as_deref(),
+                                &sensitive_args,
+                                &round2_substitution,
+                                arg_count,
+                            );
+                            let expected_type = round2_contextual_types
+                                .get(i)
+                                .copied()
+                                .flatten()
+                                .or_else(|| ctx_helper.get_parameter_type_for_call(i, arg_count));
+                            let arg_type = self.compute_single_call_argument_type(
+                                arg_idx,
+                                expected_type,
+                                check_excess_properties,
+                                i,
+                                true,
+                            );
+                            let arg_type_for_refinement = expected_type
+                                .map(|expected| {
+                                    self.instantiate_generic_function_argument_against_target_for_refinement(
+                                        arg_type, expected,
+                                    )
+                                })
+                                .unwrap_or(arg_type);
                             trace!(
                                 arg_index = i,
-                                param_type_id = param_type.0,
-                                param_type_app_args = ?tsz_solver::type_queries::get_application_info(
-                                    self.ctx.types,
-                                    param_type,
-                                )
-                                .map(|(_, args)| args),
-                                instantiated_id = instantiated.0,
-                                instantiated_app_args = ?tsz_solver::type_queries::get_application_info(
-                                    self.ctx.types,
-                                    instantiated,
-                                )
-                                .map(|(_, args)| args),
-                                evaluated_id = evaluated.0,
-                                "Round 2: instantiated parameter type"
+                                expected_type = ?expected_type.map(|t| t.0),
+                                expected_type_display = ?expected_type.map(|t| self.format_type(t)),
+                                arg_type = arg_type.0,
+                                arg_type_display = %self.format_type(arg_type),
+                                "Round 2: recomputed argument type"
                             );
-                            Some(if is_rest_param {
-                                tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
-                            } else {
-                                evaluated
-                            })
-                        } else {
-                            None
-                        };
-                        trace!(
-                            arg_index = i,
-                            ctx_type_id = ?ctx_type.map(|t| t.0),
-                            "Round 2: contextual type for argument"
-                        );
-                        round2_contextual_types.push(ctx_type);
-                    }
-
-                    for (i, &arg_idx) in args.iter().enumerate() {
-                        if i < sensitive_args.len() && sensitive_args[i] {
-                            self.clear_type_cache_recursive(arg_idx);
-                        }
-                    }
-
-                    // === Round 2: Collect ALL argument types with contextual typing ===
-                    // Now that type parameters are partially inferred, lambdas get proper contextual types.
-                    self.collect_call_argument_types_with_context(
-                        args,
-                        |i, arg_count| {
-                            // For normal argument indices, use the precomputed contextual types.
-                            // For large indices (rest parameter probes), fall back to the
-                            // contextual type helper to correctly detect rest params.
-                            if i < round2_contextual_types.len() {
-                                round2_contextual_types[i]
-                            } else {
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            round2_arg_types.push(arg_type);
+                            if i < progressive_arg_types.len() {
+                                progressive_arg_types[i] = arg_type_for_refinement;
                             }
-                        },
-                        check_excess_properties,
-                        None, // Don't skip anything in Round 2 - check all args with inferred context
-                    )
+
+                            if let Some(shape_param_type) =
+                                shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                    let last = shape.params.last()?;
+                                    last.rest.then_some(last.type_id)
+                                })
+                            {
+                                let tracked_type_params: FxHashSet<_> =
+                                    shape.type_params.iter().map(|tp| tp.name).collect();
+                                let mut arg_substitution = tsz_solver::TypeSubstitution::new();
+                                let mut visited = FxHashSet::default();
+                                self.collect_return_context_substitution(
+                                    shape_param_type,
+                                    arg_type_for_refinement,
+                                    &tracked_type_params,
+                                    &mut arg_substitution,
+                                    &mut visited,
+                                );
+                                for (&name, &raw_ty) in arg_substitution.map().iter() {
+                                    let ty = if shape
+                                        .type_params
+                                        .iter()
+                                        .find(|tp| tp.name == name)
+                                        .is_some_and(|tp| !tp.is_const)
+                                    {
+                                        self.widen_literal_type(raw_ty)
+                                    } else {
+                                        raw_ty
+                                    };
+                                    if ty == TypeId::UNKNOWN
+                                        || ty == TypeId::ERROR
+                                        || tsz_solver::type_queries::contains_non_infer_type_parameters_db(
+                                            self.ctx.types,
+                                            ty,
+                                        )
+                                    {
+                                        continue;
+                                    }
+
+                                    let should_update = match round2_substitution.get(name) {
+                                        None => true,
+                                        Some(existing) if existing == ty => false,
+                                        Some(existing) => {
+                                            existing == TypeId::UNKNOWN
+                                                || existing == TypeId::ERROR
+                                                || self.inference_type_is_anyish(
+                                                    existing,
+                                                    &mut FxHashSet::default(),
+                                                )
+                                                || tsz_solver::type_queries::contains_infer_types_db(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                                || tsz_solver::type_queries::contains_type_parameters_db(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                        }
+                                    };
+                                    if should_update {
+                                        round2_substitution.insert(name, ty);
+                                    }
+                                }
+                            }
+
+                            let expected_still_unresolved = expected_type.is_some_and(|expected| {
+                                tsz_solver::type_queries::contains_infer_types_db(
+                                    self.ctx.types,
+                                    expected,
+                                ) || tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    expected,
+                                )
+                            });
+                            let arg_is_callable = tsz_solver::type_queries::get_function_shape(
+                                self.ctx.types,
+                                arg_type,
+                            )
+                            .is_some()
+                                || tsz_solver::type_queries::get_callable_shape(
+                                    self.ctx.types,
+                                    arg_type,
+                                )
+                                .is_some();
+                            let skip_return_only_refinement = self
+                                .ctx
+                                .arena
+                                .get(arg_idx)
+                                .and_then(|node| self.ctx.arena.get_function(node))
+                                .is_some_and(|func| {
+                                    func.parameters.nodes.is_empty()
+                                        && func.type_annotation.is_none()
+                                });
+                            let should_refine_substitution =
+                                sensitive_args.get(i).copied().unwrap_or(false)
+                                    || (expected_still_unresolved && arg_is_callable);
+                            if should_refine_substitution && !skip_return_only_refinement {
+                                let refined_substitution = {
+                                    let env = self.ctx.type_env.borrow();
+                                    call_checker::compute_contextual_types_with_context(
+                                        self.ctx.types,
+                                        &self.ctx,
+                                        &env,
+                                        &evaluated_shape,
+                                        &progressive_arg_types,
+                                        generic_inference_contextual_type,
+                                    )
+                                };
+                                let mut substitution_changed = false;
+                                for (&name, &ty) in refined_substitution.map().iter() {
+                                    if ty == TypeId::UNKNOWN
+                                        || tsz_solver::type_queries::contains_infer_types_db(
+                                            self.ctx.types,
+                                            ty,
+                                        )
+                                        || tsz_solver::type_queries::contains_type_parameters_db(
+                                            self.ctx.types,
+                                            ty,
+                                        )
+                                    {
+                                        continue;
+                                    }
+
+                                    let should_update = match round2_substitution.get(name) {
+                                        None => true,
+                                        Some(existing) if existing == ty => false,
+                                        Some(existing) => {
+                                            existing == TypeId::UNKNOWN
+                                                || tsz_solver::type_queries::contains_infer_types_db(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                                || tsz_solver::type_queries::contains_type_parameters_db(
+                                                    self.ctx.types,
+                                                    existing,
+                                                )
+                                        }
+                                    };
+
+                                    if should_update {
+                                        round2_substitution.insert(name, ty);
+                                        substitution_changed = true;
+                                    }
+                                }
+                                if substitution_changed {
+                                    trace!("Round 2 substitution refined");
+                                }
+                            }
+                        }
+
+                        round2_arg_types
+                    } else {
+                        let round2_contextual_types = self.compute_round2_contextual_types(
+                            &shape,
+                            round1_instantiated_params.as_deref(),
+                            &sensitive_args,
+                            &round2_substitution,
+                            arg_count,
+                        );
+
+                        self.collect_call_argument_types_with_context(
+                            args,
+                            |i, arg_count| {
+                                if i < round2_contextual_types.len() {
+                                    round2_contextual_types[i]
+                                } else {
+                                    ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                }
+                            },
+                            check_excess_properties,
+                            None,
+                        )
+                    }
                 } else {
                     // No context-sensitive arguments: skip Round 1/2 and use single-pass collection.
                     // For array literal arguments in generic calls, erase the callee's type
@@ -1346,7 +1331,7 @@ impl<'a> CheckerState<'a> {
                             ))
                         })
                         .collect();
-                    self.collect_call_argument_types_with_context(
+                    let initial_arg_types = self.collect_call_argument_types_with_context(
                         args,
                         |i, arg_count| {
                             if i < single_pass_contextual_types.len() {
@@ -1357,7 +1342,134 @@ impl<'a> CheckerState<'a> {
                         },
                         check_excess_properties,
                         None, // No skipping needed for single-pass
-                    )
+                    );
+
+                    let needs_refresh = self.ctx.contextual_type.is_some()
+                        && args
+                            .iter()
+                            .copied()
+                            .any(|arg| self.argument_needs_contextual_type(arg));
+                    if !needs_refresh {
+                        initial_arg_types
+                    } else {
+                        let return_context_substitution = self
+                            .compute_return_context_substitution_from_shape(
+                                &shape,
+                                self.ctx.contextual_type,
+                            );
+                        if !return_context_substitution.is_empty() {
+                            for &arg_idx in args {
+                                if self.argument_needs_contextual_type(arg_idx) {
+                                    self.clear_type_cache_recursive(arg_idx);
+                                }
+                            }
+                            let refreshed_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                                .map(|i| {
+                                    let param =
+                                        shape.params.get(i).map(|p| (p.type_id, p.rest)).or_else(
+                                            || {
+                                                let last = shape.params.last()?;
+                                                last.rest.then_some((last.type_id, true))
+                                            },
+                                        )?;
+                                    let instantiated = tsz_solver::instantiate_type(
+                                        self.ctx.types,
+                                        param.0,
+                                        &return_context_substitution,
+                                    );
+                                    let param_type = if param.1 {
+                                        tsz_solver::rest_argument_element_type(
+                                            self.ctx.types,
+                                            instantiated,
+                                        )
+                                    } else {
+                                        instantiated
+                                    };
+                                    Some(normalize_contextual_param_type(
+                                        self,
+                                        &ctx_helper,
+                                        param_type,
+                                        i,
+                                        args.len(),
+                                    ))
+                                })
+                                .collect();
+                            self.collect_call_argument_types_with_context(
+                                args,
+                                |i, arg_count| {
+                                    refreshed_contextual_types
+                                        .get(i)
+                                        .copied()
+                                        .flatten()
+                                        .or_else(|| {
+                                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                        })
+                                },
+                                check_excess_properties,
+                                None,
+                            )
+                        } else if let Some(instantiated_params) = self
+                            .resolve_call_with_checker_adapter(
+                                callee_type_for_context,
+                                &initial_arg_types,
+                                force_bivariant_callbacks,
+                                self.ctx.contextual_type,
+                                actual_this_type,
+                            )
+                            .2
+                        {
+                            for &arg_idx in args {
+                                if self.argument_needs_contextual_type(arg_idx) {
+                                    self.clear_type_cache_recursive(arg_idx);
+                                }
+                            }
+                            let refreshed_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                                .map(|i| {
+                                    instantiated_params
+                                        .get(i)
+                                        .or_else(|| {
+                                            let last = instantiated_params.last()?;
+                                            last.rest.then_some(last)
+                                        })
+                                        .map(|param| {
+                                            let evaluated =
+                                                self.evaluate_type_with_env(param.type_id);
+                                            let param_type = if param.rest {
+                                                tsz_solver::rest_argument_element_type(
+                                                    self.ctx.types,
+                                                    evaluated,
+                                                )
+                                            } else {
+                                                evaluated
+                                            };
+                                            normalize_contextual_param_type(
+                                                self,
+                                                &ctx_helper,
+                                                param_type,
+                                                i,
+                                                args.len(),
+                                            )
+                                        })
+                                })
+                                .collect();
+                            self.collect_call_argument_types_with_context(
+                                args,
+                                |i, arg_count| {
+                                    refreshed_contextual_types
+                                        .get(i)
+                                        .copied()
+                                        .flatten()
+                                        .or_else(|| {
+                                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                        })
+                                },
+                                check_excess_properties,
+                                None,
+                            )
+                        } else {
+                            initial_arg_types
+                        }
+                    }
                 }
             } else {
                 // Shouldn't happen for generic call detection, but keep single-pass fallback.
@@ -1471,26 +1583,124 @@ impl<'a> CheckerState<'a> {
             (arg_types.clone(), false)
         };
 
-        let (result, instantiated_predicate, generic_instantiated_params) = if is_super_call {
-            (
-                self.resolve_new_with_checker_adapter(
+        let (mut result, mut instantiated_predicate, mut generic_instantiated_params) =
+            if is_super_call {
+                (
+                    self.resolve_new_with_checker_adapter(
+                        callee_type_for_call,
+                        &generic_inference_arg_types,
+                        force_bivariant_callbacks,
+                        self.ctx.contextual_type,
+                    ),
+                    None,
+                    None,
+                )
+            } else {
+                self.resolve_call_with_checker_adapter(
                     callee_type_for_call,
                     &generic_inference_arg_types,
                     force_bivariant_callbacks,
                     self.ctx.contextual_type,
-                ),
-                None,
-                None,
-            )
+                    actual_this_type,
+                )
+            };
+
+        let should_retry_generic_call = if let Some(ctx_type) = self.ctx.contextual_type {
+            match &result {
+                CallResult::Success(ret) => {
+                    !assign_query::is_fresh_subtype_of(self.ctx.types, *ret, ctx_type)
+                }
+                _ => true,
+            }
         } else {
-            self.resolve_call_with_checker_adapter(
-                callee_type_for_call,
-                &generic_inference_arg_types,
-                force_bivariant_callbacks,
-                self.ctx.contextual_type,
-                actual_this_type,
-            )
+            false
         };
+
+        if is_generic_call
+            && should_retry_generic_call
+            && let Some(instantiated_params) = generic_instantiated_params.as_ref()
+        {
+            for &arg_idx in args {
+                if self.argument_needs_contextual_type(arg_idx) {
+                    self.clear_type_cache_recursive(arg_idx);
+                }
+            }
+            let refreshed_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                .map(|i| {
+                    instantiated_params
+                        .get(i)
+                        .or_else(|| {
+                            let last = instantiated_params.last()?;
+                            last.rest.then_some(last)
+                        })
+                        .map(|param| {
+                            let evaluated = self.evaluate_type_with_env(param.type_id);
+                            let param_type = if param.rest {
+                                tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
+                            } else {
+                                evaluated
+                            };
+                            normalize_contextual_param_type(
+                                self,
+                                &ctx_helper,
+                                param_type,
+                                i,
+                                args.len(),
+                            )
+                        })
+                })
+                .collect();
+            arg_types = self.collect_call_argument_types_with_context(
+                args,
+                |i, arg_count| {
+                    refreshed_contextual_types
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .or_else(|| ctx_helper.get_parameter_type_for_call(i, arg_count))
+                },
+                check_excess_properties,
+                None,
+            );
+
+            let (retry_generic_arg_types, retry_sanitized) =
+                self.sanitize_generic_inference_arg_types(args, &arg_types);
+            let retry = if is_super_call {
+                (
+                    self.resolve_new_with_checker_adapter(
+                        callee_type_for_call,
+                        &retry_generic_arg_types,
+                        force_bivariant_callbacks,
+                        self.ctx.contextual_type,
+                    ),
+                    None,
+                    None,
+                )
+            } else {
+                self.resolve_call_with_checker_adapter(
+                    callee_type_for_call,
+                    &retry_generic_arg_types,
+                    force_bivariant_callbacks,
+                    self.ctx.contextual_type,
+                    actual_this_type,
+                )
+            };
+            result = if retry_sanitized {
+                if let Some(instantiated_params) = retry.2.as_ref() {
+                    self.recheck_generic_call_arguments_with_real_types(
+                        retry.0.clone(),
+                        instantiated_params,
+                        &arg_types,
+                    )
+                } else {
+                    retry.0
+                }
+            } else {
+                retry.0
+            };
+            instantiated_predicate = retry.1;
+            generic_instantiated_params = retry.2;
+        }
 
         // Store instantiated type predicate from generic call resolution
         // so flow narrowing can use the correct (inferred) predicate type.
@@ -1593,381 +1803,10 @@ impl<'a> CheckerState<'a> {
             is_super_call,
             is_optional_chain: nullish_cause.is_some(),
         };
+        if let Some(original_ctx) = saved_contextual_for_iife {
+            self.ctx.contextual_type = Some(original_ctx);
+        }
         self.handle_call_result(result, call_context)
-    }
-
-    /// Handle the result of a call evaluation, emitting diagnostics for errors
-    /// and applying this-substitution/mixin refinement for successes.
-    fn handle_call_result(
-        &mut self,
-        result: tsz_solver::CallResult,
-        context: CallResultContext<'_>,
-    ) -> TypeId {
-        use tsz_solver::CallResult;
-        let CallResultContext {
-            callee_expr,
-            call_idx,
-            args,
-            arg_types,
-            callee_type,
-            is_super_call,
-            is_optional_chain,
-            ..
-        } = context;
-        match result {
-            CallResult::Success(return_type) => {
-                // super() calls always return void — they call the parent constructor
-                // on `this`, they don't create a new instance.
-                if is_super_call {
-                    return TypeId::VOID;
-                }
-                let return_type =
-                    self.apply_this_substitution_to_call_return(return_type, callee_expr);
-                let return_type =
-                    self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
-                // Strip freshness from function return types. Object literals returned
-                // from functions lose their freshness at the call boundary — the caller
-                // should not see excess property checks for the callee's return value.
-                let return_type = if !self.ctx.compiler_options.sound_mode {
-                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, return_type)
-                } else {
-                    return_type
-                };
-                if is_optional_chain {
-                    self.ctx
-                        .types
-                        .factory()
-                        .union(vec![return_type, TypeId::UNDEFINED])
-                } else {
-                    return_type
-                }
-            }
-            CallResult::NonVoidFunctionCalledWithNew | CallResult::VoidFunctionCalledWithNew => {
-                self.error_non_void_function_called_with_new_at(callee_expr);
-                TypeId::ANY
-            }
-            CallResult::NotCallable { .. } => {
-                // super() calls now use resolve_new() which checks construct signatures,
-                // so NotCallable for super() means the base class has no constructor.
-                // This is valid - classes can have implicit constructors.
-                if is_super_call {
-                    return TypeId::VOID;
-                }
-                if self.is_constructor_type(callee_type) {
-                    self.error_class_constructor_without_new_at(callee_type, callee_expr);
-                } else if self.is_get_accessor_call(callee_expr) {
-                    self.error_get_accessor_not_callable_at(callee_expr);
-                } else if self.ctx.compiler_options.strict_null_checks {
-                    // TS2721/TS2722/TS2723: Check if the callee type contains null/undefined.
-                    // When strictNullChecks is on and the type includes nullish parts,
-                    // emit a specific "cannot invoke possibly null/undefined" error
-                    // instead of the generic TS2349 "not callable".
-                    let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
-                    if let Some(cause) = nullish_cause {
-                        self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
-                    } else {
-                        self.error_not_callable_at(callee_type, callee_expr);
-                    }
-                } else {
-                    self.error_not_callable_at(callee_type, callee_expr);
-                }
-                TypeId::ERROR
-            }
-            CallResult::ArgumentCountMismatch {
-                expected_min,
-                expected_max,
-                actual,
-            } => {
-                if !self.ctx.has_parse_errors {
-                    // tsc suppresses TS2554/TS2555 for IIFEs (immediately invoked
-                    // function expressions) when too few arguments are provided.
-                    // Missing arguments just become `undefined` at runtime.
-                    if actual < expected_min {
-                        let is_iife = self.is_callee_function_expression(callee_expr);
-                        if is_iife {
-                            return TypeId::ERROR;
-                        }
-                    }
-
-                    // Suppress arity errors when the call contains non-tuple spread
-                    // arguments. The spread could provide any number of values at
-                    // runtime, so the actual argument count is indeterminate.
-                    // TSC only emits TS2556 in this case, not TS2555/TS2554.
-                    // However, tuple spreads have known length, so TS2554 should
-                    // still fire for those.
-                    let has_non_tuple_spread = args.iter().any(|&arg_idx| {
-                        if let Some(n) = self.ctx.arena.get(arg_idx)
-                            && n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                            && let Some(spread_data) = self.ctx.arena.get_spread(n)
-                        {
-                            let spread_type = self.get_type_of_node(spread_data.expression);
-                            let spread_type = self.resolve_type_for_property_access(spread_type);
-                            let spread_type = self.resolve_lazy_type(spread_type);
-                            crate::query_boundaries::common::tuple_elements(
-                                self.ctx.types,
-                                spread_type,
-                            )
-                            .is_none()
-                        } else {
-                            false
-                        }
-                    });
-                    if has_non_tuple_spread {
-                        // TS2556 was already emitted by collect_call_argument_types;
-                        // don't cascade with a misleading TS2555/TS2554.
-                    } else if actual < expected_min && expected_max.is_none() {
-                        // Too few arguments with rest parameters (unbounded) - use TS2555
-                        self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
-                    } else {
-                        // Use TS2554 for exact count, range, or too many args
-                        let max = expected_max.unwrap_or(expected_min);
-                        // Build expanded args list: for tuple spreads, repeat the
-                        // spread node for each tuple element so that the excess
-                        // argument location logic points at the correct node.
-                        let expanded_args = self.build_expanded_args_for_error(args);
-                        let args_for_error = if expanded_args.len() > args.len() {
-                            &expanded_args
-                        } else {
-                            args
-                        };
-                        self.error_argument_count_mismatch_at(
-                            expected_min,
-                            max,
-                            actual,
-                            call_idx,
-                            args_for_error,
-                        );
-                    }
-                }
-                TypeId::ERROR
-            }
-            CallResult::OverloadArgumentCountMismatch {
-                actual,
-                expected_low,
-                expected_high,
-            } => {
-                if !self.ctx.has_parse_errors {
-                    self.error_at_node(
-                        call_idx,
-                        &format!(
-                            "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
-                        ),
-                        diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
-                    );
-                }
-                TypeId::ERROR
-            }
-            CallResult::ArgumentTypeMismatch {
-                index,
-                expected,
-                actual,
-                fallback_return,
-            } => {
-                if let Some((call_start, call_end)) = self.get_node_span(call_idx)
-                    && self.has_diagnostic_code_within_span(
-                        call_start,
-                        call_end,
-                        diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
-                    )
-                {
-                    return if fallback_return != TypeId::ERROR {
-                        fallback_return
-                    } else {
-                        TypeId::ERROR
-                    };
-                }
-                if self.should_defer_contextual_argument_mismatch(actual, expected) {
-                    return TypeId::ERROR;
-                }
-                // Avoid cascading TS2345 when the argument type is already invalid or unknown.
-                // In these cases, a more specific upstream diagnostic is usually the root cause.
-                if actual == TypeId::ERROR
-                    || actual == TypeId::UNKNOWN
-                    || expected == TypeId::ERROR
-                    || expected == TypeId::UNKNOWN
-                {
-                    return TypeId::ERROR;
-                }
-
-                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
-                if let Some(arg_idx) = arg_idx {
-                    self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
-                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
-                    {
-                        // Try to elaborate: for object literal arguments, report TS2322
-                        // on specific mismatched properties instead of TS2345 on the
-                        // whole argument. This matches tsc behavior.
-                        if !self.try_elaborate_object_literal_arg_error(arg_idx, expected) {
-                            let _ =
-                                self.check_argument_assignable_or_report(actual, expected, arg_idx);
-                        }
-                    }
-                } else if !args.is_empty() {
-                    let last_arg = args[args.len() - 1];
-                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
-                        && !self.try_elaborate_object_literal_arg_error(last_arg, expected)
-                    {
-                        let _ =
-                            self.check_argument_assignable_or_report(actual, expected, last_arg);
-                    }
-                } else {
-                    // No arguments at all (e.g. f1() where f1 expects variadic
-                    // tuple rest param). Report TS2345 on the call expression.
-                    let _ = self.check_argument_assignable_or_report(actual, expected, call_idx);
-                }
-
-                if fallback_return != TypeId::ERROR {
-                    fallback_return
-                } else if let Some(return_type) =
-                    crate::query_boundaries::assignability::get_function_return_type(
-                        self.ctx.types,
-                        callee_type,
-                    )
-                {
-                    self.apply_this_substitution_to_call_return(return_type, callee_expr)
-                } else {
-                    TypeId::ERROR
-                }
-            }
-            CallResult::TypeParameterConstraintViolation {
-                inferred_type,
-                constraint_type,
-                return_type,
-            } => {
-                // Report TS2322 for constraint violations from callback return type inference
-                let _ = self.check_assignable_or_report_generic_at(
-                    inferred_type,
-                    constraint_type,
-                    call_idx,
-                    call_idx,
-                );
-                return_type
-            }
-            CallResult::NoOverloadMatch {
-                failures,
-                fallback_return,
-                ..
-            } => {
-                if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
-                    self.error_no_overload_matches_at(call_idx, &failures);
-                }
-
-                // Fallback: use return type of the first overload if available.
-                // This improves error recovery for chained calls (e.g. [].concat().map())
-                // by allowing subsequent calls to see a typed object rather than ERROR.
-                // For Array.concat, this returns T[] (e.g. never[]) matching TSC behavior.
-                fallback_return
-            }
-            CallResult::ThisTypeMismatch {
-                expected_this,
-                actual_this,
-            } => {
-                self.error_this_type_mismatch_at(expected_this, actual_this, callee_expr);
-                TypeId::ERROR
-            }
-        }
-    }
-
-    pub(crate) fn should_defer_contextual_argument_mismatch(
-        &self,
-        actual: TypeId,
-        expected: TypeId,
-    ) -> bool {
-        // During generic contextual inference, expected parameter types can transiently
-        // include placeholder `any` slots before all nested callbacks are fully typed.
-        // Emitting TS2345 in this state creates false positives in conformance tests.
-        if assign_query::contains_infer_types(self.ctx.types, actual)
-            || assign_query::contains_infer_types(self.ctx.types, expected)
-        {
-            return true;
-        }
-        if assign_query::contains_type_parameters(self.ctx.types, expected)
-            && assign_query::contains_any_type(self.ctx.types, actual)
-        {
-            return true;
-        }
-        assign_query::is_any_type(self.ctx.types, expected)
-    }
-
-    fn suppress_later_call_excess_property_diagnostics(
-        &mut self,
-        args: &[NodeIndex],
-        primary_arg_idx: NodeIndex,
-    ) {
-        let Some(primary_pos) = args.iter().position(|&arg| arg == primary_arg_idx) else {
-            return;
-        };
-        let later_spans: Vec<(u32, u32)> = args[primary_pos + 1..]
-            .iter()
-            .filter_map(|&arg_idx| {
-                self.get_node_span(arg_idx)
-                    .map(|(start, len)| (start, start.saturating_add(len)))
-            })
-            .collect();
-        if later_spans.is_empty() {
-            return;
-        }
-        self.ctx.diagnostics.retain(|diag| {
-            if diag.code
-                != diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
-            {
-                return true;
-            }
-            !later_spans
-                .iter()
-                .any(|&(start, end)| diag.start >= start && diag.start < end)
-        });
-    }
-
-    /// Check if the callee expression is a function expression (IIFE pattern).
-    ///
-    /// Unwraps through parenthesized expressions to find the actual callee.
-    fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(callee_expr) else {
-            return false;
-        };
-        match node.kind {
-            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => true,
-            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    self.is_callee_function_expression(paren.expression)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    }
-
-    /// Build an expanded args list for TS2554 error location.
-    ///
-    /// When tuple spreads are present, the original `args` slice has fewer
-    /// entries than the expanded argument count. This method builds a new
-    /// list where tuple-spread nodes are repeated for each tuple element,
-    /// so the excess-argument location logic in `error_argument_count_mismatch_at`
-    /// can index into it correctly.
-    pub(crate) fn build_expanded_args_for_error(&mut self, args: &[NodeIndex]) -> Vec<NodeIndex> {
-        let mut expanded = Vec::with_capacity(args.len());
-        for &arg_idx in args {
-            if let Some(n) = self.ctx.arena.get(arg_idx)
-                && n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread_data) = self.ctx.arena.get_spread(n)
-            {
-                let spread_type = self.get_type_of_node(spread_data.expression);
-                let spread_type = self.resolve_type_for_property_access(spread_type);
-                let spread_type = self.resolve_lazy_type(spread_type);
-                if let Some(elems) =
-                    crate::query_boundaries::common::tuple_elements(self.ctx.types, spread_type)
-                {
-                    for _ in &elems {
-                        expanded.push(arg_idx);
-                    }
-                    continue;
-                }
-            }
-            expanded.push(arg_idx);
-        }
-        expanded
     }
 }
 

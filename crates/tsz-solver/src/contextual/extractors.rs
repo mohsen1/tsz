@@ -1307,14 +1307,24 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
         let mut matched = false;
         let mut param_types: Vec<TypeId> = Vec::new();
 
-        for sig in &shape.call_signatures {
-            if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
-                matched = true;
-                if let Some(param_type) =
-                    extract_param_type_at_for_call(self.db, &sig.params, self.index, self.arg_count)
-                {
-                    param_types.push(param_type);
-                }
+        let mut matching_call_signatures: Vec<_> = shape
+            .call_signatures
+            .iter()
+            .filter(|sig| self.signature_accepts_arg_count(&sig.params, self.arg_count))
+            .collect();
+        if matching_call_signatures
+            .iter()
+            .any(|sig| !sig.params.last().is_some_and(|param| param.rest))
+        {
+            matching_call_signatures
+                .retain(|sig| !sig.params.last().is_some_and(|param| param.rest));
+        }
+        for sig in matching_call_signatures {
+            matched = true;
+            if let Some(param_type) =
+                extract_param_type_at_for_call(self.db, &sig.params, self.index, self.arg_count)
+            {
+                param_types.push(param_type);
             }
         }
 
@@ -1336,17 +1346,24 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
         // and suppressing them causes false TS7006 in constructor calls.
         if param_types.is_empty() {
             matched = false;
-            for sig in &shape.construct_signatures {
-                if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
-                    matched = true;
-                    if let Some(param_type) = extract_param_type_at_for_call(
-                        self.db,
-                        &sig.params,
-                        self.index,
-                        self.arg_count,
-                    ) {
-                        param_types.push(param_type);
-                    }
+            let mut matching_construct_signatures: Vec<_> = shape
+                .construct_signatures
+                .iter()
+                .filter(|sig| self.signature_accepts_arg_count(&sig.params, self.arg_count))
+                .collect();
+            if matching_construct_signatures
+                .iter()
+                .any(|sig| !sig.params.last().is_some_and(|param| param.rest))
+            {
+                matching_construct_signatures
+                    .retain(|sig| !sig.params.last().is_some_and(|param| param.rest));
+            }
+            for sig in matching_construct_signatures {
+                matched = true;
+                if let Some(param_type) =
+                    extract_param_type_at_for_call(self.db, &sig.params, self.index, self.arg_count)
+                {
+                    param_types.push(param_type);
                 }
             }
             if param_types.is_empty() && !matched {

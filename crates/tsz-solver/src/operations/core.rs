@@ -711,16 +711,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &shape.call_signatures
                 };
 
-                // If arg_count is provided, select the first overload whose arity matches.
+                // If arg_count is provided, prefer fixed-arity overloads over
+                // catch-all rest signatures when both match. This keeps broad
+                // implementation signatures from poisoning contextual typing.
                 let sig = if let Some(count) = self.arg_count {
-                    signatures
+                    let mut matching: Vec<_> = signatures
                         .iter()
-                        .find(|sig| {
+                        .filter(|sig| {
                             let min_args = crate::utils::required_param_count(&sig.params);
                             let has_rest = sig.params.iter().any(|p| p.rest);
                             count >= min_args && (has_rest || count <= sig.params.len())
                         })
-                        .or_else(|| signatures.first())
+                        .collect();
+                    if matching
+                        .iter()
+                        .any(|sig| !sig.params.last().is_some_and(|param| param.rest))
+                    {
+                        matching.retain(|sig| !sig.params.last().is_some_and(|param| param.rest));
+                    }
+                    matching.into_iter().next().or_else(|| signatures.first())
                 } else {
                     signatures.first()
                 };

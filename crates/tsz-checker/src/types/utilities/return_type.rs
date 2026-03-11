@@ -544,9 +544,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let prev_context = self.ctx.contextual_type;
-        let prev_preserve = self.ctx.preserve_literal_types;
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
         if let Some(ctx_type) = return_context {
             self.ctx.contextual_type = Some(ctx_type);
+            self.ctx.preserve_literal_types = true;
         }
         // Preserve literal types in return expressions during inference.
         // tsc's checkExpression always returns literal types for literals
@@ -557,7 +558,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = true;
         let return_type = self.get_type_of_node(expr_idx);
         self.ctx.contextual_type = prev_context;
-        self.ctx.preserve_literal_types = prev_preserve;
+        self.ctx.preserve_literal_types = prev_preserve_literals;
         return_type
     }
 

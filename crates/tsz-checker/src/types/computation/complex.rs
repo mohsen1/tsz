@@ -29,14 +29,19 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
         // Functions are sensitive ONLY if they have at least one parameter without a type annotation
         k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
             if let Some(func) = state.ctx.arena.get_function(node) {
-                func.parameters.nodes.iter().any(|&param_idx| {
+                let has_unannotated_params = func.parameters.nodes.iter().any(|&param_idx| {
                     if let Some(param_node) = state.ctx.arena.get(param_idx)
                         && let Some(param) = state.ctx.arena.get_parameter(param_node)
                     {
                         return param.type_annotation.is_none();
                     }
                     false
-                })
+                });
+
+                has_unannotated_params
+                    || (func.parameters.nodes.is_empty()
+                        && func.type_annotation.is_none()
+                        && function_body_needs_contextual_return_type(state, func.body))
             } else {
                 false
             }
@@ -140,6 +145,100 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
             }
         }
 
+        _ => false,
+    }
+}
+
+fn should_preserve_contextual_application_shape(
+    db: &dyn tsz_solver::TypeDatabase,
+    ty: TypeId,
+) -> bool {
+    if tsz_solver::type_queries::get_application_info(db, ty).is_some() {
+        return true;
+    }
+
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, ty) {
+        return members
+            .iter()
+            .copied()
+            .any(|member| should_preserve_contextual_application_shape(db, member));
+    }
+
+    match db.lookup(ty) {
+        Some(tsz_solver::TypeData::ReadonlyType(inner) | tsz_solver::TypeData::NoInfer(inner)) => {
+            should_preserve_contextual_application_shape(db, inner)
+        }
+        _ => false,
+    }
+}
+
+fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: NodeIndex) -> bool {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let Some(body_node) = state.ctx.arena.get(body_idx) else {
+        return false;
+    };
+
+    if body_node.kind != syntax_kind_ext::BLOCK {
+        return expression_needs_contextual_return_type(state, body_idx);
+    }
+
+    let Some(block) = state.ctx.arena.get_block(body_node) else {
+        return false;
+    };
+
+    block.statements.nodes.iter().any(|&stmt_idx| {
+        let Some(stmt_node) = state.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return false;
+        }
+        state
+            .ctx
+            .arena
+            .get_return_statement(stmt_node)
+            .is_some_and(|ret| {
+                ret.expression.is_some()
+                    && expression_needs_contextual_return_type(state, ret.expression)
+            })
+    })
+}
+
+fn expression_needs_contextual_return_type(state: &CheckerState, expr_idx: NodeIndex) -> bool {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    if is_contextually_sensitive(state, expr_idx) {
+        return true;
+    }
+
+    let Some(node) = state.ctx.arena.get(expr_idx) else {
+        return false;
+    };
+
+    match node.kind {
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => state
+            .ctx
+            .arena
+            .get_parenthesized(node)
+            .is_some_and(|paren| expression_needs_contextual_return_type(state, paren.expression)),
+        k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => state
+            .ctx
+            .arena
+            .get_conditional_expr(node)
+            .is_some_and(|cond| {
+                expression_needs_contextual_return_type(state, cond.when_true)
+                    || expression_needs_contextual_return_type(state, cond.when_false)
+            }),
+        k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || k == syntax_kind_ext::CALL_EXPRESSION
+            || k == syntax_kind_ext::NEW_EXPRESSION
+            || k == syntax_kind_ext::YIELD_EXPRESSION
+            || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+        {
+            true
+        }
         _ => false,
     }
 }
@@ -483,6 +582,12 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .map(|s| s.type_params.len())
                 .unwrap_or(0),
+            constructor_param_types = ?constructor_shape.as_ref().map(|s| s.params.iter().map(|p| (
+                self.format_type(p.type_id),
+                self.ctx.types.lookup(p.type_id),
+                tsz_solver::type_queries::get_application_info(self.ctx.types, p.type_id)
+                    .map(|(_, args)| args),
+            )).collect::<Vec<_>>()),
             "New expression: two-pass inference check"
         );
 
@@ -815,7 +920,23 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 instantiated
                             };
-                            Some(self.evaluate_type_with_env(instantiated))
+                            let contextual = if should_preserve_contextual_application_shape(
+                                self.ctx.types,
+                                instantiated,
+                            ) {
+                                instantiated
+                            } else {
+                                self.evaluate_type_with_env(instantiated)
+                            };
+                            trace!(
+                                arg_index = i,
+                                param_type_display = %self.format_type(param_type),
+                                instantiated_display = %self.format_type(instantiated),
+                                contextual_display = %self.format_type(contextual),
+                                contextual_key = ?self.ctx.types.lookup(contextual),
+                                "New expression Round 2 contextual type"
+                            );
+                            Some(contextual)
                         } else {
                             None
                         };

@@ -1,5 +1,7 @@
 //! Call expression checking (overload resolution, contextual typing, signature instantiation).
 
+use crate::computation::complex::is_contextually_sensitive;
+use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type, resolve_call,
     resolve_new, tuple_elements_for_type,
@@ -61,6 +63,23 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn suppress_generic_return_context_for_arg(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        func.parameters.nodes.is_empty()
+            && func.type_annotation.is_none()
+            && is_contextually_sensitive(self, idx)
+    }
+
     /// Whether an argument node needs contextual typing from the callee signature.
     ///
     /// Literal expressions need contextual typing to preserve literal types when
@@ -69,7 +88,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Other expressions like arrow functions, object literals, etc. also need
     /// contextual typing for their internal structure.
-    fn argument_needs_contextual_type(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn argument_needs_contextual_type(&self, idx: NodeIndex) -> bool {
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -559,7 +578,14 @@ impl<'a> CheckerState<'a> {
             // Regular (non-spread) argument
             let expected_type = expected_for_index(effective_index, expanded_count);
             let apply_contextual = self.argument_needs_contextual_type(arg_idx);
-            let expected_context_type = self.contextual_type_option_for_expression(expected_type);
+            let expected_context_type = if self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    || node.kind == syntax_kind_ext::NEW_EXPRESSION
+            }) {
+                expected_type
+            } else {
+                self.contextual_type_option_for_expression(expected_type)
+            };
 
             let prev_context = self.ctx.contextual_type;
             if apply_contextual {
@@ -576,9 +602,45 @@ impl<'a> CheckerState<'a> {
                 self.ctx.skip_flow_narrowing = true;
             }
 
+            let diag_len = self.ctx.diagnostics.len();
+            let emitted_before = self.ctx.emitted_diagnostics.clone();
             let arg_type = self.get_type_of_node(arg_idx);
             if skip_flow {
                 self.ctx.skip_flow_narrowing = prev_skip_flow;
+            }
+
+            if apply_contextual
+                && expected_type.is_some()
+                && self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                })
+            {
+                let callback_body_start = self
+                    .ctx
+                    .arena
+                    .get(arg_idx)
+                    .and_then(|node| self.ctx.arena.get_function(node))
+                    .and_then(|func| self.ctx.arena.get(func.body))
+                    .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
+                    .map(|body_node| body_node.pos);
+                let new_diags = self.ctx.diagnostics.split_off(diag_len);
+                let kept_new_diags: Vec<_> = new_diags
+                    .into_iter()
+                    .filter(|diag| {
+                        let is_provisional_assignability = diag.code
+                            == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                            || diag.code
+                                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                        !is_provisional_assignability
+                            || callback_body_start.is_some_and(|start| diag.start == start)
+                    })
+                    .collect();
+                self.ctx.diagnostics.extend(kept_new_diags);
+                self.ctx.emitted_diagnostics = emitted_before;
+                for diag in self.ctx.diagnostics.iter().skip(diag_len) {
+                    self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
+                }
             }
             arg_types.push(arg_type);
 

@@ -1,5 +1,6 @@
 //! Function, method, and arrow function type resolution.
 
+use crate::computation::complex::is_contextually_sensitive;
 use crate::diagnostics::format_message;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -811,8 +812,7 @@ impl<'a> CheckerState<'a> {
                 // type itself is Promise<inner>. Contextual return typing must
                 // therefore use the inner type, not Promise<inner>.
                 let return_context = if is_async && !is_generator {
-                    return_context
-                        .and_then(|ctx_ty| self.unwrap_promise_type(ctx_ty).or(Some(ctx_ty)))
+                    return_context.map(|ctx_ty| self.unwrap_async_return_type_for_body(ctx_ty))
                 } else {
                     return_context
                 };
@@ -1113,6 +1113,11 @@ impl<'a> CheckerState<'a> {
             //
             // For async functions with return type Promise<T>, return statements should be checked
             // against T, not Promise<T>. The function body returns T, which gets auto-wrapped.
+            let contextual_void_return_exception = !has_type_annotation
+                && jsdoc_return_context.is_none()
+                && has_contextual_return
+                && return_context_for_circularity == Some(TypeId::VOID);
+
             let body_return_type = if is_generator && has_type_annotation {
                 let original_type = annotated_return_type.unwrap_or(return_type);
                 // TS2505: A generator cannot have a 'void' type annotation.
@@ -1146,6 +1151,11 @@ impl<'a> CheckerState<'a> {
                 // Promise<T> | StateMachine<T>, unwrap each Promise member to get
                 // T | StateMachine<T> as the effective body return type.
                 self.unwrap_async_return_type_for_body(return_type)
+            } else if contextual_void_return_exception {
+                // Contextual `() => void` callbacks are allowed to return values.
+                // Skip statement-level return assignability and let the outer
+                // function-type assignability relation handle the ergonomics.
+                TypeId::ANY
             } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
             {
                 return_type
@@ -1184,7 +1194,8 @@ impl<'a> CheckerState<'a> {
             // unwrapped for async (Promise<T> → T) and generators (Generator<Y,R,N> → R).
             let expected_expression_return_type = has_type_annotation
                 .then_some(body_return_type)
-                .or(jsdoc_return_context);
+                .or(jsdoc_return_context)
+                .or(return_context_for_circularity);
             if expected_expression_return_type.is_some()
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
@@ -1223,11 +1234,29 @@ impl<'a> CheckerState<'a> {
                             None
                         })
                         .unwrap_or_else(|| {
-                            // Set contextual type to the return type annotation so that
-                            // literal expressions in the body (e.g. `(): "foo" => "foo"`)
-                            // preserve their literal types instead of widening.
+                            // For explicit annotations/JSDoc, type the body under that
+                            // return context so literal expressions are preserved.
+                            // For contextual-return-only closures, read the raw body type
+                            // and let the later assignability check report on the whole
+                            // expression instead of a nested contextualized subexpression.
                             let prev_ctx = self.ctx.contextual_type;
-                            self.ctx.contextual_type = Some(expected_return_type);
+                            let can_apply_contextual_body =
+                                !tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    expected_return_type,
+                                ) && !tsz_solver::type_queries::contains_infer_types_db(
+                                    self.ctx.types,
+                                    expected_return_type,
+                                );
+                            let keep_contextual_body = has_type_annotation
+                                || jsdoc_return_context.is_some()
+                                || (can_apply_contextual_body
+                                    && self.ctx.arena.get(body).is_some_and(|body_node| {
+                                        body_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION
+                                    })
+                                    && is_contextually_sensitive(self, body));
+                            self.ctx.contextual_type =
+                                keep_contextual_body.then_some(expected_return_type);
                             self.clear_type_cache_recursive(body);
                             let t = self.get_type_of_node(body);
                             self.ctx.contextual_type = prev_ctx;
@@ -1245,17 +1274,85 @@ impl<'a> CheckerState<'a> {
                     } else {
                         actual_return
                     };
-                    let assignability_ok =
-                        self.check_assignable_or_report(actual_return, expected_return_type, body);
-                    if assignability_ok
-                        && let Some(body_node) = self.ctx.arena.get(body)
-                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                    {
-                        self.check_conditional_return_branches_against_type(
-                            body,
+                    let suppress_contextual_return_check = !has_type_annotation
+                        && jsdoc_return_context.is_none()
+                        && (tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
                             expected_return_type,
-                            is_async_for_context,
-                        );
+                        ) || tsz_solver::type_queries::contains_infer_types_db(
+                            self.ctx.types,
+                            expected_return_type,
+                        ));
+                    let use_generic_return_mismatch = !has_type_annotation
+                        && jsdoc_return_context.is_none()
+                        && self.ctx.arena.get(body).is_some_and(|body_node| {
+                            body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        });
+                    if suppress_contextual_return_check {
+                        // Leave callback return inference to the generic/reverse-mapped
+                        // inference pass when the expected return still contains
+                        // unresolved placeholders.
+                    } else if contextual_void_return_exception {
+                        // Contextual `() => void` callbacks may return a value.
+                        // Don't report a direct body-vs-void mismatch here.
+                    } else if use_generic_return_mismatch {
+                        let conditional_branch_mismatch = self
+                            .ctx
+                            .arena
+                            .get(body)
+                            .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
+                            .is_some_and(|cond| {
+                                let prev_ctx = self.ctx.contextual_type;
+                                let diag_len = self.ctx.diagnostics.len();
+                                let emitted_before = self.ctx.emitted_diagnostics.clone();
+                                self.ctx.contextual_type = None;
+                                self.clear_type_cache_recursive(cond.when_true);
+                                self.clear_type_cache_recursive(cond.when_false);
+                                let when_true = self.get_type_of_node(cond.when_true);
+                                let when_false = self.get_type_of_node(cond.when_false);
+                                self.ctx.contextual_type = prev_ctx;
+                                self.ctx.diagnostics.truncate(diag_len);
+                                self.ctx.emitted_diagnostics = emitted_before;
+                                !self.is_assignable_to(when_true, expected_return_type)
+                                    || !self.is_assignable_to(when_false, expected_return_type)
+                            });
+                        if conditional_branch_mismatch {
+                            if let Some(loc) = self.get_source_location(body) {
+                                let src_str = self.format_type(actual_return);
+                                let tgt_str = self.format_type(expected_return_type);
+                                let message = format_message(
+                                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                    &[&src_str, &tgt_str],
+                                );
+                                self.ctx.diagnostics.push(crate::diagnostics::Diagnostic::error(
+                                    self.ctx.file_name.clone(),
+                                    loc.start,
+                                    loc.length(),
+                                    message,
+                                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                ));
+                            }
+                        } else {
+                            self.check_assignable_or_report_generic_at(
+                                actual_return,
+                                expected_return_type,
+                                body,
+                                body,
+                            );
+                        }
+                    } else {
+                        let assignability_ok =
+                            self.check_assignable_or_report(actual_return, expected_return_type, body);
+                        if assignability_ok
+                            && let Some(body_node) = self.ctx.arena.get(body)
+                            && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        {
+                            self.check_conditional_return_branches_against_type(
+                                body,
+                                expected_return_type,
+                                is_async_for_context,
+                            );
+                        }
                     }
                 }
             }
@@ -1285,6 +1382,9 @@ impl<'a> CheckerState<'a> {
                     && body_node.kind != syntax_kind_ext::BLOCK
                     && !has_type_annotation
                 {
+                    let suppress_contextual_return_for_conditional_body = jsdoc_return_context
+                        .is_none()
+                        && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION;
                     let body_return_context = ctx_helper
                         .as_ref()
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
@@ -1293,16 +1393,35 @@ impl<'a> CheckerState<'a> {
                                 tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
                             })
                         });
-                    if body_return_context.is_some() {
+                    if body_return_context.is_some()
+                        && !suppress_contextual_return_for_conditional_body
+                    {
                         self.ctx.contextual_type = body_return_context;
                     }
                 }
+
+                let suppress_expression_body_diagnostics =
+                    self.ctx.arena.get(body).is_some_and(|body_node| {
+                        body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                            && !has_type_annotation
+                            && jsdoc_return_context.is_none()
+                    });
+                let diag_len = self.ctx.diagnostics.len();
+                let emitted_before = suppress_expression_body_diagnostics
+                    .then(|| self.ctx.emitted_diagnostics.clone());
 
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
 
                 self.check_statement(body);
+
+                if suppress_expression_body_diagnostics {
+                    self.ctx.diagnostics.truncate(diag_len);
+                    if let Some(emitted_before) = emitted_before {
+                        self.ctx.emitted_diagnostics = emitted_before;
+                    }
+                }
 
                 // For annotated generator expressions, check that Generator<TYield, any, any>
                 // is assignable to the declared return type.
@@ -1889,122 +2008,4 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::diagnostics::diagnostic_codes;
-
-    fn diagnostics_for_source(source: &str) -> Vec<u32> {
-        crate::test_utils::check_source_codes(source)
-    }
-
-    #[test]
-    fn expression_body_arrow_with_return_annotation_reports_type_mismatch() {
-        let diagnostics = diagnostics_for_source("const f = (): number => \"str\";");
-        let target = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
-
-        assert!(
-            diagnostics.contains(&target),
-            "expected TS2322, got diagnostics: {diagnostics:?}"
-        );
-    }
-
-    /// Minimal Promise definition so async tests can resolve Promise<T>.
-    const PROMISE_DEF: &str = "interface Promise<T> { then<U>(cb: (val: T) => U): Promise<U>; }";
-
-    fn async_diagnostics(body: &str) -> Vec<u32> {
-        diagnostics_for_source(&format!("{PROMISE_DEF}\n{body}"))
-    }
-
-    #[test]
-    fn async_arrow_expression_body_promise_return_no_false_error() {
-        let diags = async_diagnostics("const f = async (): Promise<number> => 42;");
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "should not emit TS2322 for async arrow expression body, got: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn async_arrow_block_body_promise_return_no_false_error() {
-        let diags = async_diagnostics("const f = async (): Promise<number> => { return 42; };");
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "should not emit TS2322 for async arrow block body, got: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn async_function_expression_promise_return_no_false_error() {
-        let diags =
-            async_diagnostics("const f = async function(): Promise<number> { return 42; };");
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "should not emit TS2322 for async function expression, got: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn async_arrow_generic_promise_return_no_false_error() {
-        let diags = async_diagnostics("const f = async <T>(x: T): Promise<T> => x;");
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "should not emit TS2322 for async generic arrow, got: {diags:?}"
-        );
-    }
-
-    // ---------------------------------------------------------------
-    // Async return type unwrapping — unannotated async functions that
-    // return a Promise value should infer Promise<T>, not Promise<Promise<T>>.
-    // ---------------------------------------------------------------
-
-    #[test]
-    fn async_inferred_return_unwraps_promise() {
-        // `async () => load()` where load() returns Promise<boolean>
-        // should infer () => Promise<boolean>, not () => Promise<Promise<boolean>>
-        let diags = async_diagnostics(
-            "declare function load(): Promise<boolean>;
-             const cb: () => Promise<boolean> = async () => load();",
-        );
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "async returning Promise<T> should infer Promise<T>, not Promise<Promise<T>>: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn async_inferred_return_unwraps_promise_then_chain() {
-        // `async () => load().then(m => m)` should also infer () => Promise<boolean>
-        let diags = async_diagnostics(
-            "declare function load(): Promise<boolean>;
-             const cb: () => Promise<boolean> = async () => load().then(m => m);",
-        );
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "async returning .then() chain should infer correct Promise type: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn async_inferred_return_non_promise_wraps_once() {
-        // `async () => 42` should infer () => Promise<number>, wrapping once
-        let diags = async_diagnostics("const cb: () => Promise<number> = async () => 42;");
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "async returning non-Promise should wrap once: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn async_inferred_return_union_with_promise() {
-        // When expected type is a union containing Promise, async function
-        // returning Promise should be assignable
-        let diags = async_diagnostics(
-            "declare function load(): Promise<boolean>;
-             type LoadCallback = () => Promise<boolean> | string;
-             const cb: LoadCallback = async () => load();",
-        );
-        assert!(
-            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-            "async returning Promise in union context should not double-wrap: {diags:?}"
-        );
-    }
-}
+mod tests;

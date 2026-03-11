@@ -4279,6 +4279,117 @@ fn test_infer_generic_application_param() {
 }
 
 #[test]
+fn test_generic_call_infers_type_arg_from_contextual_return_application() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let ok_base = interner.lazy(DefId(500));
+    let ok_t = interner.application(ok_base, vec![t_type]);
+    let ok_tuple = interner.application(
+        ok_base,
+        vec![interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ])],
+    );
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: ok_t,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let arg = interner.array(interner.union(vec![
+        interner.literal_string("hello"),
+        interner.literal_number(12.0),
+    ]));
+
+    evaluator.set_contextual_type(Some(ok_tuple));
+    let result = evaluator.resolve_call(func, &[arg]);
+
+    match result {
+        CallResult::Success(ret) => assert_eq!(
+            ret,
+            ok_tuple,
+            "actual={:?} actual_app={:?} actual_arg={:?} expected={:?} expected_app={:?} expected_arg={:?}",
+            interner.lookup(ret),
+            interner.lookup(ret).and_then(|t| match t {
+                TypeData::Application(id) => Some(interner.type_application(id)),
+                _ => None,
+            }),
+            interner.lookup(TypeId(112)),
+            interner.lookup(ok_tuple),
+            interner.lookup(ok_tuple).and_then(|t| match t {
+                TypeData::Application(id) => Some(interner.type_application(id)),
+                _ => None,
+            }),
+            interner.lookup(TypeId(136))
+        ),
+        other => panic!("Expected success from contextual return inference, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_array_union_is_not_strictly_assignable_to_tuple() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let array = interner.array(interner.union(vec![
+        interner.literal_string("hello"),
+        interner.literal_number(12.0),
+    ]));
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        !checker.is_assignable_to_strict(array, tuple),
+        "array={:?} tuple={:?}",
+        interner.lookup(array),
+        interner.lookup(tuple)
+    );
+}
+
+#[test]
 fn test_infer_generic_object_property() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
