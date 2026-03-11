@@ -146,6 +146,9 @@ impl<'a> CheckerContext<'a> {
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
+            circ_ref_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(30)),
+            overlap_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(20)),
+            resolving_jsdoc_typedefs: RefCell::new(Vec::new()),
             return_type_stack: Vec::new(),
             yield_type_stack: Vec::new(),
             generator_yield_operand_types: Vec::new(),
@@ -320,6 +323,9 @@ impl<'a> CheckerContext<'a> {
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
+            circ_ref_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(30)),
+            overlap_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(20)),
+            resolving_jsdoc_typedefs: RefCell::new(Vec::new()),
             return_type_stack: Vec::new(),
             yield_type_stack: Vec::new(),
             generator_yield_operand_types: Vec::new(),
@@ -485,6 +491,9 @@ impl<'a> CheckerContext<'a> {
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
+            circ_ref_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(30)),
+            overlap_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(20)),
+            resolving_jsdoc_typedefs: RefCell::new(Vec::new()),
             return_type_stack: Vec::new(),
             yield_type_stack: Vec::new(),
             generator_yield_operand_types: Vec::new(),
@@ -660,6 +669,9 @@ impl<'a> CheckerContext<'a> {
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
+            circ_ref_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(30)),
+            overlap_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(20)),
+            resolving_jsdoc_typedefs: RefCell::new(Vec::new()),
             return_type_stack: Vec::new(),
             yield_type_stack: Vec::new(),
             generator_yield_operand_types: Vec::new(),
@@ -828,6 +840,9 @@ impl<'a> CheckerContext<'a> {
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
+            circ_ref_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(30)),
+            overlap_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(20)),
+            resolving_jsdoc_typedefs: RefCell::new(Vec::new()),
             return_type_stack: Vec::new(),
             yield_type_stack: Vec::new(),
             generator_yield_operand_types: Vec::new(),
@@ -1021,6 +1036,9 @@ impl<'a> CheckerContext<'a> {
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
+            circ_ref_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(30)),
+            overlap_depth: RefCell::new(tsz_solver::recursion::DepthCounter::new(20)),
+            resolving_jsdoc_typedefs: RefCell::new(Vec::new()),
             return_type_stack: Vec::new(),
             yield_type_stack: Vec::new(),
             generator_yield_operand_types: Vec::new(),

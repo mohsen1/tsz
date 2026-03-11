@@ -1481,21 +1481,23 @@ impl<'a> CheckerState<'a> {
 
         // Guard against circular @typedef resolution (e.g. `@typedef {string | JsonArray} Json`
         // where `JsonArray = ReadonlyArray<Json>` references `Json` again).
-        // Use a thread-local set of typedef names currently being resolved.
-        thread_local! {
-            static RESOLVING_TYPEDEFS: std::cell::RefCell<Vec<String>> =
-                const { std::cell::RefCell::new(Vec::new()) };
-        }
-
-        let is_cycle =
-            RESOLVING_TYPEDEFS.with(|stack| stack.borrow().iter().any(|name| name == type_expr));
+        // Uses a visited-name set on the checker context to detect cycles.
+        let is_cycle = self
+            .ctx
+            .resolving_jsdoc_typedefs
+            .borrow()
+            .iter()
+            .any(|name| name == type_expr);
         if is_cycle {
             // Circular typedef — return `any` as a fallback (matches tsc behavior for
             // unresolvable circular JSDoc type aliases).
             return Some(TypeId::ANY);
         }
 
-        RESOLVING_TYPEDEFS.with(|stack| stack.borrow_mut().push(type_expr.to_string()));
+        self.ctx
+            .resolving_jsdoc_typedefs
+            .borrow_mut()
+            .push(type_expr.to_string());
 
         let result = (|| {
             let mut best_def: Option<JsdocTypedefInfo> = None;
@@ -1532,12 +1534,12 @@ impl<'a> CheckerState<'a> {
             resolved
         })();
 
-        RESOLVING_TYPEDEFS.with(|stack| {
-            let mut s = stack.borrow_mut();
-            if let Some(pos) = s.iter().rposition(|name| name == type_expr) {
-                s.remove(pos);
+        {
+            let mut stack = self.ctx.resolving_jsdoc_typedefs.borrow_mut();
+            if let Some(pos) = stack.iter().rposition(|name| name == type_expr) {
+                stack.remove(pos);
             }
-        });
+        }
 
         result
     }

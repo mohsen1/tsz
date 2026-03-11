@@ -204,20 +204,9 @@ impl<'a> CheckerState<'a> {
         // and evaluated type expansions. For recursive type aliases like
         // `type N<T, K> = T | { [P in K]: N<T, K> }[K]`, evaluation can produce
         // a union containing N again, and the two TypeIds alternate indefinitely.
-        // A depth limit of 30 prevents stack overflow while allowing legitimate
-        // shallow circularity detection.
-        thread_local! {
-            static CIRC_REF_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-        }
-        const MAX_CIRC_REF_DEPTH: u32 = 30;
-
-        let depth = CIRC_REF_DEPTH.with(|d| {
-            let v = d.get();
-            d.set(v + 1);
-            v
-        });
-        if depth >= MAX_CIRC_REF_DEPTH {
-            CIRC_REF_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        // The depth counter on `ctx.circ_ref_depth` (limit 30) prevents stack
+        // overflow while allowing legitimate shallow circularity detection.
+        if !self.ctx.circ_ref_depth.borrow_mut().enter() {
             return false; // Conservatively: not a direct circular reference
         }
 
@@ -227,7 +216,7 @@ impl<'a> CheckerState<'a> {
             type_node,
             in_union_or_intersection,
         );
-        CIRC_REF_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        self.ctx.circ_ref_depth.borrow_mut().leave();
         result
     }
 
