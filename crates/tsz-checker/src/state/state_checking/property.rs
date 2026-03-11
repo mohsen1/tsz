@@ -25,7 +25,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                     let contextual_type = self
                         .get_property_name_resolved(prop.name)
-                        .and_then(|name| self.contextual_object_literal_property_type(target, &name))
+                        .and_then(|name| {
+                            self.contextual_object_literal_property_type(target, &name)
+                        })
                         .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
 
                     if let Some(contextual_type) = contextual_type {
@@ -43,7 +45,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
                     let contextual_type = self
                         .get_property_name_resolved(method.name)
-                        .and_then(|name| self.contextual_object_literal_property_type(target, &name))
+                        .and_then(|name| {
+                            self.contextual_object_literal_property_type(target, &name)
+                        })
                         .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
 
                     if let Some(contextual_type) = contextual_type {
@@ -70,7 +74,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
                     let contextual_type = self
                         .get_property_name_resolved(accessor.name)
-                        .and_then(|name| self.contextual_object_literal_property_type(target, &name))
+                        .and_then(|name| {
+                            self.contextual_object_literal_property_type(target, &name)
+                        })
                         .and_then(|ty| self.contextual_type_option_for_expression(Some(ty)));
 
                     if let Some(contextual_type) = contextual_type {
