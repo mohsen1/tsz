@@ -386,7 +386,13 @@ impl<'a> CheckerState<'a> {
                 || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
                 let lit = self.ctx.arena.get_literal(node)?;
-                Some(format!("\"{}\"", lit.text))
+                let escaped = lit
+                    .text
+                    .replace('\\', "\\\\")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t");
+                Some(format!("\"{escaped}\""))
             }
             k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.ctx.arena.get_literal(node)?;
@@ -996,6 +1002,12 @@ impl<'a> CheckerState<'a> {
         if tsz_solver::type_queries::is_symbol_or_unique_symbol(self.ctx.types, target)
             && target != TypeId::SYMBOL
         {
+            return true;
+        }
+        // Template literal types (e.g., `:${string}:`) expect specific string
+        // patterns — preserving the source literal in the diagnostic is more
+        // informative than showing widened `string`.
+        if tsz_solver::is_template_literal_type(self.ctx.types, target) {
             return true;
         }
         if let Some(list) = tsz_solver::union_list_id(self.ctx.types, target)

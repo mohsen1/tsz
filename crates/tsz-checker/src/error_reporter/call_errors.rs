@@ -1103,7 +1103,8 @@ impl<'a> CheckerState<'a> {
                 if prop_name.starts_with("__private_brand") {
                     return None;
                 }
-                let src_str = self.format_type_diagnostic(*source_type);
+                let widened = self.widen_type_for_display(*source_type);
+                let src_str = self.format_type_diagnostic(widened);
                 let msg = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[&prop_name, &src_str, &tgt_str],

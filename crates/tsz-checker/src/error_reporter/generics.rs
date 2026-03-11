@@ -339,6 +339,16 @@ impl<'a> CheckerState<'a> {
                 text.pop();
                 text = text.trim_end().to_string();
             }
+            // Strip trailing `>` leaked from angle-bracket assertion syntax `<T>expr`.
+            // Only strip when angle brackets are unbalanced (more `>` than `<`).
+            if text.ends_with('>') {
+                let open = text.chars().filter(|&c| c == '<').count();
+                let close = text.chars().filter(|&c| c == '>').count();
+                if close > open {
+                    text.pop();
+                    text = text.trim_end().to_string();
+                }
+            }
             (!text.is_empty()).then_some(text)
         }
 

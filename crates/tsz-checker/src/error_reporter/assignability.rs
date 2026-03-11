@@ -542,10 +542,11 @@ impl<'a> CheckerState<'a> {
                 // diagnostics (getApparentType(object) = {}).
                 // Use format_type_pair for import-qualification when the source and target
                 // types have the same name but come from different modules.
+                let widened_source = self.widen_type_for_display(*source_type);
                 let (src_str, tgt_str_qualified) = if *source_type == TypeId::OBJECT {
                     ("{}".to_string(), tgt_str)
                 } else {
-                    self.format_type_pair_diagnostic(*source_type, target)
+                    self.format_type_pair_diagnostic(widened_source, target)
                 };
                 let message = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -723,7 +724,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *source_type
                 };
-                let src_str = self.format_type_diagnostic(display_source);
+                let src_str =
+                    self.format_type_diagnostic(self.widen_type_for_display(display_source));
                 let tgt_str = self.format_type_diagnostic(*target_type);
                 let prop_list: Vec<String> = filtered_names
                     .iter()
