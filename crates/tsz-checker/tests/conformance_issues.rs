@@ -129,6 +129,50 @@ class Implementation extends DerivedAbstractClass {
 }
 
 #[test]
+fn test_assignment_compat_with_indexed_targets_matches_tsc() {
+    let source = r#"
+var x = { one: 1 };
+declare var y: { [index: string]: any };
+declare var z: { [index: number]: any };
+x = y;
+y = x;
+x = z;
+z = x;
+y = "foo";
+z = "foo";
+z = false;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let messages: Vec<&str> = relevant
+        .iter()
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(relevant.len(), 4, "unexpected diagnostics: {relevant:?}");
+    assert!(
+        messages.contains(&"Property 'one' is missing in type '{ [index: string]: any; }' but required in type '{ one: number; }'."),
+        "missing TS2741 for x = y: {relevant:?}"
+    );
+    assert!(
+        messages.contains(&"Property 'one' is missing in type '{ [index: number]: any; }' but required in type '{ one: number; }'."),
+        "missing TS2741 for x = z: {relevant:?}"
+    );
+    assert!(
+        messages.contains(&"Type 'string' is not assignable to type '{ [index: string]: any; }'."),
+        "missing TS2322 for y = \"foo\": {relevant:?}"
+    );
+    assert!(
+        messages.contains(&"Type 'boolean' is not assignable to type '{ [index: number]: any; }'."),
+        "missing TS2322 for z = false: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_destructuring_from_this_in_constructor_reports_ts2715_per_property() {
     let source = r#"
 abstract class C1 {

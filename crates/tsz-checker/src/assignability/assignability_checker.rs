@@ -1591,47 +1591,11 @@ impl<'a> CheckerState<'a> {
             .weak_union_violation
     }
 
-    fn checker_only_assignability_failure_reason(
+    const fn checker_only_assignability_failure_reason(
         &mut self,
-        source: TypeId,
-        target: TypeId,
+        _source: TypeId,
+        _target: TypeId,
     ) -> Option<tsz_solver::SubtypeFailureReason> {
-        self.missing_number_index_signature_reason(source, target)
-    }
-
-    fn missing_number_index_signature_reason(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> Option<tsz_solver::SubtypeFailureReason> {
-        let source = self.evaluate_type_for_assignability(source);
-        let target = self.evaluate_type_for_assignability(target);
-        let resolved_target = self.resolve_type_for_property_access(target);
-
-        let source_shape = object_shape_for_type(self.ctx.types, source)?;
-        let target_shape = object_shape_for_type(self.ctx.types, resolved_target)?;
-
-        if target_shape.number_index.is_none()
-            || target_shape.string_index.is_some()
-            || !target_shape.properties.is_empty()
-            || source_shape.number_index.is_some()
-            || source_shape.string_index.is_some()
-            || source_shape.properties.is_empty()
-        {
-            return None;
-        }
-
-        let has_numeric_property = source_shape.properties.iter().any(|prop| {
-            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-            tsz_solver::utils::is_numeric_literal_name(prop_name.as_ref())
-        });
-
-        if has_numeric_property {
-            return None;
-        }
-
-        Some(tsz_solver::SubtypeFailureReason::MissingIndexSignature {
-            index_kind: "number",
-        })
+        None
     }
 }

@@ -163,6 +163,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, resolved_target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
+                let source_kind = self.apparent_primitive_kind(resolved_source);
+                let has_string_index = t_shape.string_index.is_some();
+                let has_number_index = t_shape.number_index.is_some();
+                let allow_indexed_structural = !has_string_index
+                    && (!has_number_index || source_kind == Some(IntrinsicKind::String));
+                if !allow_indexed_structural {
+                    return Some(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    });
+                }
                 return self.explain_indexed_object_failure(source, target, &shape, None, &t_shape);
             }
         }
@@ -238,38 +249,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
-            if let Some(reason) = self.explain_object_failure(
+            return self.explain_indexed_object_failure(
                 source,
                 target,
-                &s_shape.properties,
+                &s_shape,
                 Some(s_shape_id),
-                &t_shape.properties,
-            ) {
-                return Some(reason);
-            }
-            if let Some(ref number_idx) = t_shape.number_index {
-                return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                    index_kind: "number",
-                    source_value_type: TypeId::ANY,
-                    target_value_type: number_idx.value_type,
-                });
-            }
-            if let Some(ref string_idx) = t_shape.string_index {
-                for prop in &s_shape.properties {
-                    let prop_type = self.optional_property_type(prop);
-                    if !self
-                        .check_subtype(prop_type, string_idx.value_type)
-                        .is_true()
-                    {
-                        return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                            index_kind: "string",
-                            source_value_type: prop_type,
-                            target_value_type: string_idx.value_type,
-                        });
-                    }
-                }
-            }
-            return None;
+                &t_shape,
+            );
         }
 
         // Intersection source vs object target: collect merged properties from all
