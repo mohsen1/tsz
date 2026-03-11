@@ -514,9 +514,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.cross_file_symbol_targets.borrow().clone();
         }
 
-        let ty = checker
+        let mut ty = checker
             .literal_type_from_initializer(rhs_expr)
             .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
+        ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
         for (&sym_id, &target_idx) in checker.ctx.cross_file_symbol_targets.borrow().iter() {
             self.ctx
                 .cross_file_symbol_targets
@@ -524,6 +525,68 @@ impl<'a> CheckerState<'a> {
                 .insert(sym_id, target_idx);
         }
         ty
+    }
+
+    fn upgrade_commonjs_export_constructor_type(
+        &mut self,
+        rhs_expr: NodeIndex,
+        rhs_type: TypeId,
+    ) -> TypeId {
+        let Some(instance_type) =
+            self.synthesize_js_constructor_instance_type(rhs_expr, rhs_type, &[])
+        else {
+            return rhs_type;
+        };
+
+        if let Some(func) = tsz_solver::type_queries::get_function_shape(self.ctx.types, rhs_type) {
+            if func.is_constructor {
+                return rhs_type;
+            }
+
+            let call_sig = tsz_solver::CallSignature {
+                type_params: func.type_params.clone(),
+                params: func.params.clone(),
+                this_type: func.this_type,
+                return_type: func.return_type,
+                type_predicate: func.type_predicate.clone(),
+                is_method: func.is_method,
+            };
+            let construct_sig = tsz_solver::CallSignature {
+                return_type: instance_type,
+                ..call_sig.clone()
+            };
+            let symbol = self.resolve_identifier_symbol_without_tracking(rhs_expr);
+            return self
+                .ctx
+                .types
+                .factory()
+                .callable(tsz_solver::CallableShape {
+                    call_signatures: vec![call_sig],
+                    construct_signatures: vec![construct_sig],
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol,
+                    is_abstract: false,
+                });
+        }
+
+        let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, rhs_type)
+        else {
+            return rhs_type;
+        };
+        if !shape.construct_signatures.is_empty() || shape.call_signatures.is_empty() {
+            return rhs_type;
+        }
+
+        let mut new_shape = shape.as_ref().clone();
+        let mut construct_sig = new_shape.call_signatures[0].clone();
+        construct_sig.return_type = instance_type;
+        new_shape.construct_signatures.push(construct_sig);
+        if new_shape.symbol.is_none() {
+            new_shape.symbol = self.resolve_identifier_symbol_without_tracking(rhs_expr);
+        }
+        self.ctx.types.factory().callable(new_shape)
     }
 
     fn augment_namespace_props_with_direct_assignment_exports_for_file(
