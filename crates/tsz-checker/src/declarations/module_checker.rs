@@ -1283,20 +1283,42 @@ impl<'a> CheckerState<'a> {
                         .resolve_import_target_from_file(current_file_idx, module_name)
                         && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
                     {
-                        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-                        if let Some(sf) = target_arena.source_files.first()
-                            && let Some(exports) = target_binder.module_exports.get(&sf.file_name)
+                        if let Some(target_sym_id) = target_binder
+                            .resolve_import_with_reexports_type_only(module_name, export_name)
+                            .map(|(sym_id, _)| sym_id)
+                            .or_else(|| {
+                                (curr_sym.import_name.is_none())
+                                    .then(|| {
+                                        target_binder
+                                            .resolve_import_with_reexports_type_only(
+                                                module_name,
+                                                "export=",
+                                            )
+                                            .map(|(sym_id, _)| sym_id)
+                                    })
+                                    .flatten()
+                            })
                         {
-                            if let Some(target_sym_id) = exports.get(export_name) {
-                                current_binder = target_binder;
-                                current_file_idx = target_idx;
-                                current_sym_id = target_sym_id;
-                                found = true;
-                            } else if let Some(target_sym_id) = exports.get("export=") {
-                                current_binder = target_binder;
-                                current_file_idx = target_idx;
-                                current_sym_id = target_sym_id;
-                                found = true;
+                            current_binder = target_binder;
+                            current_file_idx = target_idx;
+                            current_sym_id = target_sym_id;
+                            found = true;
+                        } else {
+                            let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                            if let Some(sf) = target_arena.source_files.first()
+                                && let Some(exports) = target_binder.module_exports.get(&sf.file_name)
+                            {
+                                if let Some(target_sym_id) = exports.get(export_name) {
+                                    current_binder = target_binder;
+                                    current_file_idx = target_idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                } else if let Some(target_sym_id) = exports.get("export=") {
+                                    current_binder = target_binder;
+                                    current_file_idx = target_idx;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                }
                             }
                         }
                     }
