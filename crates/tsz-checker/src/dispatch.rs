@@ -264,9 +264,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 if !supports_return_context {
                                     return None;
                                 }
-                                let result_ctx = prev_contextual?;
-                                contextual_yield_star_return = Some(result_ctx);
                                 let expected_generator = self.get_expected_generator_type(idx)?;
+                                let result_ctx = prev_contextual.unwrap_or(TypeId::UNKNOWN);
+                                contextual_yield_star_return = Some(result_ctx);
                                 let generator_ctx =
                                     tsz_solver::ContextualTypeContext::with_expected(
                                         self.checker.ctx.types,
