@@ -242,13 +242,19 @@ impl<'a> CheckerState<'a> {
                     } else if required_count > 0
                         && let Some(name) = self.heritage_name_text(expr_idx)
                     {
-                        // In class extends clauses, TypeScript only allows omitted type
-                        // arguments for a small set of array-like built-ins
-                        // (`class C extends Array {}`), not arbitrary generic bases.
-                        let allows_omitted_type_args_in_extends = is_class_declaration
-                            && is_extends_clause
-                            && matches!(name.as_str(), "Array" | "ReadonlyArray" | "ConcatArray");
-                        if allows_omitted_type_args_in_extends {
+                        // tsc skips TS2314 for heritage clauses when:
+                        // 1. JS files — type arguments are never required
+                        // 2. Extends clauses where the symbol has a variable
+                        //    declaration (e.g. `declare var Set: SetConstructor`)
+                        //    — the constructor infers type args
+                        use tsz_binder::symbol_flags;
+                        let skip_ts2314 = self.is_js_file()
+                            || (is_class_declaration
+                                && is_extends_clause
+                                && self
+                                    .get_cross_file_symbol(heritage_sym)
+                                    .is_some_and(|s| (s.flags & symbol_flags::VARIABLE) != 0));
+                        if skip_ts2314 {
                             continue;
                         }
                         let type_params = self.get_type_params_for_symbol(heritage_sym);
