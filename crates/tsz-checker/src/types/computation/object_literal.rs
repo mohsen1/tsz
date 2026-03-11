@@ -545,6 +545,12 @@ impl<'a> CheckerState<'a> {
             return Some(current);
         }
 
+        if let Some(preferred) =
+            self.prefer_more_specific_callable_contextual_type(current, candidate)
+        {
+            return Some(preferred);
+        }
+
         let current_eval = tsz_solver::evaluate_type(self.ctx.types, current);
         let candidate_eval = tsz_solver::evaluate_type(self.ctx.types, candidate);
         let candidate_narrower = crate::query_boundaries::assignability::is_fresh_subtype_of(
@@ -562,6 +568,65 @@ impl<'a> CheckerState<'a> {
             Some(candidate)
         } else {
             Some(current)
+        }
+    }
+
+    fn prefer_more_specific_callable_contextual_type(
+        &self,
+        current: TypeId,
+        candidate: TypeId,
+    ) -> Option<TypeId> {
+        let current_ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, current);
+        let candidate_ctx =
+            tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, candidate);
+
+        let mut prefer_current = false;
+        let mut prefer_candidate = false;
+        let mut saw_callable_params = false;
+
+        for index in 0..8 {
+            let current_param = current_ctx.get_parameter_type(index);
+            let candidate_param = candidate_ctx.get_parameter_type(index);
+
+            match (current_param, candidate_param) {
+                (None, None) => break,
+                (Some(_), None) | (None, Some(_)) => return None,
+                (Some(current_param), Some(candidate_param)) => {
+                    saw_callable_params = true;
+                    if current_param == candidate_param {
+                        continue;
+                    }
+
+                    let current_eval = tsz_solver::evaluate_type(self.ctx.types, current_param);
+                    let candidate_eval = tsz_solver::evaluate_type(self.ctx.types, candidate_param);
+                    let current_narrower =
+                        crate::query_boundaries::assignability::is_fresh_subtype_of(
+                            self.ctx.types,
+                            current_eval,
+                            candidate_eval,
+                        );
+                    let candidate_narrower =
+                        crate::query_boundaries::assignability::is_fresh_subtype_of(
+                            self.ctx.types,
+                            candidate_eval,
+                            current_eval,
+                        );
+
+                    if current_narrower && !candidate_narrower {
+                        prefer_current = true;
+                    } else if candidate_narrower && !current_narrower {
+                        prefer_candidate = true;
+                    }
+                }
+            }
+        }
+
+        if !saw_callable_params || prefer_current == prefer_candidate {
+            None
+        } else if prefer_current {
+            Some(current)
+        } else {
+            Some(candidate)
         }
     }
 

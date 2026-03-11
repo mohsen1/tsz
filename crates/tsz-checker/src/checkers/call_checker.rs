@@ -763,19 +763,23 @@ impl<'a> CheckerState<'a> {
 
             if apply_contextual
                 && expected_type.is_some()
-                && self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                    node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                })
+                && let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                && (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && self.ctx.generic_excess_skip.is_some()))
             {
-                let callback_body_start = self
-                    .ctx
-                    .arena
-                    .get(arg_idx)
-                    .and_then(|node| self.ctx.arena.get_function(node))
-                    .and_then(|func| self.ctx.arena.get(func.body))
-                    .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                    .map(|body_node| body_node.pos);
+                let callback_body_start = (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                    .then(|| {
+                        self.ctx
+                            .arena
+                            .get_function(arg_node)
+                            .and_then(|func| self.ctx.arena.get(func.body))
+                            .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
+                            .map(|body_node| body_node.pos)
+                    })
+                    .flatten();
                 let new_diags = self.ctx.diagnostics.split_off(diag_len);
                 let kept_new_diags: Vec<_> = new_diags
                     .into_iter()
@@ -788,11 +792,52 @@ impl<'a> CheckerState<'a> {
                             diag.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE;
                         let is_callback_body_diag =
                             callback_body_start.is_some_and(|start| diag.start >= start);
+                        let is_object_literal_diag = arg_node.kind
+                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            && diag.start >= arg_node.pos
+                            && diag.start < arg_node.end;
+                        let is_function_arg_implicit_any_diag =
+                            (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                && is_provisional_implicit_any
+                                && diag.start >= arg_node.pos
+                                && diag.start < arg_node.end;
                         (!is_provisional_assignability && !is_provisional_implicit_any)
-                            || !is_callback_body_diag
+                            || !(is_callback_body_diag
+                                || is_object_literal_diag
+                                || is_function_arg_implicit_any_diag)
                     })
                     .collect();
-                self.ctx.diagnostics.extend(kept_new_diags);
+                let existing_diag_keys: Vec<_> = self
+                    .ctx
+                    .diagnostics
+                    .iter()
+                    .map(|diag| {
+                        (
+                            diag.code,
+                            diag.start,
+                            diag.length,
+                            diag.message_text.clone(),
+                        )
+                    })
+                    .collect();
+                let mut seen_diag_keys = existing_diag_keys;
+                self.ctx
+                    .diagnostics
+                    .extend(kept_new_diags.into_iter().filter(|diag| {
+                        let key = (
+                            diag.code,
+                            diag.start,
+                            diag.length,
+                            diag.message_text.clone(),
+                        );
+                        if seen_diag_keys.iter().any(|existing| existing == &key) {
+                            false
+                        } else {
+                            seen_diag_keys.push(key);
+                            true
+                        }
+                    }));
                 self.ctx.emitted_diagnostics = emitted_before;
                 for diag in self.ctx.diagnostics.iter().skip(diag_len) {
                     self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
@@ -815,7 +860,12 @@ impl<'a> CheckerState<'a> {
                 // contextual type is the constraint `Named`, but tsc does not fire
                 // excess property checks because `T` captures the full object type.
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                    effective_index < skip.len() && skip[effective_index]
+                    effective_index < skip.len()
+                        && skip[effective_index]
+                        && tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            expected,
+                        )
                 })
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
@@ -851,7 +901,12 @@ impl<'a> CheckerState<'a> {
                 // Also skip when the original parameter type contains a type parameter
                 // (set via generic_excess_skip for generic call paths).
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                    i < skip.len() && skip[i]
+                    i < skip.len()
+                        && skip[i]
+                        && tsz_solver::type_queries::contains_type_parameters_db(
+                            self.ctx.types,
+                            expected,
+                        )
                 })
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);

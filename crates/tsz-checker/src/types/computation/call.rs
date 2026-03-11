@@ -22,28 +22,53 @@ use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn refreshed_generic_call_arg_type(
+    pub(crate) fn refreshed_generic_call_arg_type_with_context(
         &mut self,
         arg_idx: NodeIndex,
         cached_arg_type: TypeId,
+        expected_type: Option<TypeId>,
     ) -> TypeId {
         let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
             return cached_arg_type;
         };
 
+        let has_only_simple_parameters = || {
+            self.ctx
+                .arena
+                .get_function(arg_node)
+                .map(|func| {
+                    func.parameters.nodes.iter().all(|&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                            .and_then(|param| self.ctx.arena.get(param.name))
+                            .is_some_and(|name_node| {
+                                name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    && name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            })
+                    })
+                })
+                .unwrap_or(false)
+        };
+
         match arg_node.kind {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                || k == syntax_kind_ext::ARROW_FUNCTION =>
+                || ((k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION)
+                    && has_only_simple_parameters()) =>
             {
-                // Use the already-cached type from Round 2 inference.
-                // Previously this cleared the entire subtree cache and recomputed,
-                // but that destroys contextual typing for nested closures
-                // (arrow functions/function expressions inside object literal properties),
-                // causing false TS7006 when the recomputation happens without
-                // contextual type information.
-                self.get_type_of_node(arg_idx)
+                // Re-evaluate context-sensitive arguments under the final instantiated
+                // parameter type. Generic round-2 collection can still leave behind
+                // provisional diagnostics from a less-specific contextual pass.
+                let prev_context = self.ctx.contextual_type;
+                self.ctx.contextual_type =
+                    self.contextual_type_option_for_expression(expected_type);
+                self.clear_type_cache_recursive(arg_idx);
+                let refreshed = self.get_type_of_node(arg_idx);
+                self.ctx.contextual_type = prev_context;
+                refreshed
             }
             _ => cached_arg_type,
         }
@@ -1843,9 +1868,10 @@ impl<'a> CheckerState<'a> {
                             .get(*index)
                             .copied()
                             .map(|arg_idx| {
-                                self.refreshed_generic_call_arg_type(
+                                self.refreshed_generic_call_arg_type_with_context(
                                     arg_idx,
                                     arg_types.get(*index).copied().unwrap_or(TypeId::UNKNOWN),
+                                    Some(evaluated_param),
                                 )
                             })
                             .unwrap_or(TypeId::UNKNOWN);
@@ -1869,9 +1895,10 @@ impl<'a> CheckerState<'a> {
                     {
                         let evaluated_param = self.evaluate_type_with_env(param.type_id);
                         if !is_type_parameter_type(self.ctx.types, evaluated_param) {
-                            let arg_type = self.refreshed_generic_call_arg_type(
+                            let arg_type = self.refreshed_generic_call_arg_type_with_context(
                                 arg_idx,
                                 arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
+                                Some(evaluated_param),
                             );
                             self.check_object_literal_excess_properties(
                                 arg_type,

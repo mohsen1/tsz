@@ -901,11 +901,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Mapped(mapped_id)) => {
-                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
-                if evaluated != expected {
-                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                    return ctx.get_property_type(name);
-                }
+                let mapped = self.interner.mapped_type(mapped_id);
                 if let Some(prop) = crate::type_queries::get_finite_mapped_property_type(
                     self.interner,
                     mapped_id,
@@ -913,10 +909,48 @@ impl<'a> ContextualTypeContext<'a> {
                 ) {
                     return Some(prop);
                 }
+                // For remapped keys (`as ...`) that depend on value lookups like `T[P]`,
+                // if the finite lookup fails then this property is absent from the mapped
+                // result and must not acquire ghost context from the source constraint.
+                // Key-only remaps like `K extends Uppercase<string> ? K : never` still
+                // benefit from broader fallback contextual typing in tsc.
+                if mapped.name_type.is_some_and(|name_type| {
+                    crate::visitor::contains_type_matching(self.interner, name_type, |key| {
+                        matches!(key, TypeData::IndexAccess(_, _))
+                    })
+                }) {
+                    return None;
+                }
+
+                if mapped.name_type.is_some() {
+                    let key_literal = self
+                        .interner
+                        .literal_string_atom(self.interner.intern_string(name));
+                    let instantiated =
+                        crate::type_queries::instantiate_mapped_template_for_property(
+                            self.interner,
+                            mapped.template,
+                            mapped.type_param.name,
+                            key_literal,
+                        );
+                    let evaluated =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
+                    if evaluated != TypeId::ANY
+                        && evaluated != TypeId::ERROR
+                        && evaluated != TypeId::NEVER
+                    {
+                        return Some(evaluated);
+                    }
+                }
+
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
                 // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
                 // parameter), use the mapped type's template as the contextual property type
                 // IF the template doesn't reference the mapped type's bound parameter.
-                let mapped = self.interner.mapped_type(mapped_id);
                 if mapped.template != TypeId::ANY
                     && mapped.template != TypeId::ERROR
                     && mapped.template != TypeId::NEVER
