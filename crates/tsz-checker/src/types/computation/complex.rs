@@ -1553,7 +1553,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .resolve_identifier(self.ctx.arena, expr_idx)
-            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+            .or_else(|| {
+                query::callable_shape_for_type(self.ctx.types, constructor_type)
+                    .and_then(|shape| shape.symbol)
+            })?;
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
@@ -1651,9 +1655,11 @@ impl<'a> CheckerState<'a> {
         // Also scan Foo.prototype.m = ... patterns for:
         // 1. Method bindings (added directly as instance properties)
         // 2. this.prop assignments inside prototype methods (typed as T | undefined)
+        let mut has_prototype_evidence = false;
         if let Some(ref func_name_s) = func_name_str {
-            let (method_bindings, this_props) =
+            let (method_bindings, this_props, prototype_evidence) =
                 self.collect_prototype_members_and_this_properties(value_decl, func_name_s, sym_id);
+            has_prototype_evidence = prototype_evidence;
 
             // Add prototype methods as instance properties
             for (name, prop) in method_bindings {
@@ -1672,7 +1678,29 @@ impl<'a> CheckerState<'a> {
         }
 
         if properties.is_empty() {
-            return None;
+            if has_prototype_evidence {
+                let brand_name = self
+                    .ctx
+                    .types
+                    .intern_string(&format!("__js_ctor_brand_{}", sym_id.0));
+                properties.insert(
+                    brand_name,
+                    PropertyInfo {
+                        name: brand_name,
+                        type_id: TypeId::UNKNOWN,
+                        write_type: TypeId::UNKNOWN,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: tsz_solver::Visibility::Public,
+                        parent_id: Some(sym_id),
+                        declaration_order: 0,
+                    },
+                );
+            } else {
+                return None;
+            }
         }
 
         // Build an object type from the collected properties

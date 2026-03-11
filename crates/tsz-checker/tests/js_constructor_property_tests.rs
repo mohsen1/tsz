@@ -344,6 +344,53 @@ b.x;
     );
 }
 
+/// Plain JS constructor functions with computed prototype assignments are still
+/// constructable in checkJs, even though the computed members themselves remain
+/// unsupported for property lookup.
+#[test]
+fn test_plain_function_constructor_with_computed_prototype_assignment_is_constructable() {
+    let source = r#"
+const _sym = Symbol();
+const _str = "my-fake-sym";
+function F() {}
+F.prototype[_sym] = "ok";
+F.prototype[_str] = "ok";
+var f = new F();
+"#;
+    let diagnostics = check_js(source);
+    let ts7009: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7009)
+        .collect();
+    assert_eq!(
+        ts7009.len(),
+        0,
+        "Expected no TS7009 for JS constructor with computed prototype assignments, got: {ts7009:?}"
+    );
+}
+
+/// Object.defineProperty on a JS constructor prototype should also mark the
+/// function as constructable in checkJs.
+#[test]
+fn test_plain_function_constructor_with_define_property_prototype_is_constructable() {
+    let source = r#"
+const _sym = Symbol();
+function F() {}
+Object.defineProperty(F.prototype, _sym, { value: "ok" });
+var f = new F();
+"#;
+    let diagnostics = check_js(source);
+    let ts7009: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7009)
+        .collect();
+    assert_eq!(
+        ts7009.len(),
+        0,
+        "Expected no TS7009 for JS constructor with Object.defineProperty prototype writes, got: {ts7009:?}"
+    );
+}
+
 /// Generic constructor function with @template: instance properties get instantiated types
 #[test]
 fn test_generic_constructor_function_template_instantiation() {
