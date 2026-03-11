@@ -2056,6 +2056,45 @@ class Test1 {
 }
 
 #[test]
+fn test_instance_member_initializer_plain_constructor_names_report_ts2301() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class A {
+    private a = x;
+    private b = { p: x };
+    private c = () => x;
+    constructor(x: number) {
+    }
+}
+
+class B {
+    private a = x;
+    private b = { p: x };
+    private c = () => x;
+    constructor() {
+        var x = 1;
+    }
+}
+        ",
+    );
+
+    let ts2301_count = diagnostics.iter().filter(|(code, _)| *code == 2301).count();
+
+    assert_eq!(
+        ts2301_count, 6,
+        "Expected TS2301 for constructor parameter and constructor-local captures in instance initializers. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Did not expect TS2304 once constructor captures are recognized. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2663),
+        "Did not expect TS2663 for plain constructor captures in non-module classes. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_instance_member_initializer_missing_name_reports_ts2663() {
     let diagnostics = compile_and_get_diagnostics(
         r"

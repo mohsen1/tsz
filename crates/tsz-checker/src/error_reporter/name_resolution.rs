@@ -177,6 +177,10 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::lib_loader;
         use tsz_parser::parser::syntax_kind_ext;
 
+        if self.should_suppress_unresolved_name_for_constructor_capture(name, idx) {
+            return;
+        }
+
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
         // before any TS2304 suppression logic. This fires independently of TS2304.
         if crate::state_checking::is_strict_mode_reserved_name(name)
