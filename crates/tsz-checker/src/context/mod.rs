@@ -501,6 +501,10 @@ pub struct CheckerContext<'a> {
     /// times for the same closure (e.g., once with contextual type during call
     /// resolution, then again without context during body checking).
     pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
+    /// Closures that have already been checked with a real contextual parameter type.
+    /// Preserve this across cache clears so later context-free rechecks do not
+    /// emit false TS7006/TS7031 diagnostics.
+    pub implicit_any_contextual_closures: FxHashSet<NodeIndex>,
 
     /// Set of class declaration nodes currently being checked.
     /// Used to prevent infinite recursion in `check_class_declaration` when

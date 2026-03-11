@@ -1,6 +1,7 @@
 //! Element access, super keyword, await type computation, and optional chain detection.
 
 use crate::state::{CheckerState, EnumKind};
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -401,6 +402,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 return TypeId::ERROR;
+            }
+
+            // For merged class/function/enum + namespace symbols, literal element
+            // access should see exported namespace members just like property access.
+            if let Some(expr_node) = self.ctx.arena.get(access.expression)
+                && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
+            {
+                let expr_name = &expr_ident.escaped_text;
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
+                        && (symbol.flags
+                            & (symbol_flags::CLASS
+                                | symbol_flags::FUNCTION
+                                | symbol_flags::REGULAR_ENUM))
+                            != 0;
+
+                    if is_merged
+                        && let Some(exports) = symbol.exports.as_ref()
+                        && let Some(member_id) = exports.get(name)
+                    {
+                        result_type = Some(self.get_type_of_symbol(member_id));
+                        use_index_signature_check = false;
+                    }
+                }
             }
 
             if let Some(member_type) =

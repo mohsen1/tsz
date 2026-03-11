@@ -357,6 +357,9 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
                     || (has_unknown_expected_context && !is_js_file)
                     || (param.dot_dot_dot_token && ctx_helper.is_some());
+                if is_closure && has_contextual_type {
+                    self.ctx.implicit_any_contextual_closures.insert(idx);
+                }
                 // Use type annotation if present, otherwise infer from context
                 let type_id = if param.type_annotation.is_some() {
                     // Check parameter type for parameter properties in function types
