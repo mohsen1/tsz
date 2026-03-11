@@ -16,6 +16,12 @@ use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DuplicateDeclarationOrigin {
+    SymbolDeclaration,
+    TargetedModuleAugmentation,
+}
+
 impl<'a> CheckerState<'a> {
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
     /// Reports when variables, functions, classes, or other declarations
@@ -86,6 +92,8 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
+            let module_augmentation_declarations = self
+                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
 
             // Check if single NodeIndex has multiple arenas (cross-file duplicate with
             // same NodeIndex due to identical file structure). In this case, declarations
@@ -98,7 +106,7 @@ impl<'a> CheckerState<'a> {
                         .get(&(sym_id, decl_idx))
                         .is_some_and(|arenas| arenas.len() > 1)
                 });
-                if !has_cross_file {
+                if !has_cross_file && module_augmentation_declarations.is_empty() {
                     continue;
                 }
             }
@@ -141,6 +149,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            if !module_augmentation_declarations.is_empty() {
+                has_remote = true;
+            }
+
             if has_local && has_remote {
                 cross_file_conflicts.push(symbol.escaped_name.clone());
             }
@@ -168,6 +180,8 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
+            let module_augmentation_declarations = self
+                .module_augmentation_conflict_declarations_for_current_file(&symbol.escaped_name);
 
             if emit_ts6200
                 && cross_file_conflicts
@@ -186,7 +200,7 @@ impl<'a> CheckerState<'a> {
                         .get(&(sym_id, decl_idx))
                         .is_some_and(|arenas| arenas.len() > 1)
                 });
-                if !has_cross_file {
+                if !has_cross_file && module_augmentation_declarations.is_empty() {
                     continue;
                 }
             }
@@ -215,7 +229,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let mut declarations = Vec::<(NodeIndex, u32, bool, bool)>::new();
+            let mut declarations =
+                Vec::<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)>::new();
             for &decl_idx in &symbol.declarations {
                 // When a declaration NodeIndex has multiple arenas (cross-file
                 // merged symbols where different files produced the same NodeIndex),
@@ -236,7 +251,13 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                             let is_exported = self.is_declaration_exported(arena, decl_idx);
-                            declarations.push((decl_idx, flags, is_local, is_exported));
+                            declarations.push((
+                                decl_idx,
+                                flags,
+                                is_local,
+                                is_exported,
+                                DuplicateDeclarationOrigin::SymbolDeclaration,
+                            ));
                         }
                     }
                 } else {
@@ -252,10 +273,18 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let is_exported = self.is_declaration_exported(arena, decl_idx);
-                        declarations.push((decl_idx, flags, is_local, is_exported));
+                        declarations.push((
+                            decl_idx,
+                            flags,
+                            is_local,
+                            is_exported,
+                            DuplicateDeclarationOrigin::SymbolDeclaration,
+                        ));
                     }
                 }
             }
+
+            declarations.extend(module_augmentation_declarations);
 
             if declarations.len() <= 1 {
                 continue;
@@ -263,7 +292,7 @@ impl<'a> CheckerState<'a> {
             let mut func_decls_for_2384 = Vec::new();
             let mut has_ambient_func = false;
             let mut has_non_ambient_func = false;
-            for &(decl_idx, flags, is_local, _) in &declarations {
+            for &(decl_idx, flags, is_local, _, _) in &declarations {
                 if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
                     // TS2384 only applies to overload signatures (bodyless declarations).
                     // Skip implementations (declarations with bodies) — a non-ambient
@@ -316,7 +345,7 @@ impl<'a> CheckerState<'a> {
                 let mut has_exported = false;
                 let mut has_non_exported = false;
                 let mut func_export_info: Vec<(NodeIndex, bool)> = Vec::new();
-                for &(decl_idx, flags, is_local, is_exported) in &declarations {
+                for &(decl_idx, flags, is_local, is_exported, _) in &declarations {
                     if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
                         func_export_info.push((decl_idx, is_exported));
                         if is_exported {
@@ -415,8 +444,10 @@ impl<'a> CheckerState<'a> {
             // Emit TS2300 for duplicate class declarations in the same symbol set.
             let local_class_decls: Vec<(NodeIndex, bool)> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _)| *is_local && (flags & symbol_flags::CLASS) != 0)
-                .map(|(decl_idx, _, _, is_exported)| (*decl_idx, *is_exported))
+                .filter(|(_, flags, is_local, _, _)| {
+                    *is_local && (flags & symbol_flags::CLASS) != 0
+                })
+                .map(|(decl_idx, _, _, is_exported, _)| (*decl_idx, *is_exported))
                 .collect();
             if local_class_decls.len() > 1 {
                 // Skip TS2300 when all class declarations are `export default` —
@@ -466,7 +497,7 @@ impl<'a> CheckerState<'a> {
                 const SPACE_NAMESPACE: u32 = 4;
 
                 let any_in_declare_context = self.ctx.is_declaration_file()
-                    || declarations.iter().any(|&(decl_idx, _, is_local, _)| {
+                    || declarations.iter().any(|&(decl_idx, _, is_local, _, _)| {
                         is_local && self.is_in_declare_namespace_or_module(decl_idx)
                     });
 
@@ -475,8 +506,8 @@ impl<'a> CheckerState<'a> {
                 if !any_in_declare_context {
                     let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
                         .iter()
-                        .filter(|&(_, _, is_local, _)| *is_local)
-                        .map(|&(decl_idx, flags, _, exported)| {
+                        .filter(|&(_, _, is_local, _, _)| *is_local)
+                        .map(|&(decl_idx, flags, _, exported, _)| {
                             let space = if (flags & symbol_flags::INTERFACE) != 0
                                 || (flags & symbol_flags::TYPE_ALIAS) != 0
                             {
@@ -569,10 +600,10 @@ impl<'a> CheckerState<'a> {
 
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _)| {
+                .filter(|(_, flags, is_local, _, _)| {
                     *is_local && (flags & symbol_flags::INTERFACE) != 0
                 })
-                .map(|(decl_idx, _, _, _)| *decl_idx)
+                .map(|(decl_idx, _, _, _, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {
                 use tsz_binder::SymbolId;
@@ -622,10 +653,10 @@ impl<'a> CheckerState<'a> {
 
             let class_interface_decls: Vec<NodeIndex> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _)| {
+                .filter(|(_, flags, is_local, _, _)| {
                     *is_local && (flags & (symbol_flags::CLASS | symbol_flags::INTERFACE)) != 0
                 })
-                .map(|(decl_idx, _, _, _)| *decl_idx)
+                .map(|(decl_idx, _, _, _, _)| *decl_idx)
                 .collect();
             if class_interface_decls.len() > 1 {
                 use tsz_binder::SymbolId;
@@ -651,17 +682,17 @@ impl<'a> CheckerState<'a> {
             {
                 let local_interface_decls: Vec<NodeIndex> = declarations
                     .iter()
-                    .filter(|(_, flags, is_local, _)| {
+                    .filter(|(_, flags, is_local, _, _)| {
                         *is_local && (flags & symbol_flags::INTERFACE) != 0
                     })
-                    .map(|(decl_idx, _, _, _)| *decl_idx)
+                    .map(|(decl_idx, _, _, _, _)| *decl_idx)
                     .collect();
                 let remote_interface_decls: Vec<NodeIndex> = declarations
                     .iter()
-                    .filter(|(_, flags, is_local, _)| {
+                    .filter(|(_, flags, is_local, _, _)| {
                         !*is_local && (flags & symbol_flags::INTERFACE) != 0
                     })
-                    .map(|(decl_idx, _, _, _)| *decl_idx)
+                    .map(|(decl_idx, _, _, _, _)| *decl_idx)
                     .collect();
 
                 if !local_interface_decls.is_empty() && !remote_interface_decls.is_empty() {
@@ -675,8 +706,8 @@ impl<'a> CheckerState<'a> {
 
             let local_declarations_for_enums: Vec<(NodeIndex, u32)> = declarations
                 .iter()
-                .filter(|&(_, _, is_local, _)| *is_local)
-                .map(|&(idx, flags, _, _)| (idx, flags))
+                .filter(|&(_, _, is_local, _, _)| *is_local)
+                .map(|&(idx, flags, _, _, _)| (idx, flags))
                 .collect();
             self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
 
@@ -686,8 +717,9 @@ impl<'a> CheckerState<'a> {
 
             for i in 0..declarations.len() {
                 for j in (i + 1)..declarations.len() {
-                    let (decl_idx, decl_flags, decl_is_local, decl_is_exported) = declarations[i];
-                    let (other_idx, other_flags, other_is_local, other_is_exported) =
+                    let (decl_idx, decl_flags, decl_is_local, decl_is_exported, decl_origin) =
+                        declarations[i];
+                    let (other_idx, other_flags, other_is_local, other_is_exported, other_origin) =
                         declarations[j];
 
                     if !decl_is_local && !other_is_local {
@@ -701,13 +733,20 @@ impl<'a> CheckerState<'a> {
                         && other_is_local
                         && self.get_enclosing_namespace(other_idx).is_none();
 
+                    let decl_is_skippable_remote = !decl_is_local
+                        && decl_origin == DuplicateDeclarationOrigin::SymbolDeclaration;
+                    let other_is_skippable_remote = !other_is_local
+                        && other_origin == DuplicateDeclarationOrigin::SymbolDeclaration;
+
                     // In external modules, top-level module-scope declarations do not
                     // participate in global namespace duplicate checking against lib
                     // declarations. This preserves TypeScript semantics where external
-                    // module declarations are isolated from global symbol conflicts.
+                    // module declarations are isolated from unrelated global symbol
+                    // conflicts, but explicit module augmentations still target this
+                    // file's exports and must participate in duplicate checking.
                     if is_external_module
-                        && ((decl_is_module_scoped_local && !other_is_local)
-                            || (other_is_module_scoped_local && !decl_is_local))
+                        && ((decl_is_module_scoped_local && other_is_skippable_remote)
+                            || (other_is_module_scoped_local && decl_is_skippable_remote))
                     {
                         continue;
                     }
@@ -888,7 +927,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if propagate_type_alias_conflict_to_namespaces {
-                for &(decl_idx, decl_flags, is_local, _) in &declarations {
+                for &(decl_idx, decl_flags, is_local, _, _) in &declarations {
                     if is_local
                         && (decl_flags
                             & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
@@ -916,13 +955,13 @@ impl<'a> CheckerState<'a> {
             {
                 let func_impls_with_scope: Vec<(NodeIndex, NodeIndex)> = declarations
                     .iter()
-                    .filter(|(decl_idx, flags, is_local, _)| {
+                    .filter(|(decl_idx, flags, is_local, _, _)| {
                         *is_local
                             && conflicts.contains(decl_idx)
                             && (flags & symbol_flags::FUNCTION) != 0
                             && self.function_has_body(*decl_idx)
                     })
-                    .map(|(idx, _, _, _)| (*idx, self.get_enclosing_block_scope(*idx)))
+                    .map(|(idx, _, _, _, _)| (*idx, self.get_enclosing_block_scope(*idx)))
                     .collect();
 
                 let mut scope_groups: std::collections::HashMap<NodeIndex, Vec<NodeIndex>> =
@@ -953,25 +992,26 @@ impl<'a> CheckerState<'a> {
             // `declare class` + `function` is a valid merge in TypeScript (ambient class).
             // Only non-ambient class + function triggers these errors.
             {
-                let has_class = declarations.iter().any(|(decl_idx, flags, _, _)| {
+                let has_class = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                     conflicts.contains(decl_idx) && (flags & symbol_flags::CLASS) != 0
                 });
-                let has_function = declarations.iter().any(|(decl_idx, flags, _, _)| {
+                let has_function = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                     conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
                 });
 
                 if has_class && has_function {
                     // Check if ALL class declarations in conflicts are ambient
-                    let all_classes_ambient = declarations.iter().all(|(decl_idx, flags, _, _)| {
-                        !conflicts.contains(decl_idx)
-                            || (flags & symbol_flags::CLASS) == 0
-                            || self.is_ambient_declaration(*decl_idx)
-                    });
+                    let all_classes_ambient =
+                        declarations.iter().all(|(decl_idx, flags, _, _, _)| {
+                            !conflicts.contains(decl_idx)
+                                || (flags & symbol_flags::CLASS) == 0
+                                || self.is_ambient_declaration(*decl_idx)
+                        });
 
                     if !all_classes_ambient {
                         // Non-ambient class + function: emit TS2813/TS2814
                         let name = symbol.escaped_name.clone();
-                        for &(decl_idx, flags, is_local, _) in &declarations {
+                        for &(decl_idx, flags, is_local, _, _) in &declarations {
                             if is_local
                                 && conflicts.contains(&decl_idx)
                                 && (flags & symbol_flags::CLASS) != 0
@@ -994,7 +1034,7 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
-                        for &(decl_idx, flags, is_local, _) in &declarations {
+                        for &(decl_idx, flags, is_local, _, _) in &declarations {
                             if is_local
                                 && conflicts.contains(&decl_idx)
                                 && (flags & symbol_flags::FUNCTION) != 0
@@ -1019,12 +1059,12 @@ impl<'a> CheckerState<'a> {
                     // (ambient = valid merge, non-ambient = already reported TS2813/2814)
                     let class_function_indices: Vec<NodeIndex> = declarations
                         .iter()
-                        .filter(|(decl_idx, flags, _, _)| {
+                        .filter(|(decl_idx, flags, _, _, _)| {
                             conflicts.contains(decl_idx)
                                 && ((flags & symbol_flags::CLASS) != 0
                                     || (flags & symbol_flags::FUNCTION) != 0)
                         })
-                        .map(|(idx, _, _, _)| *idx)
+                        .map(|(idx, _, _, _, _)| *idx)
                         .collect();
                     for idx in class_function_indices {
                         conflicts.remove(&idx);
@@ -1035,7 +1075,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let has_non_block_scoped = declarations.iter().any(|(decl_idx, flags, _, _)| {
+            let has_non_block_scoped = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                 conflicts.contains(decl_idx) && {
                     (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                 }
@@ -1043,18 +1083,19 @@ impl<'a> CheckerState<'a> {
 
             let name = symbol.escaped_name.clone();
 
-            let has_enum_conflict = declarations.iter().any(|(decl_idx, flags, _, _)| {
+            let has_enum_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                 conflicts.contains(decl_idx)
                     && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
             });
 
-            let has_variable_conflict = declarations.iter().any(|(decl_idx, flags, _, _)| {
+            let has_variable_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                 conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) != 0
             });
-            let has_non_variable_conflict = declarations.iter().any(|(decl_idx, flags, _, _)| {
-                conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) == 0
-            });
-            let has_accessor_conflict = declarations.iter().any(|(decl_idx, flags, _, _)| {
+            let has_non_variable_conflict =
+                declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                    conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) == 0
+                });
+            let has_accessor_conflict = declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                 conflicts.contains(decl_idx)
                     && (flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR)) != 0
             });
@@ -1098,21 +1139,24 @@ impl<'a> CheckerState<'a> {
                 //   is block-scoped, matching tsc's binder processing order.
                 // - Cross-file: if ANY declaration is block-scoped → TS2451, because
                 //   each file's binder processes independently.
-                let has_remote = declarations.iter().any(|(_, _, is_local, _)| !*is_local);
+                let has_remote = declarations.iter().any(|(_, _, is_local, _, _)| !*is_local);
                 let use_ts2451 = if has_remote {
-                    // Cross-file: any block-scoped declaration triggers TS2451
-                    declarations
-                        .iter()
-                        .filter(|(decl_idx, _, _, _)| conflicts.contains(decl_idx))
-                        .any(|(_, flags, _, _)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0)
+                    // Cross-file: any block-scoped declaration in the merged symbol
+                    // triggers TS2451, even when the current file's conflicting
+                    // declaration is non-block-scoped (for example `class Bar {}` in
+                    // one file vs `const Bar = 1` in another). Each file is checked
+                    // against the merged declaration set, not only the local subset.
+                    declarations.iter().any(|(_, flags, _, _, _)| {
+                        (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    })
                 } else {
                     // Single-file: check first declaration by source position
                     let first_decl_flags = declarations
                         .iter()
-                        .filter(|(decl_idx, _, is_local, _)| {
+                        .filter(|(decl_idx, _, is_local, _, _)| {
                             *is_local && conflicts.contains(decl_idx)
                         })
-                        .min_by_key(|(decl_idx, _, _, _)| {
+                        .min_by_key(|(decl_idx, _, _, _, _)| {
                             self.ctx.arena.get(*decl_idx).map_or(u32::MAX, |n| n.pos)
                         })
                         .map(|d| d.1)
@@ -1135,7 +1179,7 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
-            for (decl_idx, _decl_flags, is_local, _) in declarations {
+            for (decl_idx, _decl_flags, is_local, _, _) in declarations {
                 if is_local && conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                     self.error_at_node(error_node, &message, code);
@@ -1185,6 +1229,53 @@ impl<'a> CheckerState<'a> {
             .get(&ns_node.0)
             .copied()
             .unwrap_or(tsz_binder::SymbolId::NONE)
+    }
+
+    fn module_augmentation_conflict_declarations_for_current_file(
+        &self,
+        name: &str,
+    ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
+        let Some(_arenas) = self.ctx.all_arenas.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut declarations = Vec::new();
+
+        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+            for augmentation in augmentations {
+                if augmentation.name != name {
+                    continue;
+                }
+
+                let Some(arena) = augmentation.arena.as_deref() else {
+                    continue;
+                };
+                let Some(source_file_idx) = self.ctx.get_file_idx_for_arena(arena) else {
+                    continue;
+                };
+                if self
+                    .ctx
+                    .resolve_import_target_from_file(source_file_idx, module_spec)
+                    != Some(self.ctx.current_file_idx)
+                {
+                    continue;
+                }
+
+                let Some(flags) = self.declaration_symbol_flags(arena, augmentation.node) else {
+                    continue;
+                };
+                let is_exported = self.is_declaration_exported(arena, augmentation.node);
+                declarations.push((
+                    augmentation.node,
+                    flags,
+                    false,
+                    is_exported,
+                    DuplicateDeclarationOrigin::TargetedModuleAugmentation,
+                ));
+            }
+        }
+
+        declarations
     }
 
     /// Get the `NodeIndex` of the nearest enclosing block scope for a declaration.
