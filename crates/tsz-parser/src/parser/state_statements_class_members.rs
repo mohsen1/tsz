@@ -1236,6 +1236,31 @@ impl ParserState {
         let has_modifiers = modifiers.is_some();
         let name = if self.is_property_name() {
             self.parse_property_name()
+        } else if has_modifiers
+            && self.is_token(SyntaxKind::OpenBraceToken)
+            && self.next_token_is_open_bracket()
+        {
+            let token_start = self.token_pos();
+            let decl_pos = if token_start > 0 { token_start - 1 } else { 0 };
+            self.parse_error_at(
+                decl_pos,
+                1,
+                "Declaration expected.",
+                diagnostic_codes::DECLARATION_EXPECTED,
+            );
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+            while !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                let before = self.token_pos();
+                let _ = self.parse_statement();
+                if self.token_pos() == before {
+                    self.next_token();
+                }
+            }
+            self.context_flags = name_saved_flags;
+            return NodeIndex::NONE;
         } else if asterisk_token {
             // After asterisk (*), we expect an identifier (method name).
             // Create a missing identifier and continue parsing the method
