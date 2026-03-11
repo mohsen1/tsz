@@ -54,6 +54,11 @@ pub(crate) fn get_conditional_type(
     tsz_solver::type_queries::get_conditional_type(db, type_id)
 }
 
+pub(crate) fn is_union_or_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_union_type(db, type_id)
+        || tsz_solver::type_queries::is_intersection_type(db, type_id)
+}
+
 struct CheckerDeclarationCycleHost<'a, 'b> {
     state: &'a mut CheckerState<'b>,
 }

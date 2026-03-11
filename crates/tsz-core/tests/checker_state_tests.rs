@@ -11845,7 +11845,7 @@ type Alias = typeof Foo<string>;
 ///
 /// TODO: Circular type aliases do not resolve to `any` as tsc does.
 /// Currently they resolve to a lazy/unresolved TypeId. When circular alias
-/// detection is implemented, update to assert TypeId::ANY.
+/// detection is implemented, update to assert `TypeId::ANY`.
 #[test]
 fn test_checker_circular_type_aliases() {
     use crate::parser::ParserState;
@@ -16021,8 +16021,7 @@ const reducer = createReducer(0, {
         .collect();
     assert!(
         unexpected.is_empty(),
-        "Unexpected diagnostics: {:?}",
-        unexpected
+        "Unexpected diagnostics: {unexpected:?}"
     );
 }
 

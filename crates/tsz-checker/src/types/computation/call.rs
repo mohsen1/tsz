@@ -169,14 +169,14 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
-        let key = self.ctx.types.lookup(type_id)?;
-        let kind = match key {
-            tsz_solver::TypeData::TypeParameter(info) => {
-                format!("type_param:{}", self.ctx.types.resolve_atom_ref(info.name))
-            }
-            _ => format!("kind:{:?}", std::mem::discriminant(&key)),
-        };
-        Some(kind)
+        if let Some(info) = query::type_parameter_info(self.ctx.types, type_id) {
+            return Some(format!(
+                "type_param:{}",
+                self.ctx.types.resolve_atom_ref(info.name)
+            ));
+        }
+
+        Some(format!("display:{}", self.format_type(type_id)))
     }
 
     fn call_signature_display_skeleton(

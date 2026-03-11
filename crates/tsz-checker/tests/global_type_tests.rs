@@ -450,8 +450,8 @@ class C {
 /// ES2015 libs are loaded in tests or the Symbol resolution bug is fixed.
 ///
 /// KNOWN BUG: When running with full lib files (CLI), `Symbol()` incorrectly resolves to
-/// `RTCEncodedVideoFrameType` instead of symbol primitive. See docs/conformance/bug-symbol-resolution.md
-
+/// `RTCEncodedVideoFrameType` instead of symbol primitive. See
+/// `docs/conformance/bug-symbol-resolution.md`.
 /// TODO: Test environment only loads ES5; Symbol requires ES2015.
 /// Currently emits TS2583 (Cannot find name 'Symbol') and TS2318 (Cannot find global type)
 /// errors. When ES2015 lib support is added to tests, update to expect 0 errors.
