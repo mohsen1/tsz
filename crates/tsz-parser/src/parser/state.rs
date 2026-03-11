@@ -130,6 +130,10 @@ pub struct ParserState {
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
     /// Whether a top-level import/export has been seen in the current file.
     pub(crate) seen_module_indicator: bool,
+    /// When recovery consumes a malformed arrow-body `}` directly, keep a small
+    /// number of following module-closing braces in the token stream so outer
+    /// list recovery can report them as stray braces.
+    pub(crate) deferred_module_close_braces: u32,
 }
 
 impl ParserState {
@@ -166,6 +170,7 @@ impl ParserState {
             last_error_pos: 0,
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
+            deferred_module_close_braces: 0,
         }
     }
 
@@ -182,6 +187,7 @@ impl ParserState {
         self.label_scopes.clear();
         self.label_scopes.push(FxHashMap::default());
         self.seen_module_indicator = false;
+        self.deferred_module_close_braces = 0;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded

@@ -163,7 +163,7 @@ impl ParserState {
                 // keep parsing there instead of resyncing past it. This preserves
                 // follow-up recovery like `from "./foo"` -> TS1434 in malformed
                 // import/export specifiers.
-                if !self.is_expression_start() {
+                if !self.is_expression_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
                     self.resync_after_error();
                 }
                 continue;

@@ -56,6 +56,81 @@ const fn = (a: number, b: string)
 }
 
 #[test]
+fn test_missing_arrow_with_typed_parameters_prefers_arrow_recovery() {
+    let source = r"
+namespace N {
+    var d = (x: number, y: string);
+    var e = (x: number, y: string): void;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+
+    assert_eq!(
+        ts1005_count, 2,
+        "Expected one missing-arrow TS1005 per declaration, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1109_count, 0,
+        "Typed parameter heads without => should not fall back to expression recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_missing_arrow_statement_body_consumes_synthetic_close_brace() {
+    let source = r"
+namespace N {
+    var c = (x) => var k = 10;};
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1128_count = diagnostics.iter().filter(|d| d.code == 1128).count();
+
+    assert_eq!(
+        ts1005_count, 1,
+        "Expected only the missing-block TS1005 for recovered arrow body, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1128_count, 0,
+        "Recovered statement-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_missing_arrow_expression_body_consumes_synthetic_close_brace() {
+    let source = r"
+namespace N {
+    namespace Inner {
+        var c = (x) => };
+    }
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+    let ts1128_count = diagnostics.iter().filter(|d| d.code == 1128).count();
+
+    assert_eq!(
+        ts1109_count, 1,
+        "Expected only the missing-expression TS1109 for recovered arrow body, got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1128_count, 0,
+        "Recovered expression-bodied arrows should consume their synthetic close brace: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_parameters_with_line_break_no_comma() {
     // Function parameters without comma but with line break
     // Should be more permissive to avoid false positives

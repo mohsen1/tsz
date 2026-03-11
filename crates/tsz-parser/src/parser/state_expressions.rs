@@ -18,6 +18,21 @@ use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
+    fn count_following_close_braces(&mut self) -> u32 {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let mut count = 0;
+        while self.is_token(SyntaxKind::CloseBraceToken) {
+            count += 1;
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        count
+    }
+
     // =========================================================================
     // Parse Methods - Expressions
     // =========================================================================
@@ -249,8 +264,20 @@ impl ParserState {
         // a valid arrow function parameter list — e.g., `(a, (b, c)) =>` or `((a)) =>`.
         // This matches tsc's behavior of rejecting nested-paren parameter patterns.
         let mut depth = 1;
+        let mut saw_parameter_syntax = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+            if depth == 1
+                && matches!(
+                    self.token(),
+                    SyntaxKind::ColonToken
+                        | SyntaxKind::QuestionToken
+                        | SyntaxKind::DotDotDotToken
+                        | SyntaxKind::EqualsToken
+                )
+            {
+                saw_parameter_syntax = true;
+            }
             if self.is_token(SyntaxKind::OpenParenToken) {
                 // `(` at the start of a top-level parameter slot is not a valid
                 // parameter pattern. Reject early so the expression is NOT parsed
@@ -298,7 +325,14 @@ impl ParserState {
             // emitted during actual parsing. The `(params): type` prefix is
             // unambiguous, so we don't need the line break check.
             let mut result = self.is_token(SyntaxKind::EqualsGreaterThanToken)
-                || self.is_token(SyntaxKind::OpenBraceToken);
+                || self.is_token(SyntaxKind::OpenBraceToken)
+                || matches!(
+                    self.token(),
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CommaToken
+                        | SyntaxKind::CloseBraceToken
+                        | SyntaxKind::EndOfFileToken
+                );
 
             // In the true branch of a conditional expression, only accept
             // `(x): T => ...` as an arrow function when the simulated body
@@ -338,6 +372,14 @@ impl ParserState {
             // Check for => or { (error recovery: user forgot =>)
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
+                || (saw_parameter_syntax
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::SemicolonToken
+                            | SyntaxKind::CommaToken
+                            | SyntaxKind::CloseBraceToken
+                            | SyntaxKind::EndOfFileToken
+                    ))
         };
         self.scanner.restore_state(snapshot);
         self.current_token = current;
@@ -503,7 +545,13 @@ impl ParserState {
             self.error_token_expected("{");
             let block_start = self.token_pos();
             let stmts = self.parse_statements();
-            let block_end = self.token_end();
+            let block_end = if self.is_token(SyntaxKind::CloseBraceToken) {
+                let end = self.token_end();
+                self.next_token();
+                end
+            } else {
+                self.token_end()
+            };
             self.arena.add_block(
                 syntax_kind_ext::BLOCK,
                 block_start,
@@ -518,6 +566,13 @@ impl ParserState {
             // If no expression was parsed (e.g. `() => ;`), emit TS1109
             if expr.is_none() {
                 self.error_expression_expected();
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    let deferred_close_braces = self.count_following_close_braces().saturating_sub(1);
+                    self.deferred_module_close_braces = self
+                        .deferred_module_close_braces
+                        .max(deferred_close_braces);
+                    self.next_token();
+                }
             }
             expr
         };
