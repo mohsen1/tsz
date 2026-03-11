@@ -273,14 +273,15 @@ Example: deleteExpressionMustBeOptional.ts
   silently elided via symbol depth limits. Fixes 6 conformance tests
   (`declarationEmitInferredTypeAlias4/8`, `declarationEmitTypeAliasWithTypeParameters3/4/6`,
   `importCallExpressionDeclarationEmit1`).
-- ~~False positive TS2304 for class property names~~ **FIXED** (2026-03-11)
+- ~~False positive TS2304 for class property and JSX attribute names~~ **FIXED** (2026-03-11)
   Fix: `direct_diagnostic_source_expression` in `error_reporter/core.rs` now returns
-  `None` when the diagnostic anchor is a `PROPERTY_DECLARATION` name. Previously, the
-  error reporter treated property name identifiers as source expressions and called
-  `get_type_of_node` on them during TS2322 message formatting, which triggered
-  identifier resolution → TS2304 "Cannot find name". Fixes 5 conformance tests
+  `None` when the diagnostic anchor is a `PROPERTY_DECLARATION` or `JSX_ATTRIBUTE` name.
+  Previously, the error reporter treated declaration name identifiers as source expressions
+  and called `get_type_of_node` on them during TS2322 message formatting, which triggered
+  identifier resolution → TS2304 "Cannot find name". Fixes 11 conformance tests
   (`classWithoutExplicitConstructor`, `derivedClassWithoutExplicitConstructor` (3 variants),
-  `memberVariableDeclarations1`).
+  `memberVariableDeclarations1`, `classPropertyErrorOnNameOnly`, `tsxAttributeErrors`,
+  `tsxAttributeResolution1/9/10/14`).
 
 ---
 
