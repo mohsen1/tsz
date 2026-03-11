@@ -41,7 +41,10 @@ impl<'a> CheckerState<'a> {
         props: &mut Vec<tsz_solver::PropertyInfo>,
     ) {
         let target_file_idx = source_file_idx
-            .and_then(|file_idx| self.ctx.resolve_import_target_from_file(file_idx, module_name))
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
             .or_else(|| self.ctx.resolve_import_target(module_name));
         let Some(target_file_idx) = target_file_idx else {
             return;
@@ -104,9 +107,8 @@ impl<'a> CheckerState<'a> {
             let is_exports_target = target_arena
                 .get_identifier_at(target_expr)
                 .is_some_and(|ident| ident.escaped_text == "exports");
-            let is_module_exports_target = target_arena
-                .get(target_expr)
-                .is_some_and(|target_node| {
+            let is_module_exports_target =
+                target_arena.get(target_expr).is_some_and(|target_node| {
                     if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                         return false;
                     }
@@ -138,13 +140,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(descriptor) =
-                self.resolve_define_property_descriptor_object_literal(
-                    target_file_idx,
-                    target_arena,
-                    descriptor_expr,
-                )
-            else {
+            let Some(descriptor) = self.resolve_define_property_descriptor_object_literal(
+                target_file_idx,
+                target_arena,
+                descriptor_expr,
+            ) else {
                 continue;
             };
 
@@ -176,9 +176,8 @@ impl<'a> CheckerState<'a> {
                                 has_value = true;
                             }
                             "writable" => {
-                                writable_true = target_arena
-                                    .get(prop.initializer)
-                                    .is_some_and(|init| {
+                                writable_true =
+                                    target_arena.get(prop.initializer).is_some_and(|init| {
                                         init.kind == tsz_scanner::SyntaxKind::TrueKeyword as u16
                                     });
                             }
@@ -217,7 +216,11 @@ impl<'a> CheckerState<'a> {
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
         let mut props = Vec::new();
-        self.augment_namespace_props_with_define_property_exports(module_name, source_file_idx, &mut props);
+        self.augment_namespace_props_with_define_property_exports(
+            module_name,
+            source_file_idx,
+            &mut props,
+        );
         if props.is_empty() {
             return None;
         }

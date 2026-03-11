@@ -1096,14 +1096,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (mut result, _instantiated_predicate, instantiated_params) =
-                self.resolve_call_with_checker_adapter(
-                resolved_func_type,
-                &sig_arg_types,
-                force_bivariant_callbacks,
-                self.ctx.contextual_type,
-                actual_this_type,
-            );
+            let (mut result, _instantiated_predicate, instantiated_params) = self
+                .resolve_call_with_checker_adapter(
+                    resolved_func_type,
+                    &sig_arg_types,
+                    force_bivariant_callbacks,
+                    self.ctx.contextual_type,
+                    actual_this_type,
+                );
 
             if !sig.type_params.is_empty() && !contextual_refresh_args.is_empty() {
                 if let Some(instantiated_params) = instantiated_params.as_ref() {
@@ -1122,22 +1122,24 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 instantiated_params.last().filter(|param| param.rest)
                             }?;
-                            Some(if param.rest && i >= instantiated_params.len().saturating_sub(1) {
-                                tsz_solver::rest_argument_element_type(
-                                    self.ctx.types,
-                                    param.type_id,
-                                )
-                            } else {
-                                param.type_id
-                            })
+                            Some(
+                                if param.rest && i >= instantiated_params.len().saturating_sub(1) {
+                                    tsz_solver::rest_argument_element_type(
+                                        self.ctx.types,
+                                        param.type_id,
+                                    )
+                                } else {
+                                    param.type_id
+                                },
+                            )
                         },
                         false,
                         None,
                     );
                     self.ctx.current_callable_type = prev_callable_type;
 
-                    let (retry_result, _retry_predicate, _retry_instantiated_params) =
-                        self.resolve_call_with_checker_adapter(
+                    let (retry_result, _retry_predicate, _retry_instantiated_params) = self
+                        .resolve_call_with_checker_adapter(
                             resolved_func_type,
                             &refreshed_arg_types,
                             force_bivariant_callbacks,

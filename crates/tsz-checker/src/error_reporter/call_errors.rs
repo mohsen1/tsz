@@ -5,7 +5,9 @@ use crate::diagnostics::{
     diagnostic_messages, format_message,
 };
 use crate::error_reporter::assignability::is_object_prototype_method;
-use crate::query_boundaries::assignability::{get_function_return_type, replace_function_return_type};
+use crate::query_boundaries::assignability::{
+    get_function_return_type, replace_function_return_type,
+};
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -28,7 +30,8 @@ impl<'a> CheckerState<'a> {
         if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
             let widened_return = tsz_solver::widen_literal_type(self.ctx.types, return_type);
             if widened_return != return_type {
-                let replaced = replace_function_return_type(self.ctx.types, type_id, widened_return);
+                let replaced =
+                    replace_function_return_type(self.ctx.types, type_id, widened_return);
                 if replaced != type_id {
                     return replaced;
                 }

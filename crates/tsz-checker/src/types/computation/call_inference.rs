@@ -740,7 +740,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(orig) = original_param
                         && let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, orig)
                         && self
-                            .unresolved_contextual_substitution_target(&tp_info, current_substitution)
+                            .unresolved_contextual_substitution_target(
+                                &tp_info,
+                                current_substitution,
+                            )
                             .is_some()
                     {
                         let instantiated_constraint = match self
@@ -785,7 +788,10 @@ impl<'a> CheckerState<'a> {
                         tsz_solver::type_param_info(self.ctx.types, base_param_type)
                     {
                         if self
-                            .unresolved_contextual_substitution_target(&tp_info, current_substitution)
+                            .unresolved_contextual_substitution_target(
+                                &tp_info,
+                                current_substitution,
+                            )
                             .is_some()
                         {
                             self.instantiate_contextual_constraint_without_unresolved_self(
@@ -814,8 +820,7 @@ impl<'a> CheckerState<'a> {
                             current_substitution,
                         )
                     };
-                    if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, inst)
-                    {
+                    if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, inst) {
                         let instantiated_constraint = match self
                             .instantiate_contextual_constraint_without_unresolved_self(
                                 inst,
