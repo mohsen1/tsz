@@ -758,11 +758,24 @@ impl BinderState {
             // TYPE_ALIAS symbol and record the partnership so the checker can
             // resolve type references to the type alias body while value references
             // go through the namespace alias.
-            let existing_alias_id = self.current_scope.get(name).filter(|id| {
-                self.symbols
-                    .get(*id)
-                    .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
-            });
+            let existing_alias_id = self
+                .current_scope
+                .get(name)
+                .filter(|id| {
+                    self.symbols
+                        .get(*id)
+                        .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
+                })
+                .or_else(|| {
+                    self.module_exports
+                        .get(self.debugger.current_file.as_str())
+                        .and_then(|exports| exports.get(name))
+                        .filter(|id| {
+                            self.symbols
+                                .get(*id)
+                                .is_some_and(|s| s.flags & symbol_flags::ALIAS != 0)
+                        })
+                });
             if let Some(alias_id) = existing_alias_id {
                 let sym_id = self
                     .symbols
@@ -773,6 +786,15 @@ impl BinderState {
                 }
                 // TYPE_ALIAS takes current_scope so type references resolve to it
                 self.current_scope.set(name.to_string(), sym_id);
+                if self.current_scope_id.is_some()
+                    && !self.in_module_augmentation
+                    && self
+                        .scopes
+                        .get(self.current_scope_id.0 as usize)
+                        .is_some_and(|scope| scope.kind == ContainerKind::SourceFile)
+                {
+                    self.file_locals.set(name.to_string(), sym_id);
+                }
                 self.node_symbols.insert(idx.0, sym_id);
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS

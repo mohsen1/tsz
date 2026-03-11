@@ -477,6 +477,94 @@ let y: number = x.n;
 }
 
 #[test]
+fn test_check_files_parallel_preserves_tdz_after_namespace_reexport() {
+    let files = vec![
+        (
+            "0.ts".to_string(),
+            r#"
+export const a = 1;
+export const b = 2;
+"#
+            .to_string(),
+        ),
+        (
+            "1.ts".to_string(),
+            r#"
+export * as ns from "./0";
+ns.a;
+ns.b;
+let ns = { a: 1, b: 2 };
+ns.a;
+ns.b;
+"#
+            .to_string(),
+        ),
+        (
+            "2.ts".to_string(),
+            r#"
+import * as foo from "./1";
+
+foo.ns.a;
+foo.ns.b;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "1.ts")
+        .expect("expected 1.ts result");
+
+    let ts2448_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2448)
+        .count();
+    let ts2454_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2454)
+        .count();
+
+    assert_eq!(
+        ts2448_count, 2,
+        "Expected exactly two TS2448 diagnostics in 1.ts. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+    assert_eq!(
+        ts2454_count, 2,
+        "Expected exactly two TS2454 diagnostics in 1.ts. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+
+    let importer = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "2.ts")
+        .expect("expected 2.ts result");
+    let importer_codes: Vec<u32> = importer.diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(
+        importer_codes.is_empty(),
+        "Expected no diagnostics in 2.ts. Actual diagnostics: {:#?}",
+        importer.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_jsdoc_import_type_on_export_default_preserves_ts2353() {
     let files = vec![
         (

@@ -795,7 +795,9 @@ impl BinderState {
         use crate::symbol_flags;
 
         // Collect all exports from all module-level symbols in this file
-        let mut file_exports = SymbolTable::new();
+        // Start from any exports recorded during binding that intentionally do not create
+        // file-local bindings (for example `export * as ns from "./mod"`).
+        let mut file_exports = self.module_exports.remove(file_name).unwrap_or_default();
         let mut export_equals_target: Option<SymbolId> = None;
 
         // Iterate through file_locals to find modules and their exports
@@ -821,7 +823,7 @@ impl BinderState {
                 // Also collect symbols that are explicitly exported via `export { X }`
                 // or `export` modifier. These may not be module/namespace symbols but
                 // need to be in module_exports for cross-file import resolution.
-                if (symbol.is_exported || name == "export=") && !file_exports.has(name) {
+                if symbol.is_exported || name == "export=" {
                     file_exports.set(name.clone(), sym_id);
                 }
             }

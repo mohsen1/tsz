@@ -1538,7 +1538,7 @@ impl<'a> CheckerState<'a> {
     /// Also scans `Foo.prototype.m = function() { this.y = ... }` patterns for
     /// properties assigned in prototype methods (typed as `T | undefined`).
     /// Returns `None` if the target is not a plain function or has no this-property assignments.
-    fn synthesize_js_constructor_instance_type(
+    pub(crate) fn synthesize_js_constructor_instance_type(
         &mut self,
         expr_idx: NodeIndex,
         constructor_type: TypeId,

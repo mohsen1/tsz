@@ -111,6 +111,80 @@ export as namespace Foo;
 }
 
 #[test]
+fn namespace_reexport_does_not_create_local_binding() {
+    let source = r"
+export * as ns from './mod';
+ns.a;
+let ns = { a: 1 };
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let local_ns_id = binder
+        .file_locals
+        .get("ns")
+        .expect("expected local let ns in file_locals");
+    let local_ns = binder
+        .symbols
+        .get(local_ns_id)
+        .expect("expected symbol data for local ns");
+    assert_ne!(local_ns.flags & symbol_flags::BLOCK_SCOPED_VARIABLE, 0);
+    assert_eq!(local_ns.flags & symbol_flags::ALIAS, 0);
+
+    let export_ns_id = binder
+        .module_exports
+        .get("test.ts")
+        .and_then(|exports| exports.get("ns"))
+        .expect("expected namespace re-export in module_exports");
+    let export_ns = binder
+        .symbols
+        .get(export_ns_id)
+        .expect("expected symbol data for exported ns");
+
+    assert_ne!(export_ns.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(export_ns.import_module.as_deref(), Some("./mod"));
+    assert_eq!(export_ns.import_name.as_deref(), Some("*"));
+    assert_ne!(export_ns_id, local_ns_id);
+}
+
+#[test]
+fn type_alias_after_namespace_reexport_keeps_alias_partner() {
+    let source = r"
+export * as Foo from './mod';
+export type Foo = { x: number };
+";
+    let (binder, _parser) = parse_and_bind(source);
+
+    let foo_sym_id = binder
+        .file_locals
+        .get("Foo")
+        .expect("expected exported type alias in file_locals");
+    let foo_symbol = binder
+        .symbols
+        .get(foo_sym_id)
+        .expect("expected symbol data for Foo");
+    assert_ne!(foo_symbol.flags & symbol_flags::TYPE_ALIAS, 0);
+
+    let alias_id = *binder
+        .alias_partners
+        .get(&foo_sym_id)
+        .expect("expected namespace export alias partner for Foo");
+    let alias_symbol = binder
+        .symbols
+        .get(alias_id)
+        .expect("expected alias partner symbol data");
+    assert_ne!(alias_symbol.flags & symbol_flags::ALIAS, 0);
+    assert_eq!(alias_symbol.import_module.as_deref(), Some("./mod"));
+    assert_eq!(alias_symbol.import_name.as_deref(), Some("*"));
+
+    let export_foo_id = binder
+        .module_exports
+        .get("test.ts")
+        .and_then(|exports| exports.get("Foo"))
+        .expect("expected Foo export in module_exports");
+    assert_eq!(export_foo_id, foo_sym_id);
+}
+
+#[test]
 fn resolves_wildcard_type_only_reexports_with_provenance() {
     let mut binder = BinderState::new();
 
