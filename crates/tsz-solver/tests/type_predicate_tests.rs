@@ -475,7 +475,6 @@ fn test_bare_asserts_compatibility() {
 // =============================================================================
 
 #[test]
-#[ignore = "Type guard in overloads not fully implemented"]
 fn test_type_guard_in_overloads() {
     // Test type predicate behavior with callable overloads
     let interner = TypeInterner::new();
@@ -510,10 +509,13 @@ fn test_type_guard_in_overloads() {
         is_method: false,
     });
 
-    // Type guard function is NOT assignable to regular function
+    // TODO: In TypeScript, a type guard function with matching params/return IS
+    // assignable to a regular function (the type predicate is additional info
+    // that doesn't break structural compatibility). The subtype checker
+    // currently treats them as structurally compatible.
     assert!(
-        !checker.is_subtype_of(type_guard_fn, regular_fn),
-        "Type guard function should NOT be assignable to regular function"
+        checker.is_subtype_of(type_guard_fn, regular_fn),
+        "Type guard function IS assignable to regular function (structural compatibility)"
     );
 
     // Regular function IS assignable to type guard function
