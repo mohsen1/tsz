@@ -31,6 +31,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn argument_supports_literal_elaboration(&self, arg_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        )
+    }
+
     fn preferred_literal_expected_for_mismatch(
         &self,
         arg_types: &[TypeId],
@@ -204,8 +215,10 @@ impl<'a> CheckerState<'a> {
                 let reported_expected =
                     self.preferred_literal_expected_for_mismatch(arg_types, index, expected);
                 let mut elaborated = false;
-                let should_try_deferred_elaboration =
-                    self.should_attempt_deferred_literal_elaboration(expected);
+                let should_try_deferred_elaboration = self
+                    .should_attempt_deferred_literal_elaboration(expected)
+                    || arg_idx
+                        .is_some_and(|arg_idx| self.argument_supports_literal_elaboration(arg_idx));
                 if let Some(arg_idx) = arg_idx {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
                     if should_try_deferred_elaboration

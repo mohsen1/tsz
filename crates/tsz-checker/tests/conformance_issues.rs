@@ -1298,6 +1298,32 @@ someGenerics3<number>(() => undefined);
 }
 
 #[test]
+fn test_generic_object_literal_argument_prefers_property_ts2322_over_outer_ts2345() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+function foo<T>(x: { bar: T; baz: T }) {
+    return x;
+}
+
+foo({ bar: 1, baz: '' });
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected property-level TS2322 for generic object literal mismatch. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect outer TS2345 once object literal property elaboration applies. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_literal_argument_error_preserves_literal_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
