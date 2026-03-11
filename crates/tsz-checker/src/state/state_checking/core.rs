@@ -1632,16 +1632,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let computed_name = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node)
-            {
-                Some(prop.name)
-            } else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                Some(method.name)
-            } else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
-                Some(accessor.name)
-            } else {
-                None
-            };
+            let computed_name =
+                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                    Some(prop.name)
+                } else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                    Some(method.name)
+                } else {
+                    self.ctx
+                        .arena
+                        .get_accessor(elem_node)
+                        .map(|accessor| accessor.name)
+                };
 
             let Some(name_idx) = computed_name else {
                 continue;
