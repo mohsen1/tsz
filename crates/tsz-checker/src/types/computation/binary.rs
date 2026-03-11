@@ -258,25 +258,29 @@ impl<'a> CheckerState<'a> {
                     if prev_context.is_none() {
                         let evaluated_left = self.evaluate_type_with_env(left_type);
                         let non_nullish = self.ctx.types.remove_nullish(evaluated_left);
-                        if non_nullish != TypeId::NEVER && non_nullish != TypeId::UNKNOWN {
+                        let right_ctx_idx =
+                            self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+                        let right_accepts_context = self.ctx.arena.get(right_ctx_idx).is_some_and(
+                            |right_node| {
+                                matches!(
+                                    right_node.kind,
+                                    syntax_kind_ext::ARROW_FUNCTION
+                                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                                        | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                                )
+                            },
+                        );
+                        if right_accepts_context
+                            && non_nullish != TypeId::NEVER
+                            && non_nullish != TypeId::UNKNOWN
+                        {
                             self.ctx.contextual_type = Some(non_nullish);
                         }
                     }
                     let right_type = self.get_type_of_node(right_idx);
                     self.ctx.contextual_type = prev_context;
-
-                    if let Some(contextual_type) = prev_context
-                        && right_type != TypeId::ANY
-                        && right_type != TypeId::ERROR
-                        && right_type != TypeId::UNKNOWN
-                    {
-                        let _ = self.check_assignable_or_report_at_exact_anchor(
-                            right_type,
-                            contextual_type,
-                            right_idx,
-                            right_idx,
-                        );
-                    }
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);
