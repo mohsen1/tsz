@@ -1720,6 +1720,63 @@ const obj = {
 }
 
 #[test]
+fn test_contextual_default_parameters_in_ts_do_not_emit_false_ts2322() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare function test1<
+  TContext,
+  TMethods extends Record<string, (ctx: TContext, ...args: never[]) => unknown>,
+>(context: TContext, methods: TMethods): void;
+
+test1(
+  {
+    count: 0,
+  },
+  {
+    checkLimit: (ctx, max = 500) => {},
+    hasAccess: (ctx, user: { name: string }) => {},
+  },
+);
+
+declare const num: number;
+const test2: (arg: 1 | 2) => void = (arg = num) => {};
+
+const test3: (arg: number) => void = (arg = 1) => {};
+        "#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 for TS-contextual default parameters. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_class_expression_default_parameter_does_not_emit_false_ts2322() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+((b = class { static x = 1 }) => {})();
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 for class-expression default parameter. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_string_is_assignable_to_iterable_string_under_es2015() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r##"
