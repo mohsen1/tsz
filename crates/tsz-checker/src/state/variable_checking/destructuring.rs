@@ -1355,7 +1355,9 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         let Some(shape) = shape else {
-            return if tsz_solver::type_queries::is_object_like_type(self.ctx.types, type_id) {
+            return if !remaining_props.is_empty()
+                || query::is_object_like_type(self.ctx.types, type_id)
+            {
                 self.ctx.types.factory().object(remaining_props)
             } else {
                 type_id

@@ -203,18 +203,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // If Source has a private/protected property, it cannot be assigned to a Target
         // that expects it to be Public.
         for source_prop in &source_shape.properties {
-            if source_prop.visibility == Visibility::Private
-                || source_prop.visibility == Visibility::Protected
-            {
-                if let Some(target_prop) = crate::utils::lookup_property(
+            if (source_prop.visibility == Visibility::Private
+                || source_prop.visibility == Visibility::Protected)
+                && let Some(target_prop) = crate::utils::lookup_property(
                     self.interner,
                     &target_shape.properties,
                     Some(crate::types::ObjectShapeId(target_shape_id)),
                     source_prop.name,
-                ) && target_prop.visibility == Visibility::Public
-                {
-                    return Some(false);
-                }
+                )
+                && target_prop.visibility == Visibility::Public
+            {
+                return Some(false);
             }
         }
 

@@ -88,7 +88,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if !allow_optional_source_match && source_param.optional != pattern_param.optional {
                 return false;
             }
-            let source_param_type = if source_param.optional && strip_nullish_optionals {
+            let source_param_type = if allow_optional_source_match {
                 crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
             } else if source_param.optional {
                 self.interner()
@@ -180,11 +180,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) {
                         return false;
                     }
-                } else if !self.match_signature_params(
+                } else if !self.match_signature_params_for_infer(
                     source_params,
                     &pattern_fn.params,
+                    true,
                     bindings,
-                    &mut local_visited,
                     checker,
                 ) {
                     return false;
@@ -885,11 +885,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     ) {
                         return false;
                     }
-                } else if !self.match_signature_params(
+                } else if !self.match_signature_params_for_infer(
                     source_params,
                     &pattern_sig.params,
+                    true,
                     bindings,
-                    &mut local_visited,
                     checker,
                 ) {
                     return false;
@@ -1013,15 +1013,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         );
                     }
-                    let mut local_visited = FxHashSet::default();
                     // Match params and infer types. Skip subtype check since pattern matching
                     // success implies compatibility. The subtype check can fail for optional
                     // params due to contravariance issues with undefined.
-                    self.match_signature_params(
+                    self.match_signature_params_for_infer(
                         source_params,
                         &pattern_sig.params,
+                        true,
                         bindings,
-                        &mut local_visited,
                         checker,
                     )
                 };
