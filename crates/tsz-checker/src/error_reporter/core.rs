@@ -353,6 +353,18 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Class property declaration names are not source expressions.
+        // When TS2322 is anchored at the property name (e.g., `y` in `y: string = 42`),
+        // the source expression is the initializer, not the name identifier.
+        // Without this guard, get_type_of_node on the name triggers identifier
+        // resolution → TS2304 "Cannot find name" false positive.
+        if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+            && let Some(prop) = self.ctx.arena.get_property_decl(parent_node)
+            && prop.name == expr_idx
+        {
+            return None;
+        }
+
         Some(expr_idx)
     }
 
