@@ -124,10 +124,20 @@ pub(super) fn classify_binary_file(bytes: &[u8]) -> Option<bool> {
         })
         .count();
     if control_count >= 4 {
-        return Some(false);
+        return Some(soft_control_binary_should_suppress(bytes));
     }
 
     None
+}
+
+fn soft_control_binary_should_suppress(bytes: &[u8]) -> bool {
+    let payload = bytes
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(bytes, |idx| &bytes[idx + 1..]);
+    let printable_ascii_count = payload.iter().filter(|&&b| b.is_ascii_graphic()).count();
+
+    printable_ascii_count < 2
 }
 
 #[derive(Debug, Clone)]
