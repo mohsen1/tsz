@@ -403,6 +403,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // JSX attribute names are not source expressions.
+        // When TS2322 is anchored at an attribute name (e.g., `x` in `<Comp x={10} />`),
+        // the error reporter must not call get_type_of_node on the attribute name
+        // identifier, which would trigger TS2304 "Cannot find name".
+        if parent_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+            && let Some(attr) = self.ctx.arena.get_jsx_attribute(parent_node)
+            && attr.name == expr_idx
+        {
+            return None;
+        }
+
         Some(expr_idx)
     }
 
