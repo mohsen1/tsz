@@ -213,6 +213,101 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         false
     }
 
+    fn tuple_min_required_args(&self, elements: &[crate::TupleElement]) -> usize {
+        elements
+            .iter()
+            .map(|elem| {
+                if elem.rest {
+                    let expansion = self.expand_tuple_rest(elem.type_id);
+                    self.tuple_min_required_args(&expansion.fixed)
+                        + self.tuple_min_required_args(&expansion.tail)
+                } else if elem.optional || self.param_type_contains_void(elem.type_id) {
+                    0
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
+    pub(crate) fn rest_param_min_required_arg_count(&mut self, type_id: TypeId) -> usize {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                return self.rest_param_min_required_arg_count(inner);
+            }
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+                return info
+                    .constraint
+                    .map(|constraint| self.rest_param_min_required_arg_count(constraint))
+                    .unwrap_or(0);
+            }
+            _ => {}
+        }
+
+        let evaluated = self.evaluate_type(type_id);
+        if evaluated != type_id {
+            return self.rest_param_min_required_arg_count(evaluated);
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Array(_)) => 0,
+            Some(TypeData::Tuple(elements_id)) => {
+                let elements = self.interner.tuple_list(elements_id);
+                self.tuple_min_required_args(&elements)
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .map(|&member| self.rest_param_min_required_arg_count(member))
+                    .min()
+                    .unwrap_or(0)
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .map(|&member| self.rest_param_min_required_arg_count(member))
+                    .max()
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn rest_param_needs_min_arity_guard(&mut self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                return self.rest_param_needs_min_arity_guard(inner);
+            }
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => {
+                return true;
+            }
+            _ => {}
+        }
+
+        let evaluated = self.evaluate_type(type_id);
+        if evaluated != type_id {
+            return self.rest_param_needs_min_arity_guard(evaluated);
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(
+                TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Mapped(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _),
+            ) => true,
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.rest_param_needs_min_arity_guard(member)),
+            _ => false,
+        }
+    }
+
     /// Check return type compatibility with void special-casing.
     ///
     /// When `allow_void_return` is true and target returns void:
@@ -266,6 +361,65 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             is_constructor: shape.is_constructor,
             is_method: shape.is_method,
         }
+    }
+
+    fn normalize_rest_param_types(&mut self, shape: &FunctionShape) -> FunctionShape {
+        let mut normalized = shape.clone();
+        for param in &mut normalized.params {
+            if !param.rest {
+                continue;
+            }
+            if matches!(
+                self.interner.lookup(param.type_id),
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+            ) {
+                // Preserve bare type-parameter rest slots such as `...args: T`.
+                // Eagerly evaluating them to their constraints (often `any[]`)
+                // drops the min-arity guard used by function assignability and
+                // incorrectly treats the rest as a top-like catch-all.
+                continue;
+            }
+            let evaluated = self.evaluate_type(param.type_id);
+            if evaluated != param.type_id {
+                param.type_id = evaluated;
+            }
+        }
+        normalized
+    }
+
+    fn is_effective_never_type(&mut self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.is_effective_never_type(inner)
+            }
+            _ => {
+                let evaluated = self.evaluate_type(type_id);
+                evaluated == TypeId::NEVER
+            }
+        }
+    }
+
+    pub(crate) fn first_top_rest_unassignable_source_param(
+        &mut self,
+        params: &[ParamInfo],
+    ) -> Option<(usize, TypeId)> {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        params
+            .iter()
+            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+            .enumerate()
+            .find_map(|(index, param)| {
+                if param.rest {
+                    let elem_type = self.get_array_element_type(param.type_id);
+                    self.is_effective_never_type(elem_type)
+                        .then_some((index, elem_type))
+                } else if !param.optional && self.is_effective_never_type(param.type_id) {
+                    Some((index, param.type_id))
+                } else {
+                    None
+                }
+            })
     }
 
     const fn is_uninformative_contextual_inference_input(&self, ty: TypeId) -> bool {
@@ -650,6 +804,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        source_instantiated = self.normalize_rest_param_types(&source_instantiated);
+        target_instantiated = self.normalize_rest_param_types(&target_instantiated);
+
         // Return type is covariant
         let return_result = self.check_return_compat(
             source_instantiated.return_type,
@@ -767,25 +924,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let mut variant_params: Vec<ParamInfo> = prefix_params.to_vec();
                     variant_params.extend(member_unpacked);
 
-                    let source_variant_has_rest =
-                        source_params_unpacked.last().is_some_and(|p| p.rest);
-                    if !source_variant_has_rest {
-                        let exact_variant_match = source_params_unpacked.len()
-                            == variant_params.len()
-                            && source_params_unpacked
-                                .iter()
-                                .zip(variant_params.iter())
-                                .all(|(source_param, target_param)| {
-                                    source_param.type_id == target_param.type_id
-                                        && source_param.optional == target_param.optional
-                                        && source_param.rest == target_param.rest
-                                });
-                        if exact_variant_match {
-                            return SubtypeResult::True;
-                        }
-                        continue;
-                    }
-
                     // Try the comparison with this variant
                     if self
                         .check_params_compatible(
@@ -837,14 +975,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // A function like `(a: void) => void` is assignable to `() => void` because
         // void parameters can be called without arguments.
         let source_required = self.required_param_count(&source_params_unpacked);
+        let target_rest_min_required = if target_has_rest {
+            target_params_unpacked
+                .last()
+                .map(|param| self.rest_param_min_required_arg_count(param.type_id))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let guard_target_rest_arity = target_has_rest
+            && target_params_unpacked
+                .last()
+                .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
         if !self.allow_bivariant_param_count
-            && !target_has_rest
-            && source_required > target_fixed_count
+            && ((!target_has_rest && source_required > target_fixed_count)
+                || (guard_target_rest_arity
+                    && source_required > target_fixed_count + target_rest_min_required))
         {
             let extra_are_void = source_params_unpacked
                 .iter()
                 .skip(target_fixed_count)
-                .take(source_required - target_fixed_count)
+                .take(source_required.saturating_sub(target_fixed_count + target_rest_min_required))
                 .all(|param| self.param_type_contains_void(param.type_id));
             if !extra_are_void {
                 return SubtypeResult::False;
@@ -897,6 +1048,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 };
                 if rest_is_top {
+                    if self
+                        .first_top_rest_unassignable_source_param(&source_params_unpacked)
+                        .is_some()
+                    {
+                        return SubtypeResult::False;
+                    }
                     return SubtypeResult::True;
                 }
 
@@ -1320,14 +1477,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         let source_required = self.required_param_count(source_params);
+        let target_rest_min_required = if target_has_rest {
+            target_params
+                .last()
+                .map(|param| self.rest_param_min_required_arg_count(param.type_id))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let guard_target_rest_arity = target_has_rest
+            && target_params
+                .last()
+                .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
         if !self.allow_bivariant_param_count
-            && !target_has_rest
-            && source_required > target_fixed_count
+            && ((!target_has_rest && source_required > target_fixed_count)
+                || (guard_target_rest_arity
+                    && source_required > target_fixed_count + target_rest_min_required))
         {
             let extra_are_void = source_params
                 .iter()
                 .skip(target_fixed_count)
-                .take(source_required - target_fixed_count)
+                .take(source_required.saturating_sub(target_fixed_count + target_rest_min_required))
                 .all(|param| self.param_type_contains_void(param.type_id));
             if !extra_are_void {
                 return SubtypeResult::False;

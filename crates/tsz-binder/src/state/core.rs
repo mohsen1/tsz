@@ -404,6 +404,15 @@ impl BinderState {
             file_features: FileFeatures::NONE,
             alias_partners,
         };
+        if let Some(root_scope) = binder.scopes.first() {
+            binder.current_scope = root_scope.table.clone();
+            let mut root_context =
+                ScopeContext::new(root_scope.kind, root_scope.container_node, None);
+            root_context.locals = root_scope.table.clone();
+            binder.scope_chain.push(root_context);
+            binder.current_scope_id = ScopeId(0);
+            binder.current_scope_idx = 0;
+        }
         binder.recompute_module_export_equals_non_module();
         binder
     }

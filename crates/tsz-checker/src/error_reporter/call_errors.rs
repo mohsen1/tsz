@@ -228,7 +228,7 @@ impl<'a> CheckerState<'a> {
 
         let shape = tsz_solver::type_queries::get_function_shape(self.ctx.types, arg_type)?;
         let expected = self.evaluate_application_type(param_type);
-        let ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, expected);
+        let expected = self.normalize_contextual_signature_with_env(expected);
 
         let mut rendered = Vec::with_capacity(func.parameters.nodes.len());
         for (index, &param_idx) in func.parameters.nodes.iter().enumerate() {
@@ -262,14 +262,15 @@ impl<'a> CheckerState<'a> {
                 self.contextual_rest_union_parameter_display(expected, index)
             {
                 display
+            } else if let Some(display) =
+                self.contextual_generic_rest_parameter_display(expected, index, rest)
+            {
+                display
             } else {
-                let type_id = if rest {
-                    ctx.get_rest_parameter_type(index)
-                } else {
-                    ctx.get_parameter_type(index)
-                }
-                .or_else(|| shape.params.get(index).map(|param| param.type_id))
-                .unwrap_or(TypeId::ANY);
+                let type_id = self
+                    .contextual_parameter_type_with_env_from_expected(expected, index, rest)
+                    .or_else(|| shape.params.get(index).map(|param| param.type_id))
+                    .unwrap_or(TypeId::ANY);
                 self.format_type_for_assignability_message(type_id)
             };
 
@@ -299,6 +300,49 @@ impl<'a> CheckerState<'a> {
             rendered.join(", "),
             self.format_type_for_assignability_message(return_display_type)
         ))
+    }
+
+    fn contextual_generic_rest_parameter_display(
+        &mut self,
+        expected: TypeId,
+        index: usize,
+        is_rest: bool,
+    ) -> Option<String> {
+        let params = if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, expected)
+        {
+            shape.params.clone()
+        } else {
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, expected)
+                .and_then(|shape| shape.call_signatures.first().cloned())
+                .map(|sig| sig.params)?
+        };
+
+        let last_param = params.last()?;
+        if !last_param.rest {
+            return None;
+        }
+        let rest_start = params.len().saturating_sub(1);
+        if index < rest_start {
+            return None;
+        }
+        if !crate::query_boundaries::assignability::contains_type_parameters(
+            self.ctx.types,
+            last_param.type_id,
+        ) {
+            return None;
+        }
+
+        let factory = self.ctx.types.factory();
+        let display_type = if is_rest {
+            let elem = factory.index_access(last_param.type_id, TypeId::NUMBER);
+            factory.array(elem)
+        } else {
+            let offset = index - rest_start;
+            let index_type = factory.literal_number(offset as f64);
+            factory.index_access(last_param.type_id, index_type)
+        };
+        Some(self.format_type_for_assignability_message(display_type))
     }
 
     fn contextual_rest_union_parameter_display(

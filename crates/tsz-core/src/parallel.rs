@@ -2591,6 +2591,12 @@ pub fn create_binder_from_bound_file(
         },
     );
 
+    binder.is_external_module = file.is_external_module;
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = crate::binder::ScopeId(0);
+    }
+
     binder.declared_modules = program.declared_modules.clone();
 
     // Mark lib symbols as merged since the MergedProgram's symbol arena

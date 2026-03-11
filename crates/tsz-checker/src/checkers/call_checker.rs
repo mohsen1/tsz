@@ -56,16 +56,6 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn normalized_spread_argument_type(&mut self, expr: NodeIndex) -> TypeId {
-        let spread_type = self.get_type_of_node(expr);
-        let spread_type = self.resolve_type_for_property_access(spread_type);
-        let spread_type = self.resolve_lazy_type(spread_type);
-        let spread_type = self.evaluate_type_with_env(spread_type);
-        let spread_type = self.resolve_type_for_property_access(spread_type);
-        let spread_type = self.resolve_lazy_type(spread_type);
-        self.evaluate_application_type(spread_type)
-    }
-
     fn overload_candidate_has_hard_non_callback_arg_errors(
         &self,
         args: &[NodeIndex],
@@ -170,104 +160,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    pub(crate) fn sensitive_callback_placeholder_should_skip_round1_inference(
-        &mut self,
-        callee_shape: &tsz_solver::FunctionShape,
-        callback_param_type: TypeId,
-    ) -> bool {
-        !self
-            .sensitive_callback_return_only_type_params(callee_shape, callback_param_type)
-            .is_empty()
-    }
-
-    pub(crate) fn sensitive_callback_return_only_type_params(
-        &mut self,
-        callee_shape: &tsz_solver::FunctionShape,
-        callback_param_type: TypeId,
-    ) -> Vec<tsz_common::interner::Atom> {
-        let tracked_type_params: FxHashSet<_> =
-            callee_shape.type_params.iter().map(|tp| tp.name).collect();
-        if tracked_type_params.is_empty() {
-            return Vec::new();
-        }
-
-        let callback_shape = tsz_solver::get_contextual_signature_with_compat_checker(
-            self.ctx.types,
-            callback_param_type,
-        )
-        .or_else(|| {
-            let evaluated = self.evaluate_type_with_env(callback_param_type);
-            (evaluated != callback_param_type).then(|| {
-                tsz_solver::get_contextual_signature_with_compat_checker(self.ctx.types, evaluated)
-            })?
-        })
-        .or_else(|| {
-            let evaluated = self.evaluate_application_type(callback_param_type);
-            (evaluated != callback_param_type).then(|| {
-                tsz_solver::get_contextual_signature_with_compat_checker(self.ctx.types, evaluated)
-            })?
-        });
-        let Some(callback_shape) = callback_shape else {
-            return Vec::new();
-        };
-
-        let return_mentions: FxHashSet<_> =
-            tsz_solver::collect_referenced_types(self.ctx.types, callback_shape.return_type)
-                .into_iter()
-                .filter_map(|ty| {
-                    tsz_solver::type_param_info(self.ctx.types, ty).and_then(|info| {
-                        tracked_type_params
-                            .contains(&info.name)
-                            .then_some(info.name)
-                    })
-                })
-                .collect();
-        if return_mentions.is_empty() {
-            return Vec::new();
-        }
-
-        let param_mentions: FxHashSet<_> = callback_shape
-            .params
-            .iter()
-            .flat_map(|param| {
-                tsz_solver::collect_referenced_types(self.ctx.types, param.type_id).into_iter()
-            })
-            .filter_map(|ty| {
-                tsz_solver::type_param_info(self.ctx.types, ty).and_then(|info| {
-                    tracked_type_params
-                        .contains(&info.name)
-                        .then_some(info.name)
-                })
-            })
-            .collect();
-
-        return_mentions
-            .into_iter()
-            .filter(|name| !param_mentions.contains(name))
-            .collect()
-    }
-
-    pub(crate) fn should_strip_sensitive_placeholder_substitution(
-        &mut self,
-        callee_shape: &tsz_solver::FunctionShape,
-        callback_param_type: TypeId,
-        type_param_name: tsz_common::interner::Atom,
-        inferred: TypeId,
-    ) -> bool {
-        if !self
-            .sensitive_callback_return_only_type_params(callee_shape, callback_param_type)
-            .into_iter()
-            .any(|name| name == type_param_name)
-        {
-            return false;
-        }
-
-        inferred == TypeId::ANY
-            || inferred == TypeId::UNKNOWN
-            || inferred == TypeId::ERROR
-            || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, inferred)
     }
 
     pub(crate) fn suppress_initializer_contextual_type_for_generic_call(
@@ -545,7 +437,9 @@ impl<'a> CheckerState<'a> {
                 && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                 && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
             {
-                let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.resolve_lazy_type(spread_type);
                 if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                     expanded_count += elems.len();
                     continue;
@@ -587,7 +481,9 @@ impl<'a> CheckerState<'a> {
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                     && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
                 {
-                    let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                    let spread_type = self.get_type_of_node(spread_data.expression);
+                    let spread_type = self.resolve_type_for_property_access(spread_type);
+                    let spread_type = self.resolve_lazy_type(spread_type);
 
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_data.expression);
@@ -867,23 +763,19 @@ impl<'a> CheckerState<'a> {
 
             if apply_contextual
                 && expected_type.is_some()
-                && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                && (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        && self.ctx.generic_excess_skip.is_some()))
+                && self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                })
             {
-                let callback_body_start = (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then(|| {
-                        self.ctx
-                            .arena
-                            .get_function(arg_node)
-                            .and_then(|func| self.ctx.arena.get(func.body))
-                            .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                            .map(|body_node| body_node.pos)
-                    })
-                    .flatten();
+                let callback_body_start = self
+                    .ctx
+                    .arena
+                    .get(arg_idx)
+                    .and_then(|node| self.ctx.arena.get_function(node))
+                    .and_then(|func| self.ctx.arena.get(func.body))
+                    .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
+                    .map(|body_node| body_node.pos);
                 let new_diags = self.ctx.diagnostics.split_off(diag_len);
                 let kept_new_diags: Vec<_> = new_diags
                     .into_iter()
@@ -896,52 +788,11 @@ impl<'a> CheckerState<'a> {
                             diag.code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE;
                         let is_callback_body_diag =
                             callback_body_start.is_some_and(|start| diag.start >= start);
-                        let is_object_literal_diag = arg_node.kind
-                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            && diag.start >= arg_node.pos
-                            && diag.start < arg_node.end;
-                        let is_function_arg_implicit_any_diag =
-                            (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                && is_provisional_implicit_any
-                                && diag.start >= arg_node.pos
-                                && diag.start < arg_node.end;
                         (!is_provisional_assignability && !is_provisional_implicit_any)
-                            || !(is_callback_body_diag
-                                || is_object_literal_diag
-                                || is_function_arg_implicit_any_diag)
+                            || !is_callback_body_diag
                     })
                     .collect();
-                let existing_diag_keys: Vec<_> = self
-                    .ctx
-                    .diagnostics
-                    .iter()
-                    .map(|diag| {
-                        (
-                            diag.code,
-                            diag.start,
-                            diag.length,
-                            diag.message_text.clone(),
-                        )
-                    })
-                    .collect();
-                let mut seen_diag_keys = existing_diag_keys;
-                self.ctx
-                    .diagnostics
-                    .extend(kept_new_diags.into_iter().filter(|diag| {
-                        let key = (
-                            diag.code,
-                            diag.start,
-                            diag.length,
-                            diag.message_text.clone(),
-                        );
-                        if seen_diag_keys.iter().any(|existing| existing == &key) {
-                            false
-                        } else {
-                            seen_diag_keys.push(key);
-                            true
-                        }
-                    }));
+                self.ctx.diagnostics.extend(kept_new_diags);
                 self.ctx.emitted_diagnostics = emitted_before;
                 for diag in self.ctx.diagnostics.iter().skip(diag_len) {
                     self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
@@ -964,12 +815,7 @@ impl<'a> CheckerState<'a> {
                 // contextual type is the constraint `Named`, but tsc does not fire
                 // excess property checks because `T` captures the full object type.
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                    effective_index < skip.len()
-                        && skip[effective_index]
-                        && tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            expected,
-                        )
+                    effective_index < skip.len() && skip[effective_index]
                 })
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
@@ -1005,12 +851,7 @@ impl<'a> CheckerState<'a> {
                 // Also skip when the original parameter type contains a type parameter
                 // (set via generic_excess_skip for generic call paths).
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                    i < skip.len()
-                        && skip[i]
-                        && tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            expected,
-                        )
+                    i < skip.len() && skip[i]
                 })
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
@@ -1027,7 +868,9 @@ impl<'a> CheckerState<'a> {
                 && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                 && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
             {
-                let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.resolve_lazy_type(spread_type);
                 if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                     expanded_count += elems.len();
                     continue;
@@ -1057,7 +900,9 @@ impl<'a> CheckerState<'a> {
                 effective_index += 1;
                 continue;
             };
-            let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+            let spread_type = self.get_type_of_node(spread_data.expression);
+            let spread_type = self.resolve_type_for_property_access(spread_type);
+            let spread_type = self.resolve_lazy_type(spread_type);
             if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                 effective_index += elems.len();
                 continue;
@@ -1113,7 +958,9 @@ impl<'a> CheckerState<'a> {
                 effective_index += 1;
                 continue;
             };
-            let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+            let spread_type = self.get_type_of_node(spread_data.expression);
+            let spread_type = self.resolve_type_for_property_access(spread_type);
+            let spread_type = self.resolve_lazy_type(spread_type);
             if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                 if mismatch_index < effective_index + elems.len() {
                     return prior_non_tuple_spread;
@@ -1224,7 +1071,6 @@ impl<'a> CheckerState<'a> {
         let first_pass_diagnostics_checkpoint = self.ctx.diagnostics.len();
         self.ctx.node_types = Default::default();
         for &arg_idx in &contextual_refresh_args {
-            self.clear_contextual_resolution_cache();
             self.clear_type_cache_recursive(arg_idx);
         }
         let prev_callable_type = self.ctx.current_callable_type;
@@ -1351,7 +1197,6 @@ impl<'a> CheckerState<'a> {
             let diagnostics_checkpoint = self.ctx.diagnostics.len();
             self.ctx.node_types = Default::default();
             for &arg_idx in &contextual_refresh_args {
-                self.clear_contextual_resolution_cache();
                 self.clear_type_cache_recursive(arg_idx);
             }
 
@@ -1392,7 +1237,6 @@ impl<'a> CheckerState<'a> {
             {
                 self.ctx.node_types = Default::default();
                 for &arg_idx in &contextual_refresh_args {
-                    self.clear_contextual_resolution_cache();
                     self.clear_type_cache_recursive(arg_idx);
                 }
 
@@ -1405,12 +1249,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             instantiated_params.last().filter(|param| param.rest)
                         }?;
-                        let evaluated = self.evaluate_type_with_env(param.type_id);
                         Some(
                             if param.rest && i >= instantiated_params.len().saturating_sub(1) {
-                                self.contextual_rest_argument_element_type(evaluated)
+                                self.rest_argument_element_type_with_env(param.type_id)
                             } else {
-                                evaluated
+                                param.type_id
                             },
                         )
                     })

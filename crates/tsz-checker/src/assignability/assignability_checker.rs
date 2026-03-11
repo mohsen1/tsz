@@ -31,6 +31,263 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn normalize_nested_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_type_query_type(type_id);
+        let evaluated = self.evaluate_type_with_env(resolved);
+        let type_id = if evaluated != resolved {
+            evaluated
+        } else {
+            resolved
+        };
+
+        match self.ctx.types.lookup(type_id) {
+            Some(tsz_solver::TypeData::ReadonlyType(inner)) => {
+                let normalized = self.normalize_nested_type_for_assignability(inner);
+                if normalized != inner {
+                    self.ctx.types.readonly_type(normalized)
+                } else {
+                    type_id
+                }
+            }
+            Some(tsz_solver::TypeData::NoInfer(inner)) => {
+                let normalized = self.normalize_nested_type_for_assignability(inner);
+                if normalized != inner {
+                    self.ctx.types.no_infer(normalized)
+                } else {
+                    type_id
+                }
+            }
+            Some(tsz_solver::TypeData::Array(elem)) => {
+                let normalized = self.normalize_nested_type_for_assignability(elem);
+                if normalized != elem {
+                    self.ctx.types.array(normalized)
+                } else {
+                    type_id
+                }
+            }
+            Some(tsz_solver::TypeData::Tuple(elements_id)) => {
+                let elements = self.ctx.types.tuple_list(elements_id);
+                let mut changed = false;
+                let normalized_elements: Vec<_> = elements
+                    .iter()
+                    .map(|elem| {
+                        let normalized = self.normalize_nested_type_for_assignability(elem.type_id);
+                        if normalized != elem.type_id {
+                            changed = true;
+                        }
+                        tsz_solver::TupleElement {
+                            type_id: normalized,
+                            name: elem.name,
+                            optional: elem.optional,
+                            rest: elem.rest,
+                        }
+                    })
+                    .collect();
+                if changed {
+                    self.ctx.types.factory().tuple(normalized_elements)
+                } else {
+                    type_id
+                }
+            }
+            Some(tsz_solver::TypeData::Union(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                let mut changed = false;
+                let normalized_members: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        let normalized = self.normalize_nested_type_for_assignability(member);
+                        if normalized != member {
+                            changed = true;
+                        }
+                        normalized
+                    })
+                    .collect();
+                if changed {
+                    self.ctx.types.factory().union(normalized_members)
+                } else {
+                    type_id
+                }
+            }
+            Some(tsz_solver::TypeData::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                let mut changed = false;
+                let normalized_members: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        let normalized = self.normalize_nested_type_for_assignability(member);
+                        if normalized != member {
+                            changed = true;
+                        }
+                        normalized
+                    })
+                    .collect();
+                if changed {
+                    self.ctx.types.factory().intersection(normalized_members)
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        }
+    }
+
+    fn normalize_function_shape_for_assignability(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+    ) -> Option<tsz_solver::FunctionShape> {
+        let mut changed = false;
+        let params = shape
+            .params
+            .iter()
+            .map(|param| {
+                let evaluated = self.normalize_nested_type_for_assignability(param.type_id);
+                if evaluated != param.type_id {
+                    changed = true;
+                }
+                tsz_solver::ParamInfo {
+                    name: param.name,
+                    type_id: evaluated,
+                    optional: param.optional,
+                    rest: param.rest,
+                }
+            })
+            .collect();
+        let this_type = shape.this_type.map(|this_type| {
+            let evaluated = self.normalize_nested_type_for_assignability(this_type);
+            if evaluated != this_type {
+                changed = true;
+            }
+            evaluated
+        });
+        let return_type = {
+            let evaluated = self.normalize_nested_type_for_assignability(shape.return_type);
+            if evaluated != shape.return_type {
+                changed = true;
+            }
+            evaluated
+        };
+        let type_predicate = shape.type_predicate.as_ref().map(|predicate| {
+            let type_id = predicate.type_id.map(|type_id| {
+                let evaluated = self.normalize_nested_type_for_assignability(type_id);
+                if evaluated != type_id {
+                    changed = true;
+                }
+                evaluated
+            });
+            tsz_solver::TypePredicate {
+                asserts: predicate.asserts,
+                target: predicate.target.clone(),
+                type_id,
+                parameter_index: predicate.parameter_index,
+            }
+        });
+
+        changed.then_some(tsz_solver::FunctionShape {
+            type_params: shape.type_params.clone(),
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        })
+    }
+
+    fn normalize_callable_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        match self.ctx.types.lookup(type_id) {
+            Some(tsz_solver::TypeData::Function(shape_id)) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                self.normalize_function_shape_for_assignability(&shape)
+                    .map(|shape| self.ctx.types.factory().function(shape))
+                    .unwrap_or(type_id)
+            }
+            Some(tsz_solver::TypeData::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                let mut changed = false;
+                let call_signatures: Vec<_> = shape
+                    .call_signatures
+                    .iter()
+                    .map(|sig| {
+                        let normalized = self.normalize_function_shape_for_assignability(
+                            &tsz_solver::FunctionShape {
+                                type_params: sig.type_params.clone(),
+                                params: sig.params.clone(),
+                                this_type: sig.this_type,
+                                return_type: sig.return_type,
+                                type_predicate: sig.type_predicate.clone(),
+                                is_constructor: false,
+                                is_method: false,
+                            },
+                        );
+                        if normalized.is_some() {
+                            changed = true;
+                        }
+                        normalized.map_or_else(
+                            || sig.clone(),
+                            |shape| tsz_solver::CallSignature {
+                                type_params: shape.type_params,
+                                params: shape.params,
+                                this_type: shape.this_type,
+                                return_type: shape.return_type,
+                                type_predicate: shape.type_predicate,
+                                is_method: sig.is_method,
+                            },
+                        )
+                    })
+                    .collect();
+                let construct_signatures: Vec<_> = shape
+                    .construct_signatures
+                    .iter()
+                    .map(|sig| {
+                        let normalized = self.normalize_function_shape_for_assignability(
+                            &tsz_solver::FunctionShape {
+                                type_params: sig.type_params.clone(),
+                                params: sig.params.clone(),
+                                this_type: sig.this_type,
+                                return_type: sig.return_type,
+                                type_predicate: sig.type_predicate.clone(),
+                                is_constructor: true,
+                                is_method: false,
+                            },
+                        );
+                        if normalized.is_some() {
+                            changed = true;
+                        }
+                        normalized.map_or_else(
+                            || sig.clone(),
+                            |shape| tsz_solver::CallSignature {
+                                type_params: shape.type_params,
+                                params: shape.params,
+                                this_type: shape.this_type,
+                                return_type: shape.return_type,
+                                type_predicate: shape.type_predicate,
+                                is_method: sig.is_method,
+                            },
+                        )
+                    })
+                    .collect();
+
+                if changed {
+                    self.ctx
+                        .types
+                        .factory()
+                        .callable(tsz_solver::CallableShape {
+                            call_signatures,
+                            construct_signatures,
+                            properties: shape.properties.clone(),
+                            string_index: shape.string_index.clone(),
+                            number_index: shape.number_index.clone(),
+                            symbol: shape.symbol,
+                            is_abstract: shape.is_abstract,
+                        })
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        }
+    }
+
     fn get_keyof_type_keys(
         &mut self,
         type_id: TypeId,
@@ -364,6 +621,8 @@ impl<'a> CheckerState<'a> {
             evaluated = distributed;
         }
 
+        evaluated = self.normalize_callable_type_for_assignability(evaluated);
+
         evaluated
     }
 
@@ -594,29 +853,82 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if `source` type is assignable to `target` type, resolving Ref types.
+    /// Check assignability with the current `TypeEnvironment` but without
+    /// consulting the checker's relation caches.
     ///
-    /// Uses the provided `TypeEnvironment` to resolve type references.
-    pub fn is_assignable_to_with_env(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        env: &tsz_solver::TypeEnvironment,
-    ) -> bool {
-        let flags = self.ctx.pack_relation_flags();
-        let overrides = CheckerOverrideProvider::new(self, Some(env));
-        is_assignable_with_overrides(
-            &AssignabilityQueryInputs {
+    /// Generic call/new inference uses this after instantiation to avoid stale
+    /// relation answers while still going through the same input preparation as
+    /// the normal assignability gateway.
+    pub fn is_assignable_to_with_env(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+        self.ensure_relation_inputs_ready(&[source, target]);
+        let target = self.substitute_this_type_if_needed(target);
+
+        if source != TypeId::NEVER
+            && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
+        {
+            return false;
+        }
+
+        {
+            let env = self.ctx.type_env.borrow();
+            let flags = self.ctx.pack_relation_flags();
+            let inputs = AssignabilityQueryInputs {
                 db: self.ctx.types,
-                resolver: env,
+                resolver: &*env,
                 source,
                 target,
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
-            },
-            &overrides,
-        )
+            };
+            if let Some(result) = check_application_variance_assignability(&inputs) {
+                return result;
+            }
+        }
+
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+
+        let result = {
+            let env = self.ctx.type_env.borrow();
+            let flags = self.ctx.pack_relation_flags();
+            let overrides = CheckerOverrideProvider::new(self, Some(&*env));
+            is_assignable_with_overrides(
+                &AssignabilityQueryInputs {
+                    db: self.ctx.types,
+                    resolver: &*env,
+                    source,
+                    target,
+                    flags,
+                    inheritance_graph: &self.ctx.inheritance_graph,
+                    sound_mode: self.ctx.sound_mode(),
+                },
+                &overrides,
+            )
+        };
+
+        if result
+            && self
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+        {
+            return false;
+        }
+
+        if let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
+            && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
+        {
+            let source_str = self.ctx.types.resolve_atom(source_atom);
+            let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
+            if !allowed_keys.contains(&source_str) {
+                return false;
+            }
+        }
+
+        result
     }
 
     /// Check if `source` type is assignable to `target` type with bivariant function parameter checking.
