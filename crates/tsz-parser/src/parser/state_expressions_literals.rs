@@ -1231,6 +1231,21 @@ impl ParserState {
             }
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_token(SyntaxKind::ColonToken) {
+                    let saved_token = self.current_token;
+                    let saved_state = self.scanner.save_state();
+                    self.next_token();
+                    let colon_followed_by_expression = self.is_expression_start();
+                    self.scanner.restore_state(saved_state);
+                    self.current_token = saved_token;
+
+                    if colon_followed_by_expression {
+                        self.error_comma_expected();
+                        self.next_token();
+                        continue;
+                    }
+                }
+
                 // Missing comma - check if next token looks like another array element
                 // If so, emit error and continue parsing (better recovery)
                 if self.is_expression_start()

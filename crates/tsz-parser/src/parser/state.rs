@@ -428,6 +428,18 @@ impl ParserState {
         result
     }
 
+    /// Check if the next token (after the current one) is `[` on the same line.
+    pub(crate) fn next_token_is_open_bracket(&mut self) -> bool {
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+        self.next_token();
+        let result = !self.scanner.has_preceding_line_break()
+            && self.current_token == SyntaxKind::OpenBracketToken;
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
     /// Used to emit TS1110 (Type expected) instead of TS1005 (identifier expected)
     /// when a type is expected but we encounter a token that can't start a type
     #[inline]
