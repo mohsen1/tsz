@@ -483,6 +483,74 @@ fn test_application_subtype_canonicalizes_lazy_and_typequery_bases() {
 }
 
 #[test]
+fn test_function_subtype_accepts_canonicalized_application_return_types() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let promise_def = DefId(4041);
+    let promise_symbol = SymbolRef(4041);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let promise_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        t_type,
+    )]);
+    env.insert_def_with_params(promise_def, promise_body, vec![t_param]);
+    env.insert_def_kind(promise_def, DefKind::Interface);
+
+    let source_return = interner.application(
+        interner.intern(TypeData::TypeQuery(promise_symbol)),
+        vec![TypeId::NUMBER],
+    );
+    let target_return = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let mismatch_return = interner.application(interner.lazy(promise_def), vec![TypeId::STRING]);
+
+    let source_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: source_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: target_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mismatch_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
+        this_type: None,
+        return_type: mismatch_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: promise_def,
+        symbol: Some(promise_symbol),
+        variances: Arc::from(vec![Variance::COVARIANT]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    assert!(checker.is_subtype_of(source_fn, target_fn));
+    assert!(!checker.is_subtype_of(source_fn, mismatch_fn));
+}
+
+#[test]
 fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_check() {
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();

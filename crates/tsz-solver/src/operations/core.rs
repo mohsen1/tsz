@@ -48,6 +48,17 @@ pub trait AssignabilityChecker {
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         type_id
     }
+
+    /// Extract the element type from a promise-like application when the checker
+    /// has enough semantic context to do so.
+    ///
+    /// This is used during generic inference for return-position relationships
+    /// like `Promise<number> <: Promise<U>`, especially when the two applications
+    /// are represented with different bases (`Lazy` vs `TypeQuery`) and structural
+    /// expansion alone loses the type argument connection.
+    fn promise_like_type_argument(&mut self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
 }
 
 // =============================================================================

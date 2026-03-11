@@ -1100,8 +1100,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_app = self.interner.type_application(t_app_id);
                 let evaluated_source = self.checker.evaluate_type(source);
                 let evaluated_target = self.checker.evaluate_type(target);
-                if s_app.base == t_app.base
-                    && s_app.args.len() == t_app.args.len()
+                let same_base_application =
+                    s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+                let promise_like_arg_pair = if !same_base_application {
+                    self.checker
+                        .promise_like_type_argument(source)
+                        .zip(self.checker.promise_like_type_argument(target))
+                } else {
+                    None
+                };
+                if same_base_application
                     && matches!(
                         self.interner.lookup(evaluated_target),
                         Some(TypeData::Mapped(_))
@@ -1129,18 +1137,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Objects may fail for interfaces like Promise<T> where methods (then)
                     // have their own generic signatures that block inference. Restricting
                     // to ReturnType priority preserves variance for parameter inference.
-                    if s_app.base == t_app.base
-                        && s_app.args.len() == t_app.args.len()
+                    if same_base_application
                         && priority == crate::types::InferencePriority::ReturnType
                     {
                         for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                             self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                         }
+                    } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
+                        self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
                     }
-                } else if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                } else if same_base_application {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                     }
+                } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
+                    self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
                 }
             }
             (Some(TypeData::Enum(_, s_mem)), Some(TypeData::Enum(_, t_mem))) => {

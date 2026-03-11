@@ -38,6 +38,17 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         self.state.evaluate_type_for_assignability(type_id)
     }
+
+    fn promise_like_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.state
+            .promise_like_return_type_argument(type_id)
+            .or_else(|| {
+                let resolved = self.state.resolve_lazy_type(type_id);
+                (resolved != type_id)
+                    .then(|| self.state.promise_like_return_type_argument(resolved))
+                    .flatten()
+            })
+    }
 }
 
 // =============================================================================
