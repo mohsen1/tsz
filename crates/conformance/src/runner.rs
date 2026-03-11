@@ -654,8 +654,16 @@ impl Runner {
                     // Only the FIRST variant's diagnostics are used for comparison
                     // because the tsc cache was generated with first-value-only
                     // semantics for multi-value options. Non-first variants still
-                    // run for crash/timeout detection.
+                    // run for crash/timeout detection but are skipped when time is
+                    // tight (>5s for the first variant) to avoid cumulative timeouts.
+                    let mut first_variant_slow = false;
                     for (variant_idx, variant) in option_variants.into_iter().enumerate() {
+                        // Skip non-first variants when the first variant was slow —
+                        // the cumulative time of N slow variants would exceed the
+                        // timeout even though each individual variant is within bounds.
+                        if variant_idx > 0 && first_variant_slow {
+                            continue;
+                        }
                         let content_clone = content.clone();
                         let filenames = parsed.directives.filenames.clone();
                         let variant_clone = variant.clone();
@@ -673,6 +681,7 @@ impl Runner {
                         })
                         .await??;
 
+                        let variant_start = Instant::now();
                         let compile_result = if let Some(ref pool) = pool {
                             // Use batch pool — send project dir, read output
                             let timeout_dur = if timeout_secs > 0 {
@@ -743,6 +752,11 @@ impl Runner {
                         if variant_idx == 0 {
                             all_codes.extend(compile_result.error_codes);
                             all_fingerprints.extend(compile_result.diagnostic_fingerprints);
+                            // Mark first variant as slow if it took >3s — skip
+                            // remaining variants to avoid cumulative timeout.
+                            if variant_start.elapsed() > Duration::from_secs(3) {
+                                first_variant_slow = true;
+                            }
                         }
                     }
 
