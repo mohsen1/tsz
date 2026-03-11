@@ -429,38 +429,23 @@ fn jsdoc_has_type_annotations_param_without_type() {
 }
 
 // =========================================================================
-// jsdoc_has_type_tag
-// =========================================================================
-
-#[test]
-fn jsdoc_has_type_tag_braced() {
-    let jsdoc = "@type {SomeType}";
-    assert!(CheckerState::jsdoc_has_type_tag(jsdoc));
-}
-
-#[test]
-fn jsdoc_has_type_tag_braceless() {
-    // Braceless form used for inline function types
-    let jsdoc = "@type (arg: string) => string";
-    assert!(CheckerState::jsdoc_has_type_tag(jsdoc));
-}
-
-#[test]
-fn jsdoc_has_type_tag_absent() {
-    let jsdoc = "@param {string} name";
-    assert!(!CheckerState::jsdoc_has_type_tag(jsdoc));
-}
-
-#[test]
-fn jsdoc_has_type_tag_empty_type() {
-    // @type followed by nothing should not count
-    let jsdoc = "@type";
-    assert!(!CheckerState::jsdoc_has_type_tag(jsdoc));
-}
-
-// =========================================================================
 // jsdoc_extract_type_tag_expr
 // =========================================================================
+
+#[test]
+fn jsdoc_extract_type_tag_expr_braceless_function_type() {
+    let jsdoc = "@type function (number): string";
+    assert_eq!(
+        CheckerState::jsdoc_extract_type_tag_expr_braceless(jsdoc),
+        Some("function (number): string".to_string())
+    );
+}
+
+#[test]
+fn jsdoc_extract_type_tag_expr_braceless_missing_type() {
+    let jsdoc = "@type";
+    assert_eq!(CheckerState::jsdoc_extract_type_tag_expr_braceless(jsdoc), None);
+}
 
 #[test]
 fn jsdoc_extract_type_tag_expr_simple() {

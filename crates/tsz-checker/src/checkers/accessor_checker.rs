@@ -146,7 +146,8 @@ impl<'a> CheckerState<'a> {
                 || self.param_has_inline_jsdoc_type(param_idx)
                 || accessor_jsdoc.is_some_and(|jsdoc| {
                     let pname = self.parameter_name_for_error(param.name);
-                    Self::jsdoc_has_param_type(jsdoc, &pname) || Self::jsdoc_has_type_tag(jsdoc)
+                    Self::jsdoc_has_param_type(jsdoc, &pname)
+                        || Self::jsdoc_type_tag_declares_callable(jsdoc)
                 });
             self.maybe_report_implicit_any_parameter(param, has_jsdoc, 0);
 

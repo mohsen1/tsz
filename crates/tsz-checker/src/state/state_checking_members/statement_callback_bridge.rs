@@ -214,7 +214,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         let pname =
                             self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
                         Self::jsdoc_has_param_type(jsdoc, &pname)
-                            || Self::jsdoc_has_type_tag(jsdoc)
+                            || Self::jsdoc_type_tag_declares_callable(jsdoc)
                             || self.ctx.arena.get(param.name).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                                     || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
