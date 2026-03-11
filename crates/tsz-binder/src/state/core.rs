@@ -636,6 +636,12 @@ impl BinderState {
     ///
     /// Panics if the resolved identifier cache lock is poisoned.
     pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
+        if let Some(node) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(node)
+        {
+            self.set_debug_file(&sf.file_name);
+        }
+
         // Binding mutates scope/symbol tables, so stale identifier resolution entries
         // from prior passes must be dropped.
         self.resolved_identifier_cache.write().unwrap().clear();

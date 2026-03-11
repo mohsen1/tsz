@@ -83,6 +83,34 @@ export type { D as E } from './b';
 }
 
 #[test]
+fn export_as_namespace_records_current_file_namespace_metadata() {
+    let source = r"
+export var x: number;
+export interface Thing { n: typeof x }
+export as namespace Foo;
+";
+    let mut parser = ParserState::new("foo.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let foo_sym_id = binder
+        .file_locals
+        .get("Foo")
+        .expect("expected UMD namespace alias symbol");
+    let foo_symbol = binder
+        .symbols
+        .get(foo_sym_id)
+        .expect("expected symbol data for Foo");
+
+    assert_ne!(foo_symbol.flags & symbol_flags::ALIAS, 0);
+    assert!(foo_symbol.is_umd_export);
+    assert_eq!(foo_symbol.import_module.as_deref(), Some("foo.d.ts"));
+    assert_eq!(foo_symbol.import_name.as_deref(), Some("*"));
+}
+
+#[test]
 fn resolves_wildcard_type_only_reexports_with_provenance() {
     let mut binder = BinderState::new();
 

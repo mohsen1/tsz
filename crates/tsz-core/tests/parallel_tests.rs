@@ -420,6 +420,63 @@ const y = x.get("a");
 }
 
 #[test]
+fn test_check_files_parallel_preserves_ts2454_for_umd_namespace_qualified_type_member() {
+    let files = vec![
+        (
+            "foo.d.ts".to_string(),
+            r#"
+export var x: number;
+export function fn(): void;
+export interface Thing { n: typeof x }
+export as namespace Foo;
+"#
+            .to_string(),
+        ),
+        (
+            "a.ts".to_string(),
+            r#"
+/// <reference path="foo.d.ts" />
+Foo.fn();
+let x: Foo.Thing;
+let y: number = x.n;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "a.ts")
+        .expect("expected a.ts result");
+    let relevant_codes: Vec<u32> = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code != 2318)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert_eq!(
+        relevant_codes,
+        vec![2454],
+        "Expected only TS2454 in a.ts. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_jsdoc_import_type_on_export_default_preserves_ts2353() {
     let files = vec![
         (

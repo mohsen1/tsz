@@ -564,7 +564,12 @@ impl BinderState {
                         sym.declarations.push(export.export_clause);
                         sym.is_umd_export = is_umd;
 
-                        if export.module_specifier.is_some()
+                        if is_umd {
+                            // `export as namespace Foo` creates a global alias to the
+                            // current file's external-module export surface.
+                            sym.import_module = Some(self.debugger.current_file.clone());
+                            sym.import_name = Some("*".to_string());
+                        } else if export.module_specifier.is_some()
                             && let Some(spec_node) = arena.get(export.module_specifier)
                             && let Some(lit) = arena.get_literal(spec_node)
                         {
