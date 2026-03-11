@@ -8,6 +8,15 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn widen_function_like_display_type(&mut self, type_id: TypeId) -> TypeId {
+        let type_id = self.evaluate_type_with_env(type_id);
+        let type_id = self.resolve_type_for_property_access(type_id);
+        let type_id = self.resolve_lazy_type(type_id);
+        let type_id = self.evaluate_application_type(type_id);
+
+        tsz_solver::operations::widening::widen_type(self.ctx.types, type_id)
+    }
+
     fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
         let mut current = expr_idx;
         let mut guard = 0;
@@ -790,6 +799,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         expr_type
                     };
+                let display_type = self.widen_function_like_display_type(display_type);
                 let display_type =
                     if tsz_solver::keyof_inner_type(self.ctx.types, display_type).is_some() {
                         let evaluated = self.evaluate_type_for_assignability(display_type);
@@ -833,6 +843,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 source
             };
+            let display_type = self.widen_function_like_display_type(display_type);
 
             if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -923,6 +934,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         widened_expr_type
                     };
+                let display_type = self.widen_function_like_display_type(display_type);
                 return self.format_assignability_type_for_message(display_type, target);
             }
         }
@@ -947,6 +959,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 source
             };
+            let display_type = self.widen_function_like_display_type(display_type);
             return self.format_assignability_type_for_message(display_type, target);
         }
 

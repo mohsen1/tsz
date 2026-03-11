@@ -5,6 +5,7 @@ use crate::diagnostics::{
     diagnostic_messages, format_message,
 };
 use crate::error_reporter::assignability::is_object_prototype_method;
+use crate::query_boundaries::assignability::{get_function_return_type, replace_function_return_type};
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -13,6 +14,30 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn widen_function_like_call_source(&mut self, type_id: TypeId) -> TypeId {
+        let type_id = self.evaluate_type_with_env(type_id);
+        let type_id = self.resolve_type_for_property_access(type_id);
+        let type_id = self.resolve_lazy_type(type_id);
+        let type_id = self.evaluate_application_type(type_id);
+
+        let widened = tsz_solver::operations::widening::widen_type(self.ctx.types, type_id);
+        if widened != type_id {
+            return widened;
+        }
+
+        if let Some(return_type) = get_function_return_type(self.ctx.types, type_id) {
+            let widened_return = tsz_solver::widen_literal_type(self.ctx.types, return_type);
+            if widened_return != return_type {
+                let replaced = replace_function_return_type(self.ctx.types, type_id, widened_return);
+                if replaced != type_id {
+                    return replaced;
+                }
+            }
+        }
+
+        type_id
+    }
+
     fn should_prefer_property_target_type(
         &self,
         current: Option<TypeId>,
@@ -736,8 +761,10 @@ impl<'a> CheckerState<'a> {
                 && target_prop_type != TypeId::ANY
                 && !self.is_assignable_to(source_prop_type, target_prop_type)
             {
+                let source_prop_type_for_diagnostic =
+                    self.widen_function_like_call_source(source_prop_type);
                 self.error_type_not_assignable_at_with_anchor(
-                    source_prop_type,
+                    source_prop_type_for_diagnostic,
                     target_prop_type_for_diagnostic,
                     prop_name_idx,
                 );
@@ -785,6 +812,8 @@ impl<'a> CheckerState<'a> {
 
                 // Emit TS2322 on the property name node, using the declared type
                 // (without optional undefined) for the error message
+                let source_prop_type_for_diagnostic =
+                    self.widen_function_like_call_source(source_prop_type_for_diagnostic);
                 self.error_type_not_assignable_at_with_anchor(
                     source_prop_type_for_diagnostic,
                     target_prop_type_for_diagnostic,

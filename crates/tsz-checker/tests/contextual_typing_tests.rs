@@ -433,3 +433,54 @@ createMachine2({
         "Expected TS2353 target to mention the filtered mapped intersection, got {ts2353:?}"
     );
 }
+
+#[test]
+fn test_validate_slice_case_reducers_does_not_fail_overload_resolution() {
+    let source = r#"
+declare function createSlice<T>(
+  reducers: { [K: string]: (state: string) => void } & {
+    [K in keyof T]: object;
+  }
+): void;
+
+type SliceCaseReducers<State> = Record<string, (state: State) => State | void>;
+
+type ValidateSliceCaseReducers<S, ACR extends SliceCaseReducers<S>> = ACR & {
+  [T in keyof ACR]: ACR[T] extends {
+    reducer(s: S, action?: infer A): any;
+  }
+    ? {
+        prepare(...a: never[]): Omit<A, "type">;
+      }
+    : {};
+};
+
+declare function createSlice<
+  State,
+  CaseReducers extends SliceCaseReducers<State>
+>(options: {
+  initialState: State | (() => State);
+  reducers: ValidateSliceCaseReducers<State, CaseReducers>;
+}): void;
+
+export const clientSlice = createSlice({
+  initialState: {
+    username: "",
+    isLoggedIn: false,
+    userId: "",
+    avatar: "",
+  },
+  reducers: {
+    onClientUserChanged(state) {},
+  },
+});
+"#;
+
+    let diagnostics = check_default(source);
+    let overload_errors: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 2769).collect();
+
+    assert!(
+        overload_errors.is_empty(),
+        "Expected ValidateSliceCaseReducers example to avoid overload failure, got diagnostics={diagnostics:?}"
+    );
+}

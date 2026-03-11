@@ -5,6 +5,8 @@
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
 use crate::TypeDatabase;
+use crate::evaluation::evaluate::TypeEvaluator;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{LiteralValue, MappedModifier, PropertyInfo, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::FxHashSet;
@@ -1085,11 +1087,25 @@ fn collect_exact_literal_property_keys_inner(
             keys.insert(atom);
             Some(())
         }
-        Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+        Some(TypeData::Union(members)) => {
             for &member in db.type_list(members).iter() {
                 collect_exact_literal_property_keys_inner(db, member, keys, visited)?;
             }
             Some(())
+        }
+        Some(TypeData::Intersection(members)) => {
+            let mut saw_precise_member = false;
+            for &member in db.type_list(members).iter() {
+                if collect_exact_literal_property_keys_inner(db, member, keys, visited).is_some() {
+                    saw_precise_member = true;
+                    continue;
+                }
+                if intersection_member_preserves_literal_keys(db, member) {
+                    continue;
+                }
+                return None;
+            }
+            saw_precise_member.then_some(())
         }
         Some(TypeData::Enum(_, members)) => {
             collect_exact_literal_property_keys_inner(db, members, keys, visited)
@@ -1122,15 +1138,41 @@ fn collect_exact_literal_property_keys(
     Some(keys)
 }
 
+fn intersection_member_preserves_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Intrinsic(crate::types::IntrinsicKind::String)
+                | TypeData::Intrinsic(crate::types::IntrinsicKind::Number)
+        )
+    )
+}
+
 fn resolve_concrete_conditional_branch(
     db: &dyn TypeDatabase,
     cond: &crate::types::ConditionalType,
 ) -> Option<TypeId> {
-    let check_type = crate::evaluation::evaluate::evaluate_type(db, cond.check_type);
+    resolve_concrete_conditional_result(db, cond, cond.check_type)
+}
+
+fn resolve_concrete_conditional_result(
+    db: &dyn TypeDatabase,
+    cond: &crate::types::ConditionalType,
+    check_input: TypeId,
+) -> Option<TypeId> {
+    let check_type = crate::evaluation::evaluate::evaluate_type(db, check_input);
     let extends_type = crate::evaluation::evaluate::evaluate_type(db, cond.extends_type);
 
+    if let Some(TypeData::Union(members)) = db.lookup(check_type) {
+        let members = db.type_list(members);
+        let mut results = Vec::new();
+        for &member in members.iter() {
+            results.push(resolve_concrete_conditional_result(db, cond, member)?);
+        }
+        return Some(crate::utils::union_or_single(db, results));
+    }
+
     if contains_type_parameters_db(db, check_type)
-        || contains_type_parameters_db(db, extends_type)
         || matches!(check_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
         || matches!(extends_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
     {
@@ -1147,6 +1189,30 @@ fn resolve_concrete_conditional_branch(
         } else {
             cond.false_type
         });
+    }
+
+    if contains_type_parameters_db(db, extends_type)
+        && !contains_type_parameters_db(db, cond.check_type)
+    {
+        let evaluator = TypeEvaluator::new(db);
+        if evaluator.type_contains_infer(cond.extends_type) {
+            let mut bindings = rustc_hash::FxHashMap::default();
+            let mut visited = FxHashSet::default();
+            let mut checker = SubtypeChecker::new(db);
+            if evaluator.match_infer_pattern(
+                check_type,
+                cond.extends_type,
+                &mut bindings,
+                &mut visited,
+                &mut checker,
+            ) {
+                let substituted = evaluator.substitute_infer(cond.true_type, &bindings);
+                let evaluated = crate::evaluation::evaluate::evaluate_type(db, substituted);
+                return Some(evaluated);
+            }
+            return Some(cond.false_type);
+        }
+        return None;
     }
 
     Some(if crate::is_subtype_of(db, check_type, extends_type) {
