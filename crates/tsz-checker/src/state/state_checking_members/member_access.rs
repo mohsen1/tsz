@@ -1098,6 +1098,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut seen_names: FxHashMap<String, MemberInfo> = FxHashMap::default();
+        let mut constructor_declarations: Vec<NodeIndex> = Vec::new();
         let mut constructor_implementations: Vec<NodeIndex> = Vec::new();
 
         // Track accessor occurrences for duplicate detection
@@ -1169,6 +1170,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    constructor_declarations.push(member_idx);
                     if let Some(constructor) = self.ctx.arena.get_constructor(member_node)
                         && constructor.body.is_some()
                     {
@@ -1303,7 +1305,7 @@ impl<'a> CheckerState<'a> {
         // TS2392: multiple constructor implementations are not allowed.
         // Constructor overload signatures are valid; only declarations with bodies count.
         if constructor_implementations.len() > 1 {
-            for &idx in &constructor_implementations {
+            for &idx in &constructor_declarations {
                 self.error_at_node(
                     idx,
                     "Multiple constructor implementations are not allowed.",
