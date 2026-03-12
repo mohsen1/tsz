@@ -447,8 +447,8 @@ b.m(2);
 }
 
 #[test]
-fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types()
- {
+fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types(
+) {
     let source = r#"
 var A = function A() {
     this.a = 1;
@@ -789,5 +789,31 @@ Installer.prototype.loadArgMetadata = function(next) {
         ts2322.len(),
         1,
         "Expected prototype-method arrow to inherit instance this and report TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_prototype_method_arrow_adds_instance_properties() {
+    let source = r#"
+function Installer() {
+    this.args = 0;
+}
+Installer.prototype.loadArgMetadata = function(next) {
+    (args) => {
+        this.newProperty = 1;
+    };
+}
+var i = new Installer();
+i.newProperty = i.args;
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 18048 | 7009))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected prototype-method arrows to contribute instance properties, got: {diagnostics:?}"
     );
 }

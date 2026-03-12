@@ -384,6 +384,11 @@ impl<'a> CheckerState<'a> {
                 &mut method_this_props,
                 Some(parent_sym),
             );
+            self.collect_nested_arrow_this_properties(
+                method_body,
+                &mut method_this_props,
+                Some(parent_sym),
+            );
 
             for (name, prop) in method_this_props {
                 this_props.push((name, prop));
@@ -391,6 +396,50 @@ impl<'a> CheckerState<'a> {
         }
 
         (method_bindings, this_props, has_prototype_evidence)
+    }
+
+    fn collect_nested_arrow_this_properties(
+        &mut self,
+        body_idx: NodeIndex,
+        properties: &mut rustc_hash::FxHashMap<
+            tsz_common::interner::Atom,
+            tsz_solver::PropertyInfo,
+        >,
+        parent_sym: Option<tsz_binder::SymbolId>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return;
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION {
+                continue;
+            }
+            let Some(arrow) = self.ctx.arena.get_function(expr_node) else {
+                continue;
+            };
+            if arrow.body.is_none() {
+                continue;
+            }
+            self.collect_js_constructor_this_properties(arrow.body, properties, parent_sym);
+        }
     }
 
     fn is_object_define_property_on_function_prototype(
