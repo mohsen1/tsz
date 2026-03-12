@@ -63,6 +63,13 @@ where
     tsz_solver::type_queries::has_type_query_for_symbol(db, type_id, target_sym_id, resolve_lazy)
 }
 
+pub(crate) fn needs_env_eval(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        tsz_solver::type_queries::classify_for_assignability_eval(db, type_id),
+        tsz_solver::type_queries::AssignabilityEvalKind::NeedsEnvEval
+    )
+}
+
 pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
 }
