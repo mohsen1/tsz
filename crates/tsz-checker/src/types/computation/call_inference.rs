@@ -1255,7 +1255,9 @@ impl<'a> CheckerState<'a> {
             if let Some(dedup_snapshot) = dedup_snapshot {
                 self.ctx.emitted_diagnostics = dedup_snapshot;
                 for diag in self.ctx.diagnostics.iter().skip(diag_len) {
-                    self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
+                    self.ctx
+                        .emitted_diagnostics
+                        .insert(self.ctx.diagnostic_dedup_key(diag));
                 }
             }
         }

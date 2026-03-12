@@ -13127,6 +13127,11 @@ f2(
         has_error(&diagnostics, 2353),
         "Expected TS2353 for excess property 'foo' on the filtered mapped handlers object.\nActual diagnostics: {diagnostics:#?}"
     );
+    let ts2353_count = diagnostics.iter().filter(|(code, _)| *code == 2353).count();
+    assert_eq!(
+        ts2353_count, 1,
+        "Expected exactly one TS2353 diagnostic for the excess property site.\nActual diagnostics: {diagnostics:#?}"
+    );
     let ts7006_count = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
     assert_eq!(
         ts7006_count, 2,
