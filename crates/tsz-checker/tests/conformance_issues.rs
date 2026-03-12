@@ -7516,6 +7516,27 @@ function f(x) { }
     );
 }
 
+#[test]
+fn test_ts7006_reserved_word_parameter_in_generator_strict_mode() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        "function*foo(yield) {}",
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1212),
+        "Expected strict-mode reserved-word diagnostic for generator parameter.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Expected TS7006 alongside strict-mode reserved-word diagnostic.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7006 should NOT fire when parameter has explicit type annotation.
 #[test]
 fn test_no_ts7006_with_type_annotation() {
