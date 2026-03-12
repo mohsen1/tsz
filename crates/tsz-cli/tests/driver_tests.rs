@@ -6653,6 +6653,72 @@ fn compile_short_garbage_payload_binary_suppresses_parser_diagnostics() {
 }
 
 #[test]
+fn compile_import_alias_assignment_does_not_leak_non_exported_module_symbols() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": [
+            "aliasUsageInVarAssignment_backbone.ts",
+            "aliasUsageInVarAssignment_moduleA.ts",
+            "aliasUsageInVarAssignment_main.ts"
+          ]
+        }"#,
+    );
+    write_file(
+        &base.join("aliasUsageInVarAssignment_backbone.ts"),
+        r#"export class Model {
+    public someData: string;
+}
+"#,
+    );
+    write_file(
+        &base.join("aliasUsageInVarAssignment_moduleA.ts"),
+        r#"import Backbone = require("./aliasUsageInVarAssignment_backbone");
+export class VisualizationModel extends Backbone.Model {
+    // interesting stuff here
+}
+"#,
+    );
+    write_file(
+        &base.join("aliasUsageInVarAssignment_main.ts"),
+        r#"import Backbone = require("./aliasUsageInVarAssignment_backbone");
+import moduleA = require("./aliasUsageInVarAssignment_moduleA");
+interface IHasVisualizationModel {
+    VisualizationModel: typeof Backbone.Model;
+}
+var i: IHasVisualizationModel;
+var m: typeof moduleA = i;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+
+    assert_eq!(
+        codes,
+        vec![2454, 2564],
+        "Expected only TS2454 and TS2564 for alias usage assignment. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code != 2740),
+        "Expected no TS2740 namespace-shape diagnostic leakage. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn ts2688_unresolved_types_in_tsconfig() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
