@@ -1510,7 +1510,12 @@ impl<'a> CheckerState<'a> {
             let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
 
             // Determine type: JSDoc @type annotation > inferred from RHS
+            // Track whether the resulting `any` type came from an explicit source
+            // (JSDoc @type, or a parameter with @param {any}) vs a truly implicit one
+            // (no RHS, or RHS is null/undefined without annotation).
+            let mut any_is_explicit = false;
             let type_id = if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
+                any_is_explicit = true;
                 jsdoc_type
             } else if !rhs_idx.is_none() {
                 let mut rhs_type = self.get_type_of_node(rhs_idx);
@@ -1531,6 +1536,61 @@ impl<'a> CheckerState<'a> {
                 }
                 if rhs_type == TypeId::NULL || rhs_type == TypeId::UNDEFINED {
                     rhs_type = TypeId::ANY;
+                } else if rhs_type == TypeId::ANY
+                    || tsz_solver::type_queries::get_array_element_type(self.ctx.types, rhs_type)
+                        == Some(TypeId::ANY)
+                {
+                    // RHS evaluates to `any` or `any[]` — check if it came from
+                    // an explicitly-typed source (e.g., a parameter with @param {any}).
+                    // If so, the member's `any` type is explicit, not implicit.
+                    if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+                        && rhs_node.kind == SyntaxKind::Identifier as u16
+                    {
+                        if let Some(sym_id) =
+                            self.ctx.binder.resolve_identifier(self.ctx.arena, rhs_idx)
+                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        {
+                            let decl = symbol.value_declaration;
+                            if !decl.is_none() {
+                                // Check if the declaration has an inline type annotation
+                                let has_inline_type = self.ctx.arena.get(decl).is_some_and(|d| {
+                                    self.ctx
+                                        .arena
+                                        .get_parameter(d)
+                                        .is_some_and(|p| !p.type_annotation.is_none())
+                                });
+                                // Check if the enclosing function's JSDoc has
+                                // a @param {type} tag for this parameter
+                                let has_jsdoc_param_type = if !has_inline_type {
+                                    let param_name = self
+                                        .ctx
+                                        .arena
+                                        .get(decl)
+                                        .and_then(|d| self.ctx.arena.get_parameter(d))
+                                        .and_then(|p| self.ctx.arena.get(p.name))
+                                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                                        .map(|id| id.escaped_text.as_str());
+                                    if let Some(pname) = param_name {
+                                        // Walk to enclosing function via extended node parent
+                                        let func_idx =
+                                            self.ctx.arena.get_extended(decl).map(|ext| ext.parent);
+                                        func_idx
+                                            .and_then(|fidx| self.get_jsdoc_for_function(fidx))
+                                            .is_some_and(|jsdoc| {
+                                                Self::jsdoc_has_param_type(&jsdoc, pname)
+                                            })
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                };
+                                if has_inline_type || has_jsdoc_param_type {
+                                    any_is_explicit = true;
+                                }
+                            }
+                        }
+                    }
                 }
                 if is_readonly {
                     rhs_type
@@ -1541,7 +1601,7 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
-            if self.ctx.no_implicit_any() {
+            if self.ctx.no_implicit_any() && !any_is_explicit {
                 let implicit_type = if type_id == TypeId::ANY {
                     Some("any")
                 } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
