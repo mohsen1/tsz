@@ -327,18 +327,31 @@ const x: number = 42;
 }
 
 #[test]
-fn test_compile_defaults_to_non_strict_when_strict_directive_is_absent() {
-    let content = r#"
-function f(x: string): number { return null; }
-var g: (s1: string) => number;
-g = f;
-"#;
-    let tsz = find_tsz_binary();
-    let result = compile_test(content, &[], &HashMap::new(), &tsz).unwrap();
-
+fn test_convert_options_leaves_strict_absent_when_not_explicit() {
+    let opts = convert_options_to_tsconfig(&HashMap::new(), &[]);
+    let compiler_options = opts
+        .as_object()
+        .expect("compilerOptions should be an object");
     assert!(
-        result.error_codes.is_empty(),
-        "conformance wrapper should default to non-strict semantics when @strict is absent: {result:?}"
+        !compiler_options.contains_key("strict"),
+        "strict should stay omitted when the test does not specify @strict"
+    );
+}
+
+#[test]
+fn test_convert_options_expands_explicit_strict_false() {
+    let options = HashMap::from([("strict".to_string(), "false".to_string())]);
+    let opts = convert_options_to_tsconfig(&options, &[]);
+    let compiler_options = opts
+        .as_object()
+        .expect("compilerOptions should be an object");
+    assert_eq!(
+        compiler_options.get("strict"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        compiler_options.get("strictPropertyInitialization"),
+        Some(&serde_json::Value::Bool(false))
     );
 }
 

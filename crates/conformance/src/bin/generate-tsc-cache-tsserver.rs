@@ -518,10 +518,9 @@ fn convert_options_to_tsconfig(
         opts.insert(canonical_key.to_string(), json_value);
     }
 
-    if !strict_explicit {
-        opts.insert("strict".to_string(), serde_json::Value::Bool(false));
-    }
-
+    // Mirror TypeScript harness behavior by leaving `strict` absent unless the
+    // test explicitly requested it.
+    //
     // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
     if strict_explicit {
         if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
