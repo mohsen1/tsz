@@ -1978,12 +1978,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut result = FxHashSet::default();
-        for (&placeholder_id, &var) in var_map.iter() {
-            probe_map.clear();
-            probe_map.insert(placeholder_id, var);
-            visited.clear();
-            if self.type_contains_placeholder(ty, probe_map, visited) {
+        for nested in crate::visitor::collect_all_types(self.interner.as_type_database(), ty) {
+            if let Some(&var) = var_map.get(&nested) {
                 result.insert(var);
+            }
+        }
+        let evaluated_ty = self.interner.evaluate_type(ty);
+        if evaluated_ty != ty {
+            for nested in
+                crate::visitor::collect_all_types(self.interner.as_type_database(), evaluated_ty)
+            {
+                if let Some(&var) = var_map.get(&nested) {
+                    result.insert(var);
+                }
+            }
+        }
+        if result.is_empty() {
+            for (&placeholder_id, &var) in var_map.iter() {
+                probe_map.clear();
+                probe_map.insert(placeholder_id, var);
+                visited.clear();
+                if self.type_contains_placeholder(ty, probe_map, visited) {
+                    result.insert(var);
+                }
             }
         }
 
