@@ -821,8 +821,10 @@ impl BinderState {
             }
             if let Some(symbol) = self.symbols.get(sym_id) {
                 // Check if this is a module/namespace symbol
-                if (symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
-                    != 0
+                if symbol.is_exported
+                    && (symbol.flags
+                        & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
+                        != 0
                 {
                     // If the module has an exports table, merge it into file_exports
                     if let Some(module_exports) = symbol.exports.as_ref() {
