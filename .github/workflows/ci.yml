@@ -474,6 +474,7 @@ jobs:
       needs.changes.outputs.lsp == 'true'
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -524,25 +525,6 @@ jobs:
             scripts/node_modules/
           retention-days: 1
 
-      - name: Build TypeScript harness
-        run: |
-          ./scripts/setup/ensure-pinned-typescript.sh TypeScript
-          cd TypeScript
-          npm ci --silent 2>/dev/null || npm ci
-          if [ ! -f "built/local/harness/fourslashImpl.js" ]; then
-            node scripts/processDiagnosticMessages.mjs src/compiler/diagnosticMessages.json
-            npx hereby lib 2>/dev/null || true
-            npx hereby harness 2>/dev/null || true
-          fi
-
-      - name: Upload TS harness
-        uses: actions/upload-artifact@v4
-        with:
-          name: ts-harness
-          path: |
-            TypeScript/built/local/
-            TypeScript/node_modules/
-          retention-days: 1
 
   # ─── Conformance: 10 parallel shards ───────────────────────────────────────
   conformance:
@@ -1002,15 +984,14 @@ jobs:
           mkdir -p .target/release
           ln -sf "$PWD/.target/dist-fast/tsz-server" .target/release/tsz-server
 
-      - name: Download TS harness
-        uses: actions/download-artifact@v4
+      - name: Cache fourslash deps & harness
+        uses: actions/cache@v4
         with:
-          name: ts-harness
-          path: TypeScript/
-
-      - name: Install fourslash deps
-        run: |
-          cd scripts/fourslash && npm install --silent 2>/dev/null || npm install
+          path: |
+            scripts/fourslash/node_modules
+            TypeScript/node_modules
+            TypeScript/built/local
+          key: ${{ runner.os }}-fourslash-${{ hashFiles('scripts/fourslash/package-lock.json', 'TypeScript/package-lock.json') }}
 
       - name: Run fourslash shard
         id: shard-results
@@ -1023,7 +1004,7 @@ jobs:
           CLEANOUT=$(mktemp)
           trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
-          ./scripts/fourslash/run-fourslash.sh --skip-build --offset=$OFFSET --max=$CHUNK 2>&1 | tee "$TMPOUT" || true
+          ./scripts/fourslash/run-fourslash.sh --skip-cargo-build --offset=$OFFSET --max=$CHUNK 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)
