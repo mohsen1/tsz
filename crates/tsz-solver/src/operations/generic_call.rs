@@ -1882,11 +1882,94 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    fn partial_round1_object_pair(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        let source_ty = self.checker.evaluate_type(source_ty);
+        let target_ty = self.checker.evaluate_type(target_ty);
+
+        let (Some(source_obj), Some(target_obj)) =
+            (
+                match self.interner.lookup(source_ty) {
+                    Some(TypeData::Object(shape_id))
+                    | Some(TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+                    _ => None,
+                },
+                match self.interner.lookup(target_ty) {
+                    Some(TypeData::Object(shape_id))
+                    | Some(TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+                    _ => None,
+                },
+            )
+        else {
+            return None;
+        };
+
+        let source_shape = self.interner.object_shape(source_obj);
+        let target_shape = self.interner.object_shape(target_obj);
+
+        let mut target_props_by_name: FxHashMap<_, _> = FxHashMap::default();
+        for prop in &target_shape.properties {
+            target_props_by_name.insert(prop.name, prop);
+        }
+
+        let mut source_properties = Vec::new();
+        let mut target_properties = Vec::new();
+        for prop in &source_shape.properties {
+            if self.is_contextually_sensitive(prop.type_id) {
+                continue;
+            }
+
+            if let Some(target_prop) = target_props_by_name.get(&prop.name) {
+                source_properties.push(prop.clone());
+                target_properties.push((**target_prop).clone());
+            }
+        }
+
+        if source_properties.is_empty() {
+            return None;
+        }
+
+        if source_properties.len() == source_shape.properties.len()
+            && target_properties.len() == target_shape.properties.len()
+        {
+            return Some((source_ty, target_ty));
+        }
+
+        let mut source_shape = (*source_shape).clone();
+        source_shape.properties = source_properties;
+
+        let mut target_shape = (*target_shape).clone();
+        target_shape.properties = target_properties;
+
+        Some((
+            self.interner.object_with_index(source_shape),
+            self.interner.object_with_index(target_shape),
+        ))
+    }
+
     fn contextual_round1_arg_types(
-        &self,
+        &mut self,
         arg_type: TypeId,
         target_type: TypeId,
     ) -> Option<(TypeId, TypeId)> {
+        if let (Some(mut source_fn), Some(mut target_fn)) = (
+            Self::get_contextual_signature(self.interner.as_type_database(), arg_type),
+            Self::get_contextual_signature(self.interner.as_type_database(), target_type),
+        ) && source_fn.params.len() == target_fn.params.len()
+            && let Some((source_return, target_return)) =
+                self.partial_round1_object_pair(source_fn.return_type, target_fn.return_type)
+        {
+            source_fn.return_type = source_return;
+            target_fn.return_type = target_return;
+            return Some((
+                self.interner.function(source_fn),
+                self.interner.function(target_fn),
+            ));
+        }
+
         if !self.is_contextually_sensitive(arg_type) {
             return Some((arg_type, target_type));
         }
