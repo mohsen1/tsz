@@ -115,6 +115,45 @@ fn load_tsconfig_detects_extends_cycle() {
 }
 
 #[test]
+fn load_tsconfig_resolves_package_exports_wildcard_extends() {
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::create_dir_all(temp.path.join("node_modules/foo/configs"))
+        .expect("package config dir");
+
+    write_file(
+        &temp.path,
+        "node_modules/foo/package.json",
+        r#"{
+          "name": "foo",
+          "version": "1.0.0",
+          "exports": {
+            "./*.json": "./configs/*.json"
+          }
+        }"#,
+    );
+    write_file(
+        &temp.path,
+        "node_modules/foo/configs/strict.json",
+        r#"{
+          "compilerOptions": { "strict": true }
+        }"#,
+    );
+
+    let child_path = write_file(
+        &temp.path,
+        "tsconfig.json",
+        r#"{
+          "extends": "foo/strict.json"
+        }"#,
+    );
+
+    let config = load_tsconfig(&child_path).expect("should load config through package exports");
+    let options = config.compiler_options.expect("compilerOptions missing");
+
+    assert_eq!(options.strict, Some(true));
+}
+
+#[test]
 fn resolve_compiler_options_defaults() {
     let resolved = resolve_compiler_options(None).expect("defaults should resolve");
 
