@@ -546,11 +546,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
 
             if !self.is_uninformative_contextual_inference_input(t_effective) {
+                let was_contra = infer_ctx.in_contra_mode;
+                infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
                     t_effective,
                     s_effective,
                     InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.in_contra_mode = was_contra;
             }
         }
 
@@ -563,20 +566,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .take(source_fixed_count)
                 .skip(target_fixed_count)
             {
+                let was_contra = infer_ctx.in_contra_mode;
+                infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
                     rest_elem_type,
                     s_param.type_id,
                     InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.in_contra_mode = was_contra;
             }
 
             if source_has_rest && let Some(s_rest_param) = source_params_unpacked.last() {
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                let was_contra = infer_ctx.in_contra_mode;
+                infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
                     rest_elem_type,
                     s_rest_elem,
                     InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.in_contra_mode = was_contra;
             }
         }
 
@@ -588,11 +597,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .skip(source_fixed_count)
             {
                 if !self.is_uninformative_contextual_inference_input(t_param.type_id) {
+                    let was_contra = infer_ctx.in_contra_mode;
+                    infer_ctx.in_contra_mode = true;
                     let _ = infer_ctx.infer_from_types(
                         t_param.type_id,
                         rest_elem_type,
                         InferencePriority::NakedTypeVariable,
                     );
+                    infer_ctx.in_contra_mode = was_contra;
                 }
             }
         }

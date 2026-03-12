@@ -1580,14 +1580,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         );
         let return_type =
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
-        let final_args: Vec<TypeId> = if final_arg_subst.is_empty() {
-            arg_types.to_vec()
-        } else {
-            arg_types
-                .iter()
-                .map(|&arg| self.normalize_inferred_placeholder_type(arg, &final_arg_subst))
-                .collect()
-        };
         let instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
             instantiated_params
         } else {
@@ -1602,6 +1594,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
                 .collect()
         };
+        let final_args: Vec<TypeId> = arg_types
+            .iter()
+            .enumerate()
+            .map(|(i, &arg)| {
+                let normalized = if final_arg_subst.is_empty() {
+                    arg
+                } else {
+                    self.normalize_inferred_placeholder_type(arg, &final_arg_subst)
+                };
+                let Some(param_type) =
+                    self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+                else {
+                    return normalized;
+                };
+                self.instantiate_generic_function_argument_against_target(normalized, param_type)
+            })
+            .collect();
         tracing::debug!(
             "Final argument check with {} instantiated params",
             instantiated_params.len()
@@ -2176,7 +2185,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    fn instantiate_generic_function_argument_against_target(
+    pub(crate) fn instantiate_generic_function_argument_against_target(
         &mut self,
         source_ty: TypeId,
         target_ty: TypeId,
@@ -2206,16 +2215,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
-        if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
-            return source_ty;
+        if source_fn.type_params.is_empty() {
+            return self.interner.function(source_fn);
         }
 
-        let target_param_types: Vec<_> = target_fn
-            .params
-            .iter()
-            .take(source_fn.params.len())
-            .map(|p| p.type_id)
-            .collect();
+        let mut target_param_types = Vec::with_capacity(source_fn.params.len());
+        for index in 0..source_fn.params.len() {
+            let Some(param_type) =
+                self.param_type_for_arg_index(&target_fn.params, index, source_fn.params.len())
+            else {
+                return source_ty;
+            };
+            target_param_types.push(param_type);
+        }
+
+        if target_param_types.is_empty() {
+            return source_ty;
+        }
         let prev_contextual_type = self.contextual_type;
         self.contextual_type = Some(target_ty);
         let instantiated =
