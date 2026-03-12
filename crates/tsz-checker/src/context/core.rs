@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::control_flow::FlowGraph;
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::module_resolution::module_specifier_candidates;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
@@ -444,6 +444,21 @@ impl<'a> CheckerContext<'a> {
             self.diagnostics
                 .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
             self.emitted_diagnostics.remove(&(diag.start, 2304));
+        }
+        if diag.code == 2322 {
+            let diag_end = diag.start.saturating_add(diag.length);
+            // TS2353/TS2561 on a property inside an object literal should suppress
+            // a redundant enclosing TS2322 on the whole literal.
+            if self.diagnostics.iter().any(|existing| {
+                (existing.code
+                    == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                    || existing.code
+                        == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID)
+                    && existing.start >= diag.start
+                    && existing.start < diag_end
+            }) {
+                return;
+            }
         }
 
         let key = self.diagnostic_dedup_key(&diag);
