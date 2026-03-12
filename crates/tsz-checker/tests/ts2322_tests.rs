@@ -1079,11 +1079,13 @@ foo({ x: false, y: 0, z: "" });
         *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
     });
 
-    // tsc elaborates property-level TS2322; we currently emit TS2345 at the
-    // argument level. Accept either until full elaboration is implemented.
     assert!(
-        ts2322_count >= 2 || has_ts2345,
-        "Expected property-level TS2322 or argument-level TS2345 for mismatched fields, got: {diagnostics:?}"
+        ts2322_count >= 2,
+        "Expected property-level TS2322 for the mismatched object-literal fields, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2345,
+        "Did not expect outer TS2345 once property-level elaboration applies, got: {diagnostics:?}"
     );
 }
 
