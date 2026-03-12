@@ -940,9 +940,20 @@ impl<'a> CheckerState<'a> {
             if let Some(param) = self.ctx.arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
-                return self
+                let mut text = self
                     .node_text(param.type_annotation)
-                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes));
+                    .and_then(|text| sanitize_type_annotation_text(text, allow_object_shapes))?;
+                if param.question_token
+                    && self.ctx.strict_null_checks()
+                    && !text.contains("undefined")
+                {
+                    if text.contains("=>") {
+                        text = format!("({text}) | undefined");
+                    } else {
+                        text.push_str(" | undefined");
+                    }
+                }
+                return Some(text);
             }
 
             if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl)
@@ -2068,22 +2079,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let required_props: Vec<_> = target_shape
+        let missing_required_props: Vec<_> = target_shape
             .properties
             .iter()
             .filter(|p| !p.optional)
+            .filter(|prop| !source_shape.properties.iter().any(|p| p.name == prop.name))
             .collect();
-        if required_props.len() != 1 {
+        if missing_required_props.len() != 1 {
             return None;
         }
 
-        let prop = required_props[0];
-        let source_has_prop = source_shape.properties.iter().any(|p| p.name == prop.name);
-        if source_has_prop {
-            return None;
-        }
-
-        Some(prop.name)
+        Some(missing_required_props[0].name)
     }
 
     /// Walk up the AST to find the appropriate diagnostic anchor for assignment errors.

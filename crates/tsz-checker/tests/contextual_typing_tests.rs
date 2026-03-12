@@ -11,11 +11,19 @@
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// Helper: parse, bind, check with default options.
 fn check_default(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    check_with_options(source, CheckerOptions::default())
+}
+
+fn check_with_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<crate::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -23,7 +31,6 @@ fn check_default(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let options = CheckerOptions::default();
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -126,6 +133,104 @@ function f(): number {
     assert!(
         !ts2322_errors.is_empty(),
         "Annotated return type should still produce TS2322 for type mismatch"
+    );
+}
+
+#[test]
+fn generic_overload_retry_discards_stale_callback_body_diagnostics() {
+    let source = r#"
+interface Collection<T> {
+    length: number;
+    add(x: T): void;
+    remove(x: T): boolean;
+}
+interface Combinators {
+    map<T, U>(c: Collection<T>, f: (x: T) => U): Collection<U>;
+    map<T>(c: Collection<T>, f: (x: T) => any): Collection<any>;
+}
+
+declare var _: Combinators;
+declare var c2: Collection<number>;
+
+var rf1 = (x: number) => { return x.toFixed() };
+var r1a = _.map(c2, (x) => { return x.toFixed() });
+var r1b = _.map(c2, rf1);
+var r5a = _.map<number, string>(c2, (x) => { return x.toFixed() });
+var r5b = _.map<number, string>(c2, rf1);
+"#;
+    let diagnostics = check_default(source);
+    let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        ts2339_errors.is_empty(),
+        "Generic overload retry should not keep stale callback-body TS2339 diagnostics, got: {ts2339_errors:?}"
+    );
+}
+
+#[test]
+fn hard_non_callback_overload_errors_do_not_keep_callback_body_diagnostics() {
+    let source = r#"
+interface Collection<T> {
+    length: number;
+    add(x: T): void;
+    remove(x: T): boolean;
+}
+interface Combinators {
+    map<T, U>(c: Collection<T>, f: (x: T) => U): Collection<U>;
+    map<T>(c: Collection<T>, f: (x: T) => any): Collection<any>;
+}
+
+var _: Combinators;
+var c2: Collection<number>;
+
+var r1a = _.map(c2, (x) => { return x.toFixed() });
+"#;
+    let diagnostics = check_default(source);
+    let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        ts2339_errors.is_empty(),
+        "Hard non-callback overload errors should not keep speculative callback-body TS2339 diagnostics, got: {ts2339_errors:?}"
+    );
+}
+
+#[test]
+fn callbacks_dont_share_types_conformance_source_has_no_ts2339() {
+    let source = r#"
+interface Collection<T> {
+    length: number;
+    add(x: T): void;
+    remove(x: T): boolean;
+}
+interface Combinators {
+    map<T, U>(c: Collection<T>, f: (x: T) => U): Collection<U>;
+    map<T>(c: Collection<T>, f: (x: T) => any): Collection<any>;
+}
+
+var _: Combinators;
+var c2: Collection<number>;
+
+var rf1 = (x: number) => { return x.toFixed() };
+var r1a = _.map(c2, (x) => { return x.toFixed() });
+var r1b = _.map(c2, rf1);
+var r5a = _.map<number, string>(c2, (x) => { return x.toFixed() });
+var r5b = _.map<number, string>(c2, rf1);
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    let ts2454_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2454).collect();
+    assert!(
+        ts2339_errors.is_empty(),
+        "callbacksDontShareTypes should not emit TS2339, got: {ts2339_errors:?}"
+    );
+    assert_eq!(
+        ts2454_errors.len(),
+        8,
+        "callbacksDontShareTypes should preserve all TS2454 diagnostics, got: {ts2454_errors:?}"
     );
 }
 
