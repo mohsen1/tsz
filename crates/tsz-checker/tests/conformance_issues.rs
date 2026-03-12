@@ -13147,6 +13147,37 @@ const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 1
 }
 
 #[test]
+fn test_contextual_signature_instantiation_reports_generic_callback_mismatch() {
+    let source = r#"
+declare function foo<T>(cb: (x: number, y: string) => T): T;
+declare function bar<T, U, V>(x: T, y: U, cb: (x: T, y: U) => V): V;
+declare function g<T>(x: T, y: T): T;
+
+var b = foo(g);
+var c = bar(1, "one", g);
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 2,
+        "Expected TS2345 on both generic callback mismatch sites.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(

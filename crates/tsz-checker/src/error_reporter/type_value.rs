@@ -20,16 +20,15 @@ impl<'a> CheckerState<'a> {
         current_type: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress for ERROR and UNKNOWN types.
+        // Suppress for ERROR and prior UNKNOWN types.
         // ERROR: avoids cascading diagnostics from unresolved types.
-        // UNKNOWN: when a lib global (console, Math, etc.) can't be properly
-        // typed, it resolves to `unknown`. Comparing against `unknown` always
-        // fails and produces false positives. TSC's libs properly type all
-        // globals, so this situation only arises from incomplete lib coverage.
+        // UNKNOWN on the *previous* declaration typically comes from incomplete
+        // lib coverage (console/Math/etc.) and should not establish a TS2403
+        // constraint. Keep current-declaration `unknown` visible so real
+        // redeclaration errors after failed inference still surface.
         if prev_type == TypeId::ERROR
             || current_type == TypeId::ERROR
             || prev_type == TypeId::UNKNOWN
-            || current_type == TypeId::UNKNOWN
         {
             return;
         }
