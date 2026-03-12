@@ -2379,12 +2379,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && utils::is_numeric_property_name(self.interner, prop.name)
             {
                 if let Some(&var) = var_map.get(&number_idx.value_type) {
-                    ctx.add_property_candidate_with_index(
+                    ctx.add_index_signature_candidate_with_index(
                         var,
                         prop_type,
                         priority,
                         property_index,
-                        None,
                         false,
                     );
                 } else {
@@ -2394,12 +2393,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             if let Some(string_idx) = string_index {
                 if let Some(&var) = var_map.get(&string_idx.value_type) {
-                    ctx.add_property_candidate_with_index(
+                    ctx.add_index_signature_candidate_with_index(
                         var,
                         prop_type,
                         priority,
                         property_index,
-                        None,
                         false,
                     );
                 } else {
@@ -2439,12 +2437,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && utils::is_numeric_property_name(self.interner, prop.name)
             {
                 if let Some(&var) = var_map.get(&prop_type) {
-                    ctx.add_property_candidate_with_index(
+                    ctx.add_index_signature_candidate_with_index(
                         var,
                         number_idx.value_type,
                         priority,
                         property_index,
-                        None,
                         false,
                     );
                 } else {
@@ -2454,12 +2451,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             if let Some(string_idx) = string_index {
                 if let Some(&var) = var_map.get(&prop_type) {
-                    ctx.add_property_candidate_with_index(
+                    ctx.add_index_signature_candidate_with_index(
                         var,
                         string_idx.value_type,
                         priority,
                         property_index,
-                        None,
                         false,
                     );
                 } else {
