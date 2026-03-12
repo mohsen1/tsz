@@ -514,6 +514,27 @@ for(let a: number;;) break;
             "No TS2403 for let in separate for-loops: {ts2403:?}"
         );
     }
+
+    #[test]
+    fn module_scoped_declare_var_no_ts2403_against_lib() {
+        // In module files (with import/export), `declare var` is module-scoped
+        // and should NOT trigger TS2403 against lib globals.
+        let source = r#"
+export const x = 1;
+declare var console: { log(msg?: any): void; };
+console.log("test");
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for module-scoped declare var vs lib global: {ts2403:?}"
+        );
+    }
 }
 
 #[cfg(test)]
