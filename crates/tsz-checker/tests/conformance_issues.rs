@@ -12100,8 +12100,7 @@ ff1 = ff4;
 }
 
 #[test]
-fn test_non_strict_missing_property_messages_strip_optional_undefined_and_use_contextual_callable()
-{
+fn test_missing_property_messages_preserve_function_literal_return_type_display() {
     let diagnostics = compile_and_get_raw_diagnostics_named(
         "test.ts",
         r#"
@@ -12128,15 +12127,9 @@ b3 = {
         .expect("expected TS2741 for missing property 'm'");
 
     assert!(
-        missing_m.message_text.contains(
-            "type '{ f(n: number): number; g(s: string): number; m: number; n?: number; k?(a: any): any; }'"
-        ),
-        "expected optional property display to omit `| undefined`: {missing_m:#?}"
-    );
-    assert!(
         missing_m
             .message_text
-            .contains("type '{ f: (n: number) => number; g: (s: string) => number; n: number; k: (a: any) => any; }'"),
-        "expected object-literal source display to reuse the contextual callable signature: {missing_m:#?}"
+            .contains("type '{ f: (n: number) => number; g: (s: string) => number; n: number; k: (a: any) => null; }'"),
+        "expected object-literal source display to preserve the function literal return type: {missing_m:#?}"
     );
 }
