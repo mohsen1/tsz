@@ -849,8 +849,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && self.is_tuple_list_rest_type(s_param.type_id)
             && self.is_tuple_list_rest_type(t_param.type_id)
         {
-            return if self
-                .are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) { SubtypeResult::True } else { SubtypeResult::False };
+            return if self.are_parameters_compatible_impl(
+                s_param.type_id,
+                t_param.type_id,
+                is_method,
+            ) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
         }
 
         // Unpack tuple rest parameters before comparison.
