@@ -529,12 +529,9 @@ impl<'a> CheckerState<'a> {
                 // evaluation would reduce the union to just the never-parameterized
                 // callback, losing contextual type information.
 
-                if matches!(
-                    this.ctx.types.lookup(param_type),
-                    Some(tsz_solver::TypeData::Function(_) | tsz_solver::TypeData::Callable(_))
-                ) {
-                    param_type
-                } else if should_preserve_contextual_application_shape(this.ctx.types, param_type) {
+                if tsz_solver::type_queries::is_callable_type(this.ctx.types, param_type)
+                    || should_preserve_contextual_application_shape(this.ctx.types, param_type)
+                {
                     param_type
                 } else if let Some(members) =
                     tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)

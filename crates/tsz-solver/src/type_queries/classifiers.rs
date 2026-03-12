@@ -112,7 +112,7 @@ pub fn classify_for_assignability_eval(
 
     match key {
         TypeData::Application(_) | TypeData::Lazy(_) => AssignabilityEvalKind::Application,
-        TypeData::IndexAccess(object_type, index_type) => {
+        TypeData::IndexAccess(object_type, _index_type) => {
             let object_is_deferred_type_param = match db.lookup(object_type) {
                 Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
                     info.constraint.is_none_or(|constraint| {
@@ -127,10 +127,6 @@ pub fn classify_for_assignability_eval(
                 && object_is_deferred_type_param
             {
                 AssignabilityEvalKind::Resolved
-            } else if crate::type_queries::contains_type_parameters_db(db, index_type)
-                || crate::type_queries::contains_type_parameters_db(db, object_type)
-            {
-                AssignabilityEvalKind::NeedsEnvEval
             } else {
                 AssignabilityEvalKind::NeedsEnvEval
             }

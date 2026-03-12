@@ -532,13 +532,11 @@ impl<'a> CheckerState<'a> {
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && let Some(body_type) = def.body
         {
-            if symbol.flags & symbol_flags::TYPE_ALIAS != 0
-                && let Some(def) = self.ctx.definition_store.get(def_id)
-                && let Some(body_type) = def.body
-            {
-                return self.type_contains_abstract_class_inner(body_type, visited);
-            }
+            return self.type_contains_abstract_class_inner(body_type, visited);
         }
 
         match query::classify_for_abstract_check(self.ctx.types, type_id) {

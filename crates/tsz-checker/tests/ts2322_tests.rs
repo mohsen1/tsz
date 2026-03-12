@@ -658,6 +658,29 @@ fn test_ts2322_no_false_positive_nested_conditional() {
 }
 
 #[test]
+fn test_ts2322_generic_indexed_write_preserves_type_parameter_display() {
+    let source = r#"
+        type Item = { a: string; b: number };
+
+        function setValue<T extends Item, K extends keyof T>(obj: T, key: K) {
+            obj[key] = 123;
+        }
+    "#;
+
+    let ts2322_errors: Vec<_> = get_all_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors
+            .iter()
+            .any(|(_, message)| message.contains("Type 'number' is not assignable to type 'T[K]'")),
+        "Expected generic indexed-write TS2322 to preserve T[K] display, got: {ts2322_errors:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_accessor_incompatible_getter_setter() {
     // TS 5.1+: when BOTH getter and setter have explicit type annotations,
     // unrelated types are allowed (no error).
