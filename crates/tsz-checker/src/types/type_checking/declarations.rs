@@ -972,8 +972,7 @@ impl<'a> CheckerState<'a> {
             let Some(func) = symbol_arena.get_function(init_node) else {
                 return false;
             };
-            let jsdoc =
-                self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
+            let jsdoc = self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
             if jsdoc
                 .as_ref()
                 .is_some_and(|content| content.contains("@constructor"))
