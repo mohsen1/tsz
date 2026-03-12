@@ -1552,9 +1552,8 @@ impl<'a> CheckerState<'a> {
                     None
                 };
                 if let Some(implicit_type) = implicit_type {
-                    let message = format!(
-                        "Member '{prop_name}' implicitly has an '{implicit_type}' type."
-                    );
+                    let message =
+                        format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
                     let already_emitted = self.ctx.diagnostics.iter().any(|d| {
                         d.code
                             == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE

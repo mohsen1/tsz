@@ -631,8 +631,10 @@ impl<'a> CheckerState<'a> {
                         .get(param.initializer)
                         .and_then(|n| self.ctx.arena.get_literal_expr(n))
                         .is_some_and(|lit| lit.elements.nodes.is_empty())
-                        && let Some(elem_type) =
-                            tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
+                        && let Some(elem_type) = tsz_solver::type_queries::get_array_element_type(
+                            self.ctx.types,
+                            type_id,
+                        )
                         && (elem_type == TypeId::ANY || elem_type == TypeId::NEVER)
                     {
                         type_id = self.ctx.types.factory().array(TypeId::ANY);
