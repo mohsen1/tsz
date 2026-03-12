@@ -1134,6 +1134,13 @@ impl<'a> InferenceContext<'a> {
             .any(|c| !matches!(db.lookup(c.type_id), Some(TypeData::TypeParameter(_))))
     }
 
+    /// Check whether a variable's inference came exclusively from contravariant positions.
+    pub fn has_only_contra_candidates(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates.is_empty() && !info.contra_candidates.is_empty()
+    }
+
     /// Check if all inference candidates for a variable have `ReturnType` priority.
     /// This indicates the type was inferred from callback return types (Round 2),
     /// not from direct arguments (Round 1).

@@ -1102,6 +1102,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let evaluated_target = self.checker.evaluate_type(target);
                 let same_base_application =
                     s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+                let allow_direct_arg_constraints = same_base_application
+                    && self.should_directly_constrain_same_base_application(source, target);
                 let promise_like_arg_pair = if !same_base_application {
                     self.checker
                         .promise_like_type_argument(source)
@@ -1137,7 +1139,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Objects may fail for interfaces like Promise<T> where methods (then)
                     // have their own generic signatures that block inference. Restricting
                     // to ReturnType priority preserves variance for parameter inference.
-                    if same_base_application
+                    if allow_direct_arg_constraints
                         && priority == crate::types::InferencePriority::ReturnType
                     {
                         for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
@@ -1146,7 +1148,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
                         self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
                     }
-                } else if same_base_application {
+                } else if allow_direct_arg_constraints {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                     }
