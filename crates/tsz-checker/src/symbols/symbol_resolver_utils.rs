@@ -787,6 +787,12 @@ impl<'a> CheckerState<'a> {
             false,
             defaults.no_implicit_override,
         );
+        opts.no_property_access_from_index_signature = Self::resolve_bool_option(
+            text,
+            "@nopropertyaccessfromindexsignature",
+            false,
+            defaults.no_property_access_from_index_signature,
+        );
         opts.no_unused_locals =
             Self::resolve_bool_option(text, "@nounusedlocals", false, defaults.no_unused_locals);
         opts.no_unused_parameters = Self::resolve_bool_option(
