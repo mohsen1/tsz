@@ -237,6 +237,37 @@ var style: IBookStyle = {
 }
 
 #[test]
+fn test_contextual_array_literal_through_promise_like_union_return() {
+    let source = r#"
+declare function f(cb: (v: boolean) => [0] | PromiseLike<[0]>): void;
+f(v => v ? [0] : Promise.reject());
+"#;
+
+    let diagnostics = check_default(source);
+    let ts2345_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345_errors.is_empty(),
+        "Expected PromiseLike union return context to preserve tuple typing, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_contextual_function_literal_through_promise_like_union_return() {
+    let source = r#"
+type MyCallback = (thing: string) => void;
+declare function h(cb: (v: boolean) => MyCallback | PromiseLike<MyCallback>): void;
+h(v => v ? (abc) => { } : Promise.reject());
+"#;
+
+    let diagnostics = check_default(source);
+    let ts2345_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345_errors.is_empty(),
+        "Expected PromiseLike union return context to preserve function literal typing, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
 #[ignore = "TODO: excess-property checking now emits 3 TS2353 instead of 1 after behavior change"]
 fn test_deferred_mapped_intersection_preserves_contextual_property_types() {
     let source = r#"

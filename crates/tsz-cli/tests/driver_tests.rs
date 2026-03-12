@@ -8,8 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -304,6 +309,117 @@ const q: PromiseLike<number> = p;
         result.diagnostics,
         result.files_read,
         result.file_infos
+    );
+}
+
+#[test]
+fn compile_constructor_parameters_rest_contextually_types_object_literal_methods() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"
+declare function createInstance<Ctor extends new (...args: any[]) => any, R extends InstanceType<Ctor>>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;
+
+export interface IMenuWorkbenchToolBarOptions {
+    toolbarOptions: {
+        foo(bar: string): string
+    };
+}
+
+class MenuWorkbenchToolBar {
+    constructor(
+        options: IMenuWorkbenchToolBarOptions | undefined,
+    ) { }
+}
+
+createInstance(MenuWorkbenchToolBar, {
+    toolbarOptions: {
+        foo(bar) { return bar; }
+    }
+});
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.no_implicit_any = Some(true);
+    args.strict_null_checks = Some(true);
+    args.target = Some(crate::args::Target::Es2015);
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected ConstructorParameters rest contextual typing to avoid TS2345/TS7006, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+fn direct_checker_with_real_default_libs_contextually_types_constructor_parameters_rest() {
+    let source = r#"
+declare function createInstance<Ctor extends new (...args: any[]) => any, R extends InstanceType<Ctor>>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;
+
+interface IMenuWorkbenchToolBarOptions {
+    toolbarOptions: {
+        foo(bar: string): string
+    };
+}
+
+class MenuWorkbenchToolBar {
+    constructor(
+        options: IMenuWorkbenchToolBarOptions | undefined,
+    ) { }
+}
+
+createInstance(MenuWorkbenchToolBar, {
+    toolbarOptions: {
+        foo(bar) { return bar; }
+    }
+});
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Expected direct checker with real default libs to avoid TS2345/TS7006, got diagnostics: {:?}",
+        checker.ctx.diagnostics
     );
 }
 

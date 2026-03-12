@@ -868,8 +868,13 @@ impl<'a> CheckerState<'a> {
             let expected_type = expected_for_index(effective_index, expanded_count);
             let apply_contextual = self.argument_needs_contextual_type(arg_idx);
             let expected_context_type = if self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::CALL_EXPRESSION
-                    || node.kind == syntax_kind_ext::NEW_EXPRESSION
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::CALL_EXPRESSION
+                        | syntax_kind_ext::NEW_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                )
             }) {
                 expected_type
             } else {
@@ -898,25 +903,27 @@ impl<'a> CheckerState<'a> {
                 self.ctx.skip_flow_narrowing = prev_skip_flow;
             }
 
-            if apply_contextual
+            let is_direct_function_arg = self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            });
+            let arg_node = self.ctx.arena.get(arg_idx);
+            let is_sensitive_contextual_arg = apply_contextual
                 && expected_type.is_some()
-                && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                && (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        && self.ctx.generic_excess_skip.is_some()))
-            {
-                let callback_body_start = (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then(|| {
-                        self.ctx
-                            .arena
-                            .get_function(arg_node)
-                            .and_then(|func| self.ctx.arena.get(func.body))
-                            .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                            .map(|body_node| body_node.pos)
-                    })
-                    .flatten();
+                && arg_node.is_some_and(|arg_node| {
+                    is_contextually_sensitive(self, arg_idx)
+                        || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            && self.ctx.generic_excess_skip.is_some())
+                });
+            if is_sensitive_contextual_arg {
+                let arg_node = arg_node.expect("sensitive contextual arg should exist");
+                let callback_body_start = self
+                    .ctx
+                    .arena
+                    .get_function(arg_node)
+                    .and_then(|func| self.ctx.arena.get(func.body))
+                    .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
+                    .map(|body_node| body_node.pos);
                 let new_diags = self.ctx.diagnostics.split_off(diag_len);
                 let kept_new_diags: Vec<_> = new_diags
                     .into_iter()
@@ -939,10 +946,15 @@ impl<'a> CheckerState<'a> {
                                 && is_provisional_implicit_any
                                 && diag.start >= arg_node.pos
                                 && diag.start < arg_node.end;
-                        (!is_provisional_assignability && !is_provisional_implicit_any)
-                            || !(is_callback_body_diag
-                                || is_object_literal_diag
-                                || is_function_arg_implicit_any_diag)
+                        if !is_provisional_assignability && !is_provisional_implicit_any {
+                            true
+                        } else if is_direct_function_arg {
+                            !(is_callback_body_diag || is_function_arg_implicit_any_diag)
+                        } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                            !is_object_literal_diag
+                        } else {
+                            false
+                        }
                     })
                     .collect();
                 let existing_diag_keys: Vec<_> = self

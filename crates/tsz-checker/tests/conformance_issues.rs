@@ -581,7 +581,7 @@ let x31 = callr(sn, f15);
 let x32 = callr(sn, f16);
 "#;
 
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         source,
         CheckerOptions {
             strict: true,

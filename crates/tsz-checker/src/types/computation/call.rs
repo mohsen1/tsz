@@ -500,6 +500,16 @@ impl<'a> CheckerState<'a> {
             callee_type_for_context,
             self.ctx.compiler_options.no_implicit_any,
         );
+        let base_contextual_param_types: Vec<Option<TypeId>> = (0..args.len())
+            .map(|i| {
+                self.contextual_parameter_type_for_call_with_env_from_expected(
+                    callee_type_for_context,
+                    i,
+                    args.len(),
+                )
+                .or_else(|| ctx_helper.get_parameter_type_for_call(i, args.len()))
+            })
+            .collect();
         // For union callees, skip excess property checking during argument collection.
         // The solver's resolve_union_call intersects parameter types across members,
         // so `{x: 0, y: 0}` is valid for `((a: {x}) => R) | ((a: {y}) => R)` even
@@ -519,7 +529,12 @@ impl<'a> CheckerState<'a> {
                 // evaluation would reduce the union to just the never-parameterized
                 // callback, losing contextual type information.
 
-                if should_preserve_contextual_application_shape(this.ctx.types, param_type) {
+                if matches!(
+                    this.ctx.types.lookup(param_type),
+                    Some(tsz_solver::TypeData::Function(_) | tsz_solver::TypeData::Callable(_))
+                ) {
+                    param_type
+                } else if should_preserve_contextual_application_shape(this.ctx.types, param_type) {
                     param_type
                 } else if let Some(members) =
                     tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
@@ -665,7 +680,7 @@ impl<'a> CheckerState<'a> {
                     // from being emitted before inference completes.
                     let mut round1_arg_types = self.collect_call_argument_types_with_context(
                         args,
-                        |i, arg_count| {
+                        |i, _arg_count| {
                             // Skip contextually sensitive arguments in Round 1.
                             // Guard against out-of-bounds: large indices are used to probe
                             // for rest parameters (see call_checker.rs spread handling).
@@ -676,7 +691,7 @@ impl<'a> CheckerState<'a> {
                             if skip_round1_context {
                                 None
                             } else {
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                base_contextual_param_types.get(i).copied().flatten()
                             }
                         },
                         check_excess_properties,
@@ -1167,7 +1182,7 @@ impl<'a> CheckerState<'a> {
                                 .get(i)
                                 .copied()
                                 .flatten()
-                                .or_else(|| ctx_helper.get_parameter_type_for_call(i, arg_count));
+                                .or_else(|| base_contextual_param_types.get(i).copied().flatten());
                             let arg_type = self.compute_single_call_argument_type(
                                 arg_idx,
                                 expected_type,
@@ -1358,11 +1373,11 @@ impl<'a> CheckerState<'a> {
 
                         self.collect_call_argument_types_with_context(
                             args,
-                            |i, arg_count| {
+                            |i, _arg_count| {
                                 if i < round2_contextual_types.len() {
                                     round2_contextual_types[i]
                                 } else {
-                                    ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                    base_contextual_param_types.get(i).copied().flatten()
                                 }
                             },
                             check_excess_properties,
@@ -1391,7 +1406,7 @@ impl<'a> CheckerState<'a> {
                     let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                         .map(|i| {
                             let param_type =
-                                ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                                base_contextual_param_types.get(i).copied().flatten()?;
                             let is_empty_array_literal = arena.get(args[i]).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                     && arena
@@ -1415,11 +1430,11 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let initial_arg_types = self.collect_call_argument_types_with_context(
                         args,
-                        |i, arg_count| {
+                        |i, _arg_count| {
                             if i < single_pass_contextual_types.len() {
                                 single_pass_contextual_types[i]
                             } else {
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                base_contextual_param_types.get(i).copied().flatten()
                             }
                         },
                         check_excess_properties,
@@ -1476,13 +1491,13 @@ impl<'a> CheckerState<'a> {
                                 .collect();
                             self.collect_call_argument_types_with_context(
                                 args,
-                                |i, arg_count| {
+                                |i, _arg_count| {
                                     refreshed_contextual_types
                                         .get(i)
                                         .copied()
                                         .flatten()
                                         .or_else(|| {
-                                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                            base_contextual_param_types.get(i).copied().flatten()
                                         })
                                 },
                                 check_excess_properties,
@@ -1532,13 +1547,13 @@ impl<'a> CheckerState<'a> {
                                 .collect();
                             self.collect_call_argument_types_with_context(
                                 args,
-                                |i, arg_count| {
+                                |i, _arg_count| {
                                     refreshed_contextual_types
                                         .get(i)
                                         .copied()
                                         .flatten()
                                         .or_else(|| {
-                                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                            base_contextual_param_types.get(i).copied().flatten()
                                         })
                                 },
                                 check_excess_properties,
@@ -1553,7 +1568,7 @@ impl<'a> CheckerState<'a> {
                 // Shouldn't happen for generic call detection, but keep single-pass fallback.
                 let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                     .map(|i| {
-                        let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                        let param_type = base_contextual_param_types.get(i).copied().flatten()?;
                         Some(normalize_contextual_param_type(
                             self,
                             &ctx_helper,
@@ -1565,11 +1580,11 @@ impl<'a> CheckerState<'a> {
                     .collect();
                 self.collect_call_argument_types_with_context(
                     args,
-                    |i, arg_count| {
+                    |i, _arg_count| {
                         if i < single_pass_contextual_types.len() {
                             single_pass_contextual_types[i]
                         } else {
-                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            base_contextual_param_types.get(i).copied().flatten()
                         }
                     },
                     check_excess_properties,
@@ -1581,7 +1596,7 @@ impl<'a> CheckerState<'a> {
             // Non-generic calls or calls with explicit type arguments use the standard flow.
             let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                 .map(|i| {
-                    let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                    let param_type = base_contextual_param_types.get(i).copied().flatten()?;
                     Some(normalize_contextual_param_type(
                         self,
                         &ctx_helper,
@@ -1594,11 +1609,11 @@ impl<'a> CheckerState<'a> {
             non_generic_contextual_types = Some(single_pass_contextual_types.clone());
             self.collect_call_argument_types_with_context(
                 args,
-                |i, arg_count| {
+                |i, _arg_count| {
                     if i < single_pass_contextual_types.len() {
                         single_pass_contextual_types[i]
                     } else {
-                        ctx_helper.get_parameter_type_for_call(i, arg_count)
+                        base_contextual_param_types.get(i).copied().flatten()
                     }
                 },
                 check_excess_properties,
@@ -1704,8 +1719,11 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .and_then(|types| types.get(index).copied().flatten())
                 .map(|expected| self.evaluate_contextual_type(expected))
-            && let Some(actual) = arg_types.get(index).copied()
             && let Some(&arg_idx) = args.get(index)
+            && let Some(actual) = Some(self.refreshed_generic_call_arg_type(
+                arg_idx,
+                arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
+            ))
         {
             let fresh_subtype = assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected);
             let recover_object_literal =
@@ -1789,12 +1807,12 @@ impl<'a> CheckerState<'a> {
                 .collect();
             arg_types = self.collect_call_argument_types_with_context(
                 args,
-                |i, arg_count| {
+                |i, _arg_count| {
                     refreshed_contextual_types
                         .get(i)
                         .copied()
                         .flatten()
-                        .or_else(|| ctx_helper.get_parameter_type_for_call(i, arg_count))
+                        .or_else(|| base_contextual_param_types.get(i).copied().flatten())
                 },
                 check_excess_properties,
                 None,

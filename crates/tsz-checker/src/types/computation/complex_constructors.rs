@@ -534,10 +534,6 @@ impl<'a> CheckerState<'a> {
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            let is_abstract = (symbol.flags & symbol_flags::ABSTRACT) != 0;
-            if is_abstract {
-                return true;
-            }
             if symbol.flags & symbol_flags::TYPE_ALIAS != 0
                 && let Some(def) = self.ctx.definition_store.get(def_id)
                 && let Some(body_type) = def.body

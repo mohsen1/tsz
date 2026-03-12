@@ -1062,6 +1062,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Now that non-contextual arguments have been processed, we can provide
         // proper contextual types to lambdas based on fixed type variables.
         if saw_deferred_arg {
+            let round2_params = if fixed_subst.is_empty() {
+                None
+            } else {
+                Some(
+                    instantiated_params
+                        .iter()
+                        .map(|param| ParamInfo {
+                            name: param.name,
+                            type_id: instantiate_type(self.interner, param.type_id, &fixed_subst),
+                            optional: param.optional,
+                            rest: param.rest,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            };
             for (i, &arg_type) in arg_types.iter().enumerate() {
                 if rest_tuple_start.is_some_and(|start| i >= start) {
                     continue;
@@ -1083,6 +1098,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
                 let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                     && i >= instantiated_params.len().saturating_sub(1);
+                let round2_target_type = round2_params
+                    .as_ref()
+                    .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
 
                 if original_has_placeholders && !is_rest_param_arg {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
@@ -1113,7 +1131,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Re-instantiate target_type with fixed Round 1 results.
                     // This replaces resolved placeholders with their inferred types while
                     // preserving unresolved placeholders for further Round 2 inference.
-                    let r2_target = if !fixed_subst.is_empty() {
+                    let r2_target = if let Some(candidate) = round2_target_type {
+                        candidate
+                    } else if !fixed_subst.is_empty() {
                         let candidate = instantiate_type(self.interner, target_type, &fixed_subst);
                         placeholder_visited.clear();
                         if self.type_contains_placeholder(
@@ -1124,6 +1144,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Mixed case: some placeholders resolved, some remaining.
                             // Use re-instantiated target so resolved params provide
                             // concrete contextual types to callbacks.
+                            candidate
+                        } else if is_rest_param_arg {
+                            // Rest arguments like `...args: ConstructorParameters<Ctor>`
+                            // need the fully materialized tuple/application target in
+                            // Round 2 once `Ctor` has been fixed by earlier arguments.
+                            // Reverting to the unresolved wrapper here loses both the
+                            // extracted element type for contextual typing and the
+                            // concrete assignability surface for the argument.
                             candidate
                         } else {
                             // All placeholders resolved — keep original for constraint

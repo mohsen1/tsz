@@ -210,7 +210,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(param_type) = self.param_type_for_arg_index(params, i, arg_count) else {
                 break;
             };
-
             if *arg_type == param_type {
                 continue;
             }
@@ -463,6 +462,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.tuple_rest_element_type(&elements, offset, rest_arg_count)
             }
             other => {
+                let extracted = crate::contextual::rest_argument_element_type(
+                    self.interner,
+                    self.checker.evaluate_type(rest_param_type),
+                );
+                if extracted != rest_param_type {
+                    trace!(
+                        original_id = %rest_param_type.0,
+                        extracted_id = %extracted.0,
+                        extracted_key = ?self.interner.lookup(extracted),
+                        "Extracted element type from rest wrapper fallback"
+                    );
+                    return Some(extracted);
+                }
                 trace!(?other, "Rest param is not Array or Tuple, returning as-is");
                 Some(rest_param_type)
             }
