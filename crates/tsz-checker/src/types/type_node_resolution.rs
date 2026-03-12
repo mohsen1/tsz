@@ -11,7 +11,7 @@ use tsz_solver::is_compiler_managed_type;
 use super::type_node::TypeNodeChecker;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
-    fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
+    pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             return self
@@ -35,7 +35,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         None
     }
 
-    fn resolve_entity_name_text_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+    pub(super) fn resolve_entity_name_text_symbol(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let lib_binders: Vec<_> = self
@@ -102,6 +105,64 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                         .map(|(sym_id, _)| sym_id)
                                 })
                         })
+                })?;
+        }
+
+        Some(current_sym)
+    }
+
+    fn resolve_entity_name_text_symbol_in_binder(
+        &self,
+        binder: &tsz_binder::BinderState,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        let mut current_sym = binder
+            .file_locals
+            .get(root_name)
+            .or_else(|| self.ctx.binder.file_locals.get(root_name))
+            .or_else(|| {
+                self.ctx
+                    .lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+            })?;
+
+        for segment in segments {
+            let symbol = binder
+                .get_symbol(current_sym)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))
+                .or_else(|| {
+                    self.ctx
+                        .lib_contexts
+                        .iter()
+                        .find_map(|ctx| ctx.binder.get_symbol(current_sym))
+                })
+                .or_else(|| {
+                    let resolved = binder
+                        .resolve_import_symbol(current_sym)
+                        .or_else(|| self.ctx.binder.resolve_import_symbol(current_sym))?;
+                    binder
+                        .get_symbol(resolved)
+                        .or_else(|| self.ctx.binder.get_symbol(resolved))
+                        .or_else(|| {
+                            self.ctx
+                                .lib_contexts
+                                .iter()
+                                .find_map(|ctx| ctx.binder.get_symbol(resolved))
+                        })
+                })?;
+
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
                 })?;
         }
 
@@ -207,6 +268,329 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
+    fn precompute_computed_property_names_in_arena<F>(
+        &self,
+        arena: &NodeArena,
+        root: NodeIndex,
+        resolve_text_symbol: &F,
+    ) -> rustc_hash::FxHashMap<NodeIndex, tsz_common::Atom>
+    where
+        F: Fn(&str) -> Option<tsz_binder::SymbolId>,
+    {
+        let mut map = rustc_hash::FxHashMap::default();
+        let mut stack = vec![root];
+
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = arena.get(node_idx) else {
+                continue;
+            };
+
+            if node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(name) = self.resolve_computed_property_name_in_arena(
+                    arena,
+                    node_idx,
+                    resolve_text_symbol,
+                )
+                && let Some(computed) = arena.get_computed_property(node)
+            {
+                map.insert(computed.expression, self.ctx.types.intern_string(&name));
+            }
+
+            stack.extend(arena.get_children(node_idx));
+        }
+
+        map
+    }
+
+    fn resolve_computed_property_name_in_arena<F>(
+        &self,
+        arena: &NodeArena,
+        name_idx: NodeIndex,
+        resolve_text_symbol: &F,
+    ) -> Option<String>
+    where
+        F: Fn(&str) -> Option<tsz_binder::SymbolId>,
+    {
+        if let Some(name) =
+            crate::types_domain::queries::core::get_literal_property_name(arena, name_idx)
+        {
+            return Some(name);
+        }
+
+        let name_node = arena.get(name_idx)?;
+        if name_node.kind != tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+
+        let computed = arena.get_computed_property(name_node)?;
+        if let Some(symbol_name) =
+            self.well_known_symbol_property_name_in_arena(arena, computed.expression)
+        {
+            return Some(symbol_name);
+        }
+
+        let sym_id = self.resolve_computed_property_symbol_in_arena(
+            arena,
+            computed.expression,
+            resolve_text_symbol,
+        )?;
+        self.symbol_refers_to_unique_symbol_anywhere(sym_id)
+            .then(|| format!("__unique_{}", sym_id.0))
+    }
+
+    fn well_known_symbol_property_name_in_arena(
+        &self,
+        arena: &NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let node = arena.get(expr_idx)?;
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = arena.get_parenthesized(node)?;
+            return self.well_known_symbol_property_name_in_arena(arena, paren.expression);
+        }
+
+        if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = arena.get_access_expr(node)?;
+        let base_node = arena.get(access.expression)?;
+        let base_ident = arena.get_identifier(base_node)?;
+        if base_ident.escaped_text != "Symbol" {
+            return None;
+        }
+
+        let name_node = arena.get(access.name_or_argument)?;
+        if let Some(ident) = arena.get_identifier(name_node) {
+            return Some(format!("[Symbol.{}]", ident.escaped_text));
+        }
+
+        if matches!(
+            name_node.kind,
+            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        ) && let Some(lit) = arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some(format!("[Symbol.{}]", lit.text));
+        }
+
+        None
+    }
+
+    fn resolve_computed_property_symbol_in_arena<F>(
+        &self,
+        arena: &NodeArena,
+        expr_idx: NodeIndex,
+        resolve_text_symbol: &F,
+    ) -> Option<tsz_binder::SymbolId>
+    where
+        F: Fn(&str) -> Option<tsz_binder::SymbolId>,
+    {
+        let node = arena.get(expr_idx)?;
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = arena.get_parenthesized(node)?;
+            return self.resolve_computed_property_symbol_in_arena(
+                arena,
+                paren.expression,
+                resolve_text_symbol,
+            );
+        }
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let ident = arena.get_identifier(node)?;
+            return resolve_text_symbol(&ident.escaped_text);
+        }
+
+        let qualified = self.expression_name_text_in_arena(arena, expr_idx)?;
+        resolve_text_symbol(&qualified)
+    }
+
+    fn expression_name_text_in_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+            let qn = arena.get_qualified_name(node)?;
+            let left = self.expression_name_text_in_arena(arena, qn.left)?;
+            let right = self.expression_name_text_in_arena(arena, qn.right)?;
+            return Some(format!("{left}.{right}"));
+        }
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = arena.get_parenthesized(node)?;
+            return self.expression_name_text_in_arena(arena, paren.expression);
+        }
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = arena.get_access_expr(node)
+        {
+            let left = self.expression_name_text_in_arena(arena, access.expression)?;
+            let right_node = arena.get(access.name_or_argument)?;
+            let right = arena.get_identifier(right_node)?;
+            return Some(format!("{left}.{}", right.escaped_text));
+        }
+
+        None
+    }
+
+    fn symbol_refers_to_unique_symbol_anywhere(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_from_any_context(sym_id) else {
+            return false;
+        };
+        let file_idx = symbol.decl_file_idx;
+        let owner_binder = self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .unwrap_or(self.ctx.binder);
+
+        let mut decl_candidates = symbol.declarations.clone();
+        if symbol.value_declaration.is_some()
+            && !decl_candidates.contains(&symbol.value_declaration)
+        {
+            decl_candidates.push(symbol.value_declaration);
+        }
+
+        decl_candidates.into_iter().any(|decl_idx| {
+            let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
+            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+            }
+            if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            if std::ptr::eq(owner_binder, self.ctx.binder) {
+                candidate_arenas.push(self.ctx.arena);
+            }
+
+            candidate_arenas
+                .into_iter()
+                .any(|arena| self.declaration_is_unique_symbol_in_arena(arena, decl_idx))
+        })
+    }
+
+    fn declaration_is_unique_symbol_in_arena(
+        &self,
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+
+        let Some(var_decl) = arena.get_variable_declaration(node) else {
+            return false;
+        };
+
+        (var_decl.type_annotation.is_some()
+            && self.is_unique_symbol_type_annotation_in_resolution_arena(
+                arena,
+                var_decl.type_annotation,
+            ))
+            || self.is_symbol_call_initializer_in_resolution_arena(arena, var_decl.initializer)
+    }
+
+    fn is_unique_symbol_type_annotation_in_resolution_arena(
+        &self,
+        arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+
+        match type_node.kind {
+            k if k == tsz_parser::parser::syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(type_node).is_some_and(|op| {
+                    op.operator == tsz_scanner::SyntaxKind::UniqueKeyword as u16
+                        && self.is_symbol_type_node_in_resolution_arena(arena, op.type_node)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn is_symbol_type_node_in_resolution_arena(
+        &self,
+        arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+        if type_node.kind != tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+
+        let Some(type_ref) = arena.get_type_ref(type_node) else {
+            return false;
+        };
+        let Some(name_node) = arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
+    }
+
+    fn is_symbol_call_initializer_in_resolution_arena(
+        &self,
+        arena: &NodeArena,
+        init_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let Some(call) = arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(expr_node) = arena.get(call.expression) else {
+            return false;
+        };
+
+        arena
+            .get_identifier(expr_node)
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
+    }
+
+    fn get_symbol_from_any_context(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<&tsz_binder::Symbol> {
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| {
+                self.ctx
+                    .all_binders
+                    .as_ref()
+                    .and_then(|binders| binders.iter().find_map(|binder| binder.get_symbol(sym_id)))
+            })
+            .or_else(|| {
+                self.ctx
+                    .lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.get_symbol(sym_id))
+            })
+    }
+
     /// Ensure a type alias symbol has its type params and body registered
     /// so the solver can expand Application(Lazy(DefId), Args) later.
     ///
@@ -252,12 +636,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
 
-        let symbol = self.ctx.binder.get_symbol(sym_id).or_else(|| {
-            self.ctx
-                .lib_contexts
-                .iter()
-                .find_map(|ctx| ctx.binder.get_symbol(sym_id))
-        });
+        let symbol = self.get_symbol_from_any_context(sym_id);
         let Some(symbol) = symbol else {
             return;
         };
@@ -314,6 +693,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Lower the type alias body with the type params in scope
         if type_alias.type_node != NodeIndex::NONE {
             let namespace_prefix = self.declaration_namespace_prefix(decl_arena, decl_idx);
+            let decl_binder = self
+                .ctx
+                .get_binder_for_arena(decl_arena)
+                .unwrap_or(self.ctx.binder);
             let resolve_text_symbol = |name: &str| -> Option<tsz_binder::SymbolId> {
                 namespace_prefix
                     .as_ref()
@@ -322,9 +705,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         scoped.push_str(prefix);
                         scoped.push('.');
                         scoped.push_str(name);
-                        self.resolve_entity_name_text_symbol(&scoped)
+                        self.resolve_entity_name_text_symbol_in_binder(decl_binder, &scoped)
                     })
-                    .or_else(|| self.resolve_entity_name_text_symbol(name))
+                    .or_else(|| self.resolve_entity_name_text_symbol_in_binder(decl_binder, name))
             };
             let type_resolver = |n: NodeIndex| -> Option<u32> {
                 if std::ptr::eq(decl_arena, self.ctx.arena) {
@@ -394,6 +777,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
                 self.resolve_entity_name_text_def_id(sym_id, def_id, name)
             };
+            let computed_names = self.precompute_computed_property_names_in_arena(
+                decl_arena,
+                type_alias.type_node,
+                &resolve_text_symbol,
+            );
+            eprintln!(
+                "type_node_resolution decl_idx={} computed_names={}",
+                decl_idx.0,
+                computed_names.len()
+            );
+            let computed_name_resolver =
+                |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
 
             let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                 decl_arena,
@@ -403,6 +798,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 &value_resolver,
             )
             .with_type_param_bindings(bindings)
+            .with_computed_name_resolver(&computed_name_resolver)
             .with_name_def_id_resolver(&name_resolver);
 
             let body = lowering.lower_type(type_alias.type_node);

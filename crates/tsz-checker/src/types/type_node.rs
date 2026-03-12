@@ -1023,7 +1023,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
-                        let Some(name) = self.get_property_name(sig.name) else {
+                        let Some(name) = self.get_property_name_resolved(sig.name) else {
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
@@ -1183,7 +1183,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if (member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
                 || member.kind == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR)
                 && let Some(accessor) = self.ctx.arena.get_accessor(member)
-                && let Some(name) = self.get_property_name(accessor.name)
+                && let Some(name) = self.get_property_name_resolved(accessor.name)
             {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
@@ -1752,6 +1752,236 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get property name from a property name node.
     fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
         crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
+    }
+
+    /// Resolve a property name, including computed names backed by unique symbols.
+    fn get_property_name_resolved(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+
+        if let Some(name) = self.get_property_name(name_idx) {
+            return Some(name);
+        }
+
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+
+        if let Some(symbol_name) = self.get_well_known_symbol_property_name(computed.expression) {
+            return Some(symbol_name);
+        }
+
+        let sym_id = self.resolve_computed_property_symbol(computed.expression)?;
+        self.symbol_refers_to_unique_symbol(sym_id)
+            .then(|| format!("__unique_{}", sym_id.0))
+    }
+
+    fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            return self.get_well_known_symbol_property_name(paren.expression);
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let base_node = self.ctx.arena.get(access.expression)?;
+        let base_ident = self.ctx.arena.get_identifier(base_node)?;
+        if base_ident.escaped_text != "Symbol" {
+            return None;
+        }
+
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(format!("[Symbol.{}]", ident.escaped_text));
+        }
+
+        if matches!(
+            name_node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some(format!("[Symbol.{}]", lit.text));
+        }
+
+        None
+    }
+
+    fn resolve_computed_property_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let node = self.ctx.arena.get(expr_idx)?;
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            return self.resolve_computed_property_symbol(paren.expression);
+        }
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_value_symbol_with_libs(expr_idx).map(SymbolId);
+        }
+
+        let qualified = self.expression_name_text(expr_idx)?;
+        self.resolve_entity_name_text_symbol(&qualified)
+    }
+
+    fn expression_name_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            return self.entity_name_text(idx);
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            return self.expression_name_text(paren.expression);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            let left = self.expression_name_text(access.expression)?;
+            let right_node = self.ctx.arena.get(access.name_or_argument)?;
+            let right = self.ctx.arena.get_identifier(right_node)?;
+            return Some(format!("{left}.{}", right.escaped_text));
+        }
+
+        None
+    }
+
+    fn symbol_refers_to_unique_symbol(&self, sym_id: SymbolId) -> bool {
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|ctx| std::sync::Arc::clone(&ctx.binder))
+            .collect();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        let mut decl_candidates = symbol.declarations.clone();
+        if symbol.value_declaration.is_some()
+            && !decl_candidates.contains(&symbol.value_declaration)
+        {
+            decl_candidates.push(symbol.value_declaration);
+        }
+
+        decl_candidates
+            .into_iter()
+            .any(|decl_idx| self.declaration_is_unique_symbol(sym_id, decl_idx))
+    }
+
+    fn declaration_is_unique_symbol(&self, sym_id: SymbolId, decl_idx: NodeIndex) -> bool {
+        let mut candidate_arenas: Vec<&tsz_parser::parser::node::NodeArena> = Vec::new();
+        if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+            candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+        }
+        if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+            candidate_arenas.push(symbol_arena.as_ref());
+        }
+        candidate_arenas.push(self.ctx.arena);
+
+        candidate_arenas.into_iter().any(|arena| {
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                return false;
+            }
+
+            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                return false;
+            };
+
+            (var_decl.type_annotation.is_some()
+                && self.is_unique_symbol_type_annotation_in_arena(arena, var_decl.type_annotation))
+                || self.is_symbol_call_initializer_in_arena(arena, var_decl.initializer)
+        })
+    }
+
+    fn is_unique_symbol_type_annotation_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(type_node).is_some_and(|op| {
+                    op.operator == SyntaxKind::UniqueKeyword as u16
+                        && self.is_symbol_type_node_in_arena(arena, op.type_node)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn is_symbol_type_node_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+
+        let Some(type_ref) = arena.get_type_ref(type_node) else {
+            return false;
+        };
+
+        let Some(name_node) = arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
+    }
+
+    fn is_symbol_call_initializer_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        init_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let Some(call) = arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(expr_node) = arena.get(call.expression) else {
+            return false;
+        };
+
+        arena
+            .get_identifier(expr_node)
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
     }
 
     /// Get the context reference (for read-only access).

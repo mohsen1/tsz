@@ -2267,6 +2267,39 @@ function foo<T>(arr: T[], depth: number): BadFlatArray<T, number>[] {
     );
 }
 
+#[test]
+fn test_declaration_emit_spread_with_external_unique_symbol_key_emits_ts4023() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "lib.d.ts",
+                "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ninterface Symbol {}\ninterface SymbolConstructor { (): symbol; }\ndeclare var Symbol: SymbolConstructor;\n",
+            ),
+            (
+                "type.ts",
+                "export namespace Foo {\n  export const sym = Symbol();\n}\nexport type Type = { x?: { [Foo.sym]: 0 } };\n",
+            ),
+            (
+                "index.ts",
+                "import { type Type } from './type';\nexport const foo = { ...({} as Type) };\n",
+            ),
+        ],
+        "index.ts",
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 4023),
+        "Expected TS4023 for declaration emit of an inferred spread type with an external unique-symbol key. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [

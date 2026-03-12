@@ -1131,10 +1131,13 @@ impl<'a> CheckerState<'a> {
                     return (TypeId::UNKNOWN, Vec::new());
                 };
 
-                let has_cross_arena_metadata = self.ctx.binder.symbol_arenas.contains_key(&sym_id)
-                    || self
-                        .ctx
-                        .binder
+                let decl_binder = self
+                    .ctx
+                    .get_binder_for_arena(decl_arena)
+                    .unwrap_or(self.ctx.binder);
+                let has_cross_arena_metadata = !std::ptr::eq(decl_arena, self.ctx.arena)
+                    || decl_binder.symbol_arenas.contains_key(&sym_id)
+                    || decl_binder
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
