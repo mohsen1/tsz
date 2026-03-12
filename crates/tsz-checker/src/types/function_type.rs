@@ -844,6 +844,22 @@ impl<'a> CheckerState<'a> {
                                             && (left_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                                                 || left_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                                                 && let Some(access) = self.ctx.arena.get_access_expr(left_node) {
+                                                    if let Some(proto_node) = self.ctx.arena.get(access.expression)
+                                                        && (proto_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                                                            || proto_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                                                        && let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node)
+                                                        && let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument)
+                                                        && let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node)
+                                                        && proto_ident.escaped_text == "prototype" {
+                                                            let constructor_type = self.get_type_of_node(proto_access.expression);
+                                                            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
+                                                                proto_access.expression,
+                                                                constructor_type,
+                                                                &[],
+                                                            ) {
+                                                                return Some(instance_type);
+                                                            }
+                                                        }
                                                     let receiver = self.get_type_of_node(access.expression);
                                                     if receiver != tsz_solver::TypeId::ERROR {
                                                         return Some(receiver);
