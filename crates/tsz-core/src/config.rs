@@ -2790,31 +2790,11 @@ pub fn resolve_lib_files_from_dir_with_options(
         let path = match lib_map.get(&lib_name) {
             Some(path) => path.clone(),
             None => {
-                // Handle tsc compatibility aliases:
-                // - "lib" refers to lib.d.ts which is equivalent to es5.full.d.ts
-                // - "es6" refers to lib.es6.d.ts which is equivalent to es2015.full.d.ts
-                // - "es7" refers to lib.es2016.d.ts which is equivalent to es2016.d.ts
-                let alias = match lib_name.as_str() {
-                    "lib" => Some("es5.full"),
-                    "es6" => Some("es2015.full"),
-                    "es7" => Some("es2016"),
-                    _ => None,
-                };
-                let Some(alias) = alias else {
-                    return Err(anyhow!(
-                        "unsupported compilerOptions.lib '{}' (not found in {})",
-                        lib_name,
-                        lib_dir.display()
-                    ));
-                };
-                lib_map.get(alias).cloned().ok_or_else(|| {
-                    anyhow!(
-                        "unsupported compilerOptions.lib '{}' (alias '{}' not found in {})",
-                        lib_name,
-                        alias,
-                        lib_dir.display()
-                    )
-                })?
+                return Err(anyhow!(
+                    "unsupported compilerOptions.lib '{}' (not found in {})",
+                    lib_name,
+                    lib_dir.display()
+                ));
             }
         };
         resolved.push(path.clone());
@@ -2834,12 +2814,39 @@ pub fn resolve_lib_files_from_dir_with_options(
 
 /// Resolve lib files from names, following `/// <reference lib="..." />` directives.
 /// This is used when explicitly specifying libs via `--lib`.
+///
+/// Applies tsc-compatible aliases: `es6` → `es2015`, `es7` → `es2016`.
+/// In tsc, `--lib es6` maps to `lib.es2015.d.ts` (NOT `lib.es6.d.ts`).
+/// `lib.es6.d.ts` is a "full" umbrella that includes DOM/scripthost references,
+/// while `lib.es2015.d.ts` only includes ES2015 language features.
+/// This aliasing only applies to explicit `--lib` (not `--target`-derived defaults).
 pub fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
-    resolve_lib_files_with_options(lib_list, true)
+    let aliased = apply_explicit_lib_aliases(lib_list);
+    resolve_lib_files_with_options(&aliased, true)
 }
 
 pub fn resolve_lib_files_from_dir(lib_list: &[String], lib_dir: &Path) -> Result<Vec<PathBuf>> {
-    resolve_lib_files_from_dir_with_options(lib_list, true, lib_dir)
+    let aliased = apply_explicit_lib_aliases(lib_list);
+    resolve_lib_files_from_dir_with_options(&aliased, true, lib_dir)
+}
+
+/// Apply tsc-compatible aliases for user-supplied `--lib` names.
+///
+/// In tsc's `commandLineParser.ts`, the `libs` array maps:
+/// - `es6` → `lib.es2015.d.ts`
+/// - `es7` → `lib.es2016.d.ts`
+///
+/// This is NOT applied for `--target`-derived default libs, where `es6`
+/// correctly refers to `lib.es6.d.ts` (which includes DOM).
+fn apply_explicit_lib_aliases(lib_list: &[String]) -> Vec<String> {
+    lib_list
+        .iter()
+        .map(|name| match name.to_ascii_lowercase().as_str() {
+            "es6" => "es2015".to_string(),
+            "es7" => "es2016".to_string(),
+            _ => name.clone(),
+        })
+        .collect()
 }
 
 /// Resolve default lib files for a given target.
@@ -2860,7 +2867,9 @@ pub fn resolve_default_lib_files_from_dir(
     lib_dir: &Path,
 ) -> Result<Vec<PathBuf>> {
     let root_lib = default_lib_name_for_target(target);
-    resolve_lib_files_from_dir(&[root_lib.to_string()], lib_dir)
+    // Use the raw (un-aliased) resolver — default libs from --target should
+    // use lib.es6.d.ts (which includes DOM), not lib.es2015.d.ts.
+    resolve_lib_files_from_dir_with_options(&[root_lib.to_string()], true, lib_dir)
 }
 
 /// Get the default lib name for a target.
