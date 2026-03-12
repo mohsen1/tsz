@@ -13647,3 +13647,32 @@ function mock<T>(spyObj: SpyMap<T>, methodName: keyof T): SpyMap<T> {
         "Expected TS2339 for missing property through generic mapped index access. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_argument_count_mismatch_preserves_call_return_for_follow_on_property_access() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+const f = (hdr: string, val: number) => `${hdr}:\t${val}\r\n` as `${string}:\t${number}\r\n`;
+f("x").foo;
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2554),
+        "Expected TS2554 for missing call argument. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 to remain on the call result after TS2554 recovery. Actual diagnostics: {diagnostics:#?}"
+    );
+}
