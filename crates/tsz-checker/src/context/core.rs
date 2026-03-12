@@ -349,12 +349,7 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    fn diagnostic_dedup_key_from_parts(
-        &self,
-        start: u32,
-        code: u32,
-        message: &str,
-    ) -> (u32, u32) {
+    fn diagnostic_dedup_key_from_parts(&self, start: u32, code: u32, message: &str) -> (u32, u32) {
         if code == 2318 && start == 0 {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
