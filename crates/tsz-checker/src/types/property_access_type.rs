@@ -712,6 +712,12 @@ impl<'a> CheckerState<'a> {
                 return self.apply_flow_narrowing(idx, strict_method_type);
             }
 
+            if let Some(iterator_method_type) =
+                self.synthesized_array_iterator_method_type(object_type_for_access, property_name)
+            {
+                return self.apply_flow_narrowing(idx, iterator_method_type);
+            }
+
             // Use the environment-aware resolver so that array methods, boxed
             // primitive types, and other lib-registered types are available.
             let result =

@@ -58,6 +58,10 @@ pub struct TypeLowering<'a> {
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
+    /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
+    /// resolution. This is needed for cross-arena lowering where the same NodeIndex
+    /// may refer to different identifiers in different arenas.
+    pub(super) prefer_name_def_id_resolution: bool,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
     pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
     /// Operation counter to prevent infinite loops
@@ -266,6 +270,7 @@ impl<'a> TypeLowering<'a> {
             value_resolver: None,
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
+            prefer_name_def_id_resolution: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -288,6 +293,7 @@ impl<'a> TypeLowering<'a> {
             value_resolver: Some(resolver),
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
+            prefer_name_def_id_resolution: false,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -310,6 +316,7 @@ impl<'a> TypeLowering<'a> {
             value_resolver: Some(value_resolver),
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
+            prefer_name_def_id_resolution: false,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -336,6 +343,7 @@ impl<'a> TypeLowering<'a> {
             value_resolver: Some(value_resolver),
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
+            prefer_name_def_id_resolution: false,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -362,6 +370,7 @@ impl<'a> TypeLowering<'a> {
             value_resolver: Some(value_resolver),
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
+            prefer_name_def_id_resolution: false,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -383,6 +392,7 @@ impl<'a> TypeLowering<'a> {
             value_resolver: self.value_resolver,
             computed_name_resolver: self.computed_name_resolver,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
+            prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             name_def_id_resolver: self.name_def_id_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
@@ -422,6 +432,25 @@ impl<'a> TypeLowering<'a> {
         let mut type_params_collected = false;
         let mut collected_params = Vec::new();
 
+        let is_lib_decl = |arena: &NodeArena, idx: NodeIndex| {
+            let mut current = idx;
+            while let Some(ext) = arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
+
+            arena
+                .get(current)
+                .and_then(|node| arena.get_source_file(node))
+                .is_some_and(|source| {
+                    source.is_declaration_file
+                        && source.file_name.starts_with("lib.")
+                        && source.file_name.ends_with(".d.ts")
+                })
+        };
+
         // Process declarations in reverse order: TypeScript's interface merging
         // rule puts later declarations' members first for overload resolution.
         let num_declarations = declarations.len();
@@ -433,8 +462,16 @@ impl<'a> TypeLowering<'a> {
             let forward_decl_index = num_declarations - 1 - rev_i;
             parts.set_declaration_pass(forward_decl_index);
 
-            // Create a lowering context for this specific arena
-            let lowerer = self.with_arena(decl_arena);
+            // Only prefer name-based DefId resolution when we are lowering across
+            // arenas. Same-arena declarations should keep the normal NodeIndex-based
+            // path because it preserves namespace-local bindings precisely.
+            let lowerer = if is_lib_decl(decl_arena, *decl_idx)
+                && !std::ptr::eq(self.arena, *decl_arena)
+            {
+                self.with_arena(decl_arena).prefer_name_def_id_resolution()
+            } else {
+                self.with_arena(decl_arena)
+            };
 
             let Some(node) = decl_arena.get(*decl_idx) else {
                 continue;
@@ -614,6 +651,15 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(&str) -> Option<DefId>,
     ) -> Self {
         self.name_def_id_resolver = Some(resolver);
+        self
+    }
+
+    /// Prefer identifier-text DefId resolution over raw NodeIndex-based resolution.
+    ///
+    /// This should only be enabled in cross-arena lowering contexts where NodeIndex
+    /// collisions between declaration arenas are possible.
+    pub fn prefer_name_def_id_resolution(mut self) -> Self {
+        self.prefer_name_def_id_resolution = true;
         self
     }
 

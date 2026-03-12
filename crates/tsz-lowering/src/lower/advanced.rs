@@ -695,31 +695,36 @@ impl<'a> TypeLowering<'a> {
                 _ => {}
             }
 
-            // Must resolve to DefId
+            // Must resolve to DefId.
             //
-            // Try name-based resolution — it's reliable for cross-arena
-            // lowering because it uses the identifier text (extracted from the
-            // current arena) to look up directly in file_locals. The NodeIndex-
-            // based resolver iterates ALL declaration arenas and can produce
-            // false positives when the same NodeIndex maps to different
-            // identifiers in different arenas (e.g., NodeIndex(50) is "Promise"
-            // in arena A but "AbortSignal" in arena B).
-            if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
-                && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
-            {
-                let lazy_type = self.interner.lazy(def_id);
-                return lazy_type;
-            }
-            // Prefer NodeIndex-based resolution when it is available. It preserves
-            // lexical shadowing for same-arena/user-code cases, while the scoped
-            // name lookup above still handles cross-arena namespace references.
-            if let Some(def_id) = self.resolve_def_id(node_idx) {
-                let lazy_type = self.interner.lazy(def_id);
-                return lazy_type;
-            }
-            if let Some(def_id) = self.resolve_def_id_by_name(name) {
-                let lazy_type = self.interner.lazy(def_id);
-                return lazy_type;
+            // Same-arena lowering should prefer the NodeIndex-based path because it
+            // preserves the exact bound symbol, including namespace-local bindings.
+            // Cross-arena lowering can opt into name-first resolution because raw
+            // NodeIndex values are arena-local and can collide across declarations.
+            if self.prefer_name_def_id_resolution {
+                if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
+                    && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
+                {
+                    return self.interner.lazy(def_id);
+                }
+                if let Some(def_id) = self.resolve_def_id_by_name(name) {
+                    return self.interner.lazy(def_id);
+                }
+                if let Some(def_id) = self.resolve_def_id(node_idx) {
+                    return self.interner.lazy(def_id);
+                }
+            } else {
+                if let Some(def_id) = self.resolve_def_id(node_idx) {
+                    return self.interner.lazy(def_id);
+                }
+                if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
+                    && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
+                {
+                    return self.interner.lazy(def_id);
+                }
+                if let Some(def_id) = self.resolve_def_id_by_name(name) {
+                    return self.interner.lazy(def_id);
+                }
             }
 
             TypeId::ERROR
