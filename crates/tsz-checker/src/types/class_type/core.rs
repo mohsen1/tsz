@@ -1545,49 +1545,47 @@ impl<'a> CheckerState<'a> {
                     // If so, the member's `any` type is explicit, not implicit.
                     if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
                         && rhs_node.kind == SyntaxKind::Identifier as u16
-                    {
-                        if let Some(sym_id) =
+                        && let Some(sym_id) =
                             self.ctx.binder.resolve_identifier(self.ctx.arena, rhs_idx)
-                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        {
-                            let decl = symbol.value_declaration;
-                            if !decl.is_none() {
-                                // Check if the declaration has an inline type annotation
-                                let has_inline_type = self.ctx.arena.get(decl).is_some_and(|d| {
-                                    self.ctx
-                                        .arena
-                                        .get_parameter(d)
-                                        .is_some_and(|p| !p.type_annotation.is_none())
-                                });
-                                // Check if the enclosing function's JSDoc has
-                                // a @param {type} tag for this parameter
-                                let has_jsdoc_param_type = if !has_inline_type {
-                                    let param_name = self
-                                        .ctx
-                                        .arena
-                                        .get(decl)
-                                        .and_then(|d| self.ctx.arena.get_parameter(d))
-                                        .and_then(|p| self.ctx.arena.get(p.name))
-                                        .and_then(|n| self.ctx.arena.get_identifier(n))
-                                        .map(|id| id.escaped_text.as_str());
-                                    if let Some(pname) = param_name {
-                                        // Walk to enclosing function via extended node parent
-                                        let func_idx =
-                                            self.ctx.arena.get_extended(decl).map(|ext| ext.parent);
-                                        func_idx
-                                            .and_then(|fidx| self.get_jsdoc_for_function(fidx))
-                                            .is_some_and(|jsdoc| {
-                                                Self::jsdoc_has_param_type(&jsdoc, pname)
-                                            })
-                                    } else {
-                                        false
-                                    }
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        let decl = symbol.value_declaration;
+                        if !decl.is_none() {
+                            // Check if the declaration has an inline type annotation
+                            let has_inline_type = self.ctx.arena.get(decl).is_some_and(|d| {
+                                self.ctx
+                                    .arena
+                                    .get_parameter(d)
+                                    .is_some_and(|p| !p.type_annotation.is_none())
+                            });
+                            // Check if the enclosing function's JSDoc has
+                            // a @param {type} tag for this parameter
+                            let has_jsdoc_param_type = if !has_inline_type {
+                                let param_name = self
+                                    .ctx
+                                    .arena
+                                    .get(decl)
+                                    .and_then(|d| self.ctx.arena.get_parameter(d))
+                                    .and_then(|p| self.ctx.arena.get(p.name))
+                                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                                    .map(|id| id.escaped_text.as_str());
+                                if let Some(pname) = param_name {
+                                    // Walk to enclosing function via extended node parent
+                                    let func_idx =
+                                        self.ctx.arena.get_extended(decl).map(|ext| ext.parent);
+                                    func_idx
+                                        .and_then(|fidx| self.get_jsdoc_for_function(fidx))
+                                        .is_some_and(|jsdoc| {
+                                            Self::jsdoc_has_param_type(&jsdoc, pname)
+                                        })
                                 } else {
                                     false
-                                };
-                                if has_inline_type || has_jsdoc_param_type {
-                                    any_is_explicit = true;
                                 }
+                            } else {
+                                false
+                            };
+                            if has_inline_type || has_jsdoc_param_type {
+                                any_is_explicit = true;
                             }
                         }
                     }
