@@ -522,12 +522,9 @@ impl<'a> CheckerState<'a> {
                     if is_bare_type_param && let Some(base) = base_constraint_type {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
-                        // If the base constraint is `unknown`, the type parameter has no
-                        // usable constraint (e.g., unconstrained params or call-signature
-                        // type params whose constraints aren't populated). Skip.
-                        if base == TypeId::UNKNOWN {
-                            continue;
-                        }
+                        // Unconstrained bare type parameters behave like `unknown` for
+                        // TS2344 purposes: they should still fail concrete constraints like
+                        // `T extends Object`, but remain assignable to top-like constraints.
                         // If the base constraint is a union, skip. Union-constrained type
                         // params often appear in conditional types where the true branch
                         // narrows to a specific union member. Checking the full union

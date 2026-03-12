@@ -127,6 +127,45 @@ fn test_missing_date_emits_ts2304_without_lib() {
 }
 
 #[test]
+fn test_missing_callable_and_newable_function_do_not_mask_other_checker_errors() {
+    let diagnostics = check_without_lib(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+interface Readonly<T> {}
+interface Partial<T> {}
+interface Iterable<T> {}
+
+namespace Record {
+    export interface Class<T extends Object> {
+        (values?: Partial<T> | Iterable<[string, any]>): T & Readonly<T>;
+    }
+}
+
+declare function Record<T>(defaultValues: T, name?: string): Record.Class<T>;
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
+    assert!(
+        relevant.iter().any(|d| d.code == 2344),
+        "Expected the object-constraint failure to surface as TS2344 instead of being masked by helper-global TS2318 noise. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.message_text.as_str(), "Cannot find global type 'CallableFunction'." | "Cannot find global type 'NewableFunction'.")),
+        "CallableFunction/NewableFunction should not be treated as unconditional core globals in no-lib tests. Actual diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_missing_regexp_emits_ts2304_without_lib() {
     let diagnostics = check_without_lib(r#"const r = new RegExp("foo");"#);
 
