@@ -317,6 +317,27 @@ var s = f.x;
     );
 }
 
+#[test]
+fn test_plain_function_constructor_new_result_is_not_possibly_undefined() {
+    let source = r#"
+function Foo() {
+    this.x = 1;
+}
+var f = new Foo();
+f.x;
+"#;
+    let diagnostics = check_js(source);
+    let ts18048: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .collect();
+    assert_eq!(
+        ts18048.len(),
+        0,
+        "Expected JS constructor new result to avoid false TS18048, got: {diagnostics:?}"
+    );
+}
+
 /// Plain function constructor: prototype methods should be accessible on instances
 #[test]
 fn test_plain_function_constructor_prototype_method_accessible() {
