@@ -22,6 +22,39 @@ use super::call_result::CallResultContext;
 use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
+    fn is_unshadowed_commonjs_require_identifier(&mut self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        if ident.escaped_text != "require" {
+            return false;
+        }
+
+        let resolved_symbol = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&idx.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol(idx));
+        let Some(sym_id) = resolved_symbol else {
+            return true;
+        };
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return true;
+        };
+
+        !symbol
+            .declarations
+            .iter()
+            .any(|decl_idx| self.ctx.binder.node_symbols.contains_key(&decl_idx.0))
+    }
+
     pub(crate) fn refreshed_generic_call_arg_type(
         &mut self,
         arg_idx: NodeIndex,
@@ -83,8 +116,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing call expression data - propagate error
         };
 
-        if let Some(callee_ident) = self.ctx.arena.get_identifier_at(call.expression)
-            && callee_ident.escaped_text == "require"
+        if self.is_unshadowed_commonjs_require_identifier(call.expression)
             && let Some(args) = &call.arguments
             && let Some(first_arg) = args.nodes.first().copied()
             && let Some(module_specifier) = self.get_require_module_specifier(first_arg)
@@ -94,6 +126,8 @@ impl<'a> CheckerState<'a> {
             {
                 return module_type;
             }
+            self.emit_module_not_found_error(&module_specifier, first_arg);
+            return TypeId::ANY;
         }
 
         // For IIFEs (immediately invoked function expressions), wrap the call expression's
