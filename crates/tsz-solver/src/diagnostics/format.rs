@@ -68,6 +68,9 @@ pub struct TypeFormatter<'a> {
     /// This should be set for error-message formatting (tsc doesn't optionalize
     /// union members in diagnostics, only in quickinfo/hover).
     skip_union_optionalize: bool,
+    /// When true, preserve the declared surface syntax of optional properties
+    /// instead of appending synthetic `| undefined`.
+    preserve_optional_property_surface_syntax: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -84,6 +87,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            preserve_optional_property_surface_syntax: false,
         }
     }
 
@@ -104,6 +108,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            preserve_optional_property_surface_syntax: false,
         }
     }
 
@@ -646,7 +651,9 @@ impl<'a> TypeFormatter<'a> {
         // (handled in format_params).
         let type_str: String = if prop.optional {
             let formatted = self.format(prop.type_id).into_owned();
-            if !self.type_contains_undefined(prop.type_id) {
+            if self.preserve_optional_property_surface_syntax {
+                formatted
+            } else if !self.type_contains_undefined(prop.type_id) {
                 format!("{formatted} | undefined")
             } else {
                 formatted
@@ -1221,10 +1228,14 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_conditional(&mut self, cond: &ConditionalType) -> String {
+        let prev = self.preserve_optional_property_surface_syntax;
+        self.preserve_optional_property_surface_syntax = true;
+        let extends_type = self.format(cond.extends_type).into_owned();
+        self.preserve_optional_property_surface_syntax = prev;
         format!(
             "{} extends {} ? {} : {}",
             self.format(cond.check_type),
-            self.format(cond.extends_type),
+            extends_type,
             self.format(cond.true_type),
             self.format(cond.false_type)
         )
@@ -1306,6 +1317,9 @@ impl<'a> TypeFormatter<'a> {
         {
             return self.format_def_name(&def);
         }
+        if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
+            return name;
+        }
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
@@ -1334,7 +1348,18 @@ impl<'a> TypeFormatter<'a> {
                 .collect();
             return format!("{}<{}>", name, params.join(", "));
         }
+        if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
+            return name;
+        }
         format!("{}({})", fallback_prefix, def_id.0)
+    }
+
+    /// Some checker paths still materialize fallback `Lazy(DefId(symbol_id))` nodes
+    /// without registering the `DefId` in the definition store. When that happens,
+    /// use the raw id as a `SymbolId` if it resolves in the active symbol arena.
+    fn format_raw_def_id_symbol_fallback(&mut self, def_id: crate::def::DefId) -> Option<String> {
+        let sym_id = SymbolId(def_id.0);
+        self.format_symbol_name(sym_id)
     }
 
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
@@ -3152,6 +3177,17 @@ mod tests {
             result, "MyClass<string, number>",
             "Application should show formatted type args"
         );
+    }
+
+    #[test]
+    fn lazy_raw_def_id_falls_back_to_symbol_name() {
+        let db = TypeInterner::new();
+        let mut symbols = tsz_binder::SymbolArena::new();
+        let sym_id = symbols.alloc(tsz_binder::symbol_flags::INTERFACE, "Num".to_string());
+        let lazy = db.lazy(crate::def::DefId(sym_id.0));
+
+        let mut fmt = TypeFormatter::with_symbols(&db, &symbols);
+        assert_eq!(fmt.format(lazy), "Num");
     }
 
     // =================================================================

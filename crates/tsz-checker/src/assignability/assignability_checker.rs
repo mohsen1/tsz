@@ -63,8 +63,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved = self.resolve_type_query_type(type_id);
-        let evaluated = self.evaluate_type_with_env(resolved);
-        let type_id = if evaluated != resolved {
+        let evaluated =
+            if tsz_solver::type_queries::get_type_application(self.ctx.types, resolved).is_some() {
+                self.evaluate_type_for_assignability(resolved)
+            } else {
+                self.evaluate_type_with_env(resolved)
+            };
+        let type_id = if evaluated == TypeId::UNKNOWN && resolved != TypeId::UNKNOWN {
+            resolved
+        } else if evaluated != resolved {
             evaluated
         } else {
             resolved

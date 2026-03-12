@@ -426,20 +426,9 @@ var r = foo<number>({ bar: 1, baz: '' });
         .iter()
         .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
-
-    if errors.is_empty() {
-        // Accept TS2345 at argument level as an alternative to property-level TS2322
-        let has_assignability_error = diagnostics.iter().any(|d| {
-            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || d.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-        });
-        assert!(
-            diagnostics.is_empty() || has_assignability_error,
-            "Expected TS2322, TS2345, or no diagnostics for current generic-inference behavior, got: {diagnostics:?}"
-        );
-        return;
-    }
+    let has_ts2345 = diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+    });
 
     assert_eq!(
         errors.len(),
@@ -455,6 +444,10 @@ var r = foo<number>({ bar: 1, baz: '' });
         expected_messages.contains(&diag.message_text.as_str()),
         "Unexpected TS2322 message: {}",
         diag.message_text
+    );
+    assert!(
+        !has_ts2345,
+        "Did not expect outer TS2345 once property-level TS2322 elaboration applies, got: {diagnostics:?}"
     );
 
     let expected_baz_start = source
@@ -654,6 +647,29 @@ fn test_ts2322_no_false_positive_nested_conditional() {
     assert!(
         ts2322_errors.is_empty(),
         "Expected no TS2322 for nested conditional expression, got: {ts2322_errors:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_indexed_write_preserves_type_parameter_display() {
+    let source = r#"
+        type Item = { a: string; b: number };
+
+        function setValue<T extends Item, K extends keyof T>(obj: T, key: K) {
+            obj[key] = 123;
+        }
+    "#;
+
+    let ts2322_errors: Vec<_> = get_all_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors
+            .iter()
+            .any(|(_, message)| message.contains("Type 'number' is not assignable to type 'T[K]'")),
+        "Expected generic indexed-write TS2322 to preserve T[K] display, got: {ts2322_errors:?}"
     );
 }
 
@@ -1056,11 +1072,38 @@ foo({ x: false, y: 0, z: "" });
         *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
     });
 
-    // tsc elaborates property-level TS2322; we currently emit TS2345 at the
-    // argument level. Accept either until full elaboration is implemented.
     assert!(
-        ts2322_count >= 2 || has_ts2345,
-        "Expected property-level TS2322 or argument-level TS2345 for mismatched fields, got: {diagnostics:?}"
+        ts2322_count >= 2,
+        "Expected property-level TS2322 for the mismatched object-literal fields, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2345,
+        "Did not expect outer TS2345 once property-level elaboration applies, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_callback_return_mismatch_prefers_inner_ts2322_over_outer_ts2345() {
+    let source = r#"
+function someGenerics3<T>(producer: () => T) { }
+someGenerics3<number>(() => undefined);
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_ts2345 = diagnostics.iter().any(|(code, _)| {
+        *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+    });
+
+    assert!(
+        has_ts2322,
+        "Expected TS2322 for the callback return mismatch, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2345,
+        "Did not expect outer TS2345 once callback return elaboration applies, got: {diagnostics:?}"
     );
 }
 
@@ -1511,6 +1554,24 @@ fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
 }
 
 #[test]
+fn test_ts2322_nested_assignment_destructuring_default_is_not_whole_pattern_checked() {
+    let source = r#"
+        let a: 0 | 1 = 0;
+        let b: 0 | 1 | 9;
+        [{ [(a = 1)]: b } = [9, a] as const] = [];
+        const bb: 0 = b;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no whole-pattern TS2322 for nested assignment destructuring default, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_type_query_in_type_assertion_uses_flow_narrowed_property_type() {
     let source = r#"
         interface I<T> {
@@ -1617,5 +1678,31 @@ fn test_ts2322_no_false_positive_mapped_type_key_narrowed_by_conditional() {
     assert!(
         !errors.iter().any(|(code, _)| *code == 2322),
         "Expected no TS2322 for narrowed T in mapped type key (T extends string). Got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined() {
+    let source = r#"
+        export let a: <T>() => T extends {a?: string} ? 0 : 1 = null!;
+        export let b: <T>() => T extends {a?: string | undefined} ? 0 : 1 = a;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for conditional extends optional-property identity. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type '<T>() => T extends { a?: string; } ? 0 : 1' is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"),
+        "Expected TS2322 to preserve the differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
     );
 }

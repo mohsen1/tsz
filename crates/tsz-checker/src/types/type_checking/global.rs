@@ -22,8 +22,9 @@ impl<'a> CheckerState<'a> {
     /// This function checks for:
     /// 1. Core 8 types when --noLib is used: Array, Boolean, Function, `IArguments`,
     ///    Number, Object, `RegExp`, String
-    /// 2. ES2015+ types when they should be available but aren't: Awaited,
-    ///    `IterableIterator`, `AsyncIterableIterator`, `TypedPropertyDescriptor`,
+    /// 2. Feature-specific or lib-version-specific globals when they should be
+    ///    available but aren't: Awaited, `IterableIterator`,
+    ///    `AsyncIterableIterator`, `TypedPropertyDescriptor`,
     ///    `CallableFunction`, `NewableFunction`, Disposable, `AsyncDisposable`
     ///
     /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts,
@@ -36,10 +37,8 @@ impl<'a> CheckerState<'a> {
         const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
-            "CallableFunction",
             "Function",
             "IArguments",
-            "NewableFunction",
             "Number",
             "Object",
             "RegExp",

@@ -219,25 +219,6 @@ fn test_symbol_resolution_namespace_used_as_type_errors() {
 namespace A {
     export const x = 1;
 }
-
-#[test]
-fn test_symbol_resolution_promise_is_assignable_to_promise_like_with_libs() {
-    let source = r#"
-declare const p: Promise<number>;
-const q: PromiseLike<number> = p;
-"#;
-
-    let diagnostics = collect_diagnostics_with_libs(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code != 2318)
-        .collect();
-
-    assert!(
-        relevant.is_empty(),
-        "Expected Promise<T> to be assignable to PromiseLike<T> with libs loaded, got: {relevant:?}"
-    );
-}
 let a: A;
 "#;
 
@@ -247,6 +228,22 @@ let a: A;
     assert_eq!(
         ts2709_count, 1,
         "Expected TS2709 for namespace used as type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_symbol_resolution_promise_is_assignable_to_promise_like_with_libs() {
+    let source = r#"
+declare const p: Promise<number>;
+const q: PromiseLike<number> = p;
+    "#;
+
+    let diagnostics = collect_diagnostics_with_libs(source);
+    let relevant: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected Promise<T> to be assignable to PromiseLike<T> with libs loaded, got: {relevant:?}"
     );
 }
 

@@ -501,6 +501,37 @@ class C {
 }
 
 #[test]
+fn test_computed_methods_emit_as_property_signatures() {
+    let output = emit_dts(
+        r#"
+const key: string = Math.random() > 0.5 ? "a" : "b";
+export class C {
+    [key](): string {
+        return "x";
+    }
+
+    regular(): number {
+        return 1;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("[key]: () => string;"),
+        "Expected computed method to emit as a property signature: {output}"
+    );
+    assert!(
+        !output.contains("[key](): string;"),
+        "Did not expect computed method syntax in declaration emit: {output}"
+    );
+    assert!(
+        output.contains("regular(): number;"),
+        "Expected ordinary methods to stay as methods: {output}"
+    );
+}
+
+#[test]
 fn test_declaration_file_exports_do_not_gain_duplicate_declare() {
     let source = r#"
 export class A {}
@@ -2423,6 +2454,72 @@ const bn1 = box(0);
 }
 
 #[test]
+fn test_non_null_call_initializer_recovers_return_type() {
+    let source = r#"
+declare const fn: (() => string) | undefined;
+const a = fn!();
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let fn_stmt_idx = source_file.statements.nodes[0];
+    let fn_decl = parser
+        .arena
+        .get(fn_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing fn declaration");
+    let a_stmt_idx = source_file.statements.nodes[1];
+    let a_decl = parser
+        .arena
+        .get(a_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing a declaration");
+    let call = parser
+        .arena
+        .get(a_decl.initializer)
+        .and_then(|node| parser.arena.get_call_expr(node))
+        .expect("missing call initializer");
+    let non_null = parser
+        .arena
+        .get(call.expression)
+        .and_then(|node| parser.arena.get_unary_expr_ex(node))
+        .expect("missing non-null callee");
+    let interner = TypeInterner::new();
+    let callable = interner.function(FunctionShape::new(Vec::new(), TypeId::STRING));
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(fn_decl.name.0, callable);
+    type_cache
+        .node_types
+        .insert(non_null.expression.0, callable);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const a: string;"),
+        "Expected non-null call initializer to recover the inner callable return type: {output}"
+    );
+}
+
+#[test]
 fn test_dataview_new_expression_falls_back_without_type_cache() {
     let output = emit_dts("const dataView = new DataView(new ArrayBuffer(80));");
     assert!(
@@ -2991,6 +3088,24 @@ fn test_optional_method_in_interface() {
     assert!(
         output.contains("init?(): void;"),
         "Expected optional method: {output}"
+    );
+}
+
+#[test]
+fn test_optional_computed_method_in_class_emits_optional_property_function_type() {
+    let output = emit_dts(
+        r#"
+    export const dataSomething: `data-${string}` = "data-x" as `data-${string}`;
+    export class WithData {
+        [dataSomething]?(): string {
+            return "something";
+        }
+    }
+    "#,
+    );
+    assert!(
+        output.contains("[dataSomething]?: (() => string) | undefined;"),
+        "Expected optional computed class method to emit as an optional property of function type: {output}"
     );
 }
 

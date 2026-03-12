@@ -3,6 +3,7 @@ use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
 use crate::diagnostics::format_message;
+use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -225,6 +226,28 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+        let js_constructor_target = if self.is_js_file() && !is_arrow_function {
+            if is_function_declaration {
+                Some(idx)
+            } else if is_closure {
+                self.ctx
+                    .arena
+                    .get_extended(idx)
+                    .map(|ext| ext.parent)
+                    .filter(|parent| {
+                        self.ctx.arena.get(*parent).is_some_and(|node| {
+                            node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                        })
+                    })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
+            self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
+        });
 
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
@@ -663,11 +686,15 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.evaluate_type_with_env(type_id)
                         };
-                        if tsz_solver::is_array_type(db, evaluated)
-                            || tsz_solver::is_tuple_type(db, evaluated)
-                            || tsz_solver::visitor::readonly_inner_type(db, evaluated).is_some()
-                            || tsz_solver::visitor::no_infer_inner_type(db, evaluated).is_some()
-                        {
+                        let array_like = matches!(
+                            type_query::classify_array_like(self.ctx.types, evaluated),
+                            type_query::ArrayLikeKind::Array(_)
+                                | type_query::ArrayLikeKind::Tuple
+                                | type_query::ArrayLikeKind::Readonly(_)
+                        );
+                        let no_infer =
+                            tsz_solver::visitor::no_infer_inner_type(db, evaluated).is_some();
+                        if array_like || no_infer {
                             type_id = evaluated;
                         }
                     }
@@ -795,6 +822,7 @@ impl<'a> CheckerState<'a> {
                 outer_this_type
             } else {
                 ctx_helper.as_ref().and_then(|h| h.get_this_type())
+                    .or(js_constructor_instance_type)
                     .or_else(|| {
                         // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
                         let mut current = idx;
@@ -925,10 +953,13 @@ impl<'a> CheckerState<'a> {
                 let inferred = self.infer_return_type_from_body(idx, body, return_context);
                 return_type = jsdoc_return_context.unwrap_or(inferred);
 
-                if self.is_js_file()
-                    && is_function_declaration
-                    && let Some(instance_type) =
-                        self.synthesize_js_constructor_instance_type(idx, TypeId::ANY, &[])
+                if let Some(instance_type) = js_constructor_instance_type
+                    && (return_type == TypeId::UNDEFINED || return_type == TypeId::VOID)
+                {
+                    return_type = instance_type;
+                }
+
+                if let Some(instance_type) = js_constructor_instance_type
                     && let Some(union_members) =
                         tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
                     && union_members.len() == 2
@@ -1769,7 +1800,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type: final_return_type,
             type_predicate,
-            is_constructor: false,
+            is_constructor: js_constructor_instance_type.is_some(),
             is_method: false,
         };
 

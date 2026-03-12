@@ -244,12 +244,13 @@ declare function foo<T extends XNumber>(props: {[K in keyof T & keyof XNumber]: 
 foo({x: 1, y: "foo"});
 "#;
     let diags = get_diagnostics(source);
-    // Current behavior: the compiler emits TS2322 (type not assignable) rather than
-    // TS2353 (excess property) for the generic mapped type case. tsc would emit TS2353.
-    // Accept either code as evidence that the mismatch is detected.
     assert!(
-        diags.iter().any(|d| d.0 == 2353 || d.0 == 2322),
-        "Expected TS2353 or TS2322 for excess/mismatched property 'y' in generic call with mapped type, got: {diags:?}"
+        diags.iter().any(|d| d.0 == 2353),
+        "Expected TS2353 for excess property 'y' in generic call with mapped type, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2322),
+        "Expected post-inference EPC to suppress TS2322 in favor of TS2353, got: {diags:?}"
     );
 }
 

@@ -529,12 +529,7 @@ impl<'a> CheckerState<'a> {
                 // evaluation would reduce the union to just the never-parameterized
                 // callback, losing contextual type information.
 
-                if tsz_solver::is_function_type(this.ctx.types.as_type_database(), param_type)
-                    || tsz_solver::visitor::callable_shape_id(
-                        this.ctx.types.as_type_database(),
-                        param_type,
-                    )
-                    .is_some()
+                if tsz_solver::type_queries::is_callable_type(this.ctx.types, param_type)
                     || should_preserve_contextual_application_shape(this.ctx.types, param_type)
                 {
                     param_type
@@ -2119,7 +2114,6 @@ impl<'a> CheckerState<'a> {
                     other => (other, false),
                 };
                 if should_epc {
-                    let mut _did_epc = false;
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                             && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -2138,7 +2132,6 @@ impl<'a> CheckerState<'a> {
                                     evaluated_param,
                                     arg_idx,
                                 );
-                                _did_epc = true;
                             }
                         }
                     }

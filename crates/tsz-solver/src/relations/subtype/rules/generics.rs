@@ -19,6 +19,21 @@ use crate::visitor::{
 use crate::visitors::visitor_predicates::is_primitive_type;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn application_cycle_with_concrete_differing_args_is_unsound(
+        &self,
+        s_app: &crate::types::TypeApplication,
+        t_app: &crate::types::TypeApplication,
+    ) -> bool {
+        if s_app.args == t_app.args {
+            return false;
+        }
+
+        s_app.args.iter().chain(t_app.args.iter()).all(|&arg| {
+            !crate::contains_type_parameters(self.interner, arg)
+                && !crate::contains_this_type(self.interner, arg)
+        })
+    }
+
     fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
         match self.interner.lookup(base) {
             Some(TypeData::Lazy(def_id)) => Some(def_id),
@@ -360,11 +375,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if self.def_guard.is_visiting(&def_pair)
                 || self.def_guard.is_visiting(&(def_pair.1, def_pair.0))
             {
-                return self.cycle_result();
+                return if self
+                    .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
+                {
+                    SubtypeResult::False
+                } else {
+                    self.cycle_result()
+                };
             }
             use crate::recursion::RecursionResult;
             match self.def_guard.enter(def_pair) {
-                RecursionResult::Cycle => return self.cycle_result(),
+                RecursionResult::Cycle => {
+                    return if self
+                        .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
+                    {
+                        SubtypeResult::False
+                    } else {
+                        self.cycle_result()
+                    };
+                }
                 RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
                     return self.depth_result();
                 }

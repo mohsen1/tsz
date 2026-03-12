@@ -123,5 +123,9 @@ path = "tests/contextual_tuple_tests.rs"
 name = "co_contra_inference_tests"
 path = "tests/co_contra_inference_tests.rs"
 
+[[test]]
+name = "commonjs_constructor_diagnostics_tests"
+path = "tests/commonjs_constructor_diagnostics_tests.rs"
+
 [lints]
 workspace = true
