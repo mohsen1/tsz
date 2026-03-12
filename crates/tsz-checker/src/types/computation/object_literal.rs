@@ -406,10 +406,25 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
-                        self.contextual_object_literal_property_type(
+                        let property_context_type = self.contextual_object_literal_property_type(
                             ctx_type,
                             resolved_computed_name.as_deref().unwrap_or("__@computed"),
-                        )
+                        );
+                        if property_context_type.is_none()
+                            && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                            && matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                            )
+                        {
+                            self.contextual_object_literal_property_type(ctx_type, "*")
+                                .or_else(|| {
+                                    self.fallback_contextual_callable_property_type(ctx_type, 6)
+                                })
+                        } else {
+                            property_context_type
+                        }
                     } else {
                         None
                     };
@@ -935,10 +950,15 @@ impl<'a> CheckerState<'a> {
                     }
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
-                        let computed_context_type = self.contextual_object_literal_property_type(
-                            ctx_type,
-                            resolved_computed_name.as_deref().unwrap_or("__@computed"),
-                        );
+                        let computed_context_type = self
+                            .contextual_object_literal_property_type(
+                                ctx_type,
+                                resolved_computed_name.as_deref().unwrap_or("__@computed"),
+                            )
+                            .or_else(|| self.contextual_object_literal_property_type(ctx_type, "*"))
+                            .or_else(|| {
+                                self.fallback_contextual_callable_property_type(ctx_type, 6)
+                            });
                         self.ctx.contextual_type =
                             self.contextual_type_option_for_expression(computed_context_type);
                     }

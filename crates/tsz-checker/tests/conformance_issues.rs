@@ -13340,6 +13340,37 @@ const unexpectedlyFailingExample: Mapped = {
 }
 
 #[test]
+fn test_contextual_computed_non_bindable_property_type_uses_callable_fallback() {
+    let diagnostics =
+        without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
+            r#"
+type Original = { foo: 'expects a string literal', baz: boolean, bar: number };
+type Mapped = {
+  [prop in keyof Original]: (arg: Original[prop]) => Original[prop]
+};
+
+const propSelector = <propName extends string>(propName: propName): propName => propName;
+
+const unexpectedlyFailingExample: Mapped = {
+  foo: (arg) => 'expects a string literal',
+  baz: (arg) => true,
+  [propSelector('bar')]: (arg) => 51345
+};
+"#,
+            CheckerOptions {
+                strict: true,
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        ));
+
+    assert!(
+        diagnostics.is_empty(),
+        "Did not expect a false TS2322 when a computed mapped callback property should inherit callable context.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_filtering_mapped_callbacks_use_widened_round2_context() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
