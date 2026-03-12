@@ -1514,11 +1514,8 @@ impl<'a> CheckerState<'a> {
                 jsdoc_type
             } else if !rhs_idx.is_none() {
                 let mut rhs_type = self.get_type_of_node(rhs_idx);
-                let rhs_is_direct_empty_array = self
-                    .ctx
-                    .arena
-                    .get(rhs_idx)
-                    .is_some_and(|rhs_node| {
+                let rhs_is_direct_empty_array =
+                    self.ctx.arena.get(rhs_idx).is_some_and(|rhs_node| {
                         rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                             && self
                                 .ctx
