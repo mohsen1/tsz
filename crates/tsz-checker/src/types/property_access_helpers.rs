@@ -21,8 +21,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let element_type = tsz_solver::type_queries::get_array_element_type(self.ctx.types, object_type)
-            .or_else(|| tsz_solver::type_queries::get_tuple_element_type_union(self.ctx.types, object_type))?;
+        let element_type = tsz_solver::type_queries::get_array_element_type(
+            self.ctx.types,
+            object_type,
+        )
+        .or_else(|| {
+            tsz_solver::type_queries::get_tuple_element_type_union(self.ctx.types, object_type)
+        })?;
 
         let iterator_base = self
             .resolve_entity_name_text_to_def_id_for_lowering("ArrayIterator")

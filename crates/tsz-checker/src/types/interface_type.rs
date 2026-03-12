@@ -1498,7 +1498,11 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
         use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
 
-        let guard_key = (module_spec.to_string(), interface_name.to_string(), base_type);
+        let guard_key = (
+            module_spec.to_string(),
+            interface_name.to_string(),
+            base_type,
+        );
         {
             let mut active = self.ctx.module_augmentation_application_set.borrow_mut();
             if !active.insert(guard_key.clone()) {
