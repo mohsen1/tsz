@@ -1312,6 +1312,247 @@ const q: PromiseLike<number> = p;
     }
 
     #[test]
+    fn test_collect_diagnostics_preserves_invariant_generic_error_elaboration_ts2322() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"// Repro from #19746
+
+const wat: Runtype<any> = Num;
+const Foo = Obj({ foo: Num })
+
+interface Runtype<A> {
+  constraint: Constraint<this>
+  witness: A
+}
+
+interface Num extends Runtype<number> {
+  tag: 'number'
+}
+declare const Num: Num
+
+interface Obj<O extends { [_ in string]: Runtype<any> }> extends Runtype<{[K in keyof O]: O[K]['witness'] }> {}
+declare function Obj<O extends { [_: string]: Runtype<any> }>(fields: O): Obj<O>;
+
+interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
+  underlying: A,
+  check: (x: A['witness']) => void,
+}
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let direct_lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let parallel_result =
+            parallel::check_files_parallel(&program, &resolved.checker, &lib_files);
+        let parallel_ts2322_count = parallel_result
+            .file_results
+            .iter()
+            .flat_map(|file| file.diagnostics.iter())
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        eprintln!(
+            "parallel diagnostics: {:?}",
+            parallel_result
+                .file_results
+                .iter()
+                .flat_map(|file| file.diagnostics.iter())
+                .collect::<Vec<_>>()
+        );
+        let rebuilt_binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        let mut checker = CheckerState::with_options(
+            &program.files[0].arena,
+            &rebuilt_binder,
+            &query_cache,
+            program.files[0].file_name.clone(),
+            &resolved.checker,
+        );
+        checker.ctx.set_lib_contexts(direct_lib_contexts.clone());
+        checker
+            .ctx
+            .set_actual_lib_file_count(direct_lib_contexts.len());
+        let all_arenas = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect::<Vec<_>>(),
+        );
+        let all_binders = Arc::new(vec![Arc::new(create_binder_from_bound_file(
+            &program.files[0],
+            &program,
+            0,
+        ))]);
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(0);
+        checker.check_source_file(program.files[0].source_file);
+
+        let source_file = program.files[0]
+            .arena
+            .get(program.files[0].source_file)
+            .and_then(|node| program.files[0].arena.get_source_file(node))
+            .expect("missing source file");
+        let var_stmt_idx = *source_file
+            .statements
+            .nodes
+            .first()
+            .expect("variable statement");
+        let var_stmt_node = program.files[0].arena.get(var_stmt_idx).expect("var stmt node");
+        let var_stmt_data = program.files[0]
+            .arena
+            .get_variable(var_stmt_node)
+            .expect("var stmt data");
+        let decl_list_idx = *var_stmt_data
+            .declarations
+            .nodes
+            .first()
+            .expect("declaration list");
+        let decl_list_node = program.files[0]
+            .arena
+            .get(decl_list_idx)
+            .expect("decl list node");
+        let decl_list_data = program.files[0]
+            .arena
+            .get_variable(decl_list_node)
+            .expect("decl list data");
+        let decl_idx = *decl_list_data
+            .declarations
+            .nodes
+            .first()
+            .expect("declaration");
+        let decl_node = program.files[0].arena.get(decl_idx).expect("decl node");
+        let decl = program.files[0]
+            .arena
+            .get_variable_declaration(decl_node)
+            .expect("decl data");
+        let source_type = checker.get_type_of_node(decl.initializer);
+        let target_type = checker.get_type_from_type_node(decl.type_annotation);
+        let read_constraint_type = |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+            &query_cache,
+            object_type,
+            "constraint",
+        ) {
+            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
+                Some(type_id)
+            }
+            _ => None,
+        };
+        let evaluated_target_type = {
+            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(
+                &program.type_interner,
+                &checker.ctx,
+            );
+            evaluator.evaluate(target_type)
+        };
+        let source_symbol = match program.type_interner.lookup(source_type) {
+            Some(tsz_solver::TypeData::Object(shape_id))
+            | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
+                format!("{:?}", program.type_interner.object_shape(shape_id).symbol)
+            }
+            other => format!("{other:?}"),
+        };
+        eprintln!(
+            "source={} target={} source_symbol={} source_constraint={} target_constraint={}",
+            checker.format_type(source_type),
+            checker.format_type(evaluated_target_type),
+            source_symbol,
+            read_constraint_type(source_type)
+                .map(|ty| checker.format_type(ty))
+                .unwrap_or_else(|| "<missing>".to_string()),
+            read_constraint_type(evaluated_target_type)
+                .map(|ty| checker.format_type(ty))
+                .unwrap_or_else(|| "<missing>".to_string())
+        );
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+        let direct_diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &direct_lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        );
+        let direct_ts2322_count = direct_diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        assert_eq!(
+            direct_ts2322_count, 2,
+            "Expected collect_diagnostics with direct lib contexts to preserve two TS2322 diagnostics, got: {direct_diagnostics:?}"
+        );
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &lib_contexts,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        );
+
+        let ts2322_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        assert_eq!(
+            ts2322_count, 2,
+            "Expected compile-inner collect_diagnostics to preserve two TS2322 diagnostics, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn test_is_declaration_file() {
         assert!(is_declaration_file("types.d.ts"));
         assert!(is_declaration_file("index.d.mts"));

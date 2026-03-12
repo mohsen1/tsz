@@ -359,12 +359,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
-        // Resolve the Lazy(DefId) type using the resolver
-        let resolved = self
-            .checker
-            .resolver
-            .resolve_lazy(DefId(def_id), self.checker.interner)
-            .unwrap_or(self.source);
+        // Resolve the Lazy(DefId) type using the receiver-aware lazy specialization.
+        let resolved = self.checker.resolve_lazy_type(self.source);
 
         // If resolution succeeded and changed the type, restart the check
         // This is critical for coinductive cycle detection to work correctly
@@ -510,8 +506,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
             // Object <: Object
             let t_shape = self.checker.interner.object_shape(t_shape_id);
-            self.checker
-                .check_object_subtype(&s_shape, Some(ObjectShapeId(shape_id)), &t_shape)
+            self.checker.check_object_subtype(
+                &s_shape,
+                Some(ObjectShapeId(shape_id)),
+                Some(self.source),
+                &t_shape,
+                Some(self.target),
+            )
         } else if let Some(t_shape_id) =
             object_with_index_shape_id(self.checker.interner, self.target)
         {
@@ -520,7 +521,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker.check_object_to_indexed(
                 &s_shape.properties,
                 Some(ObjectShapeId(shape_id)),
+                Some(self.source),
                 &t_shape,
+                Some(self.target),
             )
         } else {
             // Trace: Object source doesn't match non-object target
@@ -546,7 +549,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker.check_object_with_index_subtype(
                 &s_shape,
                 Some(ObjectShapeId(shape_id)),
+                Some(self.source),
                 &t_shape,
+                Some(self.target),
             )
         } else if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
             // ObjectWithIndex <: Object
@@ -554,7 +559,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             self.checker.check_object_with_index_to_object(
                 &s_shape,
                 ObjectShapeId(shape_id),
+                Some(self.source),
                 &t_shape.properties,
+                Some(self.target),
             )
         } else {
             // Trace: ObjectWithIndex source doesn't match non-object target
@@ -627,7 +634,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 number_index: s_callable.number_index.clone(),
                 symbol: s_callable.symbol,
             };
-            self.checker.check_object_subtype(&s_shape, None, &t_shape)
+            self.checker
+                .check_object_subtype(&s_shape, None, Some(self.source), &t_shape, Some(self.target))
         } else if let Some(t_shape_id) =
             object_with_index_shape_id(self.checker.interner, self.target)
         {
@@ -645,7 +653,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 symbol: s_callable.symbol,
             };
             self.checker
-                .check_object_to_indexed(&s_shape.properties, None, &t_shape)
+                .check_object_to_indexed(
+                    &s_shape.properties,
+                    None,
+                    Some(self.source),
+                    &t_shape,
+                    Some(self.target),
+                )
         } else {
             // Trace: Callable source doesn't match non-callable/non-object target
             if let Some(tracer) = &mut self.checker.tracer

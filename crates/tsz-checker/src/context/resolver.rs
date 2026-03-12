@@ -114,20 +114,29 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 return Some(tp_type);
             }
 
-            // Look up the cached type for this symbol (constructor type for classes)
+            // Look up the cached type for this symbol (constructor type for classes).
+            // For generic interfaces/type aliases, the symbol cache can hold the
+            // public `Lazy(DefId)` wrapper while the structural body lives in the
+            // type environment. Returning the self-lazy wrapper here loses generic
+            // application instantiation (`Foo<T>` collapses to bare `Foo`), so give
+            // the type environment a chance to provide the real body first.
             if let Some(&ty) = self.symbol_types.get(&sym_id) {
-                tracing::trace!(
-                    def_id = def_id.0,
-                    sym_id = sym_id.0,
-                    type_id = ty.0,
-                    name = self
-                        .binder
-                        .symbols
-                        .get(sym_id)
-                        .map_or("?", |s| s.escaped_name.as_str()),
-                    "resolve_lazy: found in symbol_types cache"
-                );
-                return Some(ty);
+                if tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id) {
+                    // Defer this self-wrapper until after the type environment fallback.
+                } else {
+                    tracing::trace!(
+                        def_id = def_id.0,
+                        sym_id = sym_id.0,
+                        type_id = ty.0,
+                        name = self
+                            .binder
+                            .symbols
+                            .get(sym_id)
+                            .map_or("?", |s| s.escaped_name.as_str()),
+                        "resolve_lazy: found in symbol_types cache"
+                    );
+                    return Some(ty);
+                }
             }
         }
 
@@ -142,6 +151,19 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 "resolve_lazy: found in type_env"
             );
             return Some(body);
+        }
+
+        if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
+            && let Some(&ty) = self.symbol_types.get(&sym_id)
+            && tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id)
+        {
+            tracing::trace!(
+                def_id = def_id.0,
+                sym_id = sym_id.0,
+                type_id = ty.0,
+                "resolve_lazy: falling back to self-lazy symbol_types entry"
+            );
+            return Some(ty);
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");

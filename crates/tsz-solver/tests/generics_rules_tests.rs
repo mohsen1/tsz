@@ -277,7 +277,7 @@ fn test_non_interface_invariant_application_fastpath_rejects_without_structural_
 }
 
 #[test]
-fn test_type_alias_with_failed_variance_check_still_uses_structural_expansion() {
+fn test_type_alias_with_failed_variance_check_rejects_same_application_family() {
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
@@ -365,7 +365,7 @@ fn test_type_alias_with_failed_variance_check_still_uses_structural_expansion() 
     assert!(
         checker
             .check_application_to_application_subtype(source_app, target_app)
-            .is_true()
+            .is_false()
     );
 }
 

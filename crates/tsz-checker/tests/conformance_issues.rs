@@ -130,6 +130,94 @@ class Implementation extends DerivedAbstractClass {
 }
 
 #[test]
+fn test_generic_indexed_access_variance_failure_preserves_ts2322() {
+    let source = r#"
+class A {
+    x: string = 'A';
+    y: number = 0;
+}
+
+class B {
+    x: string = 'B';
+    z: boolean = true;
+}
+
+type T<X extends { x: any }> = Pick<X, 'x'>;
+
+type C = T<A>;
+type D = T<B>;
+
+declare let a: T<A>;
+declare let b: T<B>;
+declare let c: C;
+declare let d: D;
+
+b = a;
+c = d;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322: Vec<&(u32, String)> =
+        diagnostics.iter().filter(|(code, _)| *code == 2322).collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the generic-application assignment to fail. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0].1.contains("Type 'T<A>' is not assignable to type 'T<B>'"),
+        "Expected TS2322 to preserve the generic application identity. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_invariant_recursive_generic_error_elaboration_preserves_ts2322() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let source = r#"
+const wat: Runtype<any> = Num;
+const Foo = Obj({ foo: Num })
+
+interface Runtype<A> {
+  constraint: Constraint<this>
+  witness: A
+}
+
+interface Num extends Runtype<number> {
+  tag: 'number'
+}
+declare const Num: Num
+
+interface Obj<O extends { [_ in string]: Runtype<any> }> extends Runtype<{[K in keyof O]: O[K]['witness'] }> {}
+declare function Obj<O extends { [_: string]: Runtype<any> }>(fields: O): Obj<O>;
+
+interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
+  underlying: A,
+  check: (x: A['witness']) => void,
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib(source);
+    let ts2322: Vec<&(u32, String)> =
+        diagnostics.iter().filter(|(code, _)| *code == 2322).collect();
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected both invariant generic writes to report TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322.iter().all(|(_, message)| {
+            message.contains("Runtype<any>") && message.contains("number")
+        }),
+        "Expected TS2322 to keep pointing at the Runtype<any> assignment mismatch. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_cached_constructor_parameters_preserve_nested_method_contextual_types() {
     let source = r#"
 declare function createInstance<

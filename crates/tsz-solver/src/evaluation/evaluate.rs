@@ -523,13 +523,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
-                    // Instantiate the resolved type with the type arguments
-                    let instantiated = instantiate_generic(
+                    let app_type = self.interner.application(app.base, app.args.clone());
+
+                    // Instantiate the resolved type with the type arguments.
+                    // Then rebind polymorphic `this` to the concrete application
+                    // so interface bodies like `constraint: Constraint<this>`
+                    // preserve their receiver-specific invariance.
+                    let mut instantiated = instantiate_generic(
                         self.interner,
                         effective_body,
                         &type_params,
                         &expanded_args,
                     );
+                    if crate::contains_this_type(self.interner, instantiated) {
+                        instantiated =
+                            crate::substitute_this_type(self.interner, instantiated, app_type);
+                    }
                     // Recursively evaluate the result
                     let evaluated = self.evaluate(instantiated);
                     if let Some(db) = self.query_db {
@@ -565,12 +574,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return cached;
                     }
 
-                    let instantiated = instantiate_generic(
+                    let app_type = self.interner.application(app.base, app.args.clone());
+                    let mut instantiated = instantiate_generic(
                         self.interner,
                         resolved,
                         &extracted_params,
                         &expanded_args,
                     );
+                    if crate::contains_this_type(self.interner, instantiated) {
+                        instantiated =
+                            crate::substitute_this_type(self.interner, instantiated, app_type);
+                    }
                     let evaluated = self.evaluate(instantiated);
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
@@ -1164,6 +1178,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a lazy type reference: Lazy(DefId)
     fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+            let resolved = if crate::contains_this_type(self.interner, resolved) {
+                crate::substitute_this_type(self.interner, resolved, original_type_id)
+            } else {
+                resolved
+            };
             // Re-evaluate the resolved type in case it needs further evaluation
             self.evaluate(resolved)
         } else {
