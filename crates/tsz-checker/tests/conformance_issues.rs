@@ -411,6 +411,27 @@ createInstance(MenuWorkbenchToolBar, {
 }
 
 #[test]
+fn test_class_implements_interface_property_access_does_not_cascade_ts2339() {
+    let source = r#"
+interface Printable { print(): void; }
+class Doc implements Printable { }
+let doc: Doc;
+doc.print();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2420),
+        "Expected the primary TS2420 for the broken implements clause. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Property access should recover through the implemented interface surface instead of cascading TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_overloaded_interface_method_inheritance_uses_trailing_signature_compatibility() {
     let source = r#"
 interface Indexed<T> {
