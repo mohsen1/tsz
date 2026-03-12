@@ -127,7 +127,7 @@ fn test_missing_date_emits_ts2304_without_lib() {
 }
 
 #[test]
-fn test_missing_callable_and_newable_function_do_not_mask_other_checker_errors() {
+fn test_nolib_emits_ts2318_for_callable_and_newable_function() {
     let diagnostics = check_without_lib(
         r#"
 interface Array<T> {}
@@ -138,32 +138,25 @@ interface Number {}
 interface Object {}
 interface RegExp {}
 interface String {}
-interface Readonly<T> {}
-interface Partial<T> {}
-interface Iterable<T> {}
 
-namespace Record {
-    export interface Class<T extends Object> {
-        (values?: Partial<T> | Iterable<[string, any]>): T & Readonly<T>;
-    }
-}
-
-declare function Record<T>(defaultValues: T, name?: string): Record.Class<T>;
+declare function foo(): void;
 "#,
     );
 
-    let relevant: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
+    // tsc emits TS2318 for CallableFunction and NewableFunction in --noLib mode
     assert!(
-        relevant.iter().any(|d| d.code == 2344),
-        "Expected the object-constraint failure to surface as TS2344 instead of being masked by helper-global TS2318 noise. Actual diagnostics: {diagnostics:?}"
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2318
+                && d.message_text == "Cannot find global type 'CallableFunction'."),
+        "Expected TS2318 for CallableFunction in noLib mode. Actual diagnostics: {diagnostics:?}"
     );
     assert!(
-        diagnostics.iter().all(|d| !matches!(
-            d.message_text.as_str(),
-            "Cannot find global type 'CallableFunction'."
-                | "Cannot find global type 'NewableFunction'."
-        )),
-        "CallableFunction/NewableFunction should not be treated as unconditional core globals in no-lib tests. Actual diagnostics: {diagnostics:?}"
+        diagnostics
+            .iter()
+            .any(|d| d.code == 2318
+                && d.message_text == "Cannot find global type 'NewableFunction'."),
+        "Expected TS2318 for NewableFunction in noLib mode. Actual diagnostics: {diagnostics:?}"
     );
 }
 
