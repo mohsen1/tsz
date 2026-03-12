@@ -202,6 +202,72 @@ impl<'a> CheckerState<'a> {
             return format!("{}[]", arg_text.trim().trim_end_matches('>'));
         }
 
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+            && let Some(type_name) = self.node_text(type_ref.type_name)
+        {
+            let type_name = type_name
+                .split('<')
+                .next()
+                .unwrap_or(type_name.as_str())
+                .trim();
+            let type_name = type_name.rsplit('.').next().unwrap_or(type_name).trim();
+            if let Some(type_args) = type_ref.type_arguments.as_ref()
+                && !type_args.nodes.is_empty()
+            {
+                let args = type_args
+                    .nodes
+                    .iter()
+                    .filter_map(|&arg_idx| self.node_text(arg_idx))
+                    .map(|text| {
+                        text.trim()
+                            .trim_start_matches('<')
+                            .trim_end_matches('>')
+                            .trim()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return format!("{type_name}<{args}>");
+            }
+            return type_name.to_string();
+        }
+
+        if type_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(type_ref) = self.ctx.arena.get_expr_type_args(type_node)
+            && let Some(type_name) = self.node_text(type_ref.expression)
+        {
+            let type_name = type_name
+                .split('<')
+                .next()
+                .unwrap_or(type_name.as_str())
+                .trim();
+            let type_name = type_name.rsplit('.').next().unwrap_or(type_name).trim();
+            if let Some(type_args) = type_ref.type_arguments.as_ref()
+                && !type_args.nodes.is_empty()
+            {
+                let args = type_args
+                    .nodes
+                    .iter()
+                    .filter_map(|&arg_idx| self.node_text(arg_idx))
+                    .map(|text| {
+                        text.trim()
+                            .trim_start_matches('<')
+                            .trim_end_matches('>')
+                            .trim()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return format!("{type_name}<{args}>");
+            }
+            return type_name.to_string();
+        }
+
+        if let Some(text) = self.node_text(type_idx) {
+            return text.trim().to_string();
+        }
+
         fallback.to_string()
     }
 

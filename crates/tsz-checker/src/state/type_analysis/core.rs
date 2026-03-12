@@ -525,6 +525,7 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
         let mut parts = Vec::new();
         let mut current = sym_id;
+        let mut root_symbol_id = SymbolId::NONE;
         // Walk up the parent chain, collecting names.
         // Stop at SymbolId::NONE (root) or after a safety limit.
         for _ in 0..64 {
@@ -549,6 +550,7 @@ impl<'a> CheckerState<'a> {
             {
                 break;
             }
+            root_symbol_id = current;
             parts.push(symbol.escaped_name.clone());
             current = symbol.parent;
         }
@@ -557,7 +559,37 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         parts.reverse();
-        Some(parts.join("."))
+        let qualified = parts.join(".");
+        if let Some(root_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(root_symbol_id, &lib_binders)
+            && root_symbol.is_exported
+            && root_symbol.parent.is_none()
+            && root_symbol.decl_file_idx != u32::MAX
+            && self
+                .ctx
+                .get_binder_for_file(root_symbol.decl_file_idx as usize)
+                .is_some_and(tsz_binder::BinderState::is_external_module)
+        {
+            let module_name = self
+                .ctx
+                .module_specifiers
+                .get(&root_symbol.decl_file_idx)
+                .cloned()
+                .or_else(|| {
+                    let arena = self.ctx.get_arena_for_file(root_symbol.decl_file_idx);
+                    let source_file = arena.source_files.first()?;
+                    let file_name = source_file.file_name.as_str();
+                    let stem = file_name
+                        .rsplit_once('.')
+                        .map(|(base, _)| base)
+                        .unwrap_or(file_name);
+                    Some(stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem).to_string())
+                })?;
+            return Some(format!("\"{module_name}\".{qualified}"));
+        }
+        Some(qualified)
     }
 
     /// Resolve a member from a symbol's exports, members, or re-exports.
