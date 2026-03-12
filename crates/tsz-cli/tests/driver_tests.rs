@@ -259,6 +259,39 @@ const q: PromiseLike<number> = p;
 }
 
 #[test]
+fn compile_array_from_iterable_uses_real_lib_iterable_overload() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"
+interface A { a: string; }
+interface B { b: string; }
+declare const inputA: A[];
+
+const bad: B[] = Array.from(inputA.values());
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![2322],
+        "Expected only the outer B[] assignment failure from Array.from(iterable). Got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn merged_program_promise_is_assignable_to_promise_like_with_default_libs() {
     let files = vec![(
         "main.ts".to_string(),

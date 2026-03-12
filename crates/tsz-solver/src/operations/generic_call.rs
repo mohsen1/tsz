@@ -1393,12 +1393,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .expect("inference substitution cache just initialized")
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
+                } else if !tp.is_const && !contra_only {
+                    crate::widen_literal_type(self.interner.as_type_database(), ty)
                 } else {
-                    if !tp.is_const && !contra_only {
-                        crate::widen_literal_type(self.interner.as_type_database(), ty)
-                    } else {
-                        ty
-                    }
+                    ty
                 }
             } else if let Some(default) = tp.default {
                 let ty =
