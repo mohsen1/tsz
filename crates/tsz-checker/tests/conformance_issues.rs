@@ -175,6 +175,46 @@ const instanceBad: number = (new Holder())["x"];
 }
 
 #[test]
+fn test_unresolved_computed_static_methods_produce_union_lookup_types() {
+    let source = r#"
+declare const f1: string;
+declare const f2: string;
+
+class Holder {
+    static [f1]() {
+        return { static: true };
+    }
+    static [f2]() {
+        return { static: "sometimes" };
+    }
+}
+
+const ok:
+    | Holder
+    | (() => { static: boolean })
+    | (() => { static: string }) = Holder["x"];
+const bad: number = Holder["x"];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322: Vec<&String> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the bad static lookup assignment to fail once late-bound static methods are typed, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0].contains("Type 'Holder' is not assignable to type 'number'"),
+        "Expected static late-bound lookup to stay non-any and still include the prototype branch in diagnostics, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {
