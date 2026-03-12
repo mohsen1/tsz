@@ -1486,13 +1486,6 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
                 tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
             evaluator.evaluate(target_type)
         };
-        let source_symbol = match program.type_interner.lookup(source_type) {
-            Some(tsz_solver::TypeData::Object(shape_id))
-            | Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
-                format!("{:?}", program.type_interner.object_shape(shape_id).symbol)
-            }
-            other => format!("{other:?}"),
-        };
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
         let direct_diagnostics = collect_diagnostics(
             &program,

@@ -368,10 +368,8 @@ impl<'a> CheckerState<'a> {
                                 .ctx
                                 .compiler_options
                                 .no_property_access_from_index_signature
-                            && !self.union_has_explicit_property_member(
-                                resolved_base,
-                                property_name,
-                            )
+                            && !self
+                                .union_has_explicit_property_member(resolved_base, property_name)
                         {
                             // Preserve the optional-chain fast path for regular
                             // property reads, but fall back to the full path when
@@ -1025,12 +1023,11 @@ impl<'a> CheckerState<'a> {
                             && let PropertyAccessResult::Success {
                                 from_index_signature,
                                 ..
-                            } = self.resolve_property_access_with_env(non_nullish_base, property_name)
+                            } = self
+                                .resolve_property_access_with_env(non_nullish_base, property_name)
                             && from_index_signature
-                            && !self.union_has_explicit_property_member(
-                                non_nullish_base,
-                                property_name,
-                            )
+                            && !self
+                                .union_has_explicit_property_member(non_nullish_base, property_name)
                         {
                             use crate::diagnostics::diagnostic_codes;
                             self.error_at_node(

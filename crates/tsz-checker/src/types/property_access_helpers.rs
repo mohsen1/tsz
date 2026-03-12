@@ -238,9 +238,15 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_solver::operations::property::PropertyAccessResult;
 
-        let Some(members) =
+        let members =
             crate::query_boundaries::state::checking::union_members(self.ctx.types, object_type)
-        else {
+                .or_else(|| {
+                    crate::query_boundaries::state::checking::intersection_members(
+                        self.ctx.types,
+                        object_type,
+                    )
+                });
+        let Some(members) = members else {
             return false;
         };
 
@@ -395,5 +401,63 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions {
+                no_property_access_from_index_signature: true,
+                ..CheckerOptions::default()
+            },
+        );
+
+        checker.check_source_file(root);
+
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn explicit_property_in_intersection_suppresses_ts4111() {
+        let diagnostics = get_diagnostics(
+            r#"
+type Bag = { foo: string } & { [k: string]: string };
+declare const bag: Bag;
+bag.foo;
+"#,
+        );
+
+        let ts4111 = diagnostics
+            .iter()
+            .filter(|(code, _)| *code == 4111)
+            .collect::<Vec<_>>();
+        assert!(
+            ts4111.is_empty(),
+            "Explicit properties in intersections should not be treated as pure index-signature access. Got: {diagnostics:?}"
+        );
     }
 }
