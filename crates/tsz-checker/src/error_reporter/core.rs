@@ -37,7 +37,8 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|param| {
                     let normalized = self.normalize_excess_display_type(param.type_id);
-                    let type_id = if self.param_matches_property_key_literal(prop_name, normalized) {
+                    let type_id = if self.param_matches_property_key_literal(prop_name, normalized)
+                    {
                         normalized
                     } else {
                         tsz_solver::widen_literal_type(self.ctx.types, normalized)

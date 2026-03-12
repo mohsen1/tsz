@@ -154,7 +154,8 @@ impl<'a> CheckerState<'a> {
             }
 
             let preserve_literals = tp.constraint.is_some_and(|constraint| {
-                let instantiated = tsz_solver::instantiate_type(self.ctx.types, constraint, substitution);
+                let instantiated =
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, substitution);
                 contextual_constraint_preserves_literals(self.ctx.types, instantiated)
             });
             if preserve_literals {

@@ -1152,11 +1152,8 @@ impl<'a> CheckerState<'a> {
                             if sensitive_args.get(i).copied().unwrap_or(false) {
                                 self.clear_type_cache_recursive(arg_idx);
                             }
-                            let contextual_substitution =
-                                self.widen_round2_contextual_substitution(
-                                    &shape,
-                                    &round2_substitution,
-                                );
+                            let contextual_substitution = self
+                                .widen_round2_contextual_substitution(&shape, &round2_substitution);
                             let round2_contextual_types = self.compute_round2_contextual_types(
                                 &shape,
                                 round1_instantiated_params.as_deref(),
@@ -1347,10 +1344,8 @@ impl<'a> CheckerState<'a> {
 
                         round2_arg_types
                     } else {
-                        let contextual_substitution = self.widen_round2_contextual_substitution(
-                            &shape,
-                            &round2_substitution,
-                        );
+                        let contextual_substitution =
+                            self.widen_round2_contextual_substitution(&shape, &round2_substitution);
                         let round2_contextual_types = self.compute_round2_contextual_types(
                             &shape,
                             round1_instantiated_params.as_deref(),
@@ -1858,172 +1853,172 @@ impl<'a> CheckerState<'a> {
         // a fresh assignability check passes, treat the call as successful and perform
         // EPC instead of reporting TS2345.
         let mut allow_contextual_mismatch_deferral = true;
-        let (result, did_post_epc) =
-            if let Some(ref instantiated_params) = generic_instantiated_params {
-                let expected_signature = (!instantiated_params.is_empty()).then(|| {
-                    self.ctx.types.factory().function(FunctionShape::new(
-                        instantiated_params.to_vec(),
-                        TypeId::UNKNOWN,
-                    ))
-                });
-                let result = if sanitized_generic_inference || needs_real_type_recheck {
-                    self.recheck_generic_call_arguments_with_real_types(
-                        result,
-                        instantiated_params,
-                        args,
-                        &arg_types,
-                    )
+        let (result, did_post_epc) = if let Some(ref instantiated_params) =
+            generic_instantiated_params
+        {
+            let expected_signature = (!instantiated_params.is_empty()).then(|| {
+                self.ctx.types.factory().function(FunctionShape::new(
+                    instantiated_params.to_vec(),
+                    TypeId::UNKNOWN,
+                ))
+            });
+            let result = if sanitized_generic_inference || needs_real_type_recheck {
+                self.recheck_generic_call_arguments_with_real_types(
+                    result,
+                    instantiated_params,
+                    args,
+                    &arg_types,
+                )
+            } else {
+                result
+            };
+            let recovered_mismatch = matches!(
+                &result,
+                CallResult::ArgumentTypeMismatch {
+                    fallback_return,
+                    ..
+                } if *fallback_return != TypeId::ERROR
+            );
+            let (result, should_epc) = match result {
+                CallResult::Success(return_type) => (CallResult::Success(return_type), true),
+                CallResult::ArgumentTypeMismatch {
+                    index,
+                    actual,
+                    expected,
+                    fallback_return,
+                } => {
+                    // The final check may fail due to stale cache entries. Verify with
+                    // a fresh structural check on the evaluated instantiated param, and
+                    // keep the refreshed types for downstream diagnostics.
+                    if let Some(param) = instantiated_params.get(index).or_else(|| {
+                        let last = instantiated_params.last()?;
+                        last.rest.then_some(last)
+                    }) {
+                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        let expected_param = expected_signature
+                            .and_then(|signature| {
+                                self.contextual_parameter_type_for_call_with_env_from_expected(
+                                    signature,
+                                    index,
+                                    arg_types.len(),
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                if param.rest {
+                                    self.rest_argument_element_type_with_env(evaluated_param)
+                                } else {
+                                    evaluated_param
+                                }
+                            });
+                        let arg_type = args
+                            .get(index)
+                            .copied()
+                            .map(|arg_idx| {
+                                self.refreshed_generic_call_arg_type(
+                                    arg_idx,
+                                    arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
+                                )
+                            })
+                            .unwrap_or(TypeId::UNKNOWN);
+                        let fresh_assignable =
+                            self.is_assignable_to_with_env(arg_type, expected_param);
+                        let excess_property_recovery = if !fresh_assignable {
+                            args.get(index)
+                                .copied()
+                                .filter(|&arg_idx| {
+                                    self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
+                                        arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    })
+                                })
+                                .is_some_and(|arg_idx| {
+                                    if is_type_parameter_type(self.ctx.types, expected_param) {
+                                        return false;
+                                    }
+                                    let before = self.ctx.diagnostics.len();
+                                    self.check_object_literal_excess_properties(
+                                        arg_type,
+                                        expected_param,
+                                        arg_idx,
+                                    );
+                                    self.ctx.diagnostics.len() > before
+                                })
+                        } else {
+                            false
+                        };
+                        if !fresh_assignable && !excess_property_recovery {
+                            allow_contextual_mismatch_deferral = false;
+                        }
+                        (
+                            CallResult::ArgumentTypeMismatch {
+                                index,
+                                expected: expected_param,
+                                actual: arg_type,
+                                fallback_return,
+                            },
+                            fresh_assignable || excess_property_recovery,
+                        )
+                    } else {
+                        (
+                            CallResult::ArgumentTypeMismatch {
+                                index,
+                                actual,
+                                expected,
+                                fallback_return,
+                            },
+                            false,
+                        )
+                    }
+                }
+                other => (other, false),
+            };
+            if should_epc {
+                let mut did_epc = false;
+                for (i, &arg_idx) in args.iter().enumerate() {
+                    if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                        && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && let Some(param) = instantiated_params.get(i)
+                        && param.type_id != TypeId::ANY
+                        && param.type_id != TypeId::UNKNOWN
+                    {
+                        let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                        if !is_type_parameter_type(self.ctx.types, evaluated_param) {
+                            let arg_type = self.refreshed_generic_call_arg_type(
+                                arg_idx,
+                                arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
+                            );
+                            self.check_object_literal_excess_properties(
+                                arg_type,
+                                evaluated_param,
+                                arg_idx,
+                            );
+                            did_epc = true;
+                        }
+                    }
+                }
+                // If the result was ArgumentTypeMismatch but fresh check passed,
+                // convert to Success so the caller doesn't report TS2345.
+                // This recovery is not limited to object-literal EPC cases:
+                // generic constructor/class arguments can also fail the cached
+                // solver check and succeed on the fresh env-aware retry.
+                let result = if recovered_mismatch {
+                    if let CallResult::ArgumentTypeMismatch {
+                        fallback_return, ..
+                    } = &result
+                    {
+                        CallResult::Success(*fallback_return)
+                    } else {
+                        result
+                    }
                 } else {
                     result
                 };
-                let recovered_mismatch = matches!(
-                    &result,
-                    CallResult::ArgumentTypeMismatch {
-                        fallback_return,
-                        ..
-                    } if *fallback_return != TypeId::ERROR
-                );
-                let (result, should_epc) = match result {
-                    CallResult::Success(return_type) => (CallResult::Success(return_type), true),
-                    CallResult::ArgumentTypeMismatch {
-                        index,
-                        actual,
-                        expected,
-                        fallback_return,
-                    } => {
-                        // The final check may fail due to stale cache entries. Verify with
-                        // a fresh structural check on the evaluated instantiated param, and
-                        // keep the refreshed types for downstream diagnostics.
-                        if let Some(param) = instantiated_params.get(index).or_else(|| {
-                            let last = instantiated_params.last()?;
-                            last.rest.then_some(last)
-                        }) {
-                            let evaluated_param = self.evaluate_type_with_env(param.type_id);
-                            let expected_param = expected_signature
-                                .and_then(|signature| {
-                                    self.contextual_parameter_type_for_call_with_env_from_expected(
-                                        signature,
-                                        index,
-                                        arg_types.len(),
-                                    )
-                                })
-                                .unwrap_or_else(|| {
-                                    if param.rest {
-                                        self.rest_argument_element_type_with_env(evaluated_param)
-                                    } else {
-                                        evaluated_param
-                                    }
-                                });
-                            let arg_type = args
-                                .get(index)
-                                .copied()
-                                .map(|arg_idx| {
-                                    self.refreshed_generic_call_arg_type(
-                                        arg_idx,
-                                        arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
-                                    )
-                                })
-                                .unwrap_or(TypeId::UNKNOWN);
-                            let fresh_assignable =
-                                self.is_assignable_to_with_env(arg_type, expected_param);
-                            let excess_property_recovery = if !fresh_assignable {
-                                args.get(index)
-                                    .copied()
-                                    .filter(|&arg_idx| {
-                                        self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
-                                            arg_node.kind
-                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                        })
-                                    })
-                                    .is_some_and(|arg_idx| {
-                                        if is_type_parameter_type(self.ctx.types, expected_param) {
-                                            return false;
-                                        }
-                                        let before = self.ctx.diagnostics.len();
-                                        self.check_object_literal_excess_properties(
-                                            arg_type,
-                                            expected_param,
-                                            arg_idx,
-                                        );
-                                        self.ctx.diagnostics.len() > before
-                                    })
-                            } else {
-                                false
-                            };
-                            if !fresh_assignable && !excess_property_recovery {
-                                allow_contextual_mismatch_deferral = false;
-                            }
-                            (
-                                CallResult::ArgumentTypeMismatch {
-                                    index,
-                                    expected: expected_param,
-                                    actual: arg_type,
-                                    fallback_return,
-                                },
-                                fresh_assignable || excess_property_recovery,
-                            )
-                        } else {
-                            (
-                                CallResult::ArgumentTypeMismatch {
-                                    index,
-                                    actual,
-                                    expected,
-                                    fallback_return,
-                                },
-                                false,
-                            )
-                        }
-                    }
-                    other => (other, false),
-                };
-                if should_epc {
-                    let mut did_epc = false;
-                    for (i, &arg_idx) in args.iter().enumerate() {
-                        if let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                            && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            && let Some(param) = instantiated_params.get(i)
-                            && param.type_id != TypeId::ANY
-                            && param.type_id != TypeId::UNKNOWN
-                        {
-                            let evaluated_param = self.evaluate_type_with_env(param.type_id);
-                            if !is_type_parameter_type(self.ctx.types, evaluated_param) {
-                                let arg_type = self.refreshed_generic_call_arg_type(
-                                    arg_idx,
-                                    arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
-                                );
-                                self.check_object_literal_excess_properties(
-                                    arg_type,
-                                    evaluated_param,
-                                    arg_idx,
-                                );
-                                did_epc = true;
-                            }
-                        }
-                    }
-                    // If the result was ArgumentTypeMismatch but fresh check passed,
-                    // convert to Success so the caller doesn't report TS2345.
-                    // This recovery is not limited to object-literal EPC cases:
-                    // generic constructor/class arguments can also fail the cached
-                    // solver check and succeed on the fresh env-aware retry.
-                    let result = if recovered_mismatch {
-                        if let CallResult::ArgumentTypeMismatch {
-                            fallback_return, ..
-                        } = &result
-                        {
-                            CallResult::Success(*fallback_return)
-                        } else {
-                            result
-                        }
-                    } else {
-                        result
-                    };
-                    (result, did_epc)
-                } else {
-                    (result, false)
-                }
+                (result, did_epc)
             } else {
                 (result, false)
-            };
+            }
+        } else {
+            (result, false)
+        };
         let _ = did_post_epc;
 
         let call_context = CallResultContext {
