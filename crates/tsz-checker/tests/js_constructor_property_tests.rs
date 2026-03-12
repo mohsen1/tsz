@@ -765,6 +765,28 @@ class MyClass {
     );
 }
 
+/// Plain function constructor prototype symbol-keyed property → no false TS7053
+#[test]
+fn test_plain_function_constructor_prototype_symbol_key_no_false_error() {
+    let source = r#"
+const _sym = Symbol("_sym");
+function Ctor() {}
+Ctor.prototype[_sym] = "ok";
+const inst = new Ctor();
+inst[_sym];
+"#;
+    let diagnostics = check_js(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053 || *code == 2339)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS7053/TS2339 for symbol-keyed prototype constructor property, got: {errors:?}"
+    );
+}
+
 /// Plain function constructor: this.prop in prototype method should be accessible but nullable
 #[test]
 fn test_plain_function_constructor_prototype_this_prop_has_undefined() {
