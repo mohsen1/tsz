@@ -130,6 +130,33 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn nominal_mismatch_detail(
+        &self,
+        source_type: TypeId,
+        target_type: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let source_prop = self.property_info_for_display(source_type, property_name)?;
+        let target_prop = self.property_info_for_display(target_type, property_name)?;
+        if source_prop.visibility != target_prop.visibility
+            || target_prop.visibility == tsz_solver::Visibility::Public
+        {
+            return None;
+        }
+
+        let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+        match target_prop.visibility {
+            tsz_solver::Visibility::Private => Some(format_message(
+                diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+                &[&prop_name],
+            )),
+            tsz_solver::Visibility::Protected => Some(format!(
+                "Types have separate declarations of a protected property '{prop_name}'."
+            )),
+            tsz_solver::Visibility::Public => None,
+        }
+    }
+
     fn canonical_array_display_rank(name: &str) -> Option<usize> {
         match name {
             "length" => Some(0),
@@ -1316,14 +1343,24 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                // TODO: tsc emits nominal mismatch elaboration as related information
-                Diagnostic::error(
-                    file_name,
+                let mut diag = Diagnostic::error(
+                    file_name.clone(),
                     start,
                     length,
                     base,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                );
+                if let Some(detail) = self.nominal_mismatch_detail(source, target, *property_name) {
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name,
+                        start,
+                        length,
+                        message_text: detail,
+                        category: DiagnosticCategory::Message,
+                        code: reason.diagnostic_code(),
+                    });
+                }
+                diag
             }
 
             SubtypeFailureReason::ExcessProperty {
