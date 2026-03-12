@@ -1343,9 +1343,20 @@ impl<'a> CheckerState<'a> {
                     })
                 }
             }
-            SubtypeFailureReason::PropertyTypeMismatch { .. } => {
-                // Could elaborate property mismatches in the future, but skip for now
-                None
+            SubtypeFailureReason::PropertyTypeMismatch { property_name, .. } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let msg = format_message(
+                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                    &[&prop_name],
+                );
+                Some(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length: length.saturating_sub(start),
+                    message_text: msg,
+                })
             }
             _ => None,
         }
