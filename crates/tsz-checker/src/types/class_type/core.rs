@@ -1336,6 +1336,25 @@ impl<'a> CheckerState<'a> {
         instance_type
     }
 
+    fn merge_union_index_signature(
+        &self,
+        target: &mut Option<IndexSignature>,
+        incoming: IndexSignature,
+    ) {
+        if let Some(existing) = target.as_mut() {
+            if existing.value_type != incoming.value_type {
+                existing.value_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .union(vec![existing.value_type, incoming.value_type]);
+            }
+            existing.readonly &= incoming.readonly;
+        } else {
+            *target = Some(incoming);
+        }
+    }
+
     fn merge_index_signature_from_unresolved_computed_name(
         &mut self,
         name_idx: NodeIndex,
@@ -1360,7 +1379,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some((wants_string, wants_number)) = self.get_index_key_kind(key_type) {
             if wants_string {
-                Self::merge_index_signature(
+                self.merge_union_index_signature(
                     string_index,
                     IndexSignature {
                         key_type: TypeId::STRING,
@@ -1371,7 +1390,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if wants_number {
-                Self::merge_index_signature(
+                self.merge_union_index_signature(
                     number_index,
                     IndexSignature {
                         key_type: TypeId::NUMBER,
