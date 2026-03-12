@@ -552,6 +552,29 @@ class Sql extends Wagon {
     );
 }
 
+#[test]
+fn test_plain_js_function_constructor_is_constructable_and_types_this_properties() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.empty = [];
+}
+var a = new A();
+a.unknown = 1;
+a.empty.push("ok");
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected plain JS function constructors to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+    );
+}
+
 // === Computed property (element access) tests ===
 
 /// this[symbolKey] = value in JS class constructor → no false TS2322

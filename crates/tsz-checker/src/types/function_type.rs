@@ -226,6 +226,11 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+        let js_constructor_instance_type = if self.is_js_file() && is_function_declaration {
+            self.synthesize_js_constructor_instance_type(idx, TypeId::ANY, &[])
+        } else {
+            None
+        };
 
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
@@ -807,6 +812,7 @@ impl<'a> CheckerState<'a> {
                 outer_this_type
             } else {
                 ctx_helper.as_ref().and_then(|h| h.get_this_type())
+                    .or(js_constructor_instance_type)
                     .or_else(|| {
                         // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
                         let mut current = idx;
@@ -937,10 +943,7 @@ impl<'a> CheckerState<'a> {
                 let inferred = self.infer_return_type_from_body(idx, body, return_context);
                 return_type = jsdoc_return_context.unwrap_or(inferred);
 
-                if self.is_js_file()
-                    && is_function_declaration
-                    && let Some(instance_type) =
-                        self.synthesize_js_constructor_instance_type(idx, TypeId::ANY, &[])
+                if let Some(instance_type) = js_constructor_instance_type
                     && let Some(union_members) =
                         tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
                     && union_members.len() == 2
@@ -1781,7 +1784,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type: final_return_type,
             type_predicate,
-            is_constructor: false,
+            is_constructor: js_constructor_instance_type.is_some(),
             is_method: false,
         };
 
