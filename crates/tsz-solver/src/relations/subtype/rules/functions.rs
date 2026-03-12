@@ -33,6 +33,25 @@ fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubsti
     sub
 }
 
+fn resolve_contextual_source_inference_candidate(lower_bounds: &[TypeId], inferred: TypeId) -> TypeId {
+    if lower_bounds.is_empty() {
+        return inferred;
+    }
+
+    let mut distinct = Vec::new();
+    for &bound in lower_bounds {
+        if !distinct.contains(&bound) {
+            distinct.push(bound);
+        }
+    }
+
+    if distinct.len() <= 1 {
+        inferred
+    } else {
+        distinct[0]
+    }
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if parameter types are compatible based on variance settings.
     ///
@@ -640,6 +659,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .iter()
             .zip(renamed_source.type_params.iter())
         {
+            let lower_bounds = infer_ctx
+                .find_type_param(renamed_tp.name)
+                .map(|var| {
+                    infer_ctx
+                        .get_constraints(var)
+                        .map(|constraints| constraints.lower_bounds)
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
             let inferred_ty = inferred
                 .iter()
                 .find_map(|(name, ty)| (*name == renamed_tp.name).then_some(*ty));
@@ -648,7 +676,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 TypeId::ANY
             };
-            substitution.insert(original_tp.name, inferred_ty.unwrap_or(fallback));
+            let inferred_ty = inferred_ty
+                .map(|ty| resolve_contextual_source_inference_candidate(&lower_bounds, ty))
+                .unwrap_or(fallback);
+            substitution.insert(original_tp.name, inferred_ty);
         }
         Ok(substitution)
     }
@@ -1212,25 +1243,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        for s_sig in &s_callable.call_signatures {
-            // Try direct match first
-            if self
-                .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-                .is_true()
-            {
-                return SubtypeResult::True;
-            }
+        let Some(s_sig) = s_callable.call_signatures.last() else {
+            return SubtypeResult::False;
+        };
 
-            // If source has type parameters and target doesn't, try instantiating
-            // Example: <V>(x: V) => {value: V} should be assignable to (x: number) => {value: number}
-            if !s_sig.type_params.is_empty()
-                && t_fn.type_params.is_empty()
-                && self
-                    .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
-                    .is_true()
-            {
-                return SubtypeResult::True;
-            }
+        if self.check_call_signature_subtype_to_fn(s_sig, &t_fn).is_true() {
+            return SubtypeResult::True;
+        }
+
+        if !s_sig.type_params.is_empty()
+            && t_fn.type_params.is_empty()
+            && self
+                .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
+                .is_true()
+        {
+            return SubtypeResult::True;
         }
         SubtypeResult::False
     }
