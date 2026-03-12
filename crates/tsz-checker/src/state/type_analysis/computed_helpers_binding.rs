@@ -27,24 +27,36 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         exports_table
             .get("export=")
-            .and_then(|export_eq_sym| {
-                let lib_binders = self.get_lib_binders();
-                let sym = self
-                    .ctx
-                    .binder
-                    .get_symbol_with_libs(export_eq_sym, &lib_binders)
-                    .or_else(|| self.get_cross_file_symbol(export_eq_sym))?;
-                let is_ns_import =
-                    sym.import_name.is_none() || sym.import_name.as_deref() == Some("*");
-                if is_ns_import {
-                    sym.import_module
-                        .as_deref()
-                        .map(|module_name| self.imported_namespace_display_module_name(module_name))
-                } else {
-                    None
-                }
-            })
+            .or_else(|| self.resolve_cross_file_export(fallback, "export="))
+            .and_then(|export_eq_sym| self.namespace_display_module_name_for_symbol(export_eq_sym))
             .unwrap_or_else(|| self.imported_namespace_display_module_name(fallback))
+    }
+
+    fn namespace_display_module_name_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<String> {
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
+
+        let is_namespace_import =
+            symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
+        if is_namespace_import && let Some(module_name) = symbol.import_module.as_deref() {
+            return Some(self.imported_namespace_display_module_name(module_name));
+        }
+
+        if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
+            let mut visited = Vec::new();
+            if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                && target_sym_id != sym_id
+            {
+                return self.namespace_display_module_name_for_symbol(target_sym_id);
+            }
+        }
+
+        None
     }
 
     /// Resolve binding element type from annotated destructured function parameter.

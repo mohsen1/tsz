@@ -825,6 +825,10 @@ impl<'a> TypeFormatter<'a> {
             parts.push(self.format_property(prop));
         }
 
+        if parts.is_empty() {
+            return "{}".to_string();
+        }
+
         format!("{{ {}; }}", parts.join("; "))
     }
 
@@ -3259,6 +3263,14 @@ mod tests {
             result, "{ x?: string | undefined; }",
             "Optional property with string | undefined should keep it as-is"
         );
+    }
+
+    #[test]
+    fn empty_object_shape_formats_without_spurious_separator() {
+        let db = TypeInterner::new();
+        let mut fmt = TypeFormatter::new(&db);
+
+        assert_eq!(fmt.format(db.object(Vec::new())), "{}");
     }
 
     #[test]

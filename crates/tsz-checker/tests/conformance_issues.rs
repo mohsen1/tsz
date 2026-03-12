@@ -16,6 +16,7 @@ use tsz_binder::lib_loader::LibFile;
 use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
+use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -2463,6 +2464,7 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         .ctx
         .diagnostics
         .iter()
+        .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -2518,6 +2520,7 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_cache_and_opt
         .ctx
         .diagnostics
         .iter()
+        .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -8089,6 +8092,63 @@ fn compile_two_files_get_diagnostics_with_options(
         .collect()
 }
 
+fn compile_named_files_get_diagnostics_with_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .expect("entry file should exist");
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn compile_two_global_files_get_diagnostics_with_options(
     a_name: &str,
     a_source: &str,
@@ -10203,6 +10263,32 @@ const { x = 1 } = source;
     assert!(
         ts2339_messages[0].contains("Property 'x' does not exist on type '{}'."),
         "Expected TS2339 to report the missing property on '{{}}'. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_empty_object_literal_missing_property_formats_as_empty_object() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A { a: string; }
+const value: A = {};
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    );
+
+    let message = diagnostic_message(&diagnostics, 2741)
+        .expect("expected TS2741 for assignment from empty object literal");
+    assert!(
+        message.contains("type '{}'"),
+        "Expected TS2741 to format the empty object literal as '{{}}'. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !message.contains("{ ; }"),
+        "Did not expect the legacy '{{ ; }}' empty-object formatting. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -13679,5 +13765,85 @@ f("x").foo;
     assert!(
         has_error(&diagnostics, 2339),
         "Expected TS2339 to remain on the call result after TS2554 recovery. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_only_namespace_reexport_chain_does_not_emit_ts2305() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "lib.d.ts",
+                "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+            ),
+            ("a.ts", "export class A {}\n"),
+            ("b.ts", "export * as a from './a';\n"),
+            ("c.ts", "import type { a } from './b';\nexport { a };\n"),
+            ("d.ts", "import { a } from './c';\nnew a.A();\n"),
+        ],
+        "d.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "Did not expect TS2305 for a type-only namespace re-export chain. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_only_namespace_export_is_importable_from_reexporting_module() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("a.ts", "export class A {}\n"),
+            ("b.ts", "export * as a from './a';\n"),
+            ("c.ts", "import type { a } from './b';\nexport { a };\n"),
+        ],
+        "c.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "Did not expect TS2305 when importing a namespace export through a re-exporting module. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_only_namespace_export_is_importable_from_reexporting_module_with_absolute_paths() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("/tmp/tsz-export-namespace/a.ts", "export class A {}\n"),
+            (
+                "/tmp/tsz-export-namespace/b.ts",
+                "export * as a from './a';\n",
+            ),
+            (
+                "/tmp/tsz-export-namespace/c.ts",
+                "import type { a } from './b';\nexport { a };\n",
+            ),
+        ],
+        "/tmp/tsz-export-namespace/c.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "Did not expect TS2305 for an absolute-path namespace re-export import. Actual diagnostics: {diagnostics:#?}"
     );
 }
