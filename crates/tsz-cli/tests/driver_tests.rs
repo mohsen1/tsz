@@ -1524,6 +1524,51 @@ fn compile_resolves_package_imports_wildcard() {
 }
 
 #[test]
+fn compile_rejects_root_slash_package_import_specifier_under_node16() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "moduleResolution": "node16",
+            "noEmitOnError": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{
+          "name": "package",
+          "private": true,
+          "type": "module",
+          "imports": {
+            "#/*": "./src/*"
+          }
+        }"##,
+    );
+    write_file(&base.join("src/foo.ts"), "export const foo = 'foo';");
+    write_file(
+        &base.join("index.ts"),
+        "import { foo } from '#/foo.js';\nfoo;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for invalid #/ package import, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(!base.join("dist/index.js").is_file());
+}
+
+#[test]
 fn compile_resolves_package_imports_prefers_types_condition() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
