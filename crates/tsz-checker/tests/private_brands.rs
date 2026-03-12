@@ -213,13 +213,24 @@ fn test_multiple_private_members() {
 #[test]
 fn test_different_private_members() {
     // TS2322: Types with different private members are incompatible
-    test_private_brands(
-        r"
+    let source = r"
         class A { private x: number = 1; }
         class B { private y: number = 1; }
         let a: A = new B();
-        ",
-        1,
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for different private members");
+    assert!(
+        ts2322.related_information.iter().any(|info| {
+            info.message_text.contains("Property 'y' in type 'B'")
+                && !info.message_text.contains("[private field]")
+        }),
+        "Expected nominal mismatch related info to mention the concrete private member, got: {ts2322:?}"
     );
 }
 
