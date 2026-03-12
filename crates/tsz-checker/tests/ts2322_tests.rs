@@ -1210,6 +1210,30 @@ fn test_ts2322_namespace_export_assignment_optional_to_required() {
 }
 
 #[test]
+fn test_ts2322_optional_property_required_includes_related_missing_property_detail() {
+    let source = r#"
+        let source: { one?: number } = {};
+        let target: { one: number } = source;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322 for optional-to-required property assignment");
+
+    assert!(
+        ts2322.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                && info
+                    .message_text
+                    .contains("Property 'one' is missing in type")
+        }),
+        "Expected TS2322 to include missing-property elaboration as related information, got: {ts2322:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;

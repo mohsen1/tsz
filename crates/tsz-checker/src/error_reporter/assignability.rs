@@ -1197,14 +1197,29 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    // TODO: tsc emits property optional/required elaboration as related information
-                    Diagnostic::error(
-                        file_name,
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let source_str = self.format_type_diagnostic(source);
+                    let target_str = self.format_type_diagnostic(target);
+                    let detail = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &source_str, &target_str],
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: detail,
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    });
+                    diag
                 } else {
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                     let source_str = self.format_type_diagnostic(source);
