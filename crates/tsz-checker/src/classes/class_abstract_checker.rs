@@ -183,15 +183,14 @@ impl<'a> CheckerState<'a> {
             // Strategy 1: class symbol on the shape itself
             if let Some(class_sym_id) = shape.symbol
                 && let Some(symbol) = self.get_symbol_globally(class_sym_id)
+                && let Some(ref members_table) = symbol.members
             {
-                if let Some(ref members_table) = symbol.members {
-                    for (name, member_sym_id) in members_table.iter() {
-                        if implemented_members.contains(name) || missing.contains(name) {
-                            continue;
-                        }
-                        if self.member_symbol_is_abstract_global(*member_sym_id) {
-                            missing.push(name.clone());
-                        }
+                for (name, member_sym_id) in members_table.iter() {
+                    if implemented_members.contains(name) || missing.contains(name) {
+                        continue;
+                    }
+                    if self.member_symbol_is_abstract_global(*member_sym_id) {
+                        missing.push(name.clone());
                     }
                 }
             }
