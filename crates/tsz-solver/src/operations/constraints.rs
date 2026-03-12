@@ -2488,16 +2488,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // via intersection (not union).
         if let Some(&var) = var_map.get(&target_param) {
             ctx.add_contra_candidate(var, source_param, priority);
-            // Also do the reverse constraint (target→source) for bidirectional inference.
-            // But skip it when source_param is a type parameter that is NOT an inference
-            // placeholder. This avoids leaking original type parameter names (from contextual
-            // typing) as covariant candidates, which would produce false unions like
-            // `A | {BLAH:33}` instead of just `{BLAH:33}`.
-            let source_is_non_placeholder_type_param = matches!(
+            // Do not feed a bare placeholder target back into source-side type parameters.
+            // For higher-order generic callbacks like `callr(sn, f16)`, that reverse edge
+            // creates recursive source-placeholder candidates (`A = T`, `T = [A, B]`) and
+            // blows the target callback type into a self-referential tuple union.
+            let source_is_type_param = matches!(
                 self.interner.lookup(source_param),
                 Some(TypeData::TypeParameter(_))
-            ) && !var_map.contains_key(&source_param);
-            if !source_is_non_placeholder_type_param {
+            );
+            if !source_is_type_param {
                 self.constrain_types(ctx, var_map, target_param, source_param, priority);
             }
         } else {

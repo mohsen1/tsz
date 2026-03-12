@@ -59,6 +59,21 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn normalize_function_shape_params_for_context(
+        &self,
+        shape: &FunctionShape,
+    ) -> FunctionShape {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let mut normalized = shape.clone();
+        normalized.params = shape
+            .params
+            .iter()
+            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+            .collect();
+        normalized
+    }
+
     fn get_overloaded_source_signature(
         db: &dyn crate::TypeDatabase,
         type_id: TypeId,
@@ -2215,6 +2230,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
+        let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
+        let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
         if source_fn.type_params.is_empty() {
             return self.interner.function(source_fn);
         }
@@ -2232,8 +2249,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if target_param_types.is_empty() {
             return source_ty;
         }
+        let source_type_params_fully_determined_by_params = source_fn.type_params.iter().all(|tp| {
+            source_fn.params.iter().any(|param| {
+                crate::visitor::collect_referenced_types(self.interner.as_type_database(), param.type_id)
+                    .into_iter()
+                    .any(|ty| crate::type_param_info(self.interner.as_type_database(), ty).is_some_and(|info| info.name == tp.name))
+            })
+        });
         let prev_contextual_type = self.contextual_type;
-        self.contextual_type = Some(target_ty);
+        self.contextual_type = if source_type_params_fully_determined_by_params
+            && target_fn.params.iter().any(|param| param.rest)
+            && !crate::visitor::contains_type_parameters(
+                self.interner.as_type_database(),
+                target_fn.return_type,
+            )
+        {
+            None
+        } else {
+            Some(target_ty)
+        };
         let instantiated =
             self.instantiate_function_shape_from_argument_types(&source_fn, &target_param_types);
         self.contextual_type = prev_contextual_type;
