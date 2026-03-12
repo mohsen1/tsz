@@ -1085,66 +1085,67 @@ c = d;
         ctx_params_debug,
         ctx_body_debug,
         solver_variance_debug,
-    ) =
-        if let Some(def_id) = tsz_solver::visitor::application_id(&program.type_interner, source_type)
-            .and_then(|app_id| {
+    ) = if let Some(def_id) =
+        tsz_solver::visitor::application_id(&program.type_interner, source_type).and_then(
+            |app_id| {
                 let app = program.type_interner.type_application(app_id);
                 tsz_solver::visitor::lazy_def_id(&program.type_interner, app.base)
-            })
-        {
-            let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
-                .map(|variances| format!("{variances:?}"))
-                .unwrap_or_else(|| "<none>".to_string());
-            let params = tsz_solver::TypeResolver::get_lazy_type_params(&query_cache, def_id)
-                .map(|params| format!("{params:?}"))
-                .unwrap_or_else(|| "<none>".to_string());
-            let body = tsz_solver::TypeResolver::resolve_lazy(
-                &query_cache,
-                def_id,
-                &program.type_interner,
-            )
-            .map(|body| checker.format_type(body))
+            },
+        ) {
+        let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
+            .map(|variances| format!("{variances:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-            let ctx_params = checker
-                .ctx
-                .get_def_type_params(def_id)
-                .map(|params| format!("{params:?}"))
+        let params = tsz_solver::TypeResolver::get_lazy_type_params(&query_cache, def_id)
+            .map(|params| format!("{params:?}"))
+            .unwrap_or_else(|| "<none>".to_string());
+        let body =
+            tsz_solver::TypeResolver::resolve_lazy(&query_cache, def_id, &program.type_interner)
+                .map(|body| checker.format_type(body))
                 .unwrap_or_else(|| "<none>".to_string());
-            let ctx_body = tsz_solver::TypeResolver::resolve_lazy(
-                &checker.ctx,
-                def_id,
-                &program.type_interner,
-            )
-            .map(|body| checker.format_type(body))
+        let ctx_params = checker
+            .ctx
+            .get_def_type_params(def_id)
+            .map(|params| format!("{params:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-            let policy = tsz_solver::RelationPolicy::from_flags(checker.ctx.pack_relation_flags());
-            let context = tsz_solver::RelationContext {
-                query_db: Some(&query_cache),
-                inheritance_graph: Some(&checker.ctx.inheritance_graph),
-                class_check: None,
-            };
-            let solver_variance = tsz_solver::check_application_variance(
-                &program.type_interner,
-                &checker.ctx,
-                Some(&query_cache),
-                source_type,
-                target_type,
-                policy,
-                context,
-            )
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "<none>".to_string());
-            (variances, params, body, ctx_params, ctx_body, solver_variance)
-        } else {
-            (
-                "<none>".to_string(),
-                "<none>".to_string(),
-                "<none>".to_string(),
-                "<none>".to_string(),
-                "<none>".to_string(),
-                "<none>".to_string(),
-            )
+        let ctx_body =
+            tsz_solver::TypeResolver::resolve_lazy(&checker.ctx, def_id, &program.type_interner)
+                .map(|body| checker.format_type(body))
+                .unwrap_or_else(|| "<none>".to_string());
+        let policy = tsz_solver::RelationPolicy::from_flags(checker.ctx.pack_relation_flags());
+        let context = tsz_solver::RelationContext {
+            query_db: Some(&query_cache),
+            inheritance_graph: Some(&checker.ctx.inheritance_graph),
+            class_check: None,
         };
+        let solver_variance = tsz_solver::check_application_variance(
+            &program.type_interner,
+            &checker.ctx,
+            Some(&query_cache),
+            source_type,
+            target_type,
+            policy,
+            context,
+        )
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+        (
+            variances,
+            params,
+            body,
+            ctx_params,
+            ctx_body,
+            solver_variance,
+        )
+    } else {
+        (
+            "<none>".to_string(),
+            "<none>".to_string(),
+            "<none>".to_string(),
+            "<none>".to_string(),
+            "<none>".to_string(),
+            "<none>".to_string(),
+        )
+    };
 
     assert!(
         file_result.diagnostics.iter().any(|diag| diag.code == 2322),
@@ -1249,7 +1250,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         .nodes
         .first()
         .expect("declaration list");
-    let decl_list_node = program_file.arena.get(decl_list_idx).expect("decl list node");
+    let decl_list_node = program_file
+        .arena
+        .get(decl_list_idx)
+        .expect("decl list node");
     let decl_list_data = program_file
         .arena
         .get_variable(decl_list_node)
@@ -1267,29 +1271,31 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 
     let source_type = checker.get_type_of_node(decl.initializer);
     let target_type = checker.get_type_from_type_node(decl.type_annotation);
-    let read_constraint_type = |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
-        &query_cache,
-        object_type,
-        "constraint",
-    ) {
-        tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
-            Some(type_id)
-        }
-        _ => None,
-    };
+    let read_constraint_type =
+        |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+            &query_cache,
+            object_type,
+            "constraint",
+        ) {
+            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
+                Some(type_id)
+            }
+            _ => None,
+        };
     let source_constraint_type =
         read_constraint_type(source_type).expect("Num.constraint should resolve through self type");
     let evaluated_target_type = {
-        let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(
-            &program.type_interner,
-            &checker.ctx,
-        );
+        let mut evaluator =
+            tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
         evaluator.evaluate(target_type)
     };
     let target_constraint_type = read_constraint_type(evaluated_target_type)
         .expect("evaluated Runtype<any>.constraint should resolve through application self type");
 
-    assert_eq!(checker.format_type(source_constraint_type), "Constraint<Num>");
+    assert_eq!(
+        checker.format_type(source_constraint_type),
+        "Constraint<Num>"
+    );
     assert_eq!(
         checker.format_type(target_constraint_type),
         "Constraint<Runtype<any>>"

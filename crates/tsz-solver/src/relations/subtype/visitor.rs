@@ -634,8 +634,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 number_index: s_callable.number_index.clone(),
                 symbol: s_callable.symbol,
             };
-            self.checker
-                .check_object_subtype(&s_shape, None, Some(self.source), &t_shape, Some(self.target))
+            self.checker.check_object_subtype(
+                &s_shape,
+                None,
+                Some(self.source),
+                &t_shape,
+                Some(self.target),
+            )
         } else if let Some(t_shape_id) =
             object_with_index_shape_id(self.checker.interner, self.target)
         {
@@ -652,14 +657,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 number_index: s_callable.number_index.clone(),
                 symbol: s_callable.symbol,
             };
-            self.checker
-                .check_object_to_indexed(
-                    &s_shape.properties,
-                    None,
-                    Some(self.source),
-                    &t_shape,
-                    Some(self.target),
-                )
+            self.checker.check_object_to_indexed(
+                &s_shape.properties,
+                None,
+                Some(self.source),
+                &t_shape,
+                Some(self.target),
+            )
         } else {
             // Trace: Callable source doesn't match non-callable/non-object target
             if let Some(tracer) = &mut self.checker.tracer

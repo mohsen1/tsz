@@ -1445,7 +1445,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             .nodes
             .first()
             .expect("variable statement");
-        let var_stmt_node = program.files[0].arena.get(var_stmt_idx).expect("var stmt node");
+        let var_stmt_node = program.files[0]
+            .arena
+            .get(var_stmt_idx)
+            .expect("var stmt node");
         let var_stmt_data = program.files[0]
             .arena
             .get_variable(var_stmt_node)
@@ -1475,21 +1478,20 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             .expect("decl data");
         let source_type = checker.get_type_of_node(decl.initializer);
         let target_type = checker.get_type_from_type_node(decl.type_annotation);
-        let read_constraint_type = |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
-            &query_cache,
-            object_type,
-            "constraint",
-        ) {
-            tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
-                Some(type_id)
-            }
-            _ => None,
-        };
+        let read_constraint_type =
+            |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+                &query_cache,
+                object_type,
+                "constraint",
+            ) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id, ..
+                } => Some(type_id),
+                _ => None,
+            };
         let evaluated_target_type = {
-            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(
-                &program.type_interner,
-                &checker.ctx,
-            );
+            let mut evaluator =
+                tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
             evaluator.evaluate(target_type)
         };
         let source_symbol = match program.type_interner.lookup(source_type) {
