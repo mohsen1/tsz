@@ -132,6 +132,28 @@ fn test_protected_members_are_nominal() {
     );
 }
 
+#[test]
+fn test_protected_member_visibility_mismatch_elaborates_ts2322() {
+    let source = r"
+        class A { protected x: number = 1; }
+        class B { public x: number = 1; }
+        let a: A = new B();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for protected/public visibility mismatch");
+    assert!(
+        ts2322
+            .message_text
+            .contains("Property 'x' is protected in type 'A' but public in type 'B'"),
+        "Expected protected/public visibility detail in TS2322 message, got: {ts2322:?}"
+    );
+}
+
 /// Test that subclasses ARE compatible with their base classes.
 /// The subclass inherits the private brand from the parent.
 #[test]
