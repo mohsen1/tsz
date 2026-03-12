@@ -29,7 +29,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [█████████████████░░░] 85.3% (8,515/9,981 tests)
+Progress: [█████████████████░░░] 84.2% (10,596/12,581 tests)
 ```
 <!-- CONFORMANCE_END -->
 
