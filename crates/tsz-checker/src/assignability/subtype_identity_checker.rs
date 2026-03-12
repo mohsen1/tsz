@@ -274,6 +274,13 @@ impl<'a> CheckerState<'a> {
         let prev_type = self.evaluate_type_for_assignability(prev_type);
         let current_type = self.evaluate_type_for_assignability(current_type);
 
+        // `unknown` is only redeclaration-identical to itself. Treating top-level
+        // unknown like a wildcard suppresses real TS2403 errors after failed
+        // generic call inference (e.g. `var b: string | number; var b = foo(g);`).
+        if prev_type == TypeId::UNKNOWN || current_type == TypeId::UNKNOWN {
+            return prev_type == current_type;
+        }
+
         // Resolve namespace Lazy(DefId) types to their structural Object form.
         // Namespace symbols are intentionally cached as Lazy(DefId) for TS2693/TS2708
         // value-vs-type differentiation. But for TS2403 redeclaration checking, the

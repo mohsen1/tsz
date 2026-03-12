@@ -31,6 +31,23 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, type_id) {
+            return !shape.type_params.is_empty();
+        }
+        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id) {
+            return shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty())
+                || shape
+                    .construct_signatures
+                    .iter()
+                    .any(|sig| !sig.type_params.is_empty());
+        }
+        false
+    }
+
     fn normalize_nested_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         let mut visited = FxHashSet::default();
         self.normalize_nested_type_for_assignability_inner(type_id, &mut visited)
@@ -1507,6 +1524,7 @@ impl<'a> CheckerState<'a> {
             )
             && tsz_solver::type_queries::is_callable_type(self.ctx.types, source)
             && tsz_solver::type_queries::is_callable_type(self.ctx.types, target)
+            && !self.callable_has_own_generic_signatures(source)
             && self.ctx.types.is_assignable_to(target, source)
         {
             return true;

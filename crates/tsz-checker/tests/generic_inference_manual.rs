@@ -7,8 +7,32 @@
 
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+
+fn variable_declaration_initializer_at(
+    parser: &ParserState,
+    root: NodeIndex,
+    stmt_index: usize,
+) -> NodeIndex {
+    parser
+        .get_arena()
+        .get(root)
+        .and_then(|node| parser.get_arena().get_source_file(node))
+        .and_then(|source_file| {
+            parser
+                .get_arena()
+                .get(source_file.statements.nodes[stmt_index])
+        })
+        .and_then(|node| parser.get_arena().get_variable(node))
+        .and_then(|stmt| parser.get_arena().get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.get_arena().get_variable(node))
+        .and_then(|decl_list| parser.get_arena().get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.get_arena().get_variable_declaration(node))
+        .map(|decl| decl.initializer)
+        .expect("missing variable declaration")
+}
 
 #[test]
 fn test_identity_function_inference() {
@@ -197,5 +221,54 @@ const result = process(42, x => x.toString());
     assert!(
         type_errors.is_empty(),
         "Expected no type errors for process inference, got: {type_errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_call_with_optional_trailing_param_preserves_inferred_return_type() {
+    let source = r#"
+class Collection<T> {
+    public add(x: T) { }
+}
+interface Utils {
+    fold<T, S>(c: Collection<T>, folder: (s: S, t: T) => T, init?: S): T;
+}
+var c = new Collection<string>();
+declare var utils: Utils;
+var r = utils.fold(c, (s, t) => t, "");
+var r2 = utils.fold(c, (s, t) => t);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let r_type = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 4));
+    let r2_type = checker.get_type_of_node(variable_declaration_initializer_at(&parser, root, 5));
+
+    assert_eq!(
+        checker.format_type(r_type),
+        "string",
+        "Expected utils.fold(c, (s, t) => t, \"\") to infer string. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        checker.format_type(r2_type),
+        "string",
+        "Expected utils.fold(c, (s, t) => t) to infer string. Diagnostics: {:?}",
+        checker.ctx.diagnostics
     );
 }
