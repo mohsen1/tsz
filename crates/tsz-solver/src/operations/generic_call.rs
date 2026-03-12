@@ -383,7 +383,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> CallResult {
         let actual_this_type = self.actual_this_type;
-        let _has_context_sensitive_args = arg_types
+        let has_context_sensitive_args = arg_types
             .iter()
             .copied()
             .any(|arg| self.is_contextually_sensitive(arg));
@@ -686,10 +686,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let structural_return_subst =
             self.compute_return_context_substitution(func, self.contextual_type);
-        for (&name, &ty) in structural_return_subst.map().iter() {
-            substitution.insert(name, ty);
-        }
-        if !structural_return_subst.is_empty() {
+        if has_context_sensitive_args && !structural_return_subst.is_empty() {
+            for (&name, &ty) in structural_return_subst.map().iter() {
+                substitution.insert(name, ty);
+            }
             instantiated_params = func
                 .params
                 .iter()
