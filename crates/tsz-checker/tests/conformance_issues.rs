@@ -6054,8 +6054,7 @@ class DerivedInterface implements Base {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
-fn test_class_implements_class_does_not_gain_missing_private_members_for_assignment() {
+fn test_class_implements_class_reports_private_member_incompatibility_on_assignment() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 class A {
@@ -6088,8 +6087,11 @@ c2 = c;
         "Expected TS2720 for implementing class A, got: {relevant_diagnostics:#?}"
     );
     assert!(
-        has_error(&relevant_diagnostics, 2741),
-        "Expected TS2741 for assigning C to C2 after failed implements-class check, got: {relevant_diagnostics:#?}"
+        relevant_diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Property 'x' is private in type 'A' but not in type 'C'.")
+        }),
+        "Expected TS2322 for assigning C to C2 after failed implements-class check, got: {relevant_diagnostics:#?}"
     );
 }
 
