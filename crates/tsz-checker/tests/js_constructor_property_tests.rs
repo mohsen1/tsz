@@ -582,17 +582,42 @@ function A() {
 }
 var a = new A();
 a.unknown = 1;
-a.empty.push("ok");
+a.empty;
 "#;
     let diagnostics = check_js(source);
     let relevant: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
+        .filter(|(code, _)| matches!(*code, 2322 | 2683 | 7009 | 2339))
         .collect();
     assert_eq!(
         relevant.len(),
         0,
-        "Expected plain JS function constructors to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+        "Expected plain JS function constructors to avoid TS2322/TS2683/TS7009/TS2339 on instance properties, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_plain_js_function_constructor_initializers_widen_like_js() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.unknowable = undefined;
+    this.empty = [];
+}
+var a = new A();
+a.unknown = 1;
+a.unknowable = "ok";
+a.empty;
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2683 | 7009 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JS constructor null/undefined/[] initializers to widen for instance properties, got: {diagnostics:?}"
     );
 }
 
