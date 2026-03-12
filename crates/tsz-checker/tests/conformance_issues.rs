@@ -9978,6 +9978,34 @@ call(...sa, (...x) => 42);
     );
 }
 
+#[test]
+fn test_zero_param_callback_partial_return_participates_in_round1_inference() {
+    let source = r#"
+interface Foo<A> {
+    a: A;
+    b: (x: A) => void;
+}
+
+declare function canYouInferThis<A>(fn: () => Foo<A>): A;
+
+const result = canYouInferThis(() => ({
+    a: { BLAH: 33 },
+    b: x => { }
+}));
+
+result.BLAH;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Round 1 should infer from the non-sensitive callback return member and avoid TS2345. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Round 2 should contextualize the callback parameter after inference. Got: {diagnostics:?}"
+    );
+}
+
 /// Return type inference should use narrowed types from type guard predicates.
 /// When `isFunction(item)` narrows `item` to `Extract<T, Function>` inside an
 /// if-block, the inferred return type should reflect the narrowed type, not the
