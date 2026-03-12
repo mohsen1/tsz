@@ -1494,7 +1494,28 @@ impl<'a> CheckerState<'a> {
             let type_id = if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(stmt_idx) {
                 jsdoc_type
             } else if !rhs_idx.is_none() {
-                let rhs_type = self.get_type_of_node(rhs_idx);
+                let mut rhs_type = self.get_type_of_node(rhs_idx);
+                let rhs_is_direct_empty_array = self
+                    .ctx
+                    .arena
+                    .get(rhs_idx)
+                    .is_some_and(|rhs_node| {
+                        rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && self
+                                .ctx
+                                .arena
+                                .get_literal_expr(rhs_node)
+                                .is_some_and(|lit| lit.elements.nodes.is_empty())
+                    });
+                if rhs_is_direct_empty_array
+                    && tsz_solver::type_queries::get_array_element_type(self.ctx.types, rhs_type)
+                        == Some(TypeId::NEVER)
+                {
+                    rhs_type = self.ctx.types.factory().array(TypeId::ANY);
+                }
+                if rhs_type == TypeId::NULL || rhs_type == TypeId::UNDEFINED {
+                    rhs_type = TypeId::ANY;
+                }
                 if is_readonly {
                     rhs_type
                 } else {
