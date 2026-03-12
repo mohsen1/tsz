@@ -1125,6 +1125,63 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns `true` if the name node is a computed property with a non-statically-determinable
+    /// expression (e.g., `[someVariable]` or `[expr()]`). TSC skips duplicate member checking
+    /// for such "late-bound" names because the actual property name can't be known at compile time.
+    ///
+    /// Returns `false` for:
+    /// - Regular identifiers (`foo`)
+    /// - Computed properties with string/numeric literals (`["foo"]`, `[0]`)
+    /// - Computed properties with well-known symbols (`[Symbol.iterator]`)
+    /// - Computed properties whose expression resolves to a unique symbol type
+    fn is_late_bound_member_name(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return true; // can't determine -> treat as late-bound
+        };
+        // String/numeric literals are statically determinable
+        if expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            || expr_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+        {
+            return false;
+        }
+        // Well-known symbols (Symbol.xxx) are statically determinable
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+            && let Some(obj_node) = self.ctx.arena.get(access.expression)
+            && let Some(obj_ident) = self.ctx.arena.get_identifier(obj_node)
+            && obj_ident.escaped_text.as_str() == "Symbol"
+        {
+            return false;
+        }
+        // Check if the expression resolves to a statically determinable type.
+        // tsc treats unique symbols and single literal types as statically determinable
+        // property keys, but not unions or non-literal types.
+        let expr_type = self.get_type_of_node(computed.expression);
+        if tsz_solver::unique_symbol_ref(self.ctx.types.as_type_database(), expr_type).is_some() {
+            return false;
+        }
+        if !matches!(
+            tsz_solver::type_queries::classify_literal_type(
+                self.ctx.types.as_type_database(),
+                expr_type
+            ),
+            tsz_solver::type_queries::LiteralTypeKind::NotLiteral
+        ) {
+            return false;
+        }
+        // Everything else (unions, non-literal types, etc.) is late-bound
+        true
+    }
+
     /// Get the name node from an interface member for error reporting.
     fn get_interface_member_name_node(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
         let member_node = self.ctx.arena.get(member_idx)?;
@@ -1417,6 +1474,10 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_property_decl(member_node)
                     .and_then(|prop| {
+                        // Skip late-bound computed names — tsc doesn't check duplicates for these
+                        if self.is_late_bound_member_name(prop.name) {
+                            return None;
+                        }
                         let is_static = self.has_static_modifier(&prop.modifiers);
                         self.get_member_name_text(prop.name)
                             .map(|n| (n, true, false, is_static))
@@ -1427,6 +1488,10 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_method_decl(member_node)
                     .and_then(|method| {
+                        // Skip late-bound computed names — tsc doesn't check duplicates for these
+                        if self.is_late_bound_member_name(method.name) {
+                            return None;
+                        }
                         let has_body = method.body.is_some();
                         let is_static = self.has_static_modifier(&method.modifiers);
                         self.get_member_name_text(method.name)
@@ -1437,6 +1502,7 @@ impl<'a> CheckerState<'a> {
                     // Track accessors for duplicate detection (getter/setter pairs are allowed,
                     // but duplicate getters or duplicate setters are not)
                     if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                        && !self.is_late_bound_member_name(accessor.name)
                         && let Some(name) = self.get_member_name_text(accessor.name)
                     {
                         let is_static = self.has_static_modifier(&accessor.modifiers);
