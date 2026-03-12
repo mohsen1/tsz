@@ -525,7 +525,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .collect();
 
         // 2. Instantiate parameters with placeholders
-        let instantiated_params: Vec<ParamInfo> = func
+        let mut instantiated_params: Vec<ParamInfo> = func
             .params
             .iter()
             .map(|p| {
@@ -646,6 +646,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.compute_return_context_substitution(func, self.contextual_type);
         for (&name, &ty) in structural_return_subst.map().iter() {
             substitution.insert(name, ty);
+        }
+        if !structural_return_subst.is_empty() {
+            instantiated_params = func
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    name: p.name,
+                    type_id: instantiate_call_type(
+                        self.interner,
+                        p.type_id,
+                        &substitution,
+                        actual_this_type,
+                    ),
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect();
         }
 
         // 3. Multi-pass constraint collection for proper contextual typing
@@ -2467,7 +2484,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // 2. Instantiate parameters with placeholders
-        let instantiated_params: Vec<ParamInfo> = func
+        let mut instantiated_params: Vec<ParamInfo> = func
             .params
             .iter()
             .map(|p| ParamInfo {
@@ -2539,6 +2556,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             self.compute_return_context_substitution(func, self.contextual_type)
         };
+        if !structural_return_subst.is_empty() {
+            for (&name, &ty) in structural_return_subst.map().iter() {
+                substitution.insert(name, ty);
+            }
+            instantiated_params = func
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    name: p.name,
+                    type_id: instantiate_type(self.interner, p.type_id, &substitution),
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect();
+        }
 
         // 3. Round 1: Process non-contextual arguments only
         let rest_tuple_inference =

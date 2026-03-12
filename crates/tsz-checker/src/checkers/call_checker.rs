@@ -128,6 +128,37 @@ impl<'a> CheckerState<'a> {
             && is_contextually_sensitive(self, idx)
     }
 
+    fn object_literal_contains_function_member(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
+            return false;
+        };
+
+        obj.elements.nodes.iter().any(|&element_idx| {
+            let Some(element) = self.ctx.arena.get(element_idx) else {
+                return false;
+            };
+            if element.kind == syntax_kind_ext::METHOD_DECLARATION
+                || element.kind == syntax_kind_ext::GET_ACCESSOR
+                || element.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return true;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(element) else {
+                return false;
+            };
+            self.ctx.arena.get(prop.initializer).is_some_and(|init| {
+                init.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || init.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            })
+        })
+    }
+
     pub(crate) fn suppress_generic_return_context_for_direct_arg_overlap(
         &self,
         shape: &tsz_solver::FunctionShape,
@@ -146,7 +177,9 @@ impl<'a> CheckerState<'a> {
         }
 
         for (i, &arg_idx) in args.iter().enumerate() {
-            if is_contextually_sensitive(self, arg_idx) {
+            if is_contextually_sensitive(self, arg_idx)
+                || self.object_literal_contains_function_member(arg_idx)
+            {
                 continue;
             }
 
