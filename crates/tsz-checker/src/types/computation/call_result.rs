@@ -374,13 +374,15 @@ impl<'a> CheckerState<'a> {
                         elaborated = self.try_elaborate_object_literal_arg_error(arg_idx, expected);
                     }
                     if !elaborated
-                        && self.callback_body_span(arg_idx).is_some_and(|(start, end)| {
-                            self.has_diagnostic_code_within_span(
-                                start,
-                                end,
-                                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            )
-                        })
+                        && self
+                            .callback_body_span(arg_idx)
+                            .is_some_and(|(start, end)| {
+                                self.has_diagnostic_code_within_span(
+                                    start,
+                                    end,
+                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                )
+                            })
                     {
                         elaborated = true;
                     }
