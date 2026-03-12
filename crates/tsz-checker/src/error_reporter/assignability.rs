@@ -163,16 +163,22 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
         owner_name: &str,
         visibility: tsz_solver::Visibility,
+        source_visibility: Option<tsz_solver::Visibility>,
     ) -> String {
+        let source_side = source_visibility
+            .filter(|_| !source_str.trim_start().starts_with('{'))
+            .map(Self::visibility_name)
+            .map(|visibility| format!("{visibility} in type '{source_str}'"))
+            .unwrap_or_else(|| format!("not in type '{source_str}'"));
         let detail = match visibility {
             tsz_solver::Visibility::Private => {
                 format!(
-                    "Property '{prop_name}' is private in type '{owner_name}' but not in type '{source_str}'."
+                    "Property '{prop_name}' is private in type '{owner_name}' but {source_side}."
                 )
             }
             tsz_solver::Visibility::Protected => {
                 format!(
-                    "Property '{prop_name}' is protected in type '{owner_name}' but not in type '{source_str}'."
+                    "Property '{prop_name}' is protected in type '{owner_name}' but {source_side}."
                 )
             }
             _ => format!(
@@ -181,6 +187,29 @@ impl<'a> CheckerState<'a> {
         };
 
         format!("Type '{source_str}' is not assignable to type '{target_str}'.\n  {detail}")
+    }
+
+    fn visibility_name(visibility: tsz_solver::Visibility) -> &'static str {
+        match visibility {
+            tsz_solver::Visibility::Private => "private",
+            tsz_solver::Visibility::Protected => "protected",
+            tsz_solver::Visibility::Public => "public",
+        }
+    }
+
+    fn property_visibility_assignability_message(
+        &self,
+        source_str: &str,
+        target_str: &str,
+        prop_name: &str,
+        source_visibility: tsz_solver::Visibility,
+        target_visibility: tsz_solver::Visibility,
+    ) -> String {
+        let source_visibility = Self::visibility_name(source_visibility);
+        let target_visibility = Self::visibility_name(target_visibility);
+        format!(
+            "Type '{source_str}' is not assignable to type '{target_str}'.\n  Property '{prop_name}' is {target_visibility} in type '{target_str}' but {source_visibility} in type '{source_str}'."
+        )
     }
 
     fn sort_missing_property_names_for_display(
@@ -568,6 +597,11 @@ impl<'a> CheckerState<'a> {
                                     &display_prop,
                                     &owner_name,
                                     visibility,
+                                    self.property_info_for_display(
+                                        source,
+                                        self.ctx.types.intern_string(&display_prop),
+                                    )
+                                    .map(|prop| prop.visibility),
                                 ),
                                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             )
@@ -1016,6 +1050,7 @@ impl<'a> CheckerState<'a> {
                             &prop_name,
                             &owner_name,
                             visibility,
+                            None,
                         );
                         return Diagnostic::error(
                             file_name,
@@ -1191,14 +1226,21 @@ impl<'a> CheckerState<'a> {
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
-            SubtypeFailureReason::PropertyVisibilityMismatch { .. } => {
+            SubtypeFailureReason::PropertyVisibilityMismatch {
+                property_name,
+                source_visibility,
+                target_visibility,
+            } => {
                 let (source_str, target_str) =
                     self.format_top_level_assignability_message_types(source, target);
-                let base = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let base = self.property_visibility_assignability_message(
+                    &source_str,
+                    &target_str,
+                    &prop_name,
+                    *source_visibility,
+                    *target_visibility,
                 );
-                // TODO: tsc emits visibility elaboration as related information
                 Diagnostic::error(
                     file_name,
                     start,
@@ -1229,6 +1271,7 @@ impl<'a> CheckerState<'a> {
                         &prop_name,
                         &owner_name,
                         visibility,
+                        None,
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1629,6 +1672,7 @@ impl<'a> CheckerState<'a> {
                         &prop_name,
                         &owner_name,
                         visibility,
+                        None,
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1654,6 +1698,11 @@ impl<'a> CheckerState<'a> {
                                     &display_prop,
                                     &owner_name,
                                     visibility,
+                                    self.property_info_for_display(
+                                        source,
+                                        self.ctx.types.intern_string(&display_prop),
+                                    )
+                                    .map(|prop| prop.visibility),
                                 )
                             })
                             .unwrap_or_else(|| {
