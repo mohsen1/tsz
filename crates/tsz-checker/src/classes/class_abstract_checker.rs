@@ -7,8 +7,8 @@
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -59,7 +59,8 @@ impl<'a> CheckerState<'a> {
             .map(|sym_id| self.find_abstract_members_from_symbol(sym_id, &implemented_members))
             .unwrap_or_default();
         if missing_members.is_empty() {
-            missing_members = self.find_abstract_members_in_type(instance_type, &implemented_members);
+            missing_members =
+                self.find_abstract_members_in_type(instance_type, &implemented_members);
         }
 
         if missing_members.is_empty() {
@@ -355,7 +356,12 @@ impl<'a> CheckerState<'a> {
 
         if args.len() < type_params.len() {
             for param in type_params.iter().skip(args.len()) {
-                args.push(param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN));
+                args.push(
+                    param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN),
+                );
             }
         }
         if args.len() > type_params.len() {
@@ -393,9 +399,11 @@ impl<'a> CheckerState<'a> {
             if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 for arena in arenas {
                     if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                        if let Some(params) =
-                            Self::extract_class_type_params_from_current_arena(self, decl_idx, &symbol_name)
-                        {
+                        if let Some(params) = Self::extract_class_type_params_from_current_arena(
+                            self,
+                            decl_idx,
+                            &symbol_name,
+                        ) {
                             return Some(params);
                         }
                     } else {
@@ -457,9 +465,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        member_sym.declarations.iter().any(|&decl_idx| {
-            self.member_declaration_is_abstract_global(member_sym_id, decl_idx)
-        })
+        member_sym
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.member_declaration_is_abstract_global(member_sym_id, decl_idx))
     }
 
     fn member_declaration_is_abstract_global(
@@ -484,9 +493,8 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => arena
-                .get_property_decl(node)
-                .is_some_and(|prop| {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                arena.get_property_decl(node).is_some_and(|prop| {
                     prop.modifiers.as_ref().is_some_and(|mods| {
                         mods.nodes.iter().any(|&mod_idx| {
                             arena.get(mod_idx).is_some_and(|mod_node| {
@@ -494,10 +502,10 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                     })
-                }),
-            k if k == syntax_kind_ext::METHOD_DECLARATION => arena
-                .get_method_decl(node)
-                .is_some_and(|method| {
+                })
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                arena.get_method_decl(node).is_some_and(|method| {
                     method.modifiers.as_ref().is_some_and(|mods| {
                         mods.nodes.iter().any(|&mod_idx| {
                             arena.get(mod_idx).is_some_and(|mod_node| {
@@ -505,10 +513,10 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                     })
-                }),
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => arena
-                .get_accessor(node)
-                .is_some_and(|accessor| {
+                })
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                arena.get_accessor(node).is_some_and(|accessor| {
                     accessor.modifiers.as_ref().is_some_and(|mods| {
                         mods.nodes.iter().any(|&mod_idx| {
                             arena.get(mod_idx).is_some_and(|mod_node| {
@@ -516,7 +524,8 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                     })
-                }),
+                })
+            }
             _ => false,
         }
     }
