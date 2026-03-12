@@ -40,6 +40,34 @@ fn check_js(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn check_js_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 /// Basic constructor this.prop assignment → no TS2339 on instance access
 #[test]
 fn test_js_constructor_this_prop_no_false_ts2339() {
@@ -618,6 +646,49 @@ a.empty;
         relevant.len(),
         0,
         "Expected JS constructor null/undefined/[] initializers to widen for instance properties, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_plain_js_function_constructor_initializers_emit_ts7008_in_check_js() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.unknowable = undefined;
+    this.empty = [];
+}
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts7008_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7008)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+    assert!(
+        ts7008_messages
+            .iter()
+            .any(|msg| msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Expected TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7008_messages
+            .iter()
+            .any(|msg| msg.contains("Member 'unknowable' implicitly has an 'any' type.")),
+        "Expected TS7008 for JS undefined-initialized constructor property, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7008_messages
+            .iter()
+            .any(|msg| msg.contains("Member 'empty' implicitly has an 'any[]' type.")),
+        "Expected TS7008 for JS empty-array constructor property, got: {diagnostics:?}"
     );
 }
 

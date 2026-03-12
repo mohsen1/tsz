@@ -1541,6 +1541,36 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
+            if self.ctx.no_implicit_any() {
+                let implicit_type = if type_id == TypeId::ANY {
+                    Some("any")
+                } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
+                    == Some(TypeId::ANY)
+                {
+                    Some("any[]")
+                } else {
+                    None
+                };
+                if let Some(implicit_type) = implicit_type {
+                    let message = format!(
+                        "Member '{prop_name}' implicitly has an '{implicit_type}' type."
+                    );
+                    let already_emitted = self.ctx.diagnostics.iter().any(|d| {
+                        d.code
+                            == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
+                            && d.start == self.ctx.arena.get(report_idx).map_or(0, |n| n.pos)
+                            && d.message_text == message
+                    });
+                    if !already_emitted {
+                        self.error_at_node_msg(
+                            report_idx,
+                            crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
+                            &[&prop_name, implicit_type],
+                        );
+                    }
+                }
+            }
+
             if type_id == TypeId::UNDEFINED {
                 if let Some(parent_sym) = parent_sym
                     && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
