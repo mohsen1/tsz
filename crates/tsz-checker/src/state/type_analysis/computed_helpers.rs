@@ -40,6 +40,17 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Preserve direct callable shapes as contextual types. Re-evaluating them
+        // can simplify contravariant parameter unions inside callback types, e.g.
+        // `(value: A | B | C) => U` collapsing to `(value: A) => any` during
+        // generic call argument collection for `Array.prototype.map`.
+        if matches!(
+            self.ctx.types.lookup(type_id),
+            Some(tsz_solver::TypeData::Function(_) | tsz_solver::TypeData::Callable(_))
+        ) {
+            return type_id;
+        }
+
         if crate::query_boundaries::state::should_evaluate_contextual_declared_type(
             self.ctx.types,
             type_id,

@@ -16443,6 +16443,290 @@ fn test_variance_promise_covariant() {
 }
 
 #[test]
+fn test_recursive_promise_then_assignable_to_promise_like() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let promise_like_def = DefId(3000);
+    let promise_def = DefId(3001);
+
+    let outer_t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_u = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let outer_t_ty = interner.type_param(outer_t.clone());
+    let inner_u_ty = interner.type_param(inner_u.clone());
+
+    let promise_like_u = interner.application(interner.lazy(promise_like_def), vec![inner_u_ty]);
+    let promise_u = interner.application(interner.lazy(promise_def), vec![inner_u_ty]);
+
+    let onfulfilled_promise_like = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: outer_t_ty,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: interner.union(vec![inner_u_ty, promise_like_u]),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let then_promise_like = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![inner_u.clone()],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("onfulfilled")),
+                type_id: interner.union(vec![onfulfilled_promise_like, TypeId::UNDEFINED]),
+                optional: true,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: promise_like_u,
+            type_predicate: None,
+            is_method: true,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+    });
+
+    let onfulfilled_promise = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: outer_t_ty,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: interner.union(vec![inner_u_ty, promise_like_u]),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let then_promise = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![inner_u],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("onfulfilled")),
+                type_id: interner.union(vec![onfulfilled_promise, TypeId::UNDEFINED]),
+                optional: true,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: promise_u,
+            type_predicate: None,
+            is_method: true,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+    });
+
+    let promise_like_body = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_promise_like,
+    )]);
+    let promise_body = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_promise,
+    )]);
+
+    env.insert_def_with_params(promise_like_def, promise_like_body, vec![outer_t.clone()]);
+    env.insert_def_kind(promise_like_def, crate::def::DefKind::Interface);
+    env.insert_def_with_params(promise_def, promise_body, vec![outer_t]);
+    env.insert_def_kind(promise_def, crate::def::DefKind::Interface);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    let promise_number = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let promise_like_number =
+        interner.application(interner.lazy(promise_like_def), vec![TypeId::NUMBER]);
+
+    assert!(
+        checker.is_subtype_of(promise_number, promise_like_number),
+        "Promise<T> should be assignable to PromiseLike<T> in recursive then comparison"
+    );
+}
+
+#[test]
+fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let promise_like_def = DefId(3010);
+    let promise_def = DefId(3011);
+
+    let outer_t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let result1 = TypeParamInfo {
+        name: interner.intern_string("TResult1"),
+        constraint: None,
+        default: Some(interner.type_param(outer_t.clone())),
+        is_const: false,
+    };
+    let result2 = TypeParamInfo {
+        name: interner.intern_string("TResult2"),
+        constraint: None,
+        default: Some(TypeId::NEVER),
+        is_const: false,
+    };
+
+    let outer_t_ty = interner.type_param(outer_t.clone());
+    let result1_ty = interner.type_param(result1.clone());
+    let result2_ty = interner.type_param(result2.clone());
+    let result_union = interner.union(vec![result1_ty, result2_ty]);
+    let promise_like_result =
+        interner.application(interner.lazy(promise_like_def), vec![result_union]);
+    let promise_result = interner.application(interner.lazy(promise_def), vec![result_union]);
+    let promise_like_result1 =
+        interner.application(interner.lazy(promise_like_def), vec![result1_ty]);
+    let promise_like_result2 =
+        interner.application(interner.lazy(promise_like_def), vec![result2_ty]);
+
+    let onfulfilled = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: outer_t_ty,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: interner.union(vec![result1_ty, promise_like_result1]),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let onrejected = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("reason")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: interner.union(vec![result2_ty, promise_like_result2]),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let nullable_onfulfilled = interner.union(vec![onfulfilled, TypeId::UNDEFINED, TypeId::NULL]);
+    let nullable_onrejected = interner.union(vec![onrejected, TypeId::UNDEFINED, TypeId::NULL]);
+
+    let then_promise_like = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![result1.clone(), result2.clone()],
+            params: vec![
+                ParamInfo {
+                    name: Some(interner.intern_string("onfulfilled")),
+                    type_id: nullable_onfulfilled,
+                    optional: true,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(interner.intern_string("onrejected")),
+                    type_id: nullable_onrejected,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: promise_like_result,
+            type_predicate: None,
+            is_method: true,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+    });
+
+    let then_promise = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![result1, result2],
+            params: vec![
+                ParamInfo {
+                    name: Some(interner.intern_string("onfulfilled")),
+                    type_id: nullable_onfulfilled,
+                    optional: true,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(interner.intern_string("onrejected")),
+                    type_id: nullable_onrejected,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: promise_result,
+            type_predicate: None,
+            is_method: true,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+    });
+
+    let promise_like_body = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_promise_like,
+    )]);
+    let promise_body = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("then"),
+        then_promise,
+    )]);
+
+    env.insert_def_with_params(promise_like_def, promise_like_body, vec![outer_t.clone()]);
+    env.insert_def_kind(promise_like_def, crate::def::DefKind::Interface);
+    env.insert_def_with_params(promise_def, promise_body, vec![outer_t]);
+    env.insert_def_kind(promise_def, crate::def::DefKind::Interface);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    let promise_number = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let promise_like_number =
+        interner.application(interner.lazy(promise_like_def), vec![TypeId::NUMBER]);
+
+    assert!(
+        checker.is_subtype_of(promise_number, promise_like_number),
+        "Promise<T> should be assignable to PromiseLike<T> for the real lib then shape"
+    );
+}
+
+#[test]
 fn test_variance_triple_nested_contravariance() {
     // Three levels of contravariance: ((f: (g: (x: T) => void) => void) => void)
     // Three contravariants = contravariant overall

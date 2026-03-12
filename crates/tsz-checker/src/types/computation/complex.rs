@@ -292,10 +292,6 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
-            if (symbol.flags & symbol_flags::ABSTRACT) != 0 {
-                return true;
-            }
-
             if (symbol.flags & symbol_flags::TYPE_ALIAS) == 0 {
                 return false;
             }
@@ -357,6 +353,54 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn imported_value_is_abstract_class(&self, module_name: &str, export_name: &str) -> bool {
+        let export_sym_id = self
+            .resolve_cross_file_export(module_name, export_name)
+            .or_else(|| {
+                let target_idx = self.ctx.resolve_import_target(module_name)?;
+                let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+                let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                let file_name = target_arena.source_files.first()?.file_name.clone();
+                target_binder
+                    .module_exports
+                    .get(&file_name)
+                    .and_then(|exports| exports.get(export_name))
+            });
+        let Some(export_sym_id) = export_sym_id else {
+            return false;
+        };
+        let Some(target_idx) = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&export_sym_id)
+            .copied()
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(export_symbol) = target_binder.get_symbol(export_sym_id) else {
+            return false;
+        };
+        let decl_idx = if export_symbol.value_declaration.is_some() {
+            export_symbol.value_declaration
+        } else {
+            *export_symbol
+                .declarations
+                .first()
+                .unwrap_or(&NodeIndex::NONE)
+        };
+        target_arena
+            .get(decl_idx)
+            .filter(|decl| decl.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION)
+            .and_then(|decl| target_arena.get_class(decl))
+            .is_some_and(|class| self.has_abstract_modifier(&class.modifiers))
     }
 
     pub(crate) const fn should_suppress_weak_key_arg_mismatch(
@@ -1398,7 +1442,15 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
             .or_else(|| self.ctx.binder.file_locals.get(class_name))
             .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name))?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id).or_else(|| {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .copied()
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                .and_then(|binder| binder.get_symbol(sym_id))
+        })?;
 
         if self.alias_resolves_to_type_only(sym_id) {
             self.error_type_only_value_at(class_name, expr_idx);
@@ -1435,7 +1487,102 @@ impl<'a> CheckerState<'a> {
             self.error_type_only_value_at(class_name, expr_idx);
             return Some(TypeId::ERROR);
         }
-        if symbol.flags & symbol_flags::ABSTRACT != 0 {
+        let symbol_decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first().unwrap_or(&NodeIndex::NONE)
+        };
+        if let Some(decl_node) = self.ctx.arena.get(symbol_decl_idx)
+            && decl_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_CLAUSE
+            && let Some(ext) = self.ctx.arena.get_extended(symbol_decl_idx)
+            && ext.parent.is_some()
+            && let Some(import_decl_node) = self.ctx.arena.get(ext.parent)
+            && let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node)
+            && import_decl.module_specifier.is_some()
+            && let Some(spec_node) = self.ctx.arena.get(import_decl.module_specifier)
+            && let Some(spec_lit) = self.ctx.arena.get_literal(spec_node)
+            && self.imported_value_is_abstract_class(&spec_lit.text, "default")
+        {
+            self.error_at_node(
+                new_idx,
+                "Cannot create an instance of an abstract class.",
+                diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
+            );
+            return Some(TypeId::ERROR);
+        }
+        if let Some(module_name) = symbol.import_module.as_deref() {
+            let export_name = symbol.import_name.as_deref().unwrap_or(class_name);
+            if self.imported_value_is_abstract_class(module_name, export_name) {
+                self.error_at_node(
+                    new_idx,
+                    "Cannot create an instance of an abstract class.",
+                    diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
+                );
+                return Some(TypeId::ERROR);
+            }
+        }
+        let resolved_sym_id = if (symbol.flags & symbol_flags::ALIAS) != 0 {
+            self.resolve_alias_symbol(sym_id, &mut Vec::new())
+                .unwrap_or(sym_id)
+        } else {
+            sym_id
+        };
+        let resolved_symbol = self
+            .ctx
+            .binder
+            .get_symbol(resolved_sym_id)
+            .or_else(|| {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow()
+                    .get(&resolved_sym_id)
+                    .copied()
+                    .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                    .and_then(|binder| binder.get_symbol(resolved_sym_id))
+            })
+            .unwrap_or(symbol);
+        let resolved_symbol_is_abstract_class = (resolved_symbol.flags
+            & (symbol_flags::CLASS | symbol_flags::ABSTRACT))
+            == (symbol_flags::CLASS | symbol_flags::ABSTRACT)
+            || {
+                let target_file_idx = self
+                    .ctx
+                    .cross_file_symbol_targets
+                    .borrow()
+                    .get(&resolved_sym_id)
+                    .copied();
+                let target_arena = target_file_idx
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+                    .unwrap_or(self.ctx.arena);
+                let resolved_decl_idx = if resolved_symbol.value_declaration.is_some() {
+                    resolved_symbol.value_declaration
+                } else {
+                    *resolved_symbol
+                        .declarations
+                        .first()
+                        .unwrap_or(&NodeIndex::NONE)
+                };
+                target_arena
+                    .get(resolved_decl_idx)
+                    .filter(|decl| {
+                        decl.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
+                    })
+                    .and_then(|decl| target_arena.get_class(decl))
+                    .is_some_and(|class| self.has_abstract_modifier(&class.modifiers))
+            };
+        if resolved_symbol_is_abstract_class {
+            self.error_at_node(
+                new_idx,
+                "Cannot create an instance of an abstract class.",
+                diagnostic_codes::CANNOT_CREATE_AN_INSTANCE_OF_AN_ABSTRACT_CLASS,
+            );
+            return Some(TypeId::ERROR);
+        }
+        let symbol_type = self.get_type_of_symbol(sym_id);
+        if symbol_type != TypeId::ERROR
+            && symbol_type != TypeId::UNKNOWN
+            && self.type_contains_abstract_class(symbol_type)
+        {
             self.error_at_node(
                 new_idx,
                 "Cannot create an instance of an abstract class.",

@@ -232,6 +232,22 @@ fn test_ts2322_return_wrong_array_element() {
 }
 
 #[test]
+fn test_promise_is_assignable_to_promise_like_with_real_libs() {
+    let source = r#"
+declare const p: Promise<number>;
+const q: PromiseLike<number> = p;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let relevant: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected Promise<T> to be assignable to PromiseLike<T>, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_return_alias_instantiation_mismatch() {
     let source = r#"
         type Box<T> = { value: T };

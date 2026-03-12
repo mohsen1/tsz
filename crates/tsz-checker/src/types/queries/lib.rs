@@ -612,6 +612,9 @@ impl<'a> CheckerState<'a> {
             return self
                 .resolve_require_call_symbol(import.module_specifier, Some(visited_aliases));
         }
+        if symbol.import_module.is_none() {
+            return Some(sym_id);
+        }
         // For other alias symbols (not ES6 imports or import equals), return None
         // to indicate we couldn't resolve the alias
         None
