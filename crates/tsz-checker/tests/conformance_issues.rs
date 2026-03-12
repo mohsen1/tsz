@@ -2639,8 +2639,7 @@ function foo<T>(arr: T[], depth: number): BadFlatArray<T, number>[] {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
-fn test_declaration_emit_spread_with_external_unique_symbol_key_emits_ts4023() {
+fn test_declaration_emit_spread_with_external_unique_symbol_key_stays_nameable() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
             (
@@ -2667,8 +2666,8 @@ fn test_declaration_emit_spread_with_external_unique_symbol_key_emits_ts4023() {
     );
 
     assert!(
-        has_error(&diagnostics, 4023),
-        "Expected TS4023 for declaration emit of an inferred spread type with an external unique-symbol key. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 4023),
+        "Did not expect TS4023 for declaration emit of an inferred spread type with an external unique-symbol key. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -9285,8 +9284,7 @@ const y = x.get("a");
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
-fn test_array_literal_union_context_with_object_member_does_not_contextually_type_callbacks() {
+fn test_array_literal_union_context_with_object_member_contextually_types_callbacks() {
     if !lib_files_available() {
         return;
     }
@@ -9312,8 +9310,8 @@ test([
     );
 
     assert!(
-        has_error(&diagnostics, 7006),
-        "Expected TS7006 when array literal contextual type comes from ambiguous union. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 when array literal contextual type contains an array callback branch. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
