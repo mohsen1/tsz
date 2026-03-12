@@ -7,6 +7,7 @@
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -39,6 +40,7 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
+        let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
 
         // Collect implemented members from the derived class
         let mut implemented_members = rustc_hash::FxHashSet::default();
@@ -50,9 +52,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Find abstract members from the instance type
-        let missing_members =
-            self.find_abstract_members_in_type(instance_type, &implemented_members);
+        // Prefer the resolved heritage symbol for nominal/merged lib classes like
+        // `Iterator`, then fall back to the merged instance type walk for mixins and
+        // other expression-based heritage.
+        let mut missing_members = heritage_sym_id
+            .map(|sym_id| self.find_abstract_members_from_symbol(sym_id, &implemented_members))
+            .unwrap_or_default();
+        if missing_members.is_empty() {
+            missing_members = self.find_abstract_members_in_type(instance_type, &implemented_members);
+        }
 
         if missing_members.is_empty() {
             return;
@@ -78,6 +86,11 @@ impl<'a> CheckerState<'a> {
         // Determine the base class display name from the instance type.
         let type_base_name = self
             .intersection_instance_display_name(h_expr_idx, type_arguments)
+            .or_else(|| {
+                heritage_sym_id.and_then(|sym_id| {
+                    self.format_symbol_reference_with_type_arguments(sym_id, type_arguments)
+                })
+            })
             .or_else(|| self.collect_class_names_from_instance_type(instance_type))
             .unwrap_or_else(|| {
                 if base_class_name.is_empty() {
@@ -155,7 +168,7 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
         implemented_members: &rustc_hash::FxHashSet<String>,
     ) -> Vec<String> {
-        let mut missing = Vec::new();
+        let mut missing: Vec<String> = Vec::new();
         let type_ids_to_check =
             tsz_solver::type_queries::get_intersection_members(self.ctx.types, instance_type)
                 .unwrap_or_else(|| vec![instance_type]);
@@ -168,22 +181,15 @@ impl<'a> CheckerState<'a> {
 
             // Strategy 1: class symbol on the shape itself
             if let Some(class_sym_id) = shape.symbol
-                && let Some(symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                && let Some(symbol) = self.get_symbol_globally(class_sym_id)
             {
-                for &decl_idx in &symbol.declarations {
-                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    let Some(class_decl) = self.ctx.arena.get_class(decl_node) else {
-                        continue;
-                    };
-                    for &member_idx in &class_decl.members.nodes {
-                        if self.member_is_abstract(member_idx)
-                            && let Some(name) = self.get_member_name(member_idx)
-                            && !implemented_members.contains(&name)
-                            && !missing.contains(&name)
-                        {
-                            missing.push(name);
+                if let Some(ref members_table) = symbol.members {
+                    for (name, member_sym_id) in members_table.iter() {
+                        if implemented_members.contains(name) || missing.contains(name) {
+                            continue;
+                        }
+                        if self.member_symbol_is_abstract_global(*member_sym_id) {
+                            missing.push(name.clone());
                         }
                     }
                 }
@@ -223,7 +229,7 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::type_queries::get_object_shape(self.ctx.types, member_id)
                     && let Some(sym_id) = shape.symbol
                     && seen.insert(sym_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && let Some(symbol) = self.get_symbol_globally(sym_id)
                     && !symbol.escaped_name.is_empty()
                     && symbol.escaped_name != "__type"
                 {
@@ -235,7 +241,7 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(sym_id) = shape.symbol
                 && seen.insert(sym_id)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && let Some(symbol) = self.get_symbol_globally(sym_id)
                 && !symbol.escaped_name.is_empty()
                 && symbol.escaped_name != "__type"
             {
@@ -244,7 +250,7 @@ impl<'a> CheckerState<'a> {
             for prop in &shape.properties {
                 if let Some(parent_sym_id) = prop.parent_id
                     && seen.insert(parent_sym_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym_id)
+                    && let Some(symbol) = self.get_symbol_globally(parent_sym_id)
                     && !symbol.escaped_name.is_empty()
                     && symbol.escaped_name != "__type"
                 {
@@ -266,19 +272,14 @@ impl<'a> CheckerState<'a> {
         parent_sym_id: tsz_binder::SymbolId,
         member_name: &str,
     ) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(parent_sym_id) else {
+        let Some(symbol) = self.get_symbol_globally(parent_sym_id) else {
             return false;
         };
 
         if let Some(ref members_table) = symbol.members
             && let Some(member_sym_id) = members_table.get(member_name)
-            && let Some(member_sym) = self.ctx.binder.get_symbol(member_sym_id)
         {
-            for &decl_idx in &member_sym.declarations {
-                if self.member_is_abstract(decl_idx) {
-                    return true;
-                }
-            }
+            return self.member_symbol_is_abstract_global(member_sym_id);
         }
 
         // Fallback: check class declarations directly
@@ -300,5 +301,223 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn find_abstract_members_from_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        implemented_members: &rustc_hash::FxHashSet<String>,
+    ) -> Vec<String> {
+        let mut missing = Vec::new();
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+            return missing;
+        };
+
+        if let Some(ref members_table) = symbol.members {
+            for (name, member_sym_id) in members_table.iter() {
+                if implemented_members.contains(name) || missing.contains(name) {
+                    continue;
+                }
+                if self.member_symbol_is_abstract_global(*member_sym_id) {
+                    missing.push(name.clone());
+                }
+            }
+        }
+
+        missing
+    }
+
+    pub(crate) fn format_symbol_reference_with_type_arguments(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> Option<String> {
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let name = symbol.escaped_name.clone();
+        if name.is_empty() || name == "__type" {
+            return None;
+        }
+
+        let type_params = self
+            .class_type_params_for_symbol(sym_id)
+            .filter(|params| !params.is_empty())
+            .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id));
+        if type_params.is_empty() {
+            return Some(name);
+        }
+
+        let mut args = Vec::new();
+        if let Some(type_arguments) = type_arguments {
+            for &arg_idx in &type_arguments.nodes {
+                args.push(self.get_type_from_type_node(arg_idx));
+            }
+        }
+
+        if args.len() < type_params.len() {
+            for param in type_params.iter().skip(args.len()) {
+                args.push(param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN));
+            }
+        }
+        if args.len() > type_params.len() {
+            args.truncate(type_params.len());
+        }
+
+        Some(format!(
+            "{}<{}>",
+            name,
+            args.iter()
+                .map(|&arg| self.format_type(arg))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
+    fn class_type_params_for_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let symbol_name = symbol.escaped_name.clone();
+
+        let mut decl_candidates = Vec::new();
+        if symbol.value_declaration.is_some() {
+            decl_candidates.push(symbol.value_declaration);
+        }
+        for &decl_idx in &symbol.declarations {
+            if decl_idx != symbol.value_declaration {
+                decl_candidates.push(decl_idx);
+            }
+        }
+
+        for decl_idx in decl_candidates {
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                        if let Some(params) =
+                            Self::extract_class_type_params_from_current_arena(self, decl_idx, &symbol_name)
+                        {
+                            return Some(params);
+                        }
+                    } else {
+                        if !Self::enter_cross_arena_delegation() {
+                            continue;
+                        }
+                        let mut checker = Box::new(CheckerState::with_parent_cache(
+                            arena.as_ref(),
+                            self.ctx.binder,
+                            self.ctx.types,
+                            self.ctx.file_name.clone(),
+                            self.ctx.compiler_options.clone(),
+                            self,
+                        ));
+                        let params = Self::extract_class_type_params_from_current_arena(
+                            &mut checker,
+                            decl_idx,
+                            &symbol_name,
+                        );
+                        Self::leave_cross_arena_delegation();
+                        if params.is_some() {
+                            return params;
+                        }
+                    }
+                }
+            } else if let Some(params) =
+                Self::extract_class_type_params_from_current_arena(self, decl_idx, &symbol_name)
+            {
+                return Some(params);
+            }
+        }
+
+        None
+    }
+
+    fn extract_class_type_params_from_current_arena(
+        checker: &mut CheckerState<'_>,
+        decl_idx: NodeIndex,
+        symbol_name: &str,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let node = checker.ctx.arena.get(decl_idx)?;
+        let class = checker.ctx.arena.get_class(node)?;
+
+        if class.name.is_some()
+            && let Some(name_node) = checker.ctx.arena.get(class.name)
+            && let Some(ident) = checker.ctx.arena.get_identifier(name_node)
+            && ident.escaped_text != symbol_name
+        {
+            return None;
+        }
+
+        let (params, updates) = checker.push_type_parameters(&class.type_parameters);
+        checker.pop_type_parameters(updates);
+        Some(params)
+    }
+
+    fn member_symbol_is_abstract_global(&self, member_sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(member_sym) = self.get_symbol_globally(member_sym_id) else {
+            return false;
+        };
+
+        member_sym.declarations.iter().any(|&decl_idx| {
+            self.member_declaration_is_abstract_global(member_sym_id, decl_idx)
+        })
+    }
+
+    fn member_declaration_is_abstract_global(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+            for arena in arenas {
+                if Self::member_is_abstract_in_arena(arena, decl_idx) {
+                    return true;
+                }
+            }
+        }
+
+        Self::member_is_abstract_in_arena(self.ctx.arena, decl_idx)
+    }
+
+    fn member_is_abstract_in_arena(arena: &NodeArena, member_idx: NodeIndex) -> bool {
+        let Some(node) = arena.get(member_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => arena
+                .get_property_decl(node)
+                .is_some_and(|prop| {
+                    prop.modifiers.as_ref().is_some_and(|mods| {
+                        mods.nodes.iter().any(|&mod_idx| {
+                            arena.get(mod_idx).is_some_and(|mod_node| {
+                                mod_node.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16
+                            })
+                        })
+                    })
+                }),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => arena
+                .get_method_decl(node)
+                .is_some_and(|method| {
+                    method.modifiers.as_ref().is_some_and(|mods| {
+                        mods.nodes.iter().any(|&mod_idx| {
+                            arena.get(mod_idx).is_some_and(|mod_node| {
+                                mod_node.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16
+                            })
+                        })
+                    })
+                }),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => arena
+                .get_accessor(node)
+                .is_some_and(|accessor| {
+                    accessor.modifiers.as_ref().is_some_and(|mods| {
+                        mods.nodes.iter().any(|&mod_idx| {
+                            arena.get(mod_idx).is_some_and(|mod_node| {
+                                mod_node.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16
+                            })
+                        })
+                    })
+                }),
+            _ => false,
+        }
     }
 }
