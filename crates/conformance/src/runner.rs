@@ -696,10 +696,10 @@ impl Runner {
                                     variant,
                                 ),
                                 BatchOutcome::Crashed => {
-                                    return Ok((TestResult::Crashed, file_preview.take()))
+                                    return Ok((TestResult::Crashed, file_preview.take()));
                                 }
                                 BatchOutcome::Timeout => {
-                                    return Ok((TestResult::Timeout, file_preview.take()))
+                                    return Ok((TestResult::Timeout, file_preview.take()));
                                 }
                             }
                         } else {
@@ -727,7 +727,7 @@ impl Runner {
                                 {
                                     Ok(result) => result?,
                                     Err(_) => {
-                                        return Ok((TestResult::Timeout, file_preview.take()))
+                                        return Ok((TestResult::Timeout, file_preview.take()));
                                     }
                                 }
                             } else {
@@ -977,10 +977,10 @@ impl Runner {
                                 options,
                             ),
                             BatchOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()))
+                                return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()))
+                                return Ok((TestResult::Timeout, file_preview.take()));
                             }
                         }
                     } else {
@@ -1140,10 +1140,10 @@ impl Runner {
                                 options,
                             ),
                             BatchOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()))
+                                return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()))
+                                return Ok((TestResult::Timeout, file_preview.take()));
                             }
                         }
                     } else {
