@@ -132,13 +132,23 @@ fn test_private_member_prevents_structural_assignment() {
 fn test_protected_members_are_nominal() {
     // TS2322: Type 'B' is not assignable to type 'A'.
     //   Types have separate declarations of a protected property 'x'.
-    test_private_brands(
-        r"
+    let source = r"
         class A { protected x: number = 1; }
         class B { protected x: number = 1; }
         let a: A = new B();
-        ",
-        1,
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for protected nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a protected property 'x'.")),
+        "Expected nominal protected-property detail in TS2322 related info, got: {ts2322:?}"
     );
 }
 
