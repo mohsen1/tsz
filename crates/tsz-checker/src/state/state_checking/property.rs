@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeData, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn check_excess_property_initializer_implicit_any(
@@ -1304,15 +1304,19 @@ impl<'a> CheckerState<'a> {
                     } => {
                         if type_id == TypeId::ANY
                             && !from_index_signature
-                            && matches!(
-                                self.ctx.types.lookup(member),
-                                Some(
-                                    TypeData::IndexAccess(_, _)
-                                        | TypeData::Mapped(_)
-                                        | TypeData::Conditional(_)
-                                        | TypeData::TypeQuery(_)
-                                )
-                            )
+                            && (tsz_solver::is_index_access_type(
+                                self.ctx.types.as_type_database(),
+                                member,
+                            ) || tsz_solver::is_mapped_type(
+                                self.ctx.types.as_type_database(),
+                                member,
+                            ) || tsz_solver::is_conditional_type(
+                                self.ctx.types.as_type_database(),
+                                member,
+                            ) || tsz_solver::is_type_query_type(
+                                self.ctx.types.as_type_database(),
+                                member,
+                            ))
                         {
                             saw_deferred_any_fallback = true;
                             continue;
