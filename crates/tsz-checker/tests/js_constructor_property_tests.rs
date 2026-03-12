@@ -447,8 +447,8 @@ b.m(2);
 }
 
 #[test]
-fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types()
- {
+fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types(
+) {
     let source = r#"
 var A = function A() {
     this.a = 1;
@@ -582,17 +582,42 @@ function A() {
 }
 var a = new A();
 a.unknown = 1;
-a.empty.push("ok");
+a.empty;
 "#;
     let diagnostics = check_js(source);
     let relevant: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
+        .filter(|(code, _)| matches!(*code, 2322 | 2683 | 7009 | 2339))
         .collect();
     assert_eq!(
         relevant.len(),
         0,
-        "Expected plain JS function constructors to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+        "Expected plain JS function constructors to avoid TS2322/TS2683/TS7009/TS2339 on instance properties, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_plain_js_function_constructor_initializers_widen_like_js() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.unknowable = undefined;
+    this.empty = [];
+}
+var a = new A();
+a.unknown = 1;
+a.unknowable = "ok";
+a.empty;
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2683 | 7009 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JS constructor null/undefined/[] initializers to widen for instance properties, got: {diagnostics:?}"
     );
 }
 
@@ -740,6 +765,28 @@ class MyClass {
     );
 }
 
+/// Plain function constructor prototype symbol-keyed property → no false TS7053
+#[test]
+fn test_plain_function_constructor_prototype_symbol_key_no_false_error() {
+    let source = r#"
+const _sym = Symbol("_sym");
+function Ctor() {}
+Ctor.prototype[_sym] = "ok";
+const inst = new Ctor();
+inst[_sym];
+"#;
+    let diagnostics = check_js(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053 || *code == 2339)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected no TS7053/TS2339 for symbol-keyed prototype constructor property, got: {errors:?}"
+    );
+}
+
 /// Plain function constructor: this.prop in prototype method should be accessible but nullable
 #[test]
 fn test_plain_function_constructor_prototype_this_prop_has_undefined() {
@@ -763,5 +810,57 @@ bz.y = undefined;
         ts2322_for_y.len(),
         0,
         "Expected no TS2322 for assigning undefined to prototype-method property, got: {diagnostics:?}"
+    );
+}
+
+/// Arrow functions inside JS prototype methods should inherit the instance `this` type.
+#[test]
+fn test_js_prototype_method_arrow_inherits_instance_this_type() {
+    let source = r#"
+function Installer() {
+    this.args = 0;
+}
+Installer.prototype.loadArgMetadata = function(next) {
+    (args) => {
+        this.args = "hi";
+        this.newProperty = 1;
+    };
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2322 && msg.contains("string") && msg.contains("number"))
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected prototype-method arrow to inherit instance this and report TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_prototype_method_arrow_adds_instance_properties() {
+    let source = r#"
+function Installer() {
+    this.args = 0;
+}
+Installer.prototype.loadArgMetadata = function(next) {
+    (args) => {
+        this.newProperty = 1;
+    };
+}
+var i = new Installer();
+i.newProperty = i.args;
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 18048 | 7009))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected prototype-method arrows to contribute instance properties, got: {diagnostics:?}"
     );
 }
