@@ -406,6 +406,7 @@ impl<'a> CheckerState<'a> {
                                 };
                                 if symbol_type != TypeId::ERROR
                                     && !self.is_constructor_type(symbol_type)
+                                    && !self.symbol_has_js_constructor_evidence(sym_to_check)
                                     // Skip TS2507 for symbols with both INTERFACE and VARIABLE flags
                                     // (built-in types like Array, Object, Promise) — the variable
                                     // side provides the constructor even though the interface type

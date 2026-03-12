@@ -519,6 +519,39 @@ z.t = 2
     );
 }
 
+#[test]
+fn test_js_class_can_extend_js_constructor_function() {
+    let source = r#"
+/**
+ * @constructor
+ * @param {number} numberOxen
+ */
+function Wagon(numberOxen) {
+    this.numberOxen = numberOxen;
+}
+/** @param {*[]=} supplies */
+Wagon.prototype.load = function (supplies) {};
+class Sql extends Wagon {
+    constructor() {
+        super();
+        this.foonly = 12;
+    }
+    /** @param {Array.<string>} files @param {"csv" | "json" | "xmlolololol"} format */
+    load(files, format) {}
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2507: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2507)
+        .collect();
+    assert_eq!(
+        ts2507.len(),
+        0,
+        "Expected JS class extends JS constructor function to avoid TS2507, got: {diagnostics:?}"
+    );
+}
+
 // === Computed property (element access) tests ===
 
 /// this[symbolKey] = value in JS class constructor → no false TS2322
