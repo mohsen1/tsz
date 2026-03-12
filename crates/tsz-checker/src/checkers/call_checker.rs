@@ -1408,7 +1408,7 @@ impl<'a> CheckerState<'a> {
                         let evaluated = self.evaluate_type_with_env(param.type_id);
                         Some(
                             if param.rest && i >= instantiated_params.len().saturating_sub(1) {
-                                self.contextual_rest_argument_element_type(evaluated)
+                                self.rest_argument_element_type_with_env(param.type_id)
                             } else {
                                 evaluated
                             },

@@ -15,6 +15,7 @@ pub(super) struct CallResultContext<'a> {
     pub(super) callee_type: TypeId,
     pub(super) is_super_call: bool,
     pub(super) is_optional_chain: bool,
+    pub(super) allow_contextual_mismatch_deferral: bool,
 }
 
 impl<'a> CheckerState<'a> {
@@ -74,6 +75,7 @@ impl<'a> CheckerState<'a> {
             callee_type,
             is_super_call,
             is_optional_chain,
+            allow_contextual_mismatch_deferral,
             ..
         } = context;
         match result {
@@ -227,6 +229,7 @@ impl<'a> CheckerState<'a> {
                         elaborated = self.try_elaborate_object_literal_arg_error(arg_idx, expected);
                     }
                     if !elaborated
+                        && allow_contextual_mismatch_deferral
                         && self.should_defer_contextual_argument_mismatch(actual, expected)
                     {
                         return if fallback_return != TypeId::ERROR {
@@ -258,6 +261,7 @@ impl<'a> CheckerState<'a> {
                             self.try_elaborate_object_literal_arg_error(last_arg, expected);
                     }
                     if !elaborated
+                        && allow_contextual_mismatch_deferral
                         && self.should_defer_contextual_argument_mismatch(actual, expected)
                     {
                         return if fallback_return != TypeId::ERROR {
@@ -276,7 +280,9 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 } else {
-                    if self.should_defer_contextual_argument_mismatch(actual, expected) {
+                    if allow_contextual_mismatch_deferral
+                        && self.should_defer_contextual_argument_mismatch(actual, expected)
+                    {
                         return if fallback_return != TypeId::ERROR {
                             fallback_return
                         } else {
@@ -341,17 +347,21 @@ impl<'a> CheckerState<'a> {
         actual: TypeId,
         expected: TypeId,
     ) -> bool {
+        let callable_mismatch = tsz_solver::type_queries::is_callable_type(self.ctx.types, actual)
+            && tsz_solver::type_queries::is_callable_type(self.ctx.types, expected);
         if assign_query::contains_infer_types(self.ctx.types, actual)
             || assign_query::contains_infer_types(self.ctx.types, expected)
         {
             return true;
         }
-        if assign_query::contains_type_parameters(self.ctx.types, expected)
+        if !callable_mismatch
+            && assign_query::contains_type_parameters(self.ctx.types, expected)
             && assign_query::contains_any_type(self.ctx.types, actual)
         {
             return true;
         }
-        if assign_query::contains_type_parameters(self.ctx.types, actual)
+        if !callable_mismatch
+            && assign_query::contains_type_parameters(self.ctx.types, actual)
             && assign_query::contains_type_parameters(self.ctx.types, expected)
         {
             return true;

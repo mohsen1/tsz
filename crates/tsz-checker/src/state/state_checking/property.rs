@@ -1236,17 +1236,12 @@ impl<'a> CheckerState<'a> {
             let expanded = self.evaluate_application_type(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
                 mapped_candidate_type = expanded;
-                if matches!(
-                    result,
-                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-                ) {
-                    resolved_object_type = expanded;
-                    result = self.ctx.types.resolve_property_access_with_options(
-                        expanded,
-                        prop_name,
-                        self.ctx.compiler_options.no_unchecked_indexed_access,
-                    );
-                }
+                resolved_object_type = expanded;
+                result = self.ctx.types.resolve_property_access_with_options(
+                    expanded,
+                    prop_name,
+                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                );
             }
         }
 

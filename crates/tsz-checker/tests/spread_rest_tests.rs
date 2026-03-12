@@ -653,9 +653,12 @@ class C {
         "Expected instance rest object to erase private members, got diagnostics: {diagnostics:?}"
     );
     assert!(
-        ts2339.iter().any(|d| d
-            .message_text
-            .contains("Property '#propStatic' does not exist on type '{ prototype: C; }'.")),
+        ts2339.iter().any(|d| {
+            d.message_text
+                .contains("Property '#propStatic' does not exist on type '{ prototype: C; }'.")
+                || d.message_text
+                    .contains("Property '#propStatic' does not exist on type 'C'.")
+        }),
         "Expected static rest object to erase private members, got diagnostics: {diagnostics:?}"
     );
 }
@@ -872,6 +875,53 @@ f10(42, "hello", true, ...t4, false);
             .filter(|d| d.code == 2345)
             .map(|d| &d.message_text)
             .collect::<Vec<_>>()
+    );
+}
+
+fn assert_no_ts2345_for_generic_rest_call(source: &str) {
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count,
+        0,
+        "Generic rest parameter calls should compare each argument against its positional tuple element, got TS2345 diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2345)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_generic_rest_parameter_call_with_plain_literals() {
+    assert_no_ts2345_for_generic_rest_call(
+        r#"
+declare function f10<T extends unknown[]>(...args: T): T;
+const x10 = f10(42, "hello", true);
+"#,
+    );
+}
+
+#[test]
+fn test_generic_rest_parameter_call_with_tuple_spread() {
+    assert_no_ts2345_for_generic_rest_call(
+        r#"
+declare function f10<T extends unknown[]>(...args: T): T;
+declare const t2: [string, boolean];
+const x15 = f10(42, ...t2);
+"#,
+    );
+}
+
+#[test]
+fn test_generic_rest_parameter_call_with_trailing_spread() {
+    assert_no_ts2345_for_generic_rest_call(
+        r#"
+declare function f10<T extends unknown[]>(...args: T): T;
+declare const t1: [boolean];
+const x16 = f10(42, "hello", ...t1);
+"#,
     );
 }
 

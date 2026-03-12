@@ -143,7 +143,7 @@ pub struct CompilerOptions {
     pub lib: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_lib: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub lib_replacement: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_types_and_symbols: Option<bool>,

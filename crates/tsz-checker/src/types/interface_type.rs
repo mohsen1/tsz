@@ -98,7 +98,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref _params) = sig.parameters {}
                     let (type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
-                    let (params, this_type) = self.extract_params_from_signature(sig);
+                    let (params, this_type) =
+                        self.extract_params_from_signature_in_type_literal(sig);
                     self.push_typeof_param_scope(&params);
                     let (return_type, type_predicate) = if sig.type_annotation.is_some() {
                         let is_predicate = self
@@ -107,9 +108,15 @@ impl<'a> CheckerState<'a> {
                             .get(sig.type_annotation)
                             .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE);
                         if is_predicate {
-                            self.return_type_and_predicate(sig.type_annotation, &params)
+                            self.return_type_and_predicate_in_type_literal(
+                                sig.type_annotation,
+                                &params,
+                            )
                         } else {
-                            (self.get_type_from_type_node(sig.type_annotation), None)
+                            (
+                                self.get_type_from_type_node_in_type_literal(sig.type_annotation),
+                                None,
+                            )
                         }
                     } else {
                         // Return ANY to match TypeScript's implicit 'any' return type
@@ -133,7 +140,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref _params) = sig.parameters {}
                     let (type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
-                    let (params, this_type) = self.extract_params_from_signature(sig);
+                    let (params, this_type) =
+                        self.extract_params_from_signature_in_type_literal(sig);
                     self.push_typeof_param_scope(&params);
                     let (return_type, type_predicate) = if sig.type_annotation.is_some() {
                         let is_predicate = self
@@ -142,9 +150,15 @@ impl<'a> CheckerState<'a> {
                             .get(sig.type_annotation)
                             .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE);
                         if is_predicate {
-                            self.return_type_and_predicate(sig.type_annotation, &params)
+                            self.return_type_and_predicate_in_type_literal(
+                                sig.type_annotation,
+                                &params,
+                            )
                         } else {
-                            (self.get_type_from_type_node(sig.type_annotation), None)
+                            (
+                                self.get_type_from_type_node_in_type_literal(sig.type_annotation),
+                                None,
+                            )
                         }
                     } else {
                         // Return ANY to match TypeScript's implicit 'any' return type
@@ -185,7 +199,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let type_id = if sig.type_annotation.is_some() {
-                            self.get_type_from_type_node(sig.type_annotation)
+                            self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                         } else {
                             TypeId::ANY
                         };
@@ -228,7 +242,9 @@ impl<'a> CheckerState<'a> {
 
                         if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
                             let getter_type = if accessor.type_annotation.is_some() {
-                                self.get_type_from_type_node(accessor.type_annotation)
+                                self.get_type_from_type_node_in_type_literal(
+                                    accessor.type_annotation,
+                                )
                             } else {
                                 TypeId::ANY
                             };
@@ -242,7 +258,9 @@ impl<'a> CheckerState<'a> {
                                 .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                                 .and_then(|param| {
                                     (param.type_annotation.is_some()).then(|| {
-                                        self.get_type_from_type_node(param.type_annotation)
+                                        self.get_type_from_type_node_in_type_literal(
+                                            param.type_annotation,
+                                        )
                                     })
                                 })
                                 .unwrap_or(TypeId::UNKNOWN);
@@ -264,7 +282,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let key_type = if param_data.type_annotation.is_some() {
-                    self.get_type_from_type_node(param_data.type_annotation)
+                    self.get_type_from_type_node_in_type_literal(param_data.type_annotation)
                 } else {
                     TypeId::ANY
                 };
@@ -288,7 +306,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let value_type = if index_sig.type_annotation.is_some() {
-                    self.get_type_from_type_node(index_sig.type_annotation)
+                    self.get_type_from_type_node_in_type_literal(index_sig.type_annotation)
                 } else {
                     TypeId::ANY
                 };

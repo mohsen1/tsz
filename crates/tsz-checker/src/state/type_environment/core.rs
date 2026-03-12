@@ -408,8 +408,7 @@ impl<'a> CheckerState<'a> {
                     optional_modifier: mapped.optional_modifier,
                 };
                 let mapped_type_id = self.ctx.types.mapped(inst_mapped);
-                if (tsz_solver::is_union_type(self.ctx.types, evaluated_arg)
-                    || tsz_solver::is_intersection_type(self.ctx.types, evaluated_arg))
+                if query::is_union_or_intersection(self.ctx.types, evaluated_arg)
                     && self.contains_type_parameters_cached(evaluated_arg)
                 {
                     return mapped_type_id;

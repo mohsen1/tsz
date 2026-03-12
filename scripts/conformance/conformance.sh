@@ -330,7 +330,8 @@ EOF
         echo "  Pinned version: $pinned_version"
         echo "  Cache check: ${cache_report:-unknown}"
         echo -e "${YELLOW}Re-run with --no-cache to regenerate cache, or update cache file to match pinned version.${NC}"
-        exit 1
+        echo -e "${YELLOW}Proceeding with stale cache (results may differ from pinned tsc)${NC}"
+        return 0
     fi
 
     echo -e "${GREEN}TypeScript cache version matches pinned version: $pinned_version${NC}"

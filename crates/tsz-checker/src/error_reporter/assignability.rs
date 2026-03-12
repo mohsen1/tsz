@@ -4,7 +4,9 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::{CheckerState, MemberAccessLevel};
+use rustc_hash::FxHashMap;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -36,6 +38,136 @@ pub(super) fn is_object_prototype_method(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    fn canonical_array_display_rank(name: &str) -> Option<usize> {
+        match name {
+            "length" => Some(0),
+            "pop" => Some(1),
+            "push" => Some(2),
+            "concat" => Some(3),
+            "join" => Some(4),
+            "reverse" => Some(5),
+            "shift" => Some(6),
+            "slice" => Some(7),
+            "sort" => Some(8),
+            "splice" => Some(9),
+            "unshift" => Some(10),
+            "indexOf" => Some(11),
+            "lastIndexOf" => Some(12),
+            "every" => Some(13),
+            "some" => Some(14),
+            "forEach" => Some(15),
+            "map" => Some(16),
+            "filter" => Some(17),
+            "reduce" => Some(18),
+            "reduceRight" => Some(19),
+            _ => None,
+        }
+    }
+
+    fn sort_missing_property_names_for_display(
+        &mut self,
+        target_type: TypeId,
+        property_names: &[tsz_common::interner::Atom],
+    ) -> Vec<tsz_common::interner::Atom> {
+        let mut property_ranks: FxHashMap<tsz_common::interner::Atom, (u32, usize)> =
+            FxHashMap::default();
+
+        let mut collect_ranks = |ty: TypeId| {
+            if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) {
+                for (index, prop) in shape.properties.iter().enumerate() {
+                    property_ranks
+                        .entry(prop.name)
+                        .or_insert((prop.declaration_order, index));
+                }
+            }
+            if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty) {
+                for (index, prop) in shape.properties.iter().enumerate() {
+                    property_ranks
+                        .entry(prop.name)
+                        .or_insert((prop.declaration_order, index));
+                }
+            }
+        };
+
+        collect_ranks(target_type);
+        let resolved = self.resolve_type_for_property_access(target_type);
+        if resolved != target_type {
+            collect_ranks(resolved);
+        }
+        let evaluated = self.evaluate_type_for_assignability(target_type);
+        if evaluated != target_type && evaluated != resolved {
+            collect_ranks(evaluated);
+        }
+
+        let array_like_target = matches!(
+            query_utils::classify_array_like(self.ctx.types, target_type),
+            query_utils::ArrayLikeKind::Array(_)
+                | query_utils::ArrayLikeKind::Tuple
+                | query_utils::ArrayLikeKind::Readonly(_)
+        ) || matches!(
+            query_utils::classify_array_like(self.ctx.types, resolved),
+            query_utils::ArrayLikeKind::Array(_)
+                | query_utils::ArrayLikeKind::Tuple
+                | query_utils::ArrayLikeKind::Readonly(_)
+        ) || matches!(
+            query_utils::classify_array_like(self.ctx.types, evaluated),
+            query_utils::ArrayLikeKind::Array(_)
+                | query_utils::ArrayLikeKind::Tuple
+                | query_utils::ArrayLikeKind::Readonly(_)
+        );
+
+        let mut ordered: Vec<(usize, tsz_common::interner::Atom)> =
+            property_names.iter().copied().enumerate().collect();
+        ordered.sort_by(|(left_index, left_name), (right_index, right_name)| {
+            if array_like_target {
+                let left_text = self.ctx.types.resolve_atom_ref(*left_name);
+                let right_text = self.ctx.types.resolve_atom_ref(*right_name);
+                match (
+                    Self::canonical_array_display_rank(&left_text),
+                    Self::canonical_array_display_rank(&right_text),
+                ) {
+                    (Some(left_rank), Some(right_rank)) => {
+                        let rank_ord = left_rank.cmp(&right_rank);
+                        if rank_ord != std::cmp::Ordering::Equal {
+                            return rank_ord;
+                        }
+                    }
+                    (Some(_), None) => return std::cmp::Ordering::Less,
+                    (None, Some(_)) => return std::cmp::Ordering::Greater,
+                    (None, None) => {}
+                }
+            }
+
+            let left_rank = property_ranks.get(left_name).copied();
+            let right_rank = property_ranks.get(right_name).copied();
+            match (left_rank, right_rank) {
+                (Some((left_order, left_pos)), Some((right_order, right_pos))) => {
+                    match (
+                        left_order > 0,
+                        right_order > 0,
+                        left_order.cmp(&right_order),
+                        left_pos.cmp(&right_pos),
+                    ) {
+                        (true, true, std::cmp::Ordering::Equal, pos_ord)
+                            if pos_ord != std::cmp::Ordering::Equal =>
+                        {
+                            pos_ord
+                        }
+                        (true, true, ord, _) if ord != std::cmp::Ordering::Equal => ord,
+                        (true, false, _, _) => std::cmp::Ordering::Less,
+                        (false, true, _, _) => std::cmp::Ordering::Greater,
+                        _ => left_index.cmp(right_index),
+                    }
+                }
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => left_index.cmp(right_index),
+            }
+        });
+
+        ordered.into_iter().map(|(_, name)| name).collect()
+    }
+
     // =========================================================================
     // Type Assignability Errors
     // =========================================================================
@@ -678,13 +810,14 @@ impl<'a> CheckerState<'a> {
                         let s = self.ctx.types.resolve_atom_ref(**name);
                         !s.starts_with("__private_brand") && !is_object_prototype_method(&s)
                     })
+                    .copied()
                     .collect();
 
                 // If all missing properties are numeric indices, emit TS2322.
                 // TSC often emits TS2322 instead of TS2739 when assigning arrays/tuples to tuple-like interfaces.
                 let all_numeric = !filtered_names.is_empty()
                     && filtered_names.iter().all(|name| {
-                        let s = self.ctx.types.resolve_atom_ref(**name);
+                        let s = self.ctx.types.resolve_atom_ref(*name);
                         s.parse::<usize>().is_ok()
                     });
 
@@ -741,15 +874,17 @@ impl<'a> CheckerState<'a> {
                 let src_str =
                     self.format_type_diagnostic(self.widen_type_for_display(display_source));
                 let tgt_str = self.format_type_diagnostic(*target_type);
-                let prop_list: Vec<String> = filtered_names
+                let ordered_names =
+                    self.sort_missing_property_names_for_display(*target_type, &filtered_names);
+                let prop_list: Vec<String> = ordered_names
                     .iter()
                     .take(4)
-                    .map(|name| self.ctx.types.resolve_atom_ref(**name).to_string())
+                    .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
                     .collect();
                 let props_joined = prop_list.join(", ");
                 // Use TS2740 when there are 5+ missing properties (tsc shows first 4 + "and N more")
-                if filtered_names.len() > 4 {
-                    let more_count = (filtered_names.len() - 4).to_string();
+                if ordered_names.len() > 4 {
+                    let more_count = (ordered_names.len() - 4).to_string();
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                         &[&src_str, &tgt_str, &props_joined, &more_count],

@@ -454,6 +454,13 @@ impl<'a> CheckerState<'a> {
                         self.validate_type_reference_type_arguments(sym_id, args, idx);
                     }
                 }
+                if !is_builtin_array && let Some(sym_id) = sym_id {
+                    // Generic user-defined references lower to Application(Lazy(def), args).
+                    // Ensure the base symbol has already materialized its structural
+                    // body in the type environment before we hand the Application to
+                    // later inference/evaluation paths.
+                    let _ = self.type_reference_symbol_type(sym_id);
+                }
                 // Cache type parameters for the symbol's DefId before lowering.
                 // This enables the Solver to expand Application(Lazy(DefId), Args)
                 // for generic interfaces like Promise<T>, Map<K,V>, Set<T>.
@@ -1459,17 +1466,26 @@ impl<'a> CheckerState<'a> {
             if flags & symbol_flags::CLASS != 0 {
                 // For classes in TYPE position, return the INSTANCE TYPE directly
                 // This is critical for nominal type checking to work correctly
-                let instance_type_opt = self.class_instance_type_from_symbol(sym_id);
+                let instance_type_opt = self.class_instance_type_with_params_from_symbol(sym_id);
 
-                if let Some(instance_type) = instance_type_opt {
+                if let Some((instance_type, params)) = instance_type_opt {
                     // Register instance type → DefId so the TypeFormatter can display
                     // the class name (e.g., "A") even when the type was resolved via
                     // cross-file delegation and produced a different TypeId than the
                     // original get_class_instance_type_inner call.
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
+                        self.ctx.insert_def_type_params(def_id, params);
+                    }
                     self.ctx
                         .definition_store
                         .register_type_to_def(instance_type, def_id);
+                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                        env.insert_class_instance_type(def_id, instance_type);
+                    }
+                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                        env.insert_class_instance_type(def_id, instance_type);
+                    }
 
                     self.ctx.leave_recursion();
                     return instance_type;
@@ -1666,6 +1682,40 @@ impl<'a> CheckerState<'a> {
 
         if declarations.is_empty() {
             return TypeId::ERROR;
+        }
+
+        let local_interface_decls: Vec<_> = declarations
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .is_some()
+                    && !self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| {
+                            arenas
+                                .iter()
+                                .any(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                        })
+            })
+            .collect();
+        if local_interface_decls.len() == declarations.len() {
+            let mut merged = TypeId::ERROR;
+            for decl_idx in local_interface_decls {
+                let interface_type = self.get_type_of_interface(decl_idx);
+                merged = if merged == TypeId::ERROR {
+                    interface_type
+                } else {
+                    self.merge_interface_types(merged, interface_type)
+                };
+            }
+            return merged;
         }
 
         // Pre-compute computed property names that the lowering can't resolve from AST alone.
@@ -1904,6 +1954,8 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx))
                 });
+                let needs_text_based_resolution =
+                    has_declaration_arenas || !std::ptr::eq(fallback_arena, self.ctx.arena);
 
                 let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
                     .declarations
@@ -1939,6 +1991,32 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 let type_params_list = type_params_with_arena.as_ref().map(|(tpl, _)| tpl.clone());
+                let namespace_prefix = decls_with_arenas.iter().find_map(|(decl_idx, arena)| {
+                    let node = arena.get(*decl_idx)?;
+                    arena.get_interface(node)?;
+
+                    let mut parent = arena
+                        .get_extended(*decl_idx)
+                        .map_or(NodeIndex::NONE, |info| info.parent);
+                    let mut prefixes = Vec::new();
+                    while !parent.is_none() {
+                        let parent_node = arena.get(parent)?;
+                        if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                            && let Some(module) = arena.get_module(parent_node)
+                            && let Some(name_node) = arena.get(module.name)
+                            && name_node.kind == SyntaxKind::Identifier as u16
+                            && let Some(name_ident) = arena.get_identifier(name_node)
+                        {
+                            prefixes.push(name_ident.escaped_text.clone());
+                        }
+                        parent = arena
+                            .get_extended(parent)
+                            .map_or(NodeIndex::NONE, |info| info.parent);
+                    }
+
+                    (!prefixes.is_empty())
+                        .then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
+                });
 
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
@@ -1982,7 +2060,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    if has_declaration_arenas {
+                    if needs_text_based_resolution {
                         multi_arena_resolve(node_idx).map(|s| s.0)
                     } else {
                         self.resolve_type_symbol_for_lowering(node_idx)
@@ -1993,7 +2071,7 @@ impl<'a> CheckerState<'a> {
 
                 // Add def_id_resolver for DefId-based resolution
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-                    if has_declaration_arenas {
+                    if needs_text_based_resolution {
                         multi_arena_resolve(node_idx)
                             .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
                     } else {
@@ -2004,7 +2082,17 @@ impl<'a> CheckerState<'a> {
                     }
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    namespace_prefix
+                        .as_ref()
+                        .and_then(|prefix| {
+                            let mut scoped =
+                                String::with_capacity(prefix.len() + 1 + type_name.len());
+                            scoped.push_str(prefix);
+                            scoped.push('.');
+                            scoped.push_str(type_name);
+                            self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
+                        })
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
                 let lowering = TypeLowering::with_hybrid_resolver(
@@ -2014,12 +2102,8 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &value_resolver,
                 )
-                .with_type_param_bindings(type_param_bindings);
-                let lowering = if has_declaration_arenas {
-                    lowering.with_name_def_id_resolver(&name_resolver)
-                } else {
-                    lowering
-                };
+                .with_type_param_bindings(type_param_bindings)
+                .with_name_def_id_resolver(&name_resolver);
 
                 // Use merged interface lowering for multi-arena declarations
                 let has_multi_arenas = has_declaration_arenas;
