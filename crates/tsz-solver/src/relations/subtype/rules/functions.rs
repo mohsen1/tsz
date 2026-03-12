@@ -834,6 +834,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             || source_instantiated.is_constructor
             || target_instantiated.is_constructor;
 
+        // The lib iterator/generator declarations encode `next(value?)` as a single
+        // rest parameter with tuple-list type `[] | [TNext]`. Compare that whole
+        // tuple-list type directly before the generic rest-element machinery kicks in;
+        // otherwise we lose the contravariant relation between the tuple variants and
+        // incorrectly accept incompatible `TNext` values.
+        if let (Some(s_param), Some(t_param)) = (
+            source_instantiated.params.first(),
+            target_instantiated.params.first(),
+        ) && source_instantiated.params.len() == 1
+            && target_instantiated.params.len() == 1
+            && s_param.rest
+            && t_param.rest
+            && self.is_tuple_list_rest_type(s_param.type_id)
+            && self.is_tuple_list_rest_type(t_param.type_id)
+        {
+            return if self
+                .are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) { SubtypeResult::True } else { SubtypeResult::False };
+        }
+
         // Unpack tuple rest parameters before comparison.
         // In TypeScript, `(...args: [A, B]) => R` is equivalent to `(a: A, b: B) => R`.
         // We unpack tuple rest parameters into individual fixed parameters for proper matching.
@@ -1114,6 +1133,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             SubtypeResult::True
         })()
+    }
+
+    fn is_tuple_list_rest_type(&mut self, type_id: TypeId) -> bool {
+        use crate::type_queries::{get_tuple_elements, union_contains_tuple};
+
+        get_tuple_elements(self.interner, type_id).is_some()
+            || union_contains_tuple(self.interner, type_id)
     }
 
     /// Check if a single function type is a subtype of a callable type with overloads.
