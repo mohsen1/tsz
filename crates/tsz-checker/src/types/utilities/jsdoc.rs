@@ -5,8 +5,8 @@ use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{
-    FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId,
-    TypePredicate, TypePredicateTarget, Visibility,
+    FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TupleElement,
+    TypeId, TypePredicate, TypePredicateTarget, Visibility,
 };
 #[derive(Clone)]
 pub(crate) struct JsdocTypedefInfo {
@@ -576,6 +576,9 @@ impl<'a> CheckerState<'a> {
             let element_type = self.resolve_jsdoc_type_str(inner)?;
             let factory = self.ctx.types.factory();
             return Some(factory.array(element_type));
+        }
+        if type_expr.starts_with('[') && type_expr.ends_with(']') {
+            return self.parse_jsdoc_tuple_type(type_expr);
         }
         if ((type_expr.starts_with('"') && type_expr.ends_with('"'))
             || (type_expr.starts_with('\'') && type_expr.ends_with('\'')))
@@ -1297,8 +1300,27 @@ impl<'a> CheckerState<'a> {
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
         let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
         for (i, ch) in s.char_indices() {
-            if ch == target && angle_depth == 0 && paren_depth == 0 && brace_depth == 0 {
+            if ch == '\'' && !in_double_quote {
+                in_single_quote = !in_single_quote;
+                continue;
+            }
+            if ch == '"' && !in_single_quote {
+                in_double_quote = !in_double_quote;
+                continue;
+            }
+            if in_single_quote || in_double_quote {
+                continue;
+            }
+            if ch == target
+                && angle_depth == 0
+                && paren_depth == 0
+                && brace_depth == 0
+                && square_depth == 0
+            {
                 return Some(i);
             }
             match ch {
@@ -1308,6 +1330,8 @@ impl<'a> CheckerState<'a> {
                 ')' if paren_depth > 0 => paren_depth -= 1,
                 '{' => brace_depth += 1,
                 '}' if brace_depth > 0 => brace_depth -= 1,
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
                 _ => {}
             }
         }
@@ -1320,6 +1344,7 @@ impl<'a> CheckerState<'a> {
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
         let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
         let mut in_single_quote = false;
         let mut in_double_quote = false;
         for (i, ch) in s.char_indices() {
@@ -1333,7 +1358,14 @@ impl<'a> CheckerState<'a> {
                 ')' if paren_depth > 0 => paren_depth -= 1,
                 '{' => brace_depth += 1,
                 '}' if brace_depth > 0 => brace_depth -= 1,
-                c if c == op && angle_depth == 0 && paren_depth == 0 && brace_depth == 0 => {
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
+                c if c == op
+                    && angle_depth == 0
+                    && paren_depth == 0
+                    && brace_depth == 0
+                    && square_depth == 0 =>
+                {
                     parts.push(&s[start..i]);
                     start = i + 1;
                 }
@@ -1353,15 +1385,27 @@ impl<'a> CheckerState<'a> {
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
         let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
         for (i, ch) in s.char_indices() {
             match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                _ if in_single_quote || in_double_quote => continue,
                 '<' => angle_depth += 1,
                 '>' if angle_depth > 0 => angle_depth -= 1,
                 '(' => paren_depth += 1,
                 ')' if paren_depth > 0 => paren_depth -= 1,
                 '{' => brace_depth += 1,
                 '}' if brace_depth > 0 => brace_depth -= 1,
-                ',' if angle_depth == 0 && paren_depth == 0 && brace_depth == 0 => {
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
+                ',' if angle_depth == 0
+                    && paren_depth == 0
+                    && brace_depth == 0
+                    && square_depth == 0 =>
+                {
                     parts.push(&s[start..i]);
                     start = i + 1;
                 }
@@ -1372,6 +1416,54 @@ impl<'a> CheckerState<'a> {
             parts.push(&s[start..]);
         }
         parts
+    }
+    fn parse_jsdoc_tuple_type(&mut self, type_expr: &str) -> Option<TypeId> {
+        let inner = type_expr[1..type_expr.len() - 1].trim();
+        if inner.is_empty() {
+            return Some(self.ctx.types.factory().tuple(Vec::new()));
+        }
+
+        let mut elements = Vec::new();
+        for elem_str in Self::split_type_args_respecting_nesting(inner) {
+            let mut elem = elem_str.trim();
+            if elem.is_empty() {
+                continue;
+            }
+
+            let mut rest = false;
+            if let Some(stripped) = elem.strip_prefix("...") {
+                rest = true;
+                elem = stripped.trim();
+            }
+
+            let (name, optional, type_str) = if let Some(colon_idx) =
+                Self::find_top_level_char(elem, ':')
+            {
+                let raw_name = elem[..colon_idx].trim();
+                let type_str = elem[colon_idx + 1..].trim();
+                let (raw_name, optional) = if let Some(stripped) = raw_name.strip_suffix('?') {
+                    (stripped.trim(), true)
+                } else {
+                    (raw_name, false)
+                };
+                let name = (!raw_name.is_empty()).then(|| self.ctx.types.intern_string(raw_name));
+                (name, optional, type_str)
+            } else if !rest && elem.ends_with('?') {
+                (None, true, elem[..elem.len() - 1].trim())
+            } else {
+                (None, false, elem)
+            };
+
+            let type_id = self.resolve_jsdoc_type_str(type_str)?;
+            elements.push(TupleElement {
+                type_id,
+                name,
+                optional,
+                rest,
+            });
+        }
+
+        Some(self.ctx.types.factory().tuple(elements))
     }
     /// Parse an inline object literal type: `{ propName: Type, ... }`.
     fn parse_jsdoc_object_literal_type(&mut self, type_expr: &str) -> Option<TypeId> {
@@ -1592,13 +1684,28 @@ impl<'a> CheckerState<'a> {
         let mut start = 0;
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
         for (i, ch) in s.char_indices() {
             match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                _ if in_single_quote || in_double_quote => continue,
                 '<' => angle_depth += 1,
                 '>' if angle_depth > 0 => angle_depth -= 1,
                 '(' => paren_depth += 1,
                 ')' if paren_depth > 0 => paren_depth -= 1,
-                ',' if angle_depth == 0 && paren_depth == 0 => {
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
+                ',' if angle_depth == 0
+                    && paren_depth == 0
+                    && brace_depth == 0
+                    && square_depth == 0 =>
+                {
                     parts.push(&s[start..i]);
                     start = i + 1;
                 }
@@ -1617,15 +1724,28 @@ impl<'a> CheckerState<'a> {
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
         let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
         for (i, ch) in s.char_indices() {
             match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                _ if in_single_quote || in_double_quote => continue,
                 '<' => angle_depth += 1,
                 '>' if angle_depth > 0 => angle_depth -= 1,
                 '(' => paren_depth += 1,
                 ')' if paren_depth > 0 => paren_depth -= 1,
                 '{' => brace_depth += 1,
                 '}' if brace_depth > 0 => brace_depth -= 1,
-                ',' | ';' if angle_depth == 0 && paren_depth == 0 && brace_depth == 0 => {
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
+                ',' | ';'
+                    if angle_depth == 0
+                        && paren_depth == 0
+                        && brace_depth == 0
+                        && square_depth == 0 =>
+                {
                     parts.push(&s[start..i]);
                     start = i + 1;
                 }
