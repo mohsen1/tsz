@@ -238,6 +238,39 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn named_import_found_via_reexport(
+        &self,
+        module_name: &str,
+        normalized: &str,
+        import_name: &str,
+    ) -> bool {
+        self.ctx
+            .binder
+            .resolve_import_if_needed_public(module_name, import_name)
+            .is_some()
+            || self
+                .ctx
+                .binder
+                .resolve_import_if_needed_public(normalized, import_name)
+                .is_some()
+            || self.resolve_import_via_target_binder(module_name, import_name)
+            || self.resolve_import_via_all_binders(module_name, normalized, import_name)
+            || self
+                .resolve_cross_file_export_from_file(
+                    module_name,
+                    import_name,
+                    Some(self.ctx.current_file_idx),
+                )
+                .is_some()
+            || self
+                .resolve_cross_file_export_from_file(
+                    normalized,
+                    import_name,
+                    Some(self.ctx.current_file_idx),
+                )
+                .is_some()
+    }
+
     /// Type-level fallback for `has_named_export_via_export_equals`.
     ///
     /// When the `export =` target is a typed value (e.g., `const x: T` where
@@ -503,22 +536,8 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Check re-export chains before emitting TS2305
-                    let found_via_reexport = self
-                        .ctx
-                        .binder
-                        .resolve_import_if_needed_public(module_name, import_name)
-                        .is_some()
-                        || self
-                            .ctx
-                            .binder
-                            .resolve_import_if_needed_public(normalized, import_name)
-                            .is_some()
-                        || self.resolve_import_via_target_binder(module_name, import_name)
-                        || self.resolve_import_via_all_binders(
-                            module_name,
-                            normalized,
-                            import_name,
-                        );
+                    let found_via_reexport =
+                        self.named_import_found_via_reexport(module_name, normalized, import_name);
 
                     if !found_via_reexport {
                         if self
@@ -616,22 +635,8 @@ impl<'a> CheckerState<'a> {
                 {
                     // Before emitting TS2305, check if this import can be resolved
                     // through re-export chains (wildcard or named re-exports).
-                    let found_via_reexport = self
-                        .ctx
-                        .binder
-                        .resolve_import_if_needed_public(module_name, import_name)
-                        .is_some()
-                        || self
-                            .ctx
-                            .binder
-                            .resolve_import_if_needed_public(normalized, import_name)
-                            .is_some()
-                        || self.resolve_import_via_target_binder(module_name, import_name)
-                        || self.resolve_import_via_all_binders(
-                            module_name,
-                            normalized,
-                            import_name,
-                        );
+                    let found_via_reexport =
+                        self.named_import_found_via_reexport(module_name, normalized, import_name);
 
                     if !found_via_reexport {
                         if self

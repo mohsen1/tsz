@@ -1776,19 +1776,25 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 remapped
             };
 
+        let merge_symbol_table = |dst: &mut SymbolTable, src: &SymbolTable| {
+            for (name, sym_id) in src.iter() {
+                if !dst.has(name) {
+                    dst.set(name.clone(), *sym_id);
+                }
+            }
+        };
+
         if !exports.is_empty() {
             module_exports.insert(result.file_name.clone(), exports);
         }
 
         for (module_key, exports_table) in &result.module_exports {
-            if module_key == &result.file_name {
-                // Same-file module_exports are already handled by the file_locals
-                // remap above. Skip to avoid clobbering the remapped file_locals.
-                continue;
-            }
             let remapped = remap_symbol_table(exports_table, &id_remap);
             if !remapped.is_empty() {
-                module_exports.insert(module_key.clone(), remapped);
+                merge_symbol_table(
+                    module_exports.entry(module_key.clone()).or_default(),
+                    &remapped,
+                );
             }
         }
 
