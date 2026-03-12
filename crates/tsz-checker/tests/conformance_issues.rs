@@ -8224,15 +8224,13 @@ var z1 = G[G.A];
 
 #[test]
 fn test_duplicate_class_computed_unique_symbol_members_report_ts2300() {
+    // Test that unique symbol typed computed properties correctly detect duplicates,
+    // while non-unique-symbol computed properties (unions, function calls) do not.
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
         r#"
-const uniqueSymbol0 = Symbol.for("");
-const uniqueSymbol1 = Symbol.for("");
-
-function getUniqueSymbol0(): typeof uniqueSymbol0 {
-  return uniqueSymbol0;
-}
+declare const uniqueSymbol0: unique symbol;
+declare const uniqueSymbol1: unique symbol;
 
 class Cls1 {
   [uniqueSymbol0] = "first";
@@ -8241,9 +8239,18 @@ class Cls1 {
   [uniqueSymbol1] = "last";
 }
 
+// const with literal type — statically determinable, should detect duplicates
+const literalKey = "hello";
 class Cls2 {
-  [getUniqueSymbol0()] = "first";
-  [getUniqueSymbol0()] = "last";
+  [literalKey] = "first";
+  [literalKey] = "last";
+}
+
+// const with union type — NOT statically determinable, should NOT detect duplicates
+const unionKey = Math.random() > 0.5 ? "a" : "b";
+class Cls3 {
+  static [unionKey]() { return 1; }
+  static [unionKey]() { return 2; }
 }
 "#,
         CheckerOptions {
@@ -8252,10 +8259,23 @@ class Cls2 {
         },
     );
 
+    // Cls1: uniqueSymbol0 dup + uniqueSymbol1 dup = 2 TS2300
+    // Cls2: literalKey dup = 1 TS2300
+    // Cls3: unionKey methods = 0 TS2300 (late-bound, not checked)
     let ts2300_count = diagnostics.iter().filter(|(code, _)| *code == 2300).count();
     assert!(
         ts2300_count >= 3,
-        "Expected TS2300 for duplicate computed class members keyed by unique symbols and repeated computed expressions.\nActual diagnostics: {diagnostics:#?}"
+        "Expected TS2300 for duplicate computed class members keyed by unique symbols and literal const keys.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    // Cls3 should NOT have TS2393 (duplicate function implementation)
+    let ts2393_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2393 && msg.contains("unionKey"))
+        .collect();
+    assert!(
+        ts2393_messages.is_empty(),
+        "Should NOT emit TS2393 for late-bound (union-typed) computed method names.\nActual: {ts2393_messages:#?}"
     );
 }
 
