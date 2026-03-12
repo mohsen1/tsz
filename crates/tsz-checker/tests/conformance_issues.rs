@@ -157,8 +157,10 @@ c = d;
 "#;
 
     let diagnostics = compile_and_get_diagnostics(source);
-    let ts2322: Vec<&(u32, String)> =
-        diagnostics.iter().filter(|(code, _)| *code == 2322).collect();
+    let ts2322: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
 
     assert_eq!(
         ts2322.len(),
@@ -166,7 +168,9 @@ c = d;
         "Expected only the generic-application assignment to fail. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2322[0].1.contains("Type 'T<A>' is not assignable to type 'T<B>'"),
+        ts2322[0]
+            .1
+            .contains("Type 'T<A>' is not assignable to type 'T<B>'"),
         "Expected TS2322 to preserve the generic application identity. Actual diagnostics: {diagnostics:#?}"
     );
 }
@@ -201,8 +205,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 "#;
 
     let diagnostics = compile_and_get_diagnostics_with_lib(source);
-    let ts2322: Vec<&(u32, String)> =
-        diagnostics.iter().filter(|(code, _)| *code == 2322).collect();
+    let ts2322: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
 
     assert_eq!(
         ts2322.len(),
@@ -210,9 +216,9 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         "Expected both invariant generic writes to report TS2322. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2322.iter().all(|(_, message)| {
-            message.contains("Runtype<any>") && message.contains("number")
-        }),
+        ts2322
+            .iter()
+            .all(|(_, message)| { message.contains("Runtype<any>") && message.contains("number") }),
         "Expected TS2322 to keep pointing at the Runtype<any> assignment mismatch. Actual diagnostics: {diagnostics:#?}"
     );
 }

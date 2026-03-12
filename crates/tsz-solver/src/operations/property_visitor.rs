@@ -131,7 +131,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let read_type = self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
             let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
@@ -154,7 +155,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(self.bind_object_receiver_this(obj_type, value_type)),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -163,7 +166,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             && let Some(value_type) = resolver.resolve_number_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(self.bind_object_receiver_this(obj_type, value_type)),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -192,7 +197,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let read_type = self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
             let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
@@ -350,7 +356,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let read_type = self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
             let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
@@ -373,7 +380,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(self.bind_object_receiver_this(obj_type, value_type)),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -382,7 +391,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             && let Some(value_type) = resolver.resolve_number_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(self.bind_object_receiver_this(obj_type, value_type)),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -412,7 +423,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let read_type = self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
             let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {

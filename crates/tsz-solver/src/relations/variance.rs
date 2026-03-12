@@ -29,8 +29,8 @@
 
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
-use crate::def::resolver::TypeResolver;
 use crate::def::DefId;
+use crate::def::resolver::TypeResolver;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleListId,
@@ -437,7 +437,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     fn visit_lazy(&mut self, def_id: u32) {
         // Resolve the Lazy(DefId) to its underlying TypeId
         let def_id = DefId(def_id);
-        if let Some(resolved) = self.computer.resolver.resolve_lazy(def_id, self.computer.db) {
+        if let Some(resolved) = self
+            .computer
+            .resolver
+            .resolve_lazy(def_id, self.computer.db)
+        {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
         }
@@ -450,7 +454,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Try to convert Ref to DefId (migration path)
         if let Some(def_id) = self.computer.resolver.symbol_to_def_id(symbol_ref) {
             // Convert to Lazy and resolve
-            if let Some(resolved) = self.computer.resolver.resolve_lazy(def_id, self.computer.db) {
+            if let Some(resolved) = self
+                .computer
+                .resolver
+                .resolve_lazy(def_id, self.computer.db)
+            {
                 let current_polarity = self.get_current_polarity();
                 self.visit_with_polarity(resolved, current_polarity);
                 return;
@@ -536,7 +544,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Conditional types: `check_type` is COVARIANT, `extends_type` is CONTRAVARIANT.
     fn visit_conditional(&mut self, cond_id: u32) {
-        let cond = self.computer.db.conditional_type(ConditionalTypeId(cond_id));
+        let cond = self
+            .computer
+            .db
+            .conditional_type(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();
 
         // In TypeScript, conditional types `T extends U ? X : Y` determine variance
@@ -591,7 +602,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Template literals: types in spans are at current polarity.
     fn visit_template_literal(&mut self, template_id: u32) {
-        let spans = self.computer.db.template_list(TemplateLiteralId(template_id));
+        let spans = self
+            .computer
+            .db
+            .template_list(TemplateLiteralId(template_id));
         let current_polarity = self.get_current_polarity();
 
         for span in spans.iter() {
