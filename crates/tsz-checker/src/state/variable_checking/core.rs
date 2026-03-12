@@ -2096,14 +2096,13 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+            if let Some(shape) = query::object_shape(self.ctx.types, type_id)
                 && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
             {
                 result = Some(info);
                 return;
             }
-            if let Some(shape) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+            if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
                 && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
             {
                 result = Some(info);
