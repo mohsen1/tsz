@@ -248,6 +248,67 @@ function f(a = null, l = []) {
     );
 }
 
+#[test]
+fn js_undefined_default_parameter_reports_implicit_any_only_without_strict_null_checks() {
+    let non_strict = check_js_source_diagnostics_with_options(
+        r#"
+function f(a = undefined, l = []) {
+    a = 1;
+    l.push("ok");
+}
+"#,
+        crate::context::CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: false,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+    let non_strict_messages: Vec<_> = non_strict
+        .iter()
+        .filter(|d| d.code == 7006)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        non_strict_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Expected JS undefined default parameter to report TS7006 any without strictNullChecks, got: {non_strict:?}"
+    );
+
+    let strict = check_js_source_diagnostics_with_options(
+        r#"
+function f(a = undefined, l = []) {
+    a = 1;
+    l.push("ok");
+}
+"#,
+        crate::context::CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+    let strict_messages: Vec<_> = strict
+        .iter()
+        .filter(|d| d.code == 7006)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        !strict_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Did not expect JS undefined default parameter to report implicit any under strictNullChecks, got: {strict:?}"
+    );
+    assert!(
+        strict_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'l' implicitly has an 'any[]' type.")),
+        "Expected JS empty-array default parameter to keep reporting TS7006 any[] under strictNullChecks, got: {strict:?}"
+    );
+}
+
 // TS18050 tests: null/undefined suppression for string concatenation and `any`
 
 #[test]
