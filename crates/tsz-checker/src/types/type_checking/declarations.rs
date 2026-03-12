@@ -924,6 +924,119 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn symbol_has_js_constructor_evidence(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(symbol) = self.get_cross_file_symbol(symbol_id) else {
+            return false;
+        };
+
+        let symbol_arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&symbol_id)
+            .map_or(self.ctx.arena, |arena| arena.as_ref());
+        let Some(source_file) = symbol_arena.source_files.first() else {
+            return false;
+        };
+        if !source_file.file_name.ends_with(".js") && !source_file.file_name.ends_with(".jsx") {
+            return false;
+        }
+
+        let value_decl = symbol.value_declaration;
+        let Some(node) = symbol_arena.get(value_decl) else {
+            return false;
+        };
+
+        let body_idx = if let Some(func) = symbol_arena.get_function(node) {
+            let jsdoc = self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
+            if jsdoc
+                .as_ref()
+                .is_some_and(|content| content.contains("@constructor"))
+            {
+                return true;
+            }
+            func.body
+        } else if let Some(var_decl) = symbol_arena.get_variable_declaration(node) {
+            let Some(init_node) = symbol_arena.get(var_decl.initializer) else {
+                return false;
+            };
+            if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+                return false;
+            }
+            let Some(func) = symbol_arena.get_function(init_node) else {
+                return false;
+            };
+            let jsdoc =
+                self.try_leading_jsdoc(&source_file.comments, node.pos, &source_file.text);
+            if jsdoc
+                .as_ref()
+                .is_some_and(|content| content.contains("@constructor"))
+            {
+                return true;
+            }
+            func.body
+        } else {
+            return false;
+        };
+
+        if body_idx.is_none() {
+            return false;
+        }
+        let Some(body_node) = symbol_arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = symbol_arena.get_block(body_node) else {
+            return false;
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = symbol_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = symbol_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = symbol_arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = symbol_arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let Some(lhs_node) = symbol_arena.get(binary.left) else {
+                continue;
+            };
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = symbol_arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            let Some(base_node) = symbol_arena.get(access.expression) else {
+                continue;
+            };
+            if base_node.kind == SyntaxKind::ThisKeyword as u16 {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check if a symbol is a class symbol.
     ///
     /// ## Parameters
