@@ -15001,3 +15001,41 @@ fn test_type_only_namespace_export_is_importable_from_reexporting_module_with_ab
         "Did not expect TS2305 for an absolute-path namespace re-export import. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_contextual_keyword_as_identifier_in_different_scopes_no_false_ts2300() {
+    // strictModeUseContextualKeyword.ts: `as` used as identifier in different scopes
+    // should NOT produce TS2300 (Duplicate identifier).
+    // A function declaration at the top level of another function's body is function-scoped,
+    // not block-scoped, so it shouldn't conflict with outer-scope declarations.
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+"use strict"
+var as = 0;
+function foo(as: string) { }
+class C {
+    public as() { }
+}
+function F() {
+    function as() { }
+}
+function H() {
+    let {as} = { as: 1 };
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2300_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2300)
+        .collect();
+
+    assert!(
+        ts2300_diagnostics.is_empty(),
+        "Should not emit TS2300 for contextual keyword 'as' used in different scopes. Got: {ts2300_diagnostics:#?}"
+    );
+}

@@ -1694,9 +1694,30 @@ impl<'a> CheckerState<'a> {
                 return NodeIndex::NONE;
             };
             match parent_node.kind {
-                // Block-creating scopes - return this as the enclosing scope
-                syntax_kind_ext::BLOCK
-                | syntax_kind_ext::CASE_BLOCK
+                // Block-creating scopes - return this as the enclosing scope,
+                // but only if the block is NOT a function body.
+                syntax_kind_ext::BLOCK => {
+                    // A function body's block is the function scope itself,
+                    // not a block scope. Only blocks inside control flow
+                    // (if/catch/try/for/etc.) create true block scopes.
+                    if let Some(block_ext) = self.ctx.arena.get_extended(parent)
+                        && let Some(grandparent_node) = self.ctx.arena.get(block_ext.parent)
+                    {
+                        match grandparent_node.kind {
+                            syntax_kind_ext::FUNCTION_DECLARATION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::CONSTRUCTOR => {
+                                // This block is a function body — not a block scope
+                                return NodeIndex::NONE;
+                            }
+                            _ => return parent,
+                        }
+                    }
+                    return parent;
+                }
+                syntax_kind_ext::CASE_BLOCK
                 | syntax_kind_ext::FOR_STATEMENT
                 | syntax_kind_ext::FOR_IN_STATEMENT
                 | syntax_kind_ext::FOR_OF_STATEMENT => {
