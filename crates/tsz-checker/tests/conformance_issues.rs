@@ -12561,6 +12561,41 @@ var arguments = 1;
 }
 
 #[test]
+#[ignore = "WIP: JS identifier default param JSDoc resolution not yet producing TS2322"]
+fn test_js_identifier_default_parameter_preserves_jsdoc_initializer_type() {
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "a.js",
+        r#"
+/** @type {number | undefined} */
+var n;
+function f(b = n) {
+    b = 1;
+    b = undefined;
+    b = "error";
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected JS identifier default parameter to preserve the JSDoc initializer type and reject string assignment.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 7006 && message.contains("Parameter 'b' implicitly has an 'any' type.")
+        }),
+        "Did not expect the JS identifier default parameter to fall back to implicit any.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_declare_property_suppresses_downstream_semantic_checks() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",
