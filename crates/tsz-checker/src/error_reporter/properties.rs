@@ -94,8 +94,7 @@ impl<'a> CheckerState<'a> {
         }
         if self.is_js_file()
             && let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
-        {
-            if let Some(receiver_node) = self.ctx.arena.get(receiver)
+            && let Some(receiver_node) = self.ctx.arena.get(receiver)
                 && receiver_node.kind == SyntaxKind::Identifier as u16
                 && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
                 && let Some(shape) =
@@ -114,7 +113,6 @@ impl<'a> CheckerState<'a> {
             {
                 return format!("typeof {}", ident.escaped_text);
             }
-        }
         let is_element_access_receiver =
             self.access_receiver_for_diagnostic_node(idx)
                 .is_some_and(|expr| {
