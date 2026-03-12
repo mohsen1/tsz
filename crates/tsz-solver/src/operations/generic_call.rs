@@ -780,6 +780,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // duplicate expensive assignability work on hot generic-call paths.
             let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                 && i >= instantiated_params.len().saturating_sub(1);
+            let track_direct_placeholder_vars =
+                !is_rest_param_arg && !self.type_evaluates_to_function(target_type);
 
             if !var_map.contains_key(&target_type) {
                 placeholder_visited.clear();
@@ -799,7 +801,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             fallback_return: TypeId::ERROR,
                         };
                     }
-                    if !is_rest_param_arg {
+                    if track_direct_placeholder_vars {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
                             target_type,
                             &var_map,
@@ -809,7 +811,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 } else {
                     // Target type contains placeholders - check against their constraints
-                    if !is_rest_param_arg {
+                    if track_direct_placeholder_vars {
                         direct_param_vars.extend(self.collect_placeholder_vars_in_type(
                             target_type,
                             &var_map,
@@ -1893,29 +1895,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut result = FxHashSet::default();
-        for nested in crate::visitor::collect_all_types(self.interner.as_type_database(), ty) {
-            if let Some(&var) = var_map.get(&nested) {
+        for (&placeholder_id, &var) in var_map.iter() {
+            probe_map.clear();
+            probe_map.insert(placeholder_id, var);
+            visited.clear();
+            if self.type_contains_placeholder(ty, probe_map, visited) {
                 result.insert(var);
-            }
-        }
-        let evaluated_ty = self.interner.evaluate_type(ty);
-        if evaluated_ty != ty {
-            for nested in
-                crate::visitor::collect_all_types(self.interner.as_type_database(), evaluated_ty)
-            {
-                if let Some(&var) = var_map.get(&nested) {
-                    result.insert(var);
-                }
-            }
-        }
-        if result.is_empty() {
-            for (&placeholder_id, &var) in var_map.iter() {
-                probe_map.clear();
-                probe_map.insert(placeholder_id, var);
-                visited.clear();
-                if self.type_contains_placeholder(ty, probe_map, visited) {
-                    result.insert(var);
-                }
             }
         }
 
