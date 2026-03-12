@@ -558,6 +558,7 @@ impl<'a> CheckerState<'a> {
                             self.check_destructuring_default_initializer(
                                 shorthand.object_assignment_initializer,
                                 target_type,
+                                elem_idx,
                             );
                         }
                         target_type

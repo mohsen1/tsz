@@ -17,6 +17,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -359,6 +360,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         default_idx: NodeIndex,
         target_type: TypeId,
+        diag_idx: NodeIndex,
     ) {
         if default_idx.is_none() {
             return;
@@ -373,8 +375,31 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type =
                 self.contextual_type_option_for_expression(Some(target_type));
         }
-        let _ = self.get_type_of_node(default_idx);
+        let default_type = self.get_type_of_node(default_idx);
         self.ctx.contextual_type = prev_context;
+
+        if target_type != TypeId::ANY
+            && target_type != TypeId::NEVER
+            && target_type != TypeId::UNKNOWN
+            && !self.type_contains_error(target_type)
+        {
+            let source_type = self
+                .ctx
+                .arena
+                .get(self.ctx.arena.skip_parenthesized(default_idx))
+                .and_then(|node| match node.kind {
+                    k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
+                    k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+                    _ => None,
+                })
+                .unwrap_or(default_type);
+            let _ = self.check_assignable_or_report_at_exact_anchor(
+                source_type,
+                target_type,
+                default_idx,
+                diag_idx,
+            );
+        }
     }
 
     pub(crate) fn destructuring_target_type_from_initializer(
@@ -390,7 +415,7 @@ impl<'a> CheckerState<'a> {
             && bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
         {
             let target_type = self.get_type_of_assignment_target(bin.left);
-            self.check_destructuring_default_initializer(bin.right, target_type);
+            self.check_destructuring_default_initializer(bin.right, target_type, bin.left);
             return target_type;
         }
 
