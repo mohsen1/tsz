@@ -13327,3 +13327,38 @@ const x: IHasVisualizationModel = moduleA;
         "Did not expect TS2322 for namespace assignment with inline import-equals typeof member query. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_union_of_tuple_rest_method_parameter_rejects_incompatible_tnext() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface I {
+    next(...[value]: [] | [undefined]): { done?: false; value: string } | { done: true; value: unknown };
+}
+interface G {
+    next(...[value]: [] | [boolean]): { done?: false; value: string } | { done: true; value: number };
+}
+declare let g: G;
+const x: I = g;
+
+interface IP {
+    next: (...[value]: [] | [undefined]) => { done?: false; value: string } | { done: true; value: unknown };
+}
+interface GP {
+    next: (...[value]: [] | [boolean]) => { done?: false; value: string } | { done: true; value: number };
+}
+declare let gp: GP;
+const y: IP = gp;
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for incompatible union-of-tuple rest methods. Actual diagnostics: {diagnostics:#?}"
+    );
+}
