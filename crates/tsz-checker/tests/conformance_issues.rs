@@ -3391,12 +3391,13 @@ someGenerics3<number>(() => undefined);
         },
     );
 
-    // tsc reports TS2322 on the callback return expression; we currently
-    // report TS2345 at the argument level. Accept either until callback
-    // return elaboration is fully implemented.
     assert!(
-        has_error(&diagnostics, 2322) || has_error(&diagnostics, 2345),
-        "Expected TS2322 or TS2345 for the type mismatch. Actual: {diagnostics:#?}"
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 on the callback return expression. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect outer TS2345 once callback return elaboration applies. Actual: {diagnostics:#?}"
     );
 }
 

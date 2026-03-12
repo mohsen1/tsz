@@ -1090,6 +1090,31 @@ foo({ x: false, y: 0, z: "" });
 }
 
 #[test]
+fn test_generic_callback_return_mismatch_prefers_inner_ts2322_over_outer_ts2345() {
+    let source = r#"
+function someGenerics3<T>(producer: () => T) { }
+someGenerics3<number>(() => undefined);
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let has_ts2345 = diagnostics.iter().any(|(code, _)| {
+        *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+    });
+
+    assert!(
+        has_ts2322,
+        "Expected TS2322 for the callback return mismatch, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2345,
+        "Did not expect outer TS2345 once callback return elaboration applies, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
     let source = r#"
         // @ts-check
