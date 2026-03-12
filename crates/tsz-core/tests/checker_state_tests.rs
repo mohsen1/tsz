@@ -3385,7 +3385,7 @@ import { something } from "nonexistent-npm-package";
     );
 }
 
-/// Test TS2307 for unresolved CommonJS require() calls in checked JavaScript.
+/// Test TS2307 for unresolved CommonJS `require()` calls in checked JavaScript.
 #[test]
 fn test_ts2307_check_js_require_call_not_found() {
     use crate::checker::diagnostics::diagnostic_codes;

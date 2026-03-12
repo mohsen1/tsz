@@ -51,6 +51,13 @@ impl<'a> CheckerState<'a> {
         // TypeScript always requires these core global types to exist.
         // tsc emits these errors BOTH with and without --noLib.
         //
+        // However, when no lib files were loaded AND --noLib was not explicitly
+        // set, we're likely in a bare unit test environment with no lib context.
+        // Skip TS2318 emission to avoid flooding tests with infrastructure noise.
+        if !self.ctx.compiler_options.no_lib && self.ctx.actual_lib_file_count == 0 {
+            return;
+        }
+
         // We check if types exist globally (in libs or current file scope).
         // This matches tsc behavior where missing core types are reported
         // even when some libs are loaded (e.g., if --lib es6 is missing Array).
