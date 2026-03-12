@@ -1404,6 +1404,46 @@ impl<'a> CheckerState<'a> {
                     message_text: msg,
                 }])
             }
+            SubtypeFailureReason::ReturnTypeMismatch {
+                source_return,
+                target_return,
+                nested_reason,
+            } => {
+                let source_str = self.format_type_diagnostic(*source_return);
+                let target_str = self.format_type_diagnostic(*target_return);
+                let msg =
+                    format!("Return type '{source_str}' is not assignable to '{target_str}'.");
+                let mut related = vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: reason.diagnostic_code(),
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length: length.saturating_sub(start),
+                    message_text: msg,
+                }];
+                if let Some(nested) = nested_reason {
+                    match nested.as_ref() {
+                        SubtypeFailureReason::TypeMismatch { .. }
+                        | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                        | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
+                            let message = format_message(
+                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                &[&source_str, &target_str],
+                            );
+                            related.push(DiagnosticRelatedInformation {
+                                category: DiagnosticCategory::Message,
+                                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                file: self.ctx.file_name.clone(),
+                                start,
+                                length: length.saturating_sub(start),
+                                message_text: message,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Some(related)
+            }
             _ => None,
         }
     }
