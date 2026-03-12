@@ -620,7 +620,10 @@ impl<'a> CheckerState<'a> {
                     && !has_jsdoc_param
                     && param.type_annotation.is_none()
                 {
-                    if self
+                    if !self.ctx.strict_null_checks() && type_id == TypeId::NULL {
+                        type_id = TypeId::ANY;
+                        Some("any")
+                    } else if self
                         .ctx
                         .arena
                         .get(param.initializer)

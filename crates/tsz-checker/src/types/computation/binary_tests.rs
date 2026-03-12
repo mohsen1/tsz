@@ -204,6 +204,12 @@ function f(a = null, b = n, l = []) {
             .any(|msg| msg.contains("Parameter 'l' implicitly has an 'any[]' type.")),
         "Expected JS empty-array default parameter to report TS7006 any[], got: {diags:?}"
     );
+    assert!(
+        ts7006_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Expected JS null default parameter to report TS7006 any under non-strict null checks, got: {diags:?}"
+    );
 }
 
 #[test]
