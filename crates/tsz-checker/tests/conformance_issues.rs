@@ -13251,3 +13251,37 @@ b3 = {
         "expected object-literal source display to preserve the function literal return type: {missing_m:#?}"
     );
 }
+
+#[test]
+fn test_import_equals_namespace_assignment_respects_inline_typeof_member_queries() {
+    let diagnostics = compile_two_files_get_diagnostics_with_options(
+        r#"
+export class Model {
+    public someData!: string;
+}
+
+export class VisualizationModel extends Model {}
+"#,
+        r#"
+import moduleA = require("./a");
+
+interface IHasVisualizationModel {
+    VisualizationModel: typeof moduleA.Model;
+}
+
+const x: IHasVisualizationModel = moduleA;
+"#,
+        "./a",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect TS2322 for namespace assignment with inline import-equals typeof member query. Actual diagnostics: {diagnostics:#?}"
+    );
+}
