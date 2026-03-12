@@ -562,21 +562,44 @@ impl<'a> CheckerState<'a> {
         // `var x;` — only `let`/`const` or `var x: T;` (with type annotation) need
         // definite assignment checking. When a type annotation is present, tsc still
         // requires definite assignment even for `var`.
+        // Exception: for-in/for-of loop variables (`for (var v of ...)`) have no
+        // initializer in the AST but ARE assigned by the loop — don't suppress for those.
         if !has_initializer {
             let is_function_scoped =
                 symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
             if is_function_scoped {
-                let has_type_annotation = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                {
-                    self.ctx
-                        .arena
-                        .get_variable_declaration(decl_node)
-                        .is_some_and(|vd| vd.type_annotation.is_some())
-                } else {
-                    false
-                };
-                if !has_type_annotation {
-                    return false;
+                // Check if this var is a for-in/for-of loop variable
+                let is_for_in_of_var = self
+                    .ctx
+                    .arena
+                    .node_info(decl_id_to_check)
+                    .and_then(|info| {
+                        let list_node = self.ctx.arena.get(info.parent)?;
+                        if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            return None;
+                        }
+                        let list_info = self.ctx.arena.node_info(info.parent)?;
+                        let for_node = self.ctx.arena.get(list_info.parent)?;
+                        Some(
+                            for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                                || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT,
+                        )
+                    })
+                    .unwrap_or(false);
+
+                if !is_for_in_of_var {
+                    let has_type_annotation =
+                        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                            self.ctx
+                                .arena
+                                .get_variable_declaration(decl_node)
+                                .is_some_and(|vd| vd.type_annotation.is_some())
+                        } else {
+                            false
+                        };
+                    if !has_type_annotation {
+                        return false;
+                    }
                 }
             }
         }
