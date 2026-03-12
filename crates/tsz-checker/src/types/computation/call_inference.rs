@@ -132,6 +132,29 @@ fn instantiate_function_shape_with_substitution(
     }
 }
 
+fn instantiate_contextual_target_shape_for_return_context(
+    types: &dyn tsz_solver::QueryDatabase,
+    func: &tsz_solver::FunctionShape,
+) -> tsz_solver::FunctionShape {
+    if func.type_params.is_empty() {
+        return func.clone();
+    }
+
+    let mut substitution = tsz_solver::TypeSubstitution::new();
+    for tp in &func.type_params {
+        let Some(replacement) = tp.default.or(tp.constraint) else {
+            continue;
+        };
+        substitution.insert(tp.name, replacement);
+    }
+
+    if substitution.is_empty() {
+        return func.clone();
+    }
+
+    instantiate_function_shape_with_substitution(types, func, &substitution)
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn widen_round2_contextual_substitution(
         &mut self,
@@ -390,6 +413,8 @@ impl<'a> CheckerState<'a> {
         if let Some((source_fn, target_fn)) = function_info
             && source_fn.params.len() <= target_fn.params.len()
         {
+            let target_fn =
+                instantiate_contextual_target_shape_for_return_context(self.ctx.types, &target_fn);
             for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter())
             {
                 self.collect_return_context_substitution(
