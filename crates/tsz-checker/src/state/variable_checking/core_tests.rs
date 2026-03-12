@@ -166,6 +166,24 @@ var o: Point;
     }
 
     #[test]
+    fn var_redecl_with_unknown_initializer_emits_ts2403() {
+        let source = r#"
+declare const u: unknown;
+var x: number | string;
+var x = u;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected TS2403 for unknown redeclaration: {ts2403:?}"
+        );
+    }
+
+    #[test]
     fn typeof_module_no_false_ts2403() {
         // From nonInstantiatedModule.ts
         let source = r#"
