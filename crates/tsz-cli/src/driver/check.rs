@@ -1391,20 +1391,12 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         ));
         let parallel_result =
             parallel::check_files_parallel(&program, &resolved.checker, &lib_files);
-        let parallel_ts2322_count = parallel_result
+        let _parallel_ts2322_count = parallel_result
             .file_results
             .iter()
             .flat_map(|file| file.diagnostics.iter())
             .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
             .count();
-        eprintln!(
-            "parallel diagnostics: {:?}",
-            parallel_result
-                .file_results
-                .iter()
-                .flat_map(|file| file.diagnostics.iter())
-                .collect::<Vec<_>>()
-        );
         let rebuilt_binder = create_binder_from_bound_file(&program.files[0], &program, 0);
         let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
@@ -1501,18 +1493,6 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             }
             other => format!("{other:?}"),
         };
-        eprintln!(
-            "source={} target={} source_symbol={} source_constraint={} target_constraint={}",
-            checker.format_type(source_type),
-            checker.format_type(evaluated_target_type),
-            source_symbol,
-            read_constraint_type(source_type)
-                .map(|ty| checker.format_type(ty))
-                .unwrap_or_else(|| "<missing>".to_string()),
-            read_constraint_type(evaluated_target_type)
-                .map(|ty| checker.format_type(ty))
-                .unwrap_or_else(|| "<missing>".to_string())
-        );
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
         let direct_diagnostics = collect_diagnostics(
             &program,

@@ -782,11 +782,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 type_alias.type_node,
                 &resolve_text_symbol,
             );
-            eprintln!(
-                "type_node_resolution decl_idx={} computed_names={}",
-                decl_idx.0,
-                computed_names.len()
-            );
             let computed_name_resolver =
                 |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
 
