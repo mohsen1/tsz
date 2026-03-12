@@ -11778,26 +11778,21 @@ var r5 = foo3((x: number) => '');
         "#,
     );
 
-    let ts2345_messages: Vec<&str> = diagnostics
+    let ts2322_messages: Vec<&str> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2345)
+        .filter(|(code, _)| *code == 2322)
         .map(|(_, message)| message.as_str())
         .collect();
 
     assert_eq!(
-        ts2345_messages.len(),
+        ts2322_messages.len(),
         1,
-        "Expected a single TS2345 for incompatible callback argument.\nActual diagnostics: {diagnostics:?}"
+        "Expected a single inner TS2322 for the incompatible callback body.\nActual diagnostics: {diagnostics:?}"
     );
     assert!(
-        ts2345_messages[0].contains("(x: number) => string"),
-        "TS2345 should widen the displayed callback return type from the literal to string.\nActual message: {}",
-        ts2345_messages[0]
-    );
-    assert!(
-        !ts2345_messages[0].contains("(x: number) => \"\""),
-        "TS2345 should not display the literal return type for an unannotated callback.\nActual message: {}",
-        ts2345_messages[0]
+        ts2322_messages[0].contains("Type 'string' is not assignable to type 'number'."),
+        "Expected TS2322 to report the widened callback body mismatch.\nActual message: {}",
+        ts2322_messages[0]
     );
 }
 
