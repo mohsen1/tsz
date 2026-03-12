@@ -13065,6 +13065,46 @@ f2(
 }
 
 #[test]
+fn test_generic_contextual_filter_callback_preserves_constraint() {
+    let source = r"
+type Box<T> = { value: T };
+
+declare function arrayFilter<T>(f: (x: T) => boolean): (a: T[]) => T[];
+
+const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 10);
+";
+
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2322),
+        "Should NOT emit TS2322 for generic contextual filter callback.\nActual errors: {relevant:#?}"
+    );
+    assert!(
+        !has_error(&relevant, 2339),
+        "Should NOT emit TS2339 for generic contextual filter callback.\nActual errors: {relevant:#?}"
+    );
+    assert!(
+        !has_error(&relevant, 18046),
+        "Should NOT emit TS18046 for generic contextual filter callback.\nActual errors: {relevant:#?}"
+    );
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 for generic contextual filter callback.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
