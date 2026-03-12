@@ -846,6 +846,36 @@ fn test_ts2454_emitted_for_module_global_never_assigned_inside_deferred_function
 }
 
 #[test]
+fn test_ts2454_suppressed_for_var_module_global_never_assigned_inside_deferred_function() {
+    // `var` declarations are hoisted and initialized to `undefined` at runtime.
+    // tsc suppresses TS2454 for `var` in deferred functions even when the variable
+    // is never assigned in an external module — unlike `let`/`const`, `var` always
+    // has a runtime value.
+    let source = r"
+        export {};
+        var cond: boolean;
+        function f() {
+            while (cond) {}
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "var declarations should not emit TS2454 in deferred functions, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2454_suppressed_for_module_global_assigned_later_inside_deferred_function() {
     // In external modules, if the variable IS assigned somewhere in the file,
     // suppress TS2454 for reads in deferred nested functions — the function

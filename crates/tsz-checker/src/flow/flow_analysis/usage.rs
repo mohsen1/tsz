@@ -538,8 +538,16 @@ impl<'a> CheckerState<'a> {
                 // In external modules, only suppress if the variable has some
                 // assignment reachable in the file. If it is never assigned,
                 // the deferred function can never see a valid value.
+                //
+                // Exception: `var` (function-scoped) declarations are always
+                // hoisted and initialized to `undefined` at runtime, so tsc
+                // suppresses TS2454 for them in deferred functions regardless
+                // of whether an assignment exists in the file.
+                let is_function_scoped_var =
+                    symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
                 if self.ctx.binder.is_external_module()
                     && !has_initializer
+                    && !is_function_scoped_var
                     && !self.symbol_has_any_assignment_in_file(sym_id)
                 {
                     // Fall through — continue to the flow analysis check below
