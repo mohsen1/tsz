@@ -12,6 +12,133 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn type_nodes_structurally_equal(&self, left: NodeIndex, right: NodeIndex) -> bool {
+        if let (Some(left_text), Some(right_text)) = (self.node_text(left), self.node_text(right))
+            && left_text == right_text
+        {
+            return true;
+        }
+
+        let left_node = self.ctx.arena.get(left);
+        let right_node = self.ctx.arena.get(right);
+        match (left_node, right_node) {
+            (Some(l), Some(r)) if l.kind == r.kind => {
+                if let (Some(li), Some(ri)) = (
+                    self.ctx.arena.get_identifier(l),
+                    self.ctx.arena.get_identifier(r),
+                ) {
+                    return li.escaped_text == ri.escaped_text;
+                }
+                if let (Some(llt), Some(rlt)) = (
+                    self.ctx.arena.get_literal_type(l),
+                    self.ctx.arena.get_literal_type(r),
+                ) {
+                    return self.type_nodes_structurally_equal(llt.literal, rlt.literal);
+                }
+                if let (Some(ll), Some(rl)) =
+                    (self.ctx.arena.get_literal(l), self.ctx.arena.get_literal(r))
+                {
+                    return ll.text == rl.text;
+                }
+                if let (Some(lref), Some(rref)) = (
+                    self.ctx.arena.get_type_ref(l),
+                    self.ctx.arena.get_type_ref(r),
+                ) {
+                    if !self.type_nodes_structurally_equal(lref.type_name, rref.type_name) {
+                        return false;
+                    }
+                    let left_args = lref.type_arguments.as_ref();
+                    let right_args = rref.type_arguments.as_ref();
+                    return match (left_args, right_args) {
+                        (None, None) => true,
+                        (Some(la), Some(ra)) => {
+                            la.nodes.len() == ra.nodes.len()
+                                && la
+                                    .nodes
+                                    .iter()
+                                    .zip(ra.nodes.iter())
+                                    .all(|(&ln, &rn)| self.type_nodes_structurally_equal(ln, rn))
+                        }
+                        _ => false,
+                    };
+                }
+                if let (Some(lidx), Some(ridx)) = (
+                    self.ctx.arena.get_indexed_access_type(l),
+                    self.ctx.arena.get_indexed_access_type(r),
+                ) {
+                    return self.type_nodes_structurally_equal(lidx.object_type, ridx.object_type)
+                        && self.type_nodes_structurally_equal(lidx.index_type, ridx.index_type);
+                }
+                if let (Some(lpar), Some(rpar)) = (
+                    self.ctx.arena.get_parenthesized(l),
+                    self.ctx.arena.get_parenthesized(r),
+                ) {
+                    return self.type_nodes_structurally_equal(lpar.expression, rpar.expression);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn is_descendant_type_node(&self, node_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        let Some(ancestor) = self.ctx.arena.get(ancestor_idx) else {
+            return false;
+        };
+        if node.pos >= ancestor.pos && node.end <= ancestor.end {
+            return true;
+        }
+
+        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            if parent_idx == ancestor_idx {
+                return true;
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        false
+    }
+
+    fn type_argument_is_narrowed_by_conditional_true_branch(
+        &mut self,
+        arg_idx: NodeIndex,
+        constraint: TypeId,
+    ) -> bool {
+        let constraint = self.resolve_lazy_type(constraint);
+        let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.is_descendant_type_node(arg_idx, cond.true_type)
+                && self.type_nodes_structurally_equal(arg_idx, cond.check_type)
+            {
+                let extends_type = self.get_type_from_type_node(cond.extends_type);
+                if extends_type != TypeId::ERROR
+                    && (extends_type == constraint
+                        || (self.is_assignable_to(extends_type, constraint)
+                            && self.is_assignable_to(constraint, extends_type)))
+                {
+                    return true;
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        false
+    }
+
     // =========================================================================
     // Type Argument Validation
     // =========================================================================
@@ -510,6 +637,12 @@ impl<'a> CheckerState<'a> {
                                     && tsz_solver::type_queries::is_callable_type(db, base);
                             }
                             if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                                if self.type_argument_is_narrowed_by_conditional_true_branch(
+                                    arg_idx,
+                                    inst_constraint,
+                                ) {
+                                    continue;
+                                }
                                 self.error_type_constraint_not_satisfied(
                                     type_arg,
                                     inst_constraint,
@@ -569,6 +702,12 @@ impl<'a> CheckerState<'a> {
                             && !self.satisfies_array_like_constraint(base, inst_constraint)
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
                         {
+                            if self.type_argument_is_narrowed_by_conditional_true_branch(
+                                arg_idx,
+                                inst_constraint,
+                            ) {
+                                continue;
+                            }
                             self.error_type_constraint_not_satisfied(
                                 type_arg,
                                 inst_constraint,
@@ -581,6 +720,13 @@ impl<'a> CheckerState<'a> {
 
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
+
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self
+                        .type_argument_is_narrowed_by_conditional_true_branch(arg_idx, constraint)
+                {
+                    continue;
+                }
 
                 // Instantiate the constraint with all provided type arguments so that
                 // forward-referencing constraints (e.g., `T extends U` where U comes
@@ -652,6 +798,12 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                    if self.type_argument_is_narrowed_by_conditional_true_branch(
+                        arg_idx,
+                        instantiated_constraint,
+                    ) {
+                        continue;
+                    }
                     // Check if the failure is due to a weak type violation (TS2559).
                     // In tsc, when the constraint is a "weak type" (all-optional properties)
                     // and the type argument shares no common properties, tsc emits TS2559

@@ -14,6 +14,21 @@ impl<'a> CheckerState<'a> {
         has_contextual_type: bool,
         param_index: usize,
     ) {
+        self.maybe_report_implicit_any_parameter_with_type_hint(
+            param,
+            has_contextual_type,
+            param_index,
+            None,
+        );
+    }
+
+    pub(crate) fn maybe_report_implicit_any_parameter_with_type_hint(
+        &mut self,
+        param: &tsz_parser::parser::node::ParameterData,
+        has_contextual_type: bool,
+        param_index: usize,
+        implicit_type_hint: Option<&'static str>,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.no_implicit_any() || has_contextual_type {
@@ -26,7 +41,7 @@ impl<'a> CheckerState<'a> {
         // Check if parameter has an initializer — any initializer (including null/undefined)
         // provides a type for the parameter. tsc infers `null` or `undefined` as the type,
         // so these do NOT trigger TS7006.
-        if param.initializer.is_some() {
+        if param.initializer.is_some() && implicit_type_hint.is_none() {
             return;
         }
         if self.is_this_parameter_name(param.name) {
@@ -121,6 +136,7 @@ impl<'a> CheckerState<'a> {
         if param_name.is_empty() {
             return;
         }
+        let implicit_type = implicit_type_hint.unwrap_or("any");
 
         // Rest parameters use TS7019, regular parameters use TS7006
         let report_node = self.param_node_for_implicit_any_diagnostic(param);
@@ -182,7 +198,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     report_node,
                     diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
-                    &[&param_name, "any"],
+                    &[&param_name, implicit_type],
                 );
             }
         }

@@ -34,6 +34,75 @@ struct AccessorAggregate {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn merge_static_late_bound_index_value(
+        &self,
+        target: &mut Option<IndexSignature>,
+        incoming: IndexSignature,
+    ) {
+        if let Some(existing) = target.as_mut() {
+            if existing.value_type != incoming.value_type {
+                existing.value_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .union(vec![existing.value_type, incoming.value_type]);
+            }
+            existing.readonly &= incoming.readonly;
+        } else {
+            *target = Some(incoming);
+        }
+    }
+
+    fn merge_static_late_bound_member_from_computed_name(
+        &mut self,
+        name_idx: NodeIndex,
+        value_type: TypeId,
+        static_string_index: &mut Option<IndexSignature>,
+        static_number_index: &mut Option<IndexSignature>,
+    ) {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return;
+        };
+
+        let prev = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let key_type = self.get_type_of_node(computed.expression);
+        self.ctx.preserve_literal_types = prev;
+
+        let Some((wants_string, wants_number)) = self.get_index_key_kind(key_type) else {
+            return;
+        };
+
+        if wants_string {
+            self.merge_static_late_bound_index_value(
+                static_string_index,
+                IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type,
+                    readonly: false,
+                    param_name: None,
+                },
+            );
+        }
+        if wants_number {
+            self.merge_static_late_bound_index_value(
+                static_number_index,
+                IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type,
+                    readonly: false,
+                    param_name: None,
+                },
+            );
+        }
+    }
+
     fn class_constructor_display_name(
         &self,
         class_idx: NodeIndex,
@@ -473,18 +542,6 @@ impl<'a> CheckerState<'a> {
                     if !self.has_static_modifier(&method.modifiers) {
                         continue;
                     }
-                    let Some(name) = self.get_property_name_resolved(method.name) else {
-                        if self
-                            .ctx
-                            .arena
-                            .get(method.name)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-                        {
-                            has_static_late_bound_members = true;
-                        }
-                        continue;
-                    };
-                    let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_member_visibility(&method.modifiers, method.name);
                     // For static methods, `this` refers to the constructor type
                     // Get it from the symbol if available
@@ -522,6 +579,38 @@ impl<'a> CheckerState<'a> {
                             self.ctx.symbol_types.remove(&sym_id);
                         }
                     }
+                    let callable_type = factory.callable(CallableShape {
+                        call_signatures: vec![signature.clone()],
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    });
+                    let callable_or_undefined = if method.question_token {
+                        factory.union(vec![callable_type, TypeId::UNDEFINED])
+                    } else {
+                        callable_type
+                    };
+                    let Some(name) = self.get_property_name_resolved(method.name) else {
+                        if self
+                            .ctx
+                            .arena
+                            .get(method.name)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                        {
+                            has_static_late_bound_members = true;
+                            self.merge_static_late_bound_member_from_computed_name(
+                                method.name,
+                                callable_or_undefined,
+                                &mut static_string_index,
+                                &mut static_number_index,
+                            );
+                        }
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
                         impl_signatures: Vec::new(),
@@ -1333,14 +1422,20 @@ impl<'a> CheckerState<'a> {
 
         // When the class has static members with unresolvable computed property names,
         // tsc treats the constructor type as implicitly string-indexable to suppress TS7053.
-        let effective_string_index = static_string_index.or_else(|| {
+        let effective_string_index = if let Some(mut static_index) = static_string_index {
+            if has_static_late_bound_members {
+                static_index.value_type =
+                    factory.union(vec![static_index.value_type, instance_type]);
+            }
+            Some(static_index)
+        } else {
             has_static_late_bound_members.then_some(IndexSignature {
                 key_type: TypeId::STRING,
                 value_type: TypeId::ANY,
                 readonly: false,
                 param_name: None,
             })
-        });
+        };
 
         let constructor_type = factory.callable(CallableShape {
             call_signatures: Vec::new(),

@@ -1514,11 +1514,8 @@ impl<'a> CheckerState<'a> {
                 jsdoc_type
             } else if !rhs_idx.is_none() {
                 let mut rhs_type = self.get_type_of_node(rhs_idx);
-                let rhs_is_direct_empty_array = self
-                    .ctx
-                    .arena
-                    .get(rhs_idx)
-                    .is_some_and(|rhs_node| {
+                let rhs_is_direct_empty_array =
+                    self.ctx.arena.get(rhs_idx).is_some_and(|rhs_node| {
                         rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                             && self
                                 .ctx
@@ -1543,6 +1540,35 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypeId::ANY
             };
+
+            if self.ctx.no_implicit_any() {
+                let implicit_type = if type_id == TypeId::ANY {
+                    Some("any")
+                } else if tsz_solver::type_queries::get_array_element_type(self.ctx.types, type_id)
+                    == Some(TypeId::ANY)
+                {
+                    Some("any[]")
+                } else {
+                    None
+                };
+                if let Some(implicit_type) = implicit_type {
+                    let message =
+                        format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
+                    let already_emitted = self.ctx.diagnostics.iter().any(|d| {
+                        d.code
+                            == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
+                            && d.start == self.ctx.arena.get(report_idx).map_or(0, |n| n.pos)
+                            && d.message_text == message
+                    });
+                    if !already_emitted {
+                        self.error_at_node_msg(
+                            report_idx,
+                            crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
+                            &[&prop_name, implicit_type],
+                        );
+                    }
+                }
+            }
 
             if type_id == TypeId::UNDEFINED {
                 if let Some(parent_sym) = parent_sym

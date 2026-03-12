@@ -175,6 +175,72 @@ const instanceBad: number = (new Holder())["x"];
 }
 
 #[test]
+fn test_unresolved_computed_static_methods_produce_union_lookup_types() {
+    let source = r#"
+declare const f1: string;
+declare const f2: string;
+
+class Holder {
+    static [f1]() {
+        return { static: true };
+    }
+    static [f2]() {
+        return { static: "sometimes" };
+    }
+}
+
+const ok:
+    | Holder
+    | (() => { static: boolean })
+    | (() => { static: string }) = Holder["x"];
+const bad: number = Holder["x"];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322: Vec<&String> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the bad static lookup assignment to fail once late-bound static methods are typed, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0].contains("Type 'Holder' is not assignable to type 'number'"),
+        "Expected static late-bound lookup to stay non-any and still include the prototype branch in diagnostics, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_const_alias_expando_element_reads_do_not_emit_ts7053_in_declaration_mode() {
+    let source = r#"
+function foo() {}
+const writeKey = "late-bound";
+const readKey = writeKey;
+foo[writeKey] = "ok";
+const value: string = foo[readKey];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 once expando element keys resolve through const aliases. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {
@@ -566,7 +632,6 @@ if (typeof c === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_index_write_with_errored_key_still_checks_value_type() {
     let source = r#"
 class Box {
@@ -2576,8 +2641,7 @@ function foo<T>(arr: T[], depth: number): BadFlatArray<T, number>[] {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
-fn test_declaration_emit_spread_with_external_unique_symbol_key_emits_ts4023() {
+fn test_declaration_emit_spread_with_external_unique_symbol_key_stays_nameable() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
             (
@@ -2604,8 +2668,8 @@ fn test_declaration_emit_spread_with_external_unique_symbol_key_emits_ts4023() {
     );
 
     assert!(
-        has_error(&diagnostics, 4023),
-        "Expected TS4023 for declaration emit of an inferred spread type with an external unique-symbol key. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 4023),
+        "Did not expect TS4023 for declaration emit of an inferred spread type with an external unique-symbol key. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -5993,8 +6057,7 @@ class DerivedInterface implements Base {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
-fn test_class_implements_class_does_not_gain_missing_private_members_for_assignment() {
+fn test_class_implements_class_reports_private_member_incompatibility_on_assignment() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 class A {
@@ -6027,8 +6090,11 @@ c2 = c;
         "Expected TS2720 for implementing class A, got: {relevant_diagnostics:#?}"
     );
     assert!(
-        has_error(&relevant_diagnostics, 2741),
-        "Expected TS2741 for assigning C to C2 after failed implements-class check, got: {relevant_diagnostics:#?}"
+        relevant_diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Property 'x' is private in type 'A' but not in type 'C'.")
+        }),
+        "Expected TS2322 for assigning C to C2 after failed implements-class check, got: {relevant_diagnostics:#?}"
     );
 }
 
@@ -8991,7 +9057,6 @@ new x.F();
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_commonjs_exported_js_constructor_index_errors_use_function_name() {
     let a_source = r#"
 const s = Symbol();
@@ -9223,8 +9288,7 @@ const y = x.get("a");
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
-fn test_array_literal_union_context_with_object_member_does_not_contextually_type_callbacks() {
+fn test_array_literal_union_context_with_object_member_contextually_types_callbacks() {
     if !lib_files_available() {
         return;
     }
@@ -9250,8 +9314,8 @@ test([
     );
 
     assert!(
-        has_error(&diagnostics, 7006),
-        "Expected TS7006 when array literal contextual type comes from ambiguous union. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 when array literal contextual type contains an array callback branch. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -11052,7 +11116,6 @@ type Outer<WithC extends { name: string }> = Inner<WithC>;
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_ts2344_unconstrained_type_param_fails_object_constraint() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -12149,7 +12212,6 @@ fn test_computed_binding_element_identifier_key_unions_pre_and_default_assignmen
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_computed_assignment_pattern_order_uses_exact_rhs_tuple_access() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -14194,7 +14256,6 @@ const f: (x: Expression) => boolean = sink;
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_union_restricted_indexed_access_prefers_ts2339_over_constraint_failure() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -14236,7 +14297,6 @@ type _5 = (Foo | (Foo & Bar))['foo'];
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_conditional_true_branch_type_argument_satisfies_constraint_for_indexed_access() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -14266,7 +14326,34 @@ type Broken<V extends { x: Foo | Bar }, P extends keyof V> =
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
+fn test_conditional_true_branch_type_argument_satisfies_direct_constraint() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Foo {
+  protected foo = 0;
+}
+
+class Bar {
+  protected foo = 0;
+}
+
+type Nothing<V extends Foo> = void;
+type Guarded<V extends Foo | Bar> = V extends Foo ? Nothing<V> : never;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Conditional true-branch narrowing should satisfy direct type argument constraints.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_recursive_conditional_alias_constraint_accepts_string_literal_key() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

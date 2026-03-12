@@ -614,6 +614,37 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
+                let implicit_any_type_hint = if self.is_js_file()
+                    && param.initializer.is_some()
+                    && !has_contextual_type
+                    && !has_jsdoc_param
+                    && param.type_annotation.is_none()
+                {
+                    if !self.ctx.strict_null_checks()
+                        && (type_id == TypeId::NULL || type_id == TypeId::UNDEFINED)
+                    {
+                        type_id = TypeId::ANY;
+                        Some("any")
+                    } else if self
+                        .ctx
+                        .arena
+                        .get(param.initializer)
+                        .and_then(|n| self.ctx.arena.get_literal_expr(n))
+                        .is_some_and(|lit| lit.elements.nodes.is_empty())
+                        && let Some(elem_type) = tsz_solver::type_queries::get_array_element_type(
+                            self.ctx.types,
+                            type_id,
+                        )
+                        && (elem_type == TypeId::ANY || elem_type == TypeId::NEVER)
+                    {
+                        type_id = self.ctx.types.factory().array(TypeId::ANY);
+                        Some("any[]")
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 // Skip TS7006 for setters (handled by caller), closures during
                 // build_type_environment (no contextual type), decorator closures,
                 // re-entrant closure resolution (first call handles diagnostics),
@@ -636,10 +667,11 @@ impl<'a> CheckerState<'a> {
                     || closure_already_checked
                     || is_ambient_private;
                 if !skip_implicit_any {
-                    self.maybe_report_implicit_any_parameter(
+                    self.maybe_report_implicit_any_parameter_with_type_hint(
                         param,
                         has_contextual_type || has_jsdoc_param,
                         contextual_index,
+                        implicit_any_type_hint,
                     );
                 }
                 // In JS files, params without type annotations are implicitly optional
