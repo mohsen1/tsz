@@ -255,20 +255,61 @@ impl<'a> CheckerState<'a> {
                 .is_some()
             || self.resolve_import_via_target_binder(module_name, import_name)
             || self.resolve_import_via_all_binders(module_name, normalized, import_name)
-            || self
-                .resolve_cross_file_export_from_file(
-                    module_name,
-                    import_name,
-                    Some(self.ctx.current_file_idx),
-                )
-                .is_some()
-            || self
-                .resolve_cross_file_export_from_file(
-                    normalized,
-                    import_name,
-                    Some(self.ctx.current_file_idx),
-                )
-                .is_some()
+            || self.cross_file_export_is_actual_export(module_name, import_name)
+            || self.cross_file_export_is_actual_export(normalized, import_name)
+    }
+
+    /// Like `resolve_cross_file_export_from_file`, but filters out symbols that
+    /// only exist in `file_locals` of an external module without being exported.
+    /// This prevents non-exported local symbols from being treated as re-exports,
+    /// which would suppress TS2459 ("declares locally but not exported").
+    fn cross_file_export_is_actual_export(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> bool {
+        let sym_id = match self.resolve_cross_file_export_from_file(
+            module_specifier,
+            export_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // If the target module is an external module (has import/export statements),
+        // verify the symbol is actually exported (in module_exports), not just local.
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+            && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            && target_binder.is_external_module
+        {
+            // Check if the symbol is in file_locals but NOT in any module_exports.
+            // If so, it's a local-only symbol and should not count as a re-export.
+            if target_binder.file_locals.get(export_name) == Some(sym_id) {
+                let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                let target_file_name = target_arena
+                    .source_files
+                    .first()
+                    .map(|sf| sf.file_name.as_str());
+
+                let exports_table = target_file_name
+                    .and_then(|fname| target_binder.module_exports.get(fname))
+                    .or_else(|| target_binder.module_exports.get(module_specifier));
+
+                let in_module_exports =
+                    exports_table.is_some_and(|exports| exports.has(export_name));
+
+                // For `export =` modules, the export target is in file_locals but
+                // accessible via the `export =` binding. Don't filter these out.
+                let has_export_equals = exports_table.is_some_and(|exports| exports.has("export="));
+
+                if !in_module_exports && !has_export_equals {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     /// Type-level fallback for `has_named_export_via_export_equals`.
@@ -899,6 +940,25 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // If the module uses `export =`, the symbol may be the export target itself.
+        // In that case it IS exported (just not as a named export), so don't report
+        // it as "locally declared but not exported" (TS2459). Let the caller fall
+        // through to the appropriate `export =` diagnostic (TS2616/TS2595/TS2597).
+        let has_export_equals = module_keys.iter().any(|key| {
+            binder
+                .module_exports
+                .get(*key)
+                .is_some_and(|exports| exports.has("export="))
+        }) || file_name.is_some_and(|fname| {
+            binder
+                .module_exports
+                .get(fname)
+                .is_some_and(|exports| exports.has("export="))
+        });
+        if has_export_equals {
+            return None;
         }
 
         // Symbol exists locally but is not exported
