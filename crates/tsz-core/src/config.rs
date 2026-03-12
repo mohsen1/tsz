@@ -4302,8 +4302,8 @@ mod tests {
         let expected = config_dir.join("tsconfig.base.json");
         std::fs::write(&expected, "{}").unwrap();
 
-        let resolved = resolve_extends_path(&project_dir.join("tsconfig.json"), "pkg/tsconfig.json")
-            .unwrap();
+        let resolved =
+            resolve_extends_path(&project_dir.join("tsconfig.json"), "pkg/tsconfig.json").unwrap();
 
         assert_eq!(resolved, expected);
     }

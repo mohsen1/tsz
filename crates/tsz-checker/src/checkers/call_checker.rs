@@ -1668,7 +1668,8 @@ impl<'a> CheckerState<'a> {
                     } = result
                     {
                         type_mismatch_count += 1;
-                        if let Some((first_index, first_expected, first_actual)) = first_type_mismatch
+                        if let Some((first_index, first_expected, first_actual)) =
+                            first_type_mismatch
                         {
                             if first_index != index
                                 || first_expected != expected
