@@ -33,7 +33,10 @@ fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubsti
     sub
 }
 
-fn resolve_contextual_source_inference_candidate(lower_bounds: &[TypeId], inferred: TypeId) -> TypeId {
+fn resolve_contextual_source_inference_candidate(
+    lower_bounds: &[TypeId],
+    inferred: TypeId,
+) -> TypeId {
     if lower_bounds.is_empty() {
         return inferred;
     }
@@ -1247,7 +1250,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         };
 
-        if self.check_call_signature_subtype_to_fn(s_sig, &t_fn).is_true() {
+        if self
+            .check_call_signature_subtype_to_fn(s_sig, &t_fn)
+            .is_true()
+        {
             return SubtypeResult::True;
         }
 
