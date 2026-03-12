@@ -32,6 +32,19 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 
 impl<'a> CheckerState<'a> {
     fn normalize_nested_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        let mut visited = FxHashSet::default();
+        self.normalize_nested_type_for_assignability_inner(type_id, &mut visited)
+    }
+
+    fn normalize_nested_type_for_assignability_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> TypeId {
+        if !visited.insert(type_id) {
+            return type_id;
+        }
+
         let resolved = self.resolve_type_query_type(type_id);
         let evaluated = self.evaluate_type_with_env(resolved);
         let type_id = if evaluated != resolved {
@@ -42,7 +55,7 @@ impl<'a> CheckerState<'a> {
 
         match self.ctx.types.lookup(type_id) {
             Some(tsz_solver::TypeData::ReadonlyType(inner)) => {
-                let normalized = self.normalize_nested_type_for_assignability(inner);
+                let normalized = self.normalize_nested_type_for_assignability_inner(inner, visited);
                 if normalized != inner {
                     self.ctx.types.readonly_type(normalized)
                 } else {
@@ -50,7 +63,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             Some(tsz_solver::TypeData::NoInfer(inner)) => {
-                let normalized = self.normalize_nested_type_for_assignability(inner);
+                let normalized = self.normalize_nested_type_for_assignability_inner(inner, visited);
                 if normalized != inner {
                     self.ctx.types.no_infer(normalized)
                 } else {
@@ -58,7 +71,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             Some(tsz_solver::TypeData::Array(elem)) => {
-                let normalized = self.normalize_nested_type_for_assignability(elem);
+                let normalized = self.normalize_nested_type_for_assignability_inner(elem, visited);
                 if normalized != elem {
                     self.ctx.types.array(normalized)
                 } else {
@@ -71,7 +84,8 @@ impl<'a> CheckerState<'a> {
                 let normalized_elements: Vec<_> = elements
                     .iter()
                     .map(|elem| {
-                        let normalized = self.normalize_nested_type_for_assignability(elem.type_id);
+                        let normalized = self
+                            .normalize_nested_type_for_assignability_inner(elem.type_id, visited);
                         if normalized != elem.type_id {
                             changed = true;
                         }
@@ -95,7 +109,8 @@ impl<'a> CheckerState<'a> {
                 let normalized_members: Vec<_> = members
                     .iter()
                     .map(|&member| {
-                        let normalized = self.normalize_nested_type_for_assignability(member);
+                        let normalized =
+                            self.normalize_nested_type_for_assignability_inner(member, visited);
                         if normalized != member {
                             changed = true;
                         }
@@ -114,7 +129,8 @@ impl<'a> CheckerState<'a> {
                 let normalized_members: Vec<_> = members
                     .iter()
                     .map(|&member| {
-                        let normalized = self.normalize_nested_type_for_assignability(member);
+                        let normalized =
+                            self.normalize_nested_type_for_assignability_inner(member, visited);
                         if normalized != member {
                             changed = true;
                         }
