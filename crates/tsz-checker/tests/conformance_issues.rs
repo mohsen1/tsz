@@ -12082,3 +12082,45 @@ ff1 = ff4;
         "Expected the any-rest assignment failure to mention the source and target callable types.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_non_strict_missing_property_messages_strip_optional_undefined_and_use_contextual_callable()
+{
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        r#"
+var b3: { f(n: number): number; g(s: string): number; m: number; n?: number; k?(a: any): any; };
+
+b3 = {
+    f: (n) => { return 0; },
+    g: (s) => { return 0; },
+    n: 0,
+    k: (a) => { return null; },
+};
+"#,
+        CheckerOptions {
+            strict: false,
+            strict_null_checks: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let missing_m = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing property 'm'");
+
+    assert!(
+        missing_m.message_text.contains(
+            "type '{ f(n: number): number; g(s: string): number; m: number; n?: number; k?(a: any): any; }'"
+        ),
+        "expected optional property display to omit `| undefined`: {missing_m:#?}"
+    );
+    assert!(
+        missing_m
+            .message_text
+            .contains("type '{ f: (n: number) => number; g: (s: string) => number; n: number; k: (a: any) => any; }'"),
+        "expected object-literal source display to reuse the contextual callable signature: {missing_m:#?}"
+    );
+}
