@@ -342,6 +342,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.allow_void_return && target_return == TypeId::VOID {
             return SubtypeResult::True;
         }
+
+        let source_needs_raw_fallback = matches!(
+            self.interner.lookup(source_return),
+            Some(TypeData::Application(_) | TypeData::Lazy(_))
+        ) && self.evaluate_type(source_return) == TypeId::UNKNOWN;
+        let target_needs_raw_fallback = matches!(
+            self.interner.lookup(target_return),
+            Some(TypeData::Application(_) | TypeData::Lazy(_))
+        ) && self.evaluate_type(target_return) == TypeId::UNKNOWN;
+
+        if source_needs_raw_fallback || target_needs_raw_fallback {
+            let prev = self.bypass_evaluation;
+            self.bypass_evaluation = true;
+            let raw_result = self.check_subtype(source_return, target_return);
+            self.bypass_evaluation = prev;
+            if raw_result.is_false() {
+                return raw_result;
+            }
+        }
+
         self.check_subtype(source_return, target_return)
     }
 

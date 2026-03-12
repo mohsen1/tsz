@@ -1464,6 +1464,10 @@ impl<'a> CheckerState<'a> {
         let mut exact_expected_counts = std::collections::BTreeSet::new();
         let mut min_expected = usize::MAX;
         let mut max_expected = 0usize;
+        let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
+        let mut all_type_mismatches_identical = true;
+        let mut type_mismatch_count = 0usize;
+        let mut has_non_count_non_type_failure = false;
         for (sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -1663,6 +1667,19 @@ impl<'a> CheckerState<'a> {
                         expected, actual, ..
                     } = result
                     {
+                        type_mismatch_count += 1;
+                        if let Some((first_index, first_expected, first_actual)) =
+                            first_type_mismatch
+                        {
+                            if first_index != index
+                                || first_expected != expected
+                                || first_actual != actual
+                            {
+                                all_type_mismatches_identical = false;
+                            }
+                        } else {
+                            first_type_mismatch = Some((index, expected, actual));
+                        }
                         failures.push(PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
                         ));
@@ -1719,6 +1736,7 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {
                     all_arg_count_mismatches = false;
+                    has_non_count_non_type_failure = true;
                 }
             }
 
@@ -1776,6 +1794,25 @@ impl<'a> CheckerState<'a> {
                         Some(min_expected)
                     },
                     actual: args.len(),
+                },
+            });
+        }
+
+        if !has_non_count_non_type_failure
+            && type_mismatch_count > 0
+            && all_type_mismatches_identical
+            && let Some((index, expected, actual)) = first_type_mismatch
+        {
+            return Some(OverloadResolution {
+                arg_types,
+                result: CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                    fallback_return: signatures
+                        .first()
+                        .map(|sig| sig.return_type)
+                        .unwrap_or(TypeId::ANY),
                 },
             });
         }

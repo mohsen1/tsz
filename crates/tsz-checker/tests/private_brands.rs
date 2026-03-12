@@ -38,6 +38,21 @@ fn has_error_code(source: &str, code: u32) -> bool {
 }
 
 fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_codes: &[u32]) {
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| error_codes.contains(&d.code))
+        .count();
+
+    assert_eq!(
+        error_count, expected_errors,
+        "Expected {} errors with codes {:?}, got {}: {:?}",
+        expected_errors, error_codes, error_count, diagnostics
+    );
+}
+
+fn collect_private_brand_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -55,18 +70,7 @@ fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_co
 
     checker.check_source_file(root);
 
-    let error_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| error_codes.contains(&d.code))
-        .count();
-
-    assert_eq!(
-        error_count, expected_errors,
-        "Expected {} errors with codes {:?}, got {}: {:?}",
-        expected_errors, error_codes, error_count, checker.ctx.diagnostics
-    );
+    checker.ctx.diagnostics.clone()
 }
 
 /// Test that private members are nominal - different classes with same private member shape
@@ -75,30 +79,50 @@ fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_co
 fn test_private_members_are_nominal() {
     // TS2322: Type 'B' is not assignable to type 'A'.
     //   Types have separate declarations of a private property 'x'.
-    test_private_brands(
-        r"
+    let source = r"
         class A { private x: number = 1; }
         class B { private x: number = 1; }
         let a: A = new B();
-        ",
-        1,
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for private nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'.")),
+        "Expected nominal private-property detail in TS2322 related info, got: {ts2322:?}"
     );
 }
 
 /// Test that private members prevent structural assignment to object literals.
 /// Even if the object literal has the same shape, the private brand is missing.
-/// tsc emits TS2322 ("Property 'x' is private in type 'A'..."), but tsz currently
-/// emits TS2741 ("Property '__`private_brand_0`' is missing...") which is still an error.
 #[test]
 fn test_private_member_prevents_structural_assignment() {
-    // Accept both TS2322 and TS2741 - both indicate the assignment is rejected
-    test_private_brands_with_codes(
-        r"
+    let source = r"
         class A { private x: number = 1; }
         let a: A = { x: 1 };
-        ",
-        1,
-        &[2322, 2741],
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for private-brand structural assignment");
+    assert!(
+        !has_error_code(source, 2741),
+        "Private-brand structural assignment should report TS2322, not TS2741"
+    );
+    assert!(
+        ts2322
+            .message_text
+            .contains("Property 'x' is private in type 'A'"),
+        "Expected private-member detail in TS2322 message, got: {ts2322:?}"
     );
 }
 
@@ -115,6 +139,28 @@ fn test_protected_members_are_nominal() {
         let a: A = new B();
         ",
         1,
+    );
+}
+
+#[test]
+fn test_protected_member_visibility_mismatch_elaborates_ts2322() {
+    let source = r"
+        class A { protected x: number = 1; }
+        class B { public x: number = 1; }
+        let a: A = new B();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for protected/public visibility mismatch");
+    assert!(
+        ts2322
+            .message_text
+            .contains("Property 'x' is protected in type 'A' but public in type 'B'"),
+        "Expected protected/public visibility detail in TS2322 message, got: {ts2322:?}"
     );
 }
 
@@ -167,13 +213,24 @@ fn test_multiple_private_members() {
 #[test]
 fn test_different_private_members() {
     // TS2322: Types with different private members are incompatible
-    test_private_brands(
-        r"
+    let source = r"
         class A { private x: number = 1; }
         class B { private y: number = 1; }
         let a: A = new B();
-        ",
-        1,
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for different private members");
+    assert!(
+        ts2322.related_information.iter().any(|info| {
+            info.message_text.contains("Property 'y' in type 'B'")
+                && !info.message_text.contains("[private field]")
+        }),
+        "Expected nominal mismatch related info to mention the concrete private member, got: {ts2322:?}"
     );
 }
 

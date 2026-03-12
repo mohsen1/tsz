@@ -2096,18 +2096,14 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                self.ctx.types.as_type_database(),
-                type_id,
-            ) && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
+            if let Some(shape) = query::object_shape(self.ctx.types, type_id)
+                && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
             {
                 result = Some(info);
                 return;
             }
-            if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
-                self.ctx.types.as_type_database(),
-                type_id,
-            ) && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
+            if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
+                && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
             {
                 result = Some(info);
             }

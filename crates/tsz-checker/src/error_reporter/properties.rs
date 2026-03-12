@@ -9,17 +9,92 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn property_receiver_display_for_node(&self, type_id: TypeId, idx: NodeIndex) -> String {
-        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
-        if self.is_js_file()
-            && let Some(info) = self.ctx.arena.node_info(idx)
-            && let Some(parent) = self.ctx.arena.get(info.parent)
-            && let Some(access) = self.ctx.arena.get_access_expr(parent)
+    fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
         {
-            let receiver = self
+            return Some(
+                self.ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression),
+            );
+        }
+
+        self.ctx
+            .arena
+            .node_info(idx)
+            .and_then(|info| self.ctx.arena.get(info.parent))
+            .and_then(|parent| self.ctx.arena.get_access_expr(parent))
+            .map(|access| {
+                self.ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression)
+            })
+    }
+
+    fn js_constructor_receiver_display_for_node(&self, idx: NodeIndex) -> Option<String> {
+        if !self.is_js_file() {
+            return None;
+        }
+
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.ctx.arena.get_call_expr(init_node)?;
+        let ctor_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(new_expr.expression);
+        let ctor_node = self.ctx.arena.get(ctor_expr)?;
+
+        if ctor_node.kind == SyntaxKind::Identifier as u16 {
+            return self
                 .ctx
                 .arena
-                .skip_parenthesized_and_assertions(access.expression);
+                .get_identifier(ctor_node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if ctor_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(ctor_node)?;
+            let name = self.ctx.arena.get(access.name_or_argument)?;
+            return self
+                .ctx
+                .arena
+                .get_identifier(name)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        None
+    }
+
+    fn property_receiver_display_for_node(&self, type_id: TypeId, idx: NodeIndex) -> String {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
+            return name;
+        }
+        if self.is_js_file()
+            && let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+        {
             if let Some(receiver_node) = self.ctx.arena.get(receiver)
                 && receiver_node.kind == SyntaxKind::Identifier as u16
                 && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
@@ -40,22 +115,14 @@ impl<'a> CheckerState<'a> {
                 return format!("typeof {}", ident.escaped_text);
             }
         }
-        let is_element_access_receiver = self
-            .ctx
-            .arena
-            .node_info(idx)
-            .and_then(|info| self.ctx.arena.get(info.parent))
-            .and_then(|parent| self.ctx.arena.get_access_expr(parent))
-            .is_some_and(|access| {
-                let expr = self
-                    .ctx
-                    .arena
-                    .skip_parenthesized_and_assertions(access.expression);
-                self.ctx
-                    .arena
-                    .get(expr)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            });
+        let is_element_access_receiver =
+            self.access_receiver_for_diagnostic_node(idx)
+                .is_some_and(|expr| {
+                    self.ctx
+                        .arena
+                        .get(expr)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                });
 
         if is_element_access_receiver {
             return self.format_type_diagnostic_structural(type_id);

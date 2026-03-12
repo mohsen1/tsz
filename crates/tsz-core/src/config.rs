@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::checker::context::ScriptTarget as CheckerScriptTarget;
 use crate::checker::diagnostics::Diagnostic;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::module_resolver_helpers::{
     PackageExports, PackageJson, match_export_pattern, parse_package_specifier,
     substitute_wildcard_in_exports,
@@ -2349,6 +2350,12 @@ fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
     Ok(base_dir.join(candidate))
 }
 
+#[cfg(target_arch = "wasm32")]
+fn resolve_package_extends_path(_current_path: &Path, _extends: &str) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_package_extends_path(current_path: &Path, extends: &str) -> Option<PathBuf> {
     let base_dir = current_path.parent()?;
     let (package_name, subpath) = parse_package_specifier(extends);
@@ -2378,11 +2385,13 @@ fn resolve_package_extends_path(current_path: &Path, extends: &str) -> Option<Pa
     None
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_package_json_for_extends(path: &Path) -> Option<PackageJson> {
     let source = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&source).ok()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_package_extends_exports(
     package_dir: &Path,
     exports: &PackageExports,
@@ -2447,6 +2456,7 @@ fn resolve_package_extends_exports(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_package_extends_export_value(
     package_dir: &Path,
     value: &PackageExports,
@@ -2473,6 +2483,7 @@ fn resolve_package_extends_export_value(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_config_export_target(package_dir: &Path, target: &str) -> Option<PathBuf> {
     let resolved = package_dir.join(target.trim_start_matches("./"));
     if resolved.is_file() {
@@ -3500,6 +3511,7 @@ fn find_lib_entry_offset(source: &str, entry: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_parse_boolean_true() {
@@ -4267,6 +4279,33 @@ mod tests {
             !codes.contains(&5098),
             "Should NOT emit TS5098 with bundler moduleResolution, got: {codes:?}"
         );
+    }
+
+    #[test]
+    fn test_resolve_extends_path_uses_package_exports_mapping() {
+        let temp = tempdir().unwrap();
+        let project_dir = temp.path().join("project");
+        let package_dir = project_dir.join("node_modules").join("pkg");
+        let config_dir = package_dir.join("configs");
+
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(project_dir.join("tsconfig.json"), "{}").unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{
+                "exports": {
+                    "./tsconfig.json": "./configs/tsconfig.base.json"
+                }
+            }"#,
+        )
+        .unwrap();
+        let expected = config_dir.join("tsconfig.base.json");
+        std::fs::write(&expected, "{}").unwrap();
+
+        let resolved =
+            resolve_extends_path(&project_dir.join("tsconfig.json"), "pkg/tsconfig.json").unwrap();
+
+        assert_eq!(resolved, expected);
     }
 
     #[test]

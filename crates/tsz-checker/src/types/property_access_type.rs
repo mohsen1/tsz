@@ -8,8 +8,42 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::operations::property::PropertyAccessResult;
 
 impl<'a> CheckerState<'a> {
+    fn recover_property_from_implemented_interfaces(
+        &mut self,
+        class_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(class_node)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != SyntaxKind::ImplementsKeyword as u16 {
+                continue;
+            }
+
+            for &type_idx in &heritage.types.nodes {
+                let interface_type = self.get_type_from_type_node(type_idx);
+                let interface_type = self.evaluate_application_type(interface_type);
+                match self.resolve_property_access_with_env(interface_type, property_name) {
+                    PropertyAccessResult::Success { type_id, .. }
+                    | PropertyAccessResult::PossiblyNullOrUndefined {
+                        property_type: Some(type_id),
+                        ..
+                    } => return Some(type_id),
+                    _ => {}
+                }
+            }
+        }
+
+        None
+    }
+
     /// Get type of property access expression.
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
         if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
@@ -826,6 +860,14 @@ impl<'a> CheckerState<'a> {
                             self.resolve_property_access_with_env(func_iface, property_name)
                     {
                         return self.apply_flow_narrowing(idx, type_id);
+                    }
+                    if let Some((class_idx, is_static_access)) =
+                        self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && !is_static_access
+                        && let Some(interface_type) = self
+                            .recover_property_from_implemented_interfaces(class_idx, property_name)
+                    {
+                        return self.apply_flow_narrowing(idx, interface_type);
                     }
                     // Check for optional chaining (?.) - suppress TS2339 error when using optional chaining
                     if access.question_dot_token {

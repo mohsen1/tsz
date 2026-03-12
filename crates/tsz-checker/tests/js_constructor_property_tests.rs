@@ -317,6 +317,27 @@ var s = f.x;
     );
 }
 
+#[test]
+fn test_plain_function_constructor_new_result_is_not_possibly_undefined() {
+    let source = r#"
+function Foo() {
+    this.x = 1;
+}
+var f = new Foo();
+f.x;
+"#;
+    let diagnostics = check_js(source);
+    let ts18048: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .collect();
+    assert_eq!(
+        ts18048.len(),
+        0,
+        "Expected JS constructor new result to avoid false TS18048, got: {diagnostics:?}"
+    );
+}
+
 /// Plain function constructor: prototype methods should be accessible on instances
 #[test]
 fn test_plain_function_constructor_prototype_method_accessible() {
@@ -549,6 +570,88 @@ class Sql extends Wagon {
         ts2507.len(),
         0,
         "Expected JS class extends JS constructor function to avoid TS2507, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_plain_js_function_constructor_is_constructable_and_types_this_properties() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.empty = [];
+}
+var a = new A();
+a.unknown = 1;
+a.empty.push("ok");
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected plain JS function constructors to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_function_constructor_with_factory_guard_is_constructable() {
+    let source = r#"
+/** @param {number} x */
+function A(x) {
+    if (!(this instanceof A)) {
+        return new A(x);
+    }
+    this.x = x;
+}
+var j = new A(2);
+j.x;
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JS constructor with factory guard to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_variable_assigned_js_constructor_with_prototype_object_types_this_members() {
+    let source = r#"
+/** @constructor */
+var Multimap = function() {
+    this._map = {};
+    this._map;
+};
+Multimap.prototype = {
+    /** @param {number} n */
+    set: function(n) {
+        this._map;
+    },
+    get() {
+        this._map;
+    }
+};
+var mm = new Multimap();
+mm._map;
+mm.set(1);
+mm.get();
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339 | 7006))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected variable-assigned JS constructor with prototype object to avoid TS2683/TS7009/TS2339/TS7006, got: {diagnostics:?}"
     );
 }
 

@@ -1,5 +1,6 @@
 //! Private field access and brand checking for nominal class typing.
 
+use crate::diagnostics::{diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -76,8 +77,41 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let field_name = self
-            .get_private_field_name_from_brand(source)
+        let shared_nominal_member = |type_id: TypeId| {
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id).and_then(|shape| {
+                shape.properties.iter().find_map(|prop| {
+                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                    (!prop_name.starts_with("__private_brand_")
+                        && prop.visibility != tsz_solver::Visibility::Public)
+                        .then(|| (prop_name.to_string(), prop.visibility))
+                })
+            })
+        };
+
+        if let (Some((source_member, source_visibility)), Some((target_member, target_visibility))) =
+            (shared_nominal_member(source), shared_nominal_member(target))
+            && source_member == target_member
+            && source_visibility == target_visibility
+        {
+            return Some(match source_visibility {
+                tsz_solver::Visibility::Private => format_message(
+                    diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+                    &[&source_member],
+                ),
+                tsz_solver::Visibility::Protected => {
+                    format!(
+                        "Types have separate declarations of a protected property '{source_member}'."
+                    )
+                }
+                tsz_solver::Visibility::Public => {
+                    unreachable!("public members do not create nominal brands")
+                }
+            });
+        }
+
+        let field_name = shared_nominal_member(source)
+            .map(|(member_name, _)| member_name)
+            .or_else(|| self.get_private_field_name_from_brand(source))
             .unwrap_or_else(|| "[private field]".to_string());
 
         Some(format!(

@@ -11,6 +11,19 @@ use crate::visitor::{contains_type_parameter_named, type_param_info};
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Conditional extends-types use a stricter equivalence than ordinary
+    /// assignability. In particular, tsc does not collapse `{ a?: T }` and
+    /// `{ a?: T | undefined }` to the same type here, even when
+    /// `exactOptionalPropertyTypes` is otherwise disabled.
+    fn conditional_extends_types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
+        let prev = self.exact_optional_property_types;
+        self.exact_optional_property_types = true;
+        let equivalent =
+            self.check_subtype(left, right).is_true() && self.check_subtype(right, left).is_true();
+        self.exact_optional_property_types = prev;
+        equivalent
+    }
+
     /// Check conditional type to conditional type subtyping.
     ///
     /// For two conditional types `S extends U ? X : Y` <: `T extends V ? X' : Y'`:
@@ -37,7 +50,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Extends types must be structurally identical (equivalent).
-        if !self.types_equivalent(source.extends_type, target.extends_type) {
+        if !self.conditional_extends_types_equivalent(source.extends_type, target.extends_type) {
             return SubtypeResult::False;
         }
 

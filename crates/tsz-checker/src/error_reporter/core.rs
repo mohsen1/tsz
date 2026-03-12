@@ -197,7 +197,13 @@ impl<'a> CheckerState<'a> {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
-        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
+        let ty = if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty)
+            && tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, ty)
+        {
+            ty
+        } else {
+            tsz_solver::evaluate_type(self.ctx.types, ty)
+        };
 
         if let Some(app) = query::type_application(self.ctx.types, ty) {
             let args: Vec<_> = app

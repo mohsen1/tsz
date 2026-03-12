@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
+use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -1477,13 +1478,30 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         self.checker.ctx.types,
                                         effective_asserted,
                                     );
+                                let array_like_generic_assertion_target = matches!(
+                                    query_utils::classify_array_like(
+                                        self.checker.ctx.types,
+                                        effective_asserted,
+                                    ),
+                                    query_utils::ArrayLikeKind::Array(_)
+                                        | query_utils::ArrayLikeKind::Tuple
+                                        | query_utils::ArrayLikeKind::Readonly(_)
+                                );
                                 let source_to_target = if structured_generic_assertion_target {
-                                    true // can't evaluate — assume overlap
+                                    if array_like_generic_assertion_target {
+                                        self.checker.is_assignable_to(expr_type, effective_asserted)
+                                    } else {
+                                        true // can't evaluate — assume overlap
+                                    }
                                 } else {
                                     self.checker.is_assignable_to(expr_type, effective_asserted)
                                 };
                                 let target_to_source = if structured_generic_assertion_target {
-                                    true // can't evaluate — assume overlap
+                                    if array_like_generic_assertion_target {
+                                        self.checker.is_assignable_to(effective_asserted, expr_type)
+                                    } else {
+                                        true // can't evaluate — assume overlap
+                                    }
                                 } else {
                                     self.checker.is_assignable_to(effective_asserted, expr_type)
                                 };

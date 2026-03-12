@@ -5285,6 +5285,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_node_type_or_names(&[inner])
                     .or_else(|| self.get_type_via_symbol(inner))
             }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let inner = self.arena.get_unary_expr_ex(node)?.expression;
+                self.get_node_type_or_names(&[inner])
+                    .or_else(|| self.get_type_via_symbol(inner))
+            }
             _ => None,
         }
     }
@@ -5343,6 +5348,13 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 if let Some(query) = self.arena.get_type_query(node) {
                     vec![query.expr_name]
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    vec![unary.expression]
                 } else {
                     Vec::new()
                 }
