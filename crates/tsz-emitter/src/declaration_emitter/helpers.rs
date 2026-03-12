@@ -4598,6 +4598,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .filter(|text| !text.is_empty())
                 {
                     text
+                } else if let Some(text) = self
+                    .infer_fallback_type_text_at(ret.expression, 0)
+                    .filter(|text| !text.is_empty())
+                {
+                    text
                 } else {
                     return false;
                 };
