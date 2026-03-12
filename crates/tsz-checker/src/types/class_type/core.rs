@@ -664,18 +664,6 @@ impl<'a> CheckerState<'a> {
                 .insert(class_idx, partial_type);
 
             for (member_idx, method) in deferred_methods {
-                let Some(name) = self.get_property_name_resolved(method.name) else {
-                    if self
-                        .ctx
-                        .arena
-                        .get(method.name)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-                    {
-                        has_late_bound_members = true;
-                    }
-                    continue;
-                };
-                let name_atom = self.ctx.types.intern_string(&name);
                 let mut signature = self.call_signature_from_method(method, member_idx);
                 // When a class method without an explicit return type annotation
                 // infers its return type from the body and the result is the partial
@@ -689,6 +677,38 @@ impl<'a> CheckerState<'a> {
                 {
                     signature.return_type = self.ctx.types.this_type();
                 }
+                let callable_type = factory.callable(CallableShape {
+                    call_signatures: vec![signature.clone()],
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                });
+                let callable_or_undefined = if method.question_token {
+                    factory.union(vec![callable_type, TypeId::UNDEFINED])
+                } else {
+                    callable_type
+                };
+                let Some(name) = self.get_property_name_resolved(method.name) else {
+                    if self
+                        .ctx
+                        .arena
+                        .get(method.name)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                    {
+                        has_late_bound_members = true;
+                        self.merge_index_signature_from_unresolved_computed_name(
+                            method.name,
+                            callable_or_undefined,
+                            &mut string_index,
+                            &mut number_index,
+                        );
+                    }
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
                 let visibility = self.get_member_visibility(&method.modifiers, method.name);
                 let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                     overload_signatures: Vec::new(),
@@ -1314,6 +1334,54 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+
+    fn merge_index_signature_from_unresolved_computed_name(
+        &mut self,
+        name_idx: NodeIndex,
+        value_type: TypeId,
+        string_index: &mut Option<IndexSignature>,
+        number_index: &mut Option<IndexSignature>,
+    ) {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return;
+        };
+
+        let prev = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let key_type = self.get_type_of_node(computed.expression);
+        self.ctx.preserve_literal_types = prev;
+
+        if let Some((wants_string, wants_number)) = self.get_index_key_kind(key_type) {
+            if wants_string {
+                Self::merge_index_signature(
+                    string_index,
+                    IndexSignature {
+                        key_type: TypeId::STRING,
+                        value_type,
+                        readonly: false,
+                        param_name: None,
+                    },
+                );
+            }
+            if wants_number {
+                Self::merge_index_signature(
+                    number_index,
+                    IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type,
+                        readonly: false,
+                        param_name: None,
+                    },
+                );
+            }
+        }
     }
 
     /// For JS classes without syntax-level type parameters, check the leading
