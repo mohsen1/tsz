@@ -7,8 +7,8 @@
 
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn variable_declaration_initializer_at(
