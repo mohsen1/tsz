@@ -9027,7 +9027,6 @@ new x.F();
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_commonjs_exported_js_constructor_index_errors_use_function_name() {
     let a_source = r#"
 const s = Symbol();
