@@ -500,17 +500,14 @@ jobs:
 
   # ─── Conformance: 10 parallel shards ───────────────────────────────────────
   conformance:
-    name: "Conformance (${{ matrix.shard }}/10)"
+    name: "Conformance (${{ matrix.shard }}/20)"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [changes, conformance-build]
-    # Individual shards may be killed by CI infrastructure (OOM/shutdown).
-    # The conformance-aggregate job handles pass/fail logic from shard results.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
@@ -537,14 +534,14 @@ jobs:
         id: shard-results
         run: |
           set -euo pipefail
-          CHUNK=1300
+          CHUNK=650
           OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
 
           TMPOUT=$(mktemp)
           CLEANOUT=$(mktemp)
           trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
-          # Each shard runs ~1300 tests (1/10 of ~12,600 total).
+          # Each shard runs ~650 tests (1/20 of ~12,600 total).
           # 2 workers keeps peak memory low on ubuntu-latest (7GB RAM).
           # Recycle workers every 50 compilations to return memory to OS.
           # 30s timeout accommodates complex tests on CI hardware.
@@ -625,10 +622,10 @@ jobs:
             SHARD_COUNT=$((SHARD_COUNT + 1))
             echo "  $(basename "$f"): ${P}/${T}"
           done
-          echo "Received results from ${SHARD_COUNT}/10 shards"
+          echo "Received results from ${SHARD_COUNT}/20 shards"
 
-          if [ "$SHARD_COUNT" -lt 8 ]; then
-            echo "::error::Too many shards failed (only ${SHARD_COUNT}/10 reported results)"
+          if [ "$SHARD_COUNT" -lt 18 ]; then
+            echo "::error::Too many shards failed (only ${SHARD_COUNT}/20 reported results)"
             exit 1
           fi
 
