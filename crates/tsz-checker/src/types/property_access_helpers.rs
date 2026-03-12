@@ -12,6 +12,59 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn synthesized_array_iterator_method_type(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if !matches!(property_name, "values" | "keys" | "entries") {
+            return None;
+        }
+
+        let element_type = tsz_solver::type_queries::get_array_element_type(self.ctx.types, object_type)
+            .or_else(|| tsz_solver::type_queries::get_tuple_element_type_union(self.ctx.types, object_type))?;
+
+        let iterator_base = self
+            .resolve_entity_name_text_to_def_id_for_lowering("ArrayIterator")
+            .map(|def_id| self.ctx.types.lazy(def_id))
+            .or_else(|| {
+                self.resolve_entity_name_text_to_def_id_for_lowering("IterableIterator")
+                    .map(|def_id| self.ctx.types.lazy(def_id))
+            })?;
+
+        let return_arg = match property_name {
+            "values" => element_type,
+            "keys" => TypeId::NUMBER,
+            "entries" => self.ctx.types.tuple(vec![
+                tsz_solver::TupleElement {
+                    type_id: TypeId::NUMBER,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                },
+                tsz_solver::TupleElement {
+                    type_id: element_type,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                },
+            ]),
+            _ => return None,
+        };
+
+        let return_type = self.ctx.types.application(iterator_base, vec![return_arg]);
+
+        Some(self.ctx.types.function(tsz_solver::FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        }))
+    }
+
     /// Check if a property access is an expando function assignment pattern.
     ///
     /// TypeScript allows assigning properties to function and class declarations:
