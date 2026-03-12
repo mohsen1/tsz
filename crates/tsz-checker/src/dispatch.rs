@@ -782,15 +782,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_CURRENT_LOCATION,
                             diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_CURRENT_LOCATION,
                         );
-                        self.checker.error_at_node(
-                            idx,
-                            diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                            diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                        );
+                        // tsc emits the companion TS2683 when `this` is directly in
+                        // the enum initializer. When `this` is captured through an
+                        // arrow function, TS2683 is NOT emitted (the arrow's `this`
+                        // captures the outer context which is the enum — still invalid
+                        // via TS2332, but not flagged for implicit-any).
+                        if !self.checker.has_enclosing_arrow_before_enum(idx) {
+                            self.checker.error_at_node(
+                                idx,
+                                diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                                diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                            );
+                        }
                         return TypeId::ANY;
                     }
                     // TS2331: 'this' cannot be referenced in a module or namespace body
-                    if self.checker.is_this_in_namespace_body(idx) {
+                    // In JS files, `namespace` is invalid syntax (TS8006) so tsc
+                    // doesn't emit TS2331/TS2683 for `this` in namespace bodies.
+                    if !self.checker.is_js_file() && self.checker.is_this_in_namespace_body(idx) {
                         self.checker.error_at_node(
                             idx,
                             diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
