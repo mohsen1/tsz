@@ -59,6 +59,18 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn normalize_function_shape_params_for_context(&self, shape: &FunctionShape) -> FunctionShape {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let mut normalized = shape.clone();
+        normalized.params = shape
+            .params
+            .iter()
+            .flat_map(|param| unpack_tuple_rest_parameter(self.interner, param))
+            .collect();
+        normalized
+    }
+
     fn get_overloaded_source_signature(
         db: &dyn crate::TypeDatabase,
         type_id: TypeId,
@@ -780,6 +792,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // duplicate expensive assignability work on hot generic-call paths.
             let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                 && i >= instantiated_params.len().saturating_sub(1);
+            let track_direct_placeholder_vars =
+                !is_rest_param_arg && !self.type_evaluates_to_function(target_type);
 
             if !var_map.contains_key(&target_type) {
                 placeholder_visited.clear();
@@ -799,8 +813,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             fallback_return: TypeId::ERROR,
                         };
                     }
+                    if track_direct_placeholder_vars {
+                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                            target_type,
+                            &var_map,
+                            &mut placeholder_probe_map,
+                            &mut placeholder_visited,
+                        ));
+                    }
                 } else {
                     // Target type contains placeholders - check against their constraints
+                    if track_direct_placeholder_vars {
+                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                            target_type,
+                            &var_map,
+                            &mut placeholder_probe_map,
+                            &mut placeholder_visited,
+                        ));
+                    }
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
                         && let Some(constraint) = tp.constraint
                     {
@@ -1223,7 +1253,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 constraint = ?tp.constraint,
                 "Resolving type parameter"
             );
-
             let ty = if has_constraints {
                 let mut resolved_direct = None;
                 let contra_only = infer_ctx.has_only_contra_candidates(var);
@@ -1561,14 +1590,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         );
         let return_type =
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
-        let final_args: Vec<TypeId> = if final_arg_subst.is_empty() {
-            arg_types.to_vec()
-        } else {
-            arg_types
-                .iter()
-                .map(|&arg| self.normalize_inferred_placeholder_type(arg, &final_arg_subst))
-                .collect()
-        };
         let instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
             instantiated_params
         } else {
@@ -1583,6 +1604,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
                 .collect()
         };
+        let final_args: Vec<TypeId> = arg_types
+            .iter()
+            .enumerate()
+            .map(|(i, &arg)| {
+                let normalized = if final_arg_subst.is_empty() {
+                    arg
+                } else {
+                    self.normalize_inferred_placeholder_type(arg, &final_arg_subst)
+                };
+                let Some(param_type) =
+                    self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+                else {
+                    return normalized;
+                };
+                self.instantiate_generic_function_argument_against_target(normalized, param_type)
+            })
+            .collect();
         tracing::debug!(
             "Final argument check with {} instantiated params",
             instantiated_params.len()
@@ -2157,7 +2195,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    fn instantiate_generic_function_argument_against_target(
+    pub(crate) fn instantiate_generic_function_argument_against_target(
         &mut self,
         source_ty: TypeId,
         target_ty: TypeId,
@@ -2187,18 +2225,50 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
         };
-        if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
-            return source_ty;
+        let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
+        let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
+        if source_fn.type_params.is_empty() {
+            return self.interner.function(source_fn);
         }
 
-        let target_param_types: Vec<_> = target_fn
-            .params
-            .iter()
-            .take(source_fn.params.len())
-            .map(|p| p.type_id)
-            .collect();
+        let mut target_param_types = Vec::with_capacity(source_fn.params.len());
+        for index in 0..source_fn.params.len() {
+            let Some(param_type) =
+                self.param_type_for_arg_index(&target_fn.params, index, source_fn.params.len())
+            else {
+                return source_ty;
+            };
+            target_param_types.push(param_type);
+        }
+
+        if target_param_types.is_empty() {
+            return source_ty;
+        }
+        let source_type_params_fully_determined_by_params =
+            source_fn.type_params.iter().all(|tp| {
+                source_fn.params.iter().any(|param| {
+                    crate::visitor::collect_referenced_types(
+                        self.interner.as_type_database(),
+                        param.type_id,
+                    )
+                    .into_iter()
+                    .any(|ty| {
+                        crate::type_param_info(self.interner.as_type_database(), ty)
+                            .is_some_and(|info| info.name == tp.name)
+                    })
+                })
+            });
         let prev_contextual_type = self.contextual_type;
-        self.contextual_type = Some(target_ty);
+        self.contextual_type = if source_type_params_fully_determined_by_params
+            && target_fn.params.iter().any(|param| param.rest)
+            && !crate::visitor::contains_type_parameters(
+                self.interner.as_type_database(),
+                target_fn.return_type,
+            ) {
+            None
+        } else {
+            Some(target_ty)
+        };
         let instantiated =
             self.instantiate_function_shape_from_argument_types(&source_fn, &target_param_types);
         self.contextual_type = prev_contextual_type;
@@ -2236,6 +2306,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_mergeable_direct_inference_candidate(&self, ty: TypeId) -> bool {
+        let evaluated_ty = self.interner.evaluate_type(ty);
         // Primitives (null, undefined, string, number, boolean, void, never, etc.)
         // are always safe to merge into a union — they don't indicate structural
         // ambiguity. Without this, `equal(B, D | undefined)` would discard the
@@ -2258,6 +2329,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 | TypeId::BOOLEAN_FALSE
         ) {
             return true;
+        }
+        // Nominal private brands should never be merged into a union during
+        // direct argument inference. TypeScript fixes `T` to the first such
+        // candidate and reports the later mismatch (`C` vs `D`) instead of
+        // inferring `C | D`.
+        if crate::type_queries::get_private_brand_name(self.interner.as_type_database(), ty)
+            .is_some()
+            || crate::type_queries::get_private_field_name(self.interner.as_type_database(), ty)
+                .is_some()
+            || crate::type_queries::get_private_brand_name(
+                self.interner.as_type_database(),
+                evaluated_ty,
+            )
+            .is_some()
+            || crate::type_queries::get_private_field_name(
+                self.interner.as_type_database(),
+                evaluated_ty,
+            )
+            .is_some()
+        {
+            return false;
         }
         match self.interner.lookup(ty) {
             Some(

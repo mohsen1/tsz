@@ -33,6 +33,28 @@ fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubsti
     sub
 }
 
+fn resolve_contextual_source_inference_candidate(
+    lower_bounds: &[TypeId],
+    inferred: TypeId,
+) -> TypeId {
+    if lower_bounds.is_empty() {
+        return inferred;
+    }
+
+    let mut distinct = Vec::new();
+    for &bound in lower_bounds {
+        if !distinct.contains(&bound) {
+            distinct.push(bound);
+        }
+    }
+
+    if distinct.len() <= 1 {
+        inferred
+    } else {
+        distinct[0]
+    }
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if parameter types are compatible based on variance settings.
     ///
@@ -546,11 +568,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
 
             if !self.is_uninformative_contextual_inference_input(t_effective) {
+                let was_contra = infer_ctx.in_contra_mode;
+                infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
-                    t_effective,
                     s_effective,
+                    t_effective,
                     InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.in_contra_mode = was_contra;
             }
         }
 
@@ -563,20 +588,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .take(source_fixed_count)
                 .skip(target_fixed_count)
             {
+                let was_contra = infer_ctx.in_contra_mode;
+                infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
-                    rest_elem_type,
                     s_param.type_id,
+                    rest_elem_type,
                     InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.in_contra_mode = was_contra;
             }
 
             if source_has_rest && let Some(s_rest_param) = source_params_unpacked.last() {
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                let was_contra = infer_ctx.in_contra_mode;
+                infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
-                    rest_elem_type,
                     s_rest_elem,
+                    rest_elem_type,
                     InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.in_contra_mode = was_contra;
             }
         }
 
@@ -588,11 +619,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .skip(source_fixed_count)
             {
                 if !self.is_uninformative_contextual_inference_input(t_param.type_id) {
+                    let was_contra = infer_ctx.in_contra_mode;
+                    infer_ctx.in_contra_mode = true;
                     let _ = infer_ctx.infer_from_types(
-                        t_param.type_id,
                         rest_elem_type,
+                        t_param.type_id,
                         InferencePriority::NakedTypeVariable,
                     );
+                    infer_ctx.in_contra_mode = was_contra;
                 }
             }
         }
@@ -628,6 +662,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .iter()
             .zip(renamed_source.type_params.iter())
         {
+            let lower_bounds = infer_ctx
+                .find_type_param(renamed_tp.name)
+                .map(|var| {
+                    infer_ctx
+                        .get_constraints(var)
+                        .map(|constraints| constraints.lower_bounds)
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
             let inferred_ty = inferred
                 .iter()
                 .find_map(|(name, ty)| (*name == renamed_tp.name).then_some(*ty));
@@ -636,7 +679,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 TypeId::ANY
             };
-            substitution.insert(original_tp.name, inferred_ty.unwrap_or(fallback));
+            let inferred_ty = inferred_ty
+                .map(|ty| resolve_contextual_source_inference_candidate(&lower_bounds, ty))
+                .unwrap_or(fallback);
+            substitution.insert(original_tp.name, inferred_ty);
         }
         Ok(substitution)
     }
@@ -1200,25 +1246,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        for s_sig in &s_callable.call_signatures {
-            // Try direct match first
-            if self
-                .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-                .is_true()
-            {
-                return SubtypeResult::True;
-            }
+        let Some(s_sig) = s_callable.call_signatures.last() else {
+            return SubtypeResult::False;
+        };
 
-            // If source has type parameters and target doesn't, try instantiating
-            // Example: <V>(x: V) => {value: V} should be assignable to (x: number) => {value: number}
-            if !s_sig.type_params.is_empty()
-                && t_fn.type_params.is_empty()
-                && self
-                    .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
-                    .is_true()
-            {
-                return SubtypeResult::True;
-            }
+        if self
+            .check_call_signature_subtype_to_fn(s_sig, &t_fn)
+            .is_true()
+        {
+            return SubtypeResult::True;
+        }
+
+        if !s_sig.type_params.is_empty()
+            && t_fn.type_params.is_empty()
+            && self
+                .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
+                .is_true()
+        {
+            return SubtypeResult::True;
         }
         SubtypeResult::False
     }
@@ -1287,10 +1332,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallableShape,
         target: &CallableShape,
     ) -> SubtypeResult {
-        // For each target call signature, at least one source signature must match
+        let source_call_sigs: Vec<_> = if source.call_signatures.len() > 1 {
+            source.call_signatures.last().into_iter().collect()
+        } else {
+            source.call_signatures.iter().collect()
+        };
+
+        // For each target call signature, the effective source signature must match.
         for t_sig in &target.call_signatures {
             let mut found_match = false;
-            for s_sig in &source.call_signatures {
+            for s_sig in &source_call_sigs {
                 if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
                     found_match = true;
                     break;

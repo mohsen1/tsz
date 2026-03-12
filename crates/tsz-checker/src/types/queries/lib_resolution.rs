@@ -632,7 +632,20 @@ impl<'a> CheckerState<'a> {
                         .get(&(sym_id, decl_idx))
                         .and_then(|v| v.first())
                         .map_or(fallback_arena, |arc| arc.as_ref());
-                    let value_lowering = lowering.with_arena(value_arena);
+                    let value_lowering = if value_arena
+                        .get(decl_idx)
+                        .and_then(|node| value_arena.get_source_file(node))
+                        .is_some_and(|source| {
+                            source.is_declaration_file
+                                && source.file_name.starts_with("lib.")
+                                && source.file_name.ends_with(".d.ts")
+                        }) {
+                        lowering
+                            .with_arena(value_arena)
+                            .prefer_name_def_id_resolution()
+                    } else {
+                        lowering.with_arena(value_arena)
+                    };
                     let val_type = value_lowering.lower_type(decl_idx);
                     // Only include non-ERROR types. Value declaration lowering can fail
                     // when type references (e.g., `PromiseConstructor`) can't be resolved

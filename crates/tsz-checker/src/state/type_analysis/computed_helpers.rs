@@ -1307,6 +1307,102 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    fn static_private_member_access_compatible(
+        &self,
+        object_type: TypeId,
+        declaring_type: TypeId,
+    ) -> bool {
+        if self.types_have_same_private_brand(object_type, declaring_type) {
+            return true;
+        }
+
+        match (
+            self.get_class_decl_for_display_type(object_type),
+            self.get_class_decl_for_display_type(declaring_type),
+        ) {
+            (Some((object_class, _)), Some((declaring_class, _))) => {
+                object_class == declaring_class
+            }
+            _ => object_type == declaring_type,
+        }
+    }
+
+    fn private_member_declared_on_type(
+        &self,
+        object_type: TypeId,
+        member_name: &str,
+    ) -> Option<(NodeIndex, bool)> {
+        let (class_idx, want_static) = self.get_class_decl_for_display_type(object_type)?;
+        let mut current = class_idx;
+        let mut visited = rustc_hash::FxHashSet::default();
+
+        while visited.insert(current) {
+            if let Some(is_static) =
+                self.class_directly_declares_private_member(current, member_name)
+                && is_static == want_static
+            {
+                return Some((current, is_static));
+            }
+
+            match self.get_base_class_idx(current) {
+                Some(base) => current = base,
+                None => break,
+            }
+        }
+
+        None
+    }
+
+    fn class_decl_hint_from_expression(&mut self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        if self.ctx.arena.get_identifier(node).is_none() {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        self.get_class_declaration_from_symbol(sym_id).or_else(|| {
+            let type_id = self.get_type_of_symbol(sym_id);
+            self.get_class_decl_for_display_type(type_id)
+                .map(|(class_idx, _)| class_idx)
+        })
+    }
+
+    fn class_directly_declares_private_member(
+        &self,
+        class_idx: NodeIndex,
+        member_name: &str,
+    ) -> Option<bool> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(node)?;
+
+        for &member_idx in &class.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            let name_idx = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    self.ctx.arena.get_property_decl(member_node)?.name
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.ctx.arena.get_method_decl(member_node)?.name
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                    self.ctx.arena.get_accessor(member_node)?.name
+                }
+                k if k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx.arena.get_accessor(member_node)?.name
+                }
+                _ => continue,
+            };
+
+            if self.get_property_name(name_idx).as_deref() == Some(member_name) {
+                return Some(self.class_member_is_static(member_idx));
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
@@ -1379,11 +1475,26 @@ impl<'a> CheckerState<'a> {
         // Therefore, this access is invalid, regardless of whether the object type actually has the property.
         if symbols.is_empty() {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
+            let private_member_on_object = self
+                .private_member_declared_on_type(original_object_type, &property_name)
+                .or_else(|| {
+                    self.private_member_declared_on_type(object_type_for_check, &property_name)
+                })
+                .or_else(|| self.private_member_declared_on_type(resolved_type, &property_name));
             let is_any_like = resolved_type == TypeId::ANY
                 || resolved_type == TypeId::UNKNOWN
                 || resolved_type == TypeId::ERROR;
 
             if is_any_like {
+                if private_member_on_object.is_some() {
+                    self.report_private_identifier_outside_class(
+                        name_idx,
+                        &property_name,
+                        original_object_type,
+                        access.expression,
+                    );
+                    return TypeId::ERROR;
+                }
                 if emit_unknown_on_expression {
                     // TSC can still emit TS2339 for undeclared private names even when
                     // `unknown` diagnostics are emitted (e.g., `x.#bar` where x: unknown).
@@ -1426,6 +1537,25 @@ impl<'a> CheckerState<'a> {
                             "Property '{property_name}' does not exist on type '{type_str}'.",
                         ),
                         diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+            } else if let Some((declaring_class_idx, is_static_member)) = private_member_on_object {
+                let object_class_idx = self
+                    .get_class_decl_for_display_type(object_type_for_check)
+                    .map(|(class_idx, _)| class_idx)
+                    .or_else(|| self.class_decl_hint_from_expression(access.expression));
+                if is_static_member && object_class_idx != Some(declaring_class_idx) {
+                    self.error_property_not_exist_at(
+                        &property_name,
+                        original_object_type,
+                        name_idx,
+                    );
+                } else {
+                    self.report_private_identifier_outside_class(
+                        name_idx,
+                        &property_name,
+                        original_object_type,
+                        access.expression,
                     );
                 }
             } else {
@@ -1549,18 +1679,21 @@ impl<'a> CheckerState<'a> {
         // For private member access, use nominal typing based on private brand.
         // If both types have the same private brand, they're from the same class
         // declaration and the access should be allowed.
-        let types_compatible =
-            if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
-                true
-            } else {
-                self.is_assignable_to(object_type_for_check, declaring_type)
-            };
+        let types_compatible = if member_is_static {
+            self.static_private_member_access_compatible(object_type_for_check, declaring_type)
+        } else if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
+            true
+        } else {
+            self.is_assignable_to(object_type_for_check, declaring_type)
+        };
 
         if !types_compatible {
             let shadowed = symbols.iter().skip(1).any(|sym_id| {
                 self.private_member_declaring_type(*sym_id)
                     .is_some_and(|ty| {
-                        if self.types_have_same_private_brand(object_type_for_check, ty) {
+                        if member_is_static {
+                            self.static_private_member_access_compatible(object_type_for_check, ty)
+                        } else if self.types_have_same_private_brand(object_type_for_check, ty) {
                             true
                         } else {
                             self.is_assignable_to(object_type_for_check, ty)
