@@ -7,8 +7,8 @@
 
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::ParserState;
 use tsz_solver::{TypeId, TypeInterner};
 
 fn variable_declaration_initializer_at(
@@ -257,8 +257,16 @@ declare function testFunction(s: string): Promise<string>;
         .expect("expected overloaded call signatures");
 
     assert_eq!(signatures.len(), 2, "expected two overload signatures");
-    assert_eq!(signatures[0].params.len(), 1, "expected unary first overload");
-    assert_eq!(signatures[1].params.len(), 1, "expected unary second overload");
+    assert_eq!(
+        signatures[0].params.len(),
+        1,
+        "expected unary first overload"
+    );
+    assert_eq!(
+        signatures[1].params.len(),
+        1,
+        "expected unary second overload"
+    );
     assert_eq!(signatures[0].params[0].type_id, TypeId::NUMBER);
     assert_eq!(signatures[1].params[0].type_id, TypeId::STRING);
 }
