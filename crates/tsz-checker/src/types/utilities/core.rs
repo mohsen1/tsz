@@ -86,8 +86,12 @@ impl<'a> CheckerState<'a> {
         prop: &PropertyDeclData,
     ) -> Option<TypeId> {
         if prop.type_annotation.is_some() {
-            // In JS/checkJs, tsc still uses explicit class property type syntax for
-            // downstream semantic checks even though it separately reports TS8009/TS8010.
+            if self.is_js_file() {
+                // In JS/checkJs, property type syntax still reports TS8010, but it
+                // should not drive later class-property semantics such as constructor
+                // assignment checks or member-access narrowing.
+                return Some(TypeId::ANY);
+            }
             return Some(self.get_type_from_type_node(prop.type_annotation));
         }
 
