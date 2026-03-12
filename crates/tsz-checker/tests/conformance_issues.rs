@@ -136,6 +136,45 @@ const n: number = (new WithData())["ahahahaahah"]!();
 }
 
 #[test]
+fn test_unresolved_computed_instance_methods_produce_union_lookup_types() {
+    let source = r#"
+export const fieldName = Math.random() > 0.5 ? "f1" : "f2";
+
+class Holder {
+    [fieldName]() {
+        return "value";
+    }
+    [fieldName === "f1" ? "f2" : "f1"]() {
+        return 42;
+    }
+    static [fieldName]() {
+        return { static: true };
+    }
+    static [fieldName]() {
+        return { static: "sometimes" };
+    }
+}
+
+const instanceOk: (() => string) | (() => number) = (new Holder())["x"];
+const instanceBad: number = (new Holder())["x"];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected only the instance number assignment to fail once computed method lookups form unions, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("(() => string) | (() => number)")
+            && message.contains("number")),
+        "Expected instance lookup to produce a union of callable types, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {
