@@ -288,11 +288,12 @@ interface I3 extends T3 {
         ts2430_errors.is_empty(),
         "Expected no TS2430 (lib.d.ts not available in unit test env). Got: {ts2430_errors:?}"
     );
-    // Verify we do get TS2318 errors for missing global types as expected
+    // TS2318 is suppressed when no lib files are loaded and --noLib is not
+    // explicitly set (unit test environment without lib context).
     let ts2318_errors: Vec<_> = diags.iter().filter(|d| d.0 == 2318).collect();
     assert!(
-        !ts2318_errors.is_empty(),
-        "Expected TS2318 for missing global types without lib.d.ts"
+        ts2318_errors.is_empty(),
+        "Expected no TS2318 when lib files are not loaded and --noLib is not set. Got: {ts2318_errors:?}"
     );
 }
 

@@ -557,15 +557,27 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // `var` declarations without initializers are always `undefined` due to hoisting.
-        // tsc does not emit TS2454 for uninitialized `var` — only `let`/`const` need
-        // definite assignment checking. This matches tsc's behavior where `var x: T;`
-        // at module or function scope is valid even without assignment.
-        {
+        // `var` declarations without initializers AND without type annotations are
+        // always `undefined` due to hoisting. tsc does not emit TS2454 for bare
+        // `var x;` — only `let`/`const` or `var x: T;` (with type annotation) need
+        // definite assignment checking. When a type annotation is present, tsc still
+        // requires definite assignment even for `var`.
+        if !has_initializer {
             let is_function_scoped =
                 symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
-            if is_function_scoped && !has_initializer {
-                return false;
+            if is_function_scoped {
+                let has_type_annotation = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                {
+                    self.ctx
+                        .arena
+                        .get_variable_declaration(decl_node)
+                        .is_some_and(|vd| vd.type_annotation.is_some())
+                } else {
+                    false
+                };
+                if !has_type_annotation {
+                    return false;
+                }
             }
         }
 
