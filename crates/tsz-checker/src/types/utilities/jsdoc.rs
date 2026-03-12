@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn source_file_data_for_node(
+    pub(crate) fn source_file_data_for_node(
         &self,
         idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::SourceFileData> {
@@ -1625,7 +1625,7 @@ impl<'a> CheckerState<'a> {
         parts
     }
     /// Resolve a `@typedef` referenced by name from preceding JSDoc comments.
-    fn resolve_jsdoc_typedef_type(
+    pub(crate) fn resolve_jsdoc_typedef_type(
         &mut self,
         type_expr: &str,
         anchor_pos: u32,

@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
         // Setup contextual typing context, evaluating compound types first.
         let mut contextual_signature_type_params = None;
         let mut has_jsdoc_type_function = false;
-        let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
+        let mut ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
             tracing::debug!(
                 "function_type: contextual_type = {:?}, is_closure = {}",
                 ctx_type,
@@ -191,10 +191,7 @@ impl<'a> CheckerState<'a> {
         } else if self.is_js_file() && is_function_declaration {
             // For function declarations in JS files with @type {FunctionType},
             // use the function type as contextual type for parameter typing.
-            if let Some(func_type) = self.jsdoc_type_annotation_for_node(idx)
-                && tsz_solver::type_queries::is_callable_type(self.ctx.types, func_type)
-            {
-                let evaluated_type = self.evaluate_contextual_type(func_type);
+            if let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_function(idx) {
                 contextual_signature_type_params =
                     self.contextual_type_params_from_expected(evaluated_type);
                 has_jsdoc_type_function = true;
@@ -233,6 +230,22 @@ impl<'a> CheckerState<'a> {
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
         let mut jsdoc_type_param_types: FxHashMap<String, TypeId> = FxHashMap::default();
+
+        if self.is_js_file() && is_function_declaration && !has_jsdoc_type_function {
+            if let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_function(idx) {
+                has_jsdoc_type_function = true;
+                ctx_helper = Some(ContextualTypeContext::with_expected_and_options(
+                    self.ctx.types,
+                    evaluated_type,
+                    self.ctx.compiler_options.no_implicit_any,
+                ));
+            } else if func_jsdoc
+                .as_ref()
+                .is_some_and(|jsdoc| self.jsdoc_type_tag_references_callback_typedef(idx, jsdoc))
+            {
+                has_jsdoc_type_function = true;
+            }
+        }
 
         // In JS/checkJs, support minimal generic JSDoc function typing:
         //   @template T
@@ -531,7 +544,18 @@ impl<'a> CheckerState<'a> {
                             &jsdoc_param_names,
                             contextual_index,
                         );
+                        let has_callable_jsdoc_type = has_jsdoc_type_function
+                            || (is_js_file
+                                && is_function_declaration
+                                && self
+                                    .jsdoc_callable_type_annotation_for_function(idx)
+                                    .is_some())
+                            || self
+                                .extract_type_predicate_from_jsdoc_type_tag(jsdoc)
+                                .is_some()
+                            || self.jsdoc_type_tag_references_callback_typedef(idx, jsdoc);
                         Self::jsdoc_has_param_type(jsdoc, &pname)
+                            || has_callable_jsdoc_type
                             || Self::jsdoc_type_tag_declares_callable(jsdoc)
                             || self.ctx.arena.get(param.name).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN

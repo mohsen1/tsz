@@ -791,8 +791,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        self.jsdoc_type_annotation_for_node(func_idx)
-            .is_some_and(|ty| tsz_solver::type_queries::is_callable_type(self.ctx.types, ty))
+        self.jsdoc_callable_type_annotation_for_function(func_idx)
+            .is_some()
     }
 
     fn enclosing_function_like_for_parameter(&self, param_idx: NodeIndex) -> Option<NodeIndex> {
