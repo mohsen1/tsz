@@ -571,8 +571,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let was_contra = infer_ctx.in_contra_mode;
                 infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
-                    t_effective,
                     s_effective,
+                    t_effective,
                     InferencePriority::NakedTypeVariable,
                 );
                 infer_ctx.in_contra_mode = was_contra;
@@ -591,8 +591,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let was_contra = infer_ctx.in_contra_mode;
                 infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
-                    rest_elem_type,
                     s_param.type_id,
+                    rest_elem_type,
                     InferencePriority::NakedTypeVariable,
                 );
                 infer_ctx.in_contra_mode = was_contra;
@@ -603,8 +603,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let was_contra = infer_ctx.in_contra_mode;
                 infer_ctx.in_contra_mode = true;
                 let _ = infer_ctx.infer_from_types(
-                    rest_elem_type,
                     s_rest_elem,
+                    rest_elem_type,
                     InferencePriority::NakedTypeVariable,
                 );
                 infer_ctx.in_contra_mode = was_contra;
@@ -622,8 +622,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let was_contra = infer_ctx.in_contra_mode;
                     infer_ctx.in_contra_mode = true;
                     let _ = infer_ctx.infer_from_types(
-                        t_param.type_id,
                         rest_elem_type,
+                        t_param.type_id,
                         InferencePriority::NakedTypeVariable,
                     );
                     infer_ctx.in_contra_mode = was_contra;
@@ -1332,10 +1332,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallableShape,
         target: &CallableShape,
     ) -> SubtypeResult {
-        // For each target call signature, at least one source signature must match
+        let source_call_sigs: Vec<_> = if source.call_signatures.len() > 1 {
+            source.call_signatures.last().into_iter().collect()
+        } else {
+            source.call_signatures.iter().collect()
+        };
+
+        // For each target call signature, the effective source signature must match.
         for t_sig in &target.call_signatures {
             let mut found_match = false;
-            for s_sig in &source.call_signatures {
+            for s_sig in &source_call_sigs {
                 if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
                     found_match = true;
                     break;
