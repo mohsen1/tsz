@@ -28,6 +28,28 @@ fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) ->
     }
 }
 
+fn contextual_constraint_preserves_literals(
+    db: &dyn tsz_solver::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id == TypeId::STRING
+        || type_id == TypeId::NUMBER
+        || type_id == TypeId::BOOLEAN
+        || type_id == TypeId::BIGINT
+    {
+        return true;
+    }
+
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
+        return members
+            .iter()
+            .copied()
+            .any(|member| contextual_constraint_preserves_literals(db, member));
+    }
+
+    false
+}
+
 fn sanitize_function_shape_binding_pattern_params(
     shape: &tsz_solver::FunctionShape,
     binding_pattern_param_positions: &[usize],
@@ -111,6 +133,60 @@ fn instantiate_function_shape_with_substitution(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn widen_round2_contextual_substitution(
+        &mut self,
+        shape: &FunctionShape,
+        substitution: &tsz_solver::TypeSubstitution,
+    ) -> tsz_solver::TypeSubstitution {
+        let mut widened = substitution.clone();
+
+        for tp in &shape.type_params {
+            if tp.is_const {
+                continue;
+            }
+
+            let Some(current) = widened.get(tp.name) else {
+                continue;
+            };
+
+            if current == TypeId::UNKNOWN || current == TypeId::ERROR {
+                continue;
+            }
+
+            let preserve_literals = tp.constraint.is_some_and(|constraint| {
+                let instantiated = tsz_solver::instantiate_type(self.ctx.types, constraint, substitution);
+                contextual_constraint_preserves_literals(self.ctx.types, instantiated)
+            });
+            if preserve_literals {
+                continue;
+            }
+
+            let widened_current = tsz_solver::widen_type(self.ctx.types, current);
+            if widened_current == current {
+                continue;
+            }
+
+            let chosen = if let Some(constraint) = tp.constraint {
+                let instantiated_constraint =
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, substitution);
+                let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
+                if !self.is_assignable_to(widened_current, evaluated_constraint)
+                    && self.is_assignable_to(current, evaluated_constraint)
+                {
+                    current
+                } else {
+                    widened_current
+                }
+            } else {
+                widened_current
+            };
+
+            widened.insert(tp.name, chosen);
+        }
+
+        widened
+    }
+
     pub(crate) fn rest_argument_element_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         let evaluated = self.evaluate_type_with_env(type_id);
         tsz_solver::rest_argument_element_type(self.ctx.types, evaluated)
@@ -1049,10 +1125,24 @@ impl<'a> CheckerState<'a> {
                 .and_then(|func| self.ctx.arena.get(func.body))
                 .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
                 .map(|body_node| body_node.pos);
+            let mut seen_new_diags = FxHashSet::default();
             let new_diags = self.ctx.diagnostics.split_off(diag_len);
             let kept_new_diags: Vec<_> = new_diags
                 .into_iter()
                 .filter(|diag| {
+                    let key = (diag.code, diag.start);
+                    if !seen_new_diags.insert(key) {
+                        return false;
+                    }
+                    if self
+                        .ctx
+                        .diagnostics
+                        .iter()
+                        .take(diag_len)
+                        .any(|existing| existing.code == diag.code && existing.start == diag.start)
+                    {
+                        return false;
+                    }
                     let is_provisional_implicit_any = matches!(
                         diag.code,
                         diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
