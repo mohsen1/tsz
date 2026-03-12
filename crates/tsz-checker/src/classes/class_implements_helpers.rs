@@ -409,4 +409,105 @@ impl<'a> CheckerState<'a> {
             current_heritage = next_heritage;
         }
     }
+
+    /// Collect names of inherited PRIVATE/PROTECTED members from the base class chain.
+    ///
+    /// These members cannot satisfy interface requirements, but when an interface
+    /// extends the same base class as the implementing class, the private members
+    /// appear in the interface type shape. We need to know which members are
+    /// inherited private/protected so we can skip them in the "missing" check.
+    pub(crate) fn collect_inherited_private_member_names(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        result: &mut rustc_hash::FxHashSet<String>,
+    ) {
+        let mut visited = rustc_hash::FxHashSet::default();
+        let mut current_heritage = class_data.heritage_clauses.clone();
+
+        while let Some(ref heritage_clauses) = current_heritage {
+            let mut next_heritage = None;
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    continue;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        expr_type_args.expression
+                    } else {
+                        type_idx
+                    };
+
+                let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+                    continue;
+                };
+
+                let Some(sym_id) = self.ctx.binder.file_locals.get(&ident.escaped_text) else {
+                    continue;
+                };
+                let base_decl = {
+                    let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                        continue;
+                    };
+                    if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else if let Some(&d) = symbol.declarations.first() {
+                        d
+                    } else {
+                        continue;
+                    }
+                };
+
+                if !visited.insert(base_decl) {
+                    break;
+                }
+
+                let Some(base_node) = self.ctx.arena.get(base_decl) else {
+                    continue;
+                };
+                let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+                    continue;
+                };
+
+                for &member_idx in &base_class.members.nodes {
+                    if let Some(name) = self.get_member_name(member_idx) {
+                        let sym_flags = self
+                            .ctx
+                            .binder
+                            .get_node_symbol(member_idx)
+                            .and_then(|sid| self.ctx.binder.get_symbol(sid))
+                            .map(|s| s.flags)
+                            .unwrap_or(0);
+                        if (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0
+                            || (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0
+                        {
+                            result.insert(name);
+                        }
+                    }
+                }
+
+                next_heritage = base_class.heritage_clauses.clone();
+                break;
+            }
+
+            current_heritage = next_heritage;
+        }
+    }
 }
