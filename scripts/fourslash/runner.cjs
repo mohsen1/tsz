@@ -59,6 +59,7 @@ function parseArgs() {
     const opts = {
         tszServerBinary: null,
         max: 0,
+        offset: 0,
         filter: "",
         testDir: "tests/cases/fourslash",
         verbose: false,
@@ -74,6 +75,8 @@ function parseArgs() {
             opts.tszServerBinary = arg.substring("--tsz-server=".length);
         } else if (arg.startsWith("--max=")) {
             opts.max = parseInt(arg.substring("--max=".length), 10);
+        } else if (arg.startsWith("--offset=")) {
+            opts.offset = parseInt(arg.substring("--offset=".length), 10);
         } else if (arg.startsWith("--filter=")) {
             opts.filter = arg.substring("--filter=".length);
         } else if (arg.startsWith("--test-dir=")) {
@@ -1125,7 +1128,8 @@ async function main() {
     // Discover tests
     const testFiles = discoverTests(opts.testDir, opts.filter);
     const totalAvailable = testFiles.length;
-    const testsToRun = opts.max > 0 ? testFiles.slice(0, opts.max) : testFiles;
+    let testsToRun = opts.offset > 0 ? testFiles.slice(opts.offset) : testFiles;
+    if (opts.max > 0) testsToRun = testsToRun.slice(0, opts.max);
 
     const mode = opts.sequential ? "sequential" : `parallel (${Math.min(opts.workers, testsToRun.length)} workers)`;
     console.log("");
