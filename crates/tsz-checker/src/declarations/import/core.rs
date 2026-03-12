@@ -807,7 +807,8 @@ impl<'a> CheckerState<'a> {
         tracing::trace!("Checking if symbol exists locally and is renamed");
 
         // Try to get the target module's binder
-        let target_binder = if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+        let resolved_target = self.ctx.resolve_import_target(module_name);
+        let target_binder = if let Some(target_idx) = resolved_target {
             tracing::trace!(target_idx, "Resolved import target");
             self.ctx.get_binder_for_file(target_idx)
         } else {
@@ -821,8 +822,18 @@ impl<'a> CheckerState<'a> {
                 binder
             }
             None => {
+                // Only fall back to all-binders scan when we couldn't resolve
+                // the import target at all. If resolve_import_target succeeded
+                // but get_binder_for_file returned None, we still know which
+                // file the module points to — scanning all binders would find
+                // symbols from unrelated files and cause false TS2459.
+                if resolved_target.is_some() {
+                    tracing::trace!(
+                        "Import target resolved but binder not found, returning (false, None)"
+                    );
+                    return (false, None);
+                }
                 tracing::trace!("No direct target binder, checking all binders");
-                // If we can't find the target binder, also check all binders
                 if let Some(all_binders) = &self.ctx.all_binders {
                     // Try to find the module in any binder's exports
                     let normalized = module_name.trim_matches('"').trim_matches('\'');
