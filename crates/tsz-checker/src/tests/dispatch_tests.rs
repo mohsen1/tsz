@@ -104,14 +104,16 @@ function f<T>() {
     );
     // Filter out TS2318 "Cannot find global type" from missing lib declarations.
     let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
-    // TODO: TS2352 is not currently emitted for `<T[]>null` — the type assertion
-    // with a type-parameter array target doesn't trigger the conversion check yet.
-    // When implemented, change this to assert matching.len() == 1.
     let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected one TS2352 for `null as T[]`, got: {relevant:?}"
+    );
     assert!(
-        matching.len() <= 1,
-        "Expected at most one TS2352 for `null as T[]`, got: {:?}",
-        relevant.iter().map(|d| d.code).collect::<Vec<_>>()
+        matching[0].message_text.contains("type 'T[]'"),
+        "Expected TS2352 target display to preserve `T[]`, got: {:?}",
+        matching[0]
     );
 }
 
