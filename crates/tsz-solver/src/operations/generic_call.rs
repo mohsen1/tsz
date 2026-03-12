@@ -936,22 +936,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
-                if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
-                    if self.should_directly_constrain_same_base_application(
+                if arg_app.base == target_app.base
+                    && arg_app.args.len() == target_app.args.len()
+                    && self.should_directly_constrain_same_base_application(
                         source_for_inference,
                         contextual_target_type,
-                    ) {
-                        for (arg_inner, target_inner) in
-                            arg_app.args.iter().zip(target_app.args.iter())
-                        {
-                            self.constrain_types(
-                                &mut infer_ctx,
-                                &var_map,
-                                *arg_inner,
-                                *target_inner,
-                                crate::types::InferencePriority::NakedTypeVariable,
-                            );
-                        }
+                    )
+                {
+                    for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
+                    {
+                        self.constrain_types(
+                            &mut infer_ctx,
+                            &var_map,
+                            *arg_inner,
+                            *target_inner,
+                            crate::types::InferencePriority::NakedTypeVariable,
+                        );
                     }
                 }
             }
