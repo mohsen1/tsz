@@ -2423,6 +2423,70 @@ const bn1 = box(0);
 }
 
 #[test]
+fn test_non_null_call_initializer_recovers_return_type() {
+    let source = r#"
+declare const fn: (() => string) | undefined;
+const a = fn!();
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let fn_stmt_idx = source_file.statements.nodes[0];
+    let fn_decl = parser
+        .arena
+        .get(fn_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing fn declaration");
+    let a_stmt_idx = source_file.statements.nodes[1];
+    let a_decl = parser
+        .arena
+        .get(a_stmt_idx)
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing a declaration");
+    let call = parser
+        .arena
+        .get(a_decl.initializer)
+        .and_then(|node| parser.arena.get_call_expr(node))
+        .expect("missing call initializer");
+    let non_null = parser
+        .arena
+        .get(call.expression)
+        .and_then(|node| parser.arena.get_unary_expr_ex(node))
+        .expect("missing non-null callee");
+    let interner = TypeInterner::new();
+    let callable = interner.function(FunctionShape::new(Vec::new(), TypeId::STRING));
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(fn_decl.name.0, callable);
+    type_cache.node_types.insert(non_null.expression.0, callable);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const a: string;"),
+        "Expected non-null call initializer to recover the inner callable return type: {output}"
+    );
+}
+
+#[test]
 fn test_dataview_new_expression_falls_back_without_type_cache() {
     let output = emit_dts("const dataView = new DataView(new ArrayBuffer(80));");
     assert!(
