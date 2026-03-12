@@ -59,10 +59,7 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn normalize_function_shape_params_for_context(
-        &self,
-        shape: &FunctionShape,
-    ) -> FunctionShape {
+    fn normalize_function_shape_params_for_context(&self, shape: &FunctionShape) -> FunctionShape {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
         let mut normalized = shape.clone();
@@ -2249,21 +2246,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if target_param_types.is_empty() {
             return source_ty;
         }
-        let source_type_params_fully_determined_by_params = source_fn.type_params.iter().all(|tp| {
-            source_fn.params.iter().any(|param| {
-                crate::visitor::collect_referenced_types(self.interner.as_type_database(), param.type_id)
+        let source_type_params_fully_determined_by_params =
+            source_fn.type_params.iter().all(|tp| {
+                source_fn.params.iter().any(|param| {
+                    crate::visitor::collect_referenced_types(
+                        self.interner.as_type_database(),
+                        param.type_id,
+                    )
                     .into_iter()
-                    .any(|ty| crate::type_param_info(self.interner.as_type_database(), ty).is_some_and(|info| info.name == tp.name))
-            })
-        });
+                    .any(|ty| {
+                        crate::type_param_info(self.interner.as_type_database(), ty)
+                            .is_some_and(|info| info.name == tp.name)
+                    })
+                })
+            });
         let prev_contextual_type = self.contextual_type;
         self.contextual_type = if source_type_params_fully_determined_by_params
             && target_fn.params.iter().any(|param| param.rest)
             && !crate::visitor::contains_type_parameters(
                 self.interner.as_type_database(),
                 target_fn.return_type,
-            )
-        {
+            ) {
             None
         } else {
             Some(target_ty)
