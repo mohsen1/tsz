@@ -12,6 +12,24 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn cached_inferred_variable_type(
+        &self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        self.ctx
+            .binder
+            .get_node_symbol(decl_idx)
+            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_node_symbol(name_idx)
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            })
+            .filter(|&type_id| type_id != TypeId::ERROR)
+    }
+
     fn find_circular_reference_in_type_node(
         &self,
         type_idx: NodeIndex,
@@ -1547,6 +1565,12 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_node(var_decl.initializer)
             } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
+            } else if let Some(inferred) = self.compute_for_in_of_variable_type(decl_idx) {
+                inferred
+            } else if let Some(inferred) =
+                self.cached_inferred_variable_type(decl_idx, var_decl.name)
+            {
+                inferred
             } else {
                 TypeId::ANY
             };

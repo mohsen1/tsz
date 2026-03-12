@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 use crate::checker::context::ScriptTarget as CheckerScriptTarget;
 use crate::checker::diagnostics::Diagnostic;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use crate::module_resolver_helpers::{
+    PackageExports, PackageJson, match_export_pattern, parse_package_specifier,
+    substitute_wildcard_in_exports,
+};
 use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
 use tsz_common::diagnostics::format_message;
 
@@ -2299,6 +2303,10 @@ fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
         return Ok(base_dir.join(candidate));
     }
 
+    if let Some(resolved) = resolve_package_extends_path(current_path, extends) {
+        return Ok(resolved);
+    }
+
     // Package-name extends (e.g. "@tsconfig/node20/tsconfig.json")
     // Resolve through node_modules, walking up directory ancestors.
     let mut search_dir = base_dir.to_path_buf();
@@ -2329,6 +2337,150 @@ fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
         candidate.set_extension("json");
     }
     Ok(base_dir.join(candidate))
+}
+
+fn resolve_package_extends_path(current_path: &Path, extends: &str) -> Option<PathBuf> {
+    let base_dir = current_path.parent()?;
+    let (package_name, subpath) = parse_package_specifier(extends);
+    let export_subpath = subpath
+        .as_deref()
+        .map(|value| format!("./{value}"))
+        .unwrap_or_else(|| ".".to_string());
+
+    let mut search_dir = base_dir.to_path_buf();
+    loop {
+        let package_dir = search_dir.join("node_modules").join(&package_name);
+        let package_json_path = package_dir.join("package.json");
+        if package_json_path.is_file()
+            && let Some(package_json) = read_package_json_for_extends(&package_json_path)
+            && let Some(exports) = &package_json.exports
+            && let Some(resolved) =
+                resolve_package_extends_exports(&package_dir, exports, &export_subpath)
+        {
+            return Some(resolved);
+        }
+
+        if !search_dir.pop() {
+            break;
+        }
+    }
+
+    None
+}
+
+fn read_package_json_for_extends(path: &Path) -> Option<PackageJson> {
+    let source = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&source).ok()
+}
+
+fn resolve_package_extends_exports(
+    package_dir: &Path,
+    exports: &PackageExports,
+    subpath: &str,
+) -> Option<PathBuf> {
+    const CONDITIONS: &[&str] = &["types", "node", "import", "require", "default"];
+
+    match exports {
+        PackageExports::String(target) => {
+            if subpath == "." {
+                resolve_config_export_target(package_dir, target)
+            } else {
+                None
+            }
+        }
+        PackageExports::Map(map) => {
+            if let Some(value) = map.get(subpath) {
+                return resolve_package_extends_export_value(package_dir, value, CONDITIONS);
+            }
+
+            let mut best_match: Option<(usize, String, &PackageExports)> = None;
+            for (pattern, value) in map {
+                if let Some(wildcard) = match_export_pattern(pattern, subpath) {
+                    let specificity = pattern.len();
+                    let is_better = match &best_match {
+                        None => true,
+                        Some((best_len, _, _)) => specificity > *best_len,
+                    };
+                    if is_better {
+                        best_match = Some((specificity, wildcard, value));
+                    }
+                }
+            }
+
+            if let Some((_, wildcard, value)) = best_match {
+                let substituted_value = substitute_wildcard_in_exports(value, &wildcard);
+                return resolve_package_extends_export_value(
+                    package_dir,
+                    &substituted_value,
+                    CONDITIONS,
+                );
+            }
+
+            None
+        }
+        PackageExports::Conditional(entries) => {
+            for (key, value) in entries {
+                if CONDITIONS.iter().any(|condition| condition == key) {
+                    if matches!(value, PackageExports::Null) {
+                        return None;
+                    }
+                    if let Some(resolved) =
+                        resolve_package_extends_exports(package_dir, value, subpath)
+                    {
+                        return Some(resolved);
+                    }
+                }
+            }
+            None
+        }
+        PackageExports::Null => None,
+    }
+}
+
+fn resolve_package_extends_export_value(
+    package_dir: &Path,
+    value: &PackageExports,
+    conditions: &[&str],
+) -> Option<PathBuf> {
+    match value {
+        PackageExports::String(target) => resolve_config_export_target(package_dir, target),
+        PackageExports::Conditional(entries) => {
+            for (key, nested) in entries {
+                if conditions.iter().any(|condition| condition == key) {
+                    if matches!(nested, PackageExports::Null) {
+                        return None;
+                    }
+                    if let Some(resolved) =
+                        resolve_package_extends_export_value(package_dir, nested, conditions)
+                    {
+                        return Some(resolved);
+                    }
+                }
+            }
+            None
+        }
+        PackageExports::Map(_) | PackageExports::Null => None,
+    }
+}
+
+fn resolve_config_export_target(package_dir: &Path, target: &str) -> Option<PathBuf> {
+    let resolved = package_dir.join(target.trim_start_matches("./"));
+    if resolved.is_file() {
+        return Some(resolved);
+    }
+    if resolved.extension().is_none() {
+        let json_path = resolved.with_extension("json");
+        if json_path.is_file() {
+            return Some(json_path);
+        }
+    }
+    if resolved.is_dir() {
+        let tsconfig_path = resolved.join("tsconfig.json");
+        if tsconfig_path.is_file() {
+            return Some(tsconfig_path);
+        }
+    }
+    None
 }
 
 fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {

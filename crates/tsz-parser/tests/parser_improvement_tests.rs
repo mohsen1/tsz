@@ -280,6 +280,28 @@ var a6: Z[][] = new   Z     [      ]   [  ];
 }
 
 #[test]
+fn test_export_type_alias_missing_type_at_eof_reports_after_equals() {
+    let source = "import test from \"./test\";\nexport type test = \n";
+    let mut parser = ParserState::new("types2.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts1110_starts: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_EXPECTED)
+        .map(|d| d.start)
+        .collect();
+    let expected_start = source.find("= \n").unwrap() as u32 + 1;
+
+    assert_eq!(
+        ts1110_starts,
+        vec![expected_start],
+        "Missing export type bodies at EOF should anchor TS1110 after '=': {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_parameters_with_line_break_no_comma() {
     // Function parameters without comma but with line break
     // Should be more permissive to avoid false positives

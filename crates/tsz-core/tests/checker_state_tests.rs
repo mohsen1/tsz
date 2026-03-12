@@ -3384,6 +3384,124 @@ import { something } from "nonexistent-npm-package";
     );
 }
 
+/// Test TS2307 for unresolved CommonJS require() calls in checked JavaScript.
+#[test]
+fn test_ts2307_check_js_require_call_not_found() {
+    use crate::checker::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+const { foo } = require("bar");
+"#;
+
+    let mut parser = ParserState::new("main.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "main.js".to_string(),
+        crate::checker::context::CheckerOptions {
+            check_js: true,
+            allow_js: true,
+            module: crate::common::ModuleKind::CommonJS,
+            target: crate::common::ScriptTarget::ES2018,
+            ..Default::default()
+        },
+    );
+    setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+
+    let ts2307: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .collect();
+    assert_eq!(
+        ts2307.len(),
+        1,
+        "Expected exactly one TS2307 for unresolved require(\"bar\"), got: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert!(
+        ts2307[0].message_text.contains("'bar'"),
+        "Expected TS2307 message to reference 'bar', got: {}",
+        ts2307[0].message_text
+    );
+}
+
+/// Local declarations named `require` should shadow CommonJS require semantics.
+#[test]
+fn test_local_require_shadowing_does_not_emit_ts2307() {
+    use crate::checker::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+function require(name) {
+    return { foo: 1 };
+}
+const { foo } = require("bar");
+"#;
+
+    let mut parser = ParserState::new("main.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "main.js".to_string(),
+        crate::checker::context::CheckerOptions {
+            check_js: true,
+            allow_js: true,
+            module: crate::common::ModuleKind::CommonJS,
+            no_implicit_any: false,
+            ..Default::default()
+        },
+    );
+    setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(root);
+
+    let codes: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Local require() should shadow CommonJS module resolution. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
 /// Test that `declared_modules` prevents TS2307 when module is declared
 #[test]
 fn test_declared_module_prevents_ts2307() {

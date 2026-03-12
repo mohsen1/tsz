@@ -614,9 +614,20 @@ impl ParserState {
             .then(|| self.parse_type_parameters());
 
         let type_node = if self.is_token(SyntaxKind::EqualsToken) {
+            let equals_end = self.token_end();
             self.next_token();
             let diag_len = self.parse_diagnostics.len();
-            let parsed_type = self.parse_type();
+            let parsed_type = if self.is_token(SyntaxKind::EndOfFileToken) {
+                self.parse_error_at(
+                    equals_end,
+                    0,
+                    "Type expected.",
+                    diagnostic_codes::TYPE_EXPECTED,
+                );
+                NodeIndex::NONE
+            } else {
+                self.parse_type()
+            };
             // Keep TS1110 "Type expected" (emitted by parse_type for missing type
             // after `=`), but preserve targeted import-attribute recovery diagnostics.
             if self.parse_diagnostics.len() > diag_len {

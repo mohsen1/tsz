@@ -349,6 +349,21 @@ pub(super) fn collect_diagnostics(
                             );
                         }
 
+                        let is_ordinary_bare_specifier = !specifier.starts_with('.')
+                            && !specifier.starts_with('/')
+                            && !specifier.contains(':');
+                        if is_ordinary_bare_specifier
+                            && (program.declared_modules.contains(specifier)
+                                || program.shorthand_ambient_modules.contains(specifier))
+                        {
+                            // Local ambient modules are discovered by binding rather than
+                            // path-based resolution. Keep the specifier "resolved" here so
+                            // the checker can import from the ambient module without a
+                            // spurious TS2307 from the driver layer.
+                            resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                            continue;
+                        }
+
                         // Untyped JS module handling: When resolution fails but a JS
                         // file exists for this specifier (without declaration files),
                         // TypeScript treats it as an untyped module:
@@ -1383,6 +1398,43 @@ let __: B = new B();"#
             .resolve_import_with_reexports_type_only("./c", "A")
             .expect("expected A to resolve via wildcard chain");
         assert!(exports_via_c.1, "A should be considered type-only via ./b");
+    }
+
+    #[test]
+    fn test_collect_diagnostics_suppresses_ts2307_for_local_ambient_module() {
+        let diagnostics = collect_test_diagnostics(&[
+            (
+                "/project/demo.d.ts",
+                r#"
+declare namespace demoNS {
+    function f(): void;
+}
+declare module "demoModule" {
+    import alias = demoNS;
+    export = alias;
+}
+"#,
+            ),
+            (
+                "/project/user.ts",
+                r#"
+import { f } from "demoModule";
+let x1: string = demoNS.f;
+let x2: string = f;
+"#,
+            ),
+        ]);
+
+        let codes = diagnostics.iter().map(|d| d.code).collect::<Vec<_>>();
+        assert!(
+            !codes.contains(&2307),
+            "Did not expect TS2307 when a local ambient module declaration matches the import. Diagnostics: {diagnostics:?}"
+        );
+        assert_eq!(
+            codes.iter().filter(|&&code| code == 2322).count(),
+            2,
+            "Expected the import to still resolve and produce two downstream TS2322 diagnostics. Diagnostics: {diagnostics:?}"
+        );
     }
 
     #[test]

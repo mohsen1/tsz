@@ -391,6 +391,73 @@ var f = new F();
     );
 }
 
+/// Chained prototype object assignment should keep every participating function
+/// constructable and surface the shared prototype members on instances.
+#[test]
+fn test_variable_assigned_function_constructors_with_chained_prototype_object_are_constructable() {
+    let source = r#"
+var A = function A() {
+    this.a = 1;
+};
+var B = function B() {
+    this.b = 2;
+};
+A.prototype = B.prototype = {
+    /** @param {number} n */
+    m(n) {
+        return n + 1;
+    }
+};
+var a = new A();
+var b = new B();
+a.m(1);
+b.m(2);
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 7009 | 2339 | 7006))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected chained prototype constructors to stay constructable with method members, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types()
+ {
+    let source = r#"
+var A = function A() {
+    this.a = 1;
+};
+var B = function B() {
+    this.b = 2;
+};
+A.prototype = B.prototype = {
+    /** @param {number} n */
+    m(n) {
+        return n + 1;
+    }
+};
+var a = new A();
+var b = new B();
+a.m("nope");
+b.m("still nope");
+"#;
+    let diagnostics = check_js(source);
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        2,
+        "Expected chained prototype methods to preserve JSDoc parameter types, got: {diagnostics:?}"
+    );
+}
+
 /// Generic constructor function with @template: instance properties get instantiated types
 #[test]
 fn test_generic_constructor_function_template_instantiation() {
@@ -449,6 +516,39 @@ z.t = 2
         ts2322.len(),
         0,
         "Expected no TS2322 for compatible assignment z.t = 2, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_class_can_extend_js_constructor_function() {
+    let source = r#"
+/**
+ * @constructor
+ * @param {number} numberOxen
+ */
+function Wagon(numberOxen) {
+    this.numberOxen = numberOxen;
+}
+/** @param {*[]=} supplies */
+Wagon.prototype.load = function (supplies) {};
+class Sql extends Wagon {
+    constructor() {
+        super();
+        this.foonly = 12;
+    }
+    /** @param {Array.<string>} files @param {"csv" | "json" | "xmlolololol"} format */
+    load(files, format) {}
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2507: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2507)
+        .collect();
+    assert_eq!(
+        ts2507.len(),
+        0,
+        "Expected JS class extends JS constructor function to avoid TS2507, got: {diagnostics:?}"
     );
 }
 

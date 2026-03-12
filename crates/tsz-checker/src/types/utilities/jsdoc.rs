@@ -179,27 +179,13 @@ impl<'a> CheckerState<'a> {
         self.resolve_jsdoc_type_str(type_expr).or_else(|| {
             self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
                 .or_else(|| {
-                    if let Some((module_specifier, member_name)) =
-                        Self::parse_jsdoc_import_type(type_expr)
-                        && let Some(sym_id) =
-                            self.resolve_jsdoc_import_member(&module_specifier, &member_name)
-                    {
-                        let resolved = self.type_reference_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR {
-                            return Some(resolved);
-                        }
+                    if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
+                        return Some(resolved);
                     }
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                        if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
-                            || (symbol.flags & symbol_flags::CLASS) != 0
-                            || (symbol.flags & symbol_flags::INTERFACE) != 0
-                            || (symbol.flags & symbol_flags::ENUM) != 0
-                        {
-                            let resolved = self.type_reference_symbol_type(sym_id);
-                            if resolved != TypeId::ERROR {
-                                return Some(resolved);
-                            }
+                        let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                            return Some(resolved);
                         }
                     }
                     None
@@ -400,29 +386,13 @@ impl<'a> CheckerState<'a> {
         self.jsdoc_type_from_expression(type_expr).or_else(|| {
             self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
                 .or_else(|| {
-                    if let Some((module_specifier, member_name)) =
-                        Self::parse_jsdoc_import_type(type_expr)
-                        && let Some(sym_id) =
-                            self.resolve_jsdoc_import_member(&module_specifier, &member_name)
-                    {
-                        let resolved = self.type_reference_symbol_type(sym_id);
-                        if resolved != TypeId::ERROR {
-                            return Some(resolved);
-                        }
+                    if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
+                        return Some(resolved);
                     }
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                        if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
-                            || (symbol.flags & symbol_flags::CLASS) != 0
-                            || (symbol.flags & symbol_flags::INTERFACE) != 0
-                            || (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0
-                            || (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
-                            || (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
-                        {
-                            let t = self.type_reference_symbol_type(sym_id);
-                            if t != TypeId::ERROR {
-                                return Some(t);
-                            }
+                        let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                            return Some(resolved);
                         }
                     }
                     None
@@ -473,7 +443,7 @@ impl<'a> CheckerState<'a> {
         let end_idx = end_idx?;
         Some(after_open[..end_idx].trim())
     }
-    fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, String)> {
+    fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, Option<String>)> {
         let expr = type_expr.trim();
         let rest = expr.strip_prefix("import(")?;
         let mut rest = rest.trim_start();
@@ -485,8 +455,11 @@ impl<'a> CheckerState<'a> {
         let close_quote = rest.find(quote)?;
         let module_specifier = rest[..close_quote].trim().to_string();
         let after_quote = rest[close_quote + quote.len_utf8()..].trim_start();
-        let after_quote = after_quote.strip_prefix(')')?;
-        let after_dot = after_quote.trim_start().strip_prefix('.')?;
+        let after_quote = after_quote.strip_prefix(')')?.trim_start();
+        if after_quote.is_empty() {
+            return Some((module_specifier, None));
+        }
+        let after_dot = after_quote.strip_prefix('.')?;
         let after_dot = after_dot.trim_start();
         let mut end = 0usize;
         for (idx, ch) in after_dot.char_indices() {
@@ -502,7 +475,23 @@ impl<'a> CheckerState<'a> {
         if end == 0 {
             return None;
         }
-        Some((module_specifier, after_dot[..end].to_string()))
+        Some((module_specifier, Some(after_dot[..end].to_string())))
+    }
+
+    fn resolve_jsdoc_import_type_reference(&mut self, type_expr: &str) -> Option<TypeId> {
+        let (module_specifier, member_name) = Self::parse_jsdoc_import_type(type_expr)?;
+
+        if let Some(member_name) = member_name {
+            let sym_id = self.resolve_jsdoc_import_member(&module_specifier, &member_name)?;
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            return (resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN).then_some(resolved);
+        }
+
+        self.commonjs_module_value_type(&module_specifier, Some(self.ctx.current_file_idx))
+            .map(|module_type| {
+                self.instance_type_from_constructor_type(module_type)
+                    .unwrap_or(module_type)
+            })
     }
     /// Parse a JSDoc-style `@type` expression into a concrete type.
     pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
@@ -618,15 +607,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
                     return Some(*tp);
                 }
-                if let Some((module_specifier, member_name)) =
-                    Self::parse_jsdoc_import_type(type_expr)
-                    && let Some(sym_id) =
-                        self.resolve_jsdoc_import_member(&module_specifier, &member_name)
-                {
-                    let resolved = self.type_reference_symbol_type(sym_id);
-                    if resolved != TypeId::ERROR {
-                        return Some(resolved);
-                    }
+                if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
+                    return Some(resolved);
                 }
                 let obj_map_inner = type_expr
                     .strip_prefix("Object.<")
@@ -938,18 +920,9 @@ impl<'a> CheckerState<'a> {
             return Some(resolved);
         }
 
-        // Check file_locals for type aliases, classes, interfaces, enums
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags
-                & (symbol_flags::TYPE_ALIAS
-                    | symbol_flags::CLASS
-                    | symbol_flags::INTERFACE
-                    | symbol_flags::ENUM))
-                != 0
-        {
-            let resolved = self.type_reference_symbol_type(sym_id);
-            if resolved != TypeId::ERROR {
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                 return Some(resolved);
             }
         }
@@ -1057,6 +1030,17 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+            let mut visited_aliases = Vec::new();
+            if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                return self.resolve_jsdoc_symbol_type(target);
+            }
+        }
+
+        if (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0 {
+            return self.type_reference_symbol_type(sym_id);
+        }
+
         if (symbol.flags
             & (symbol_flags::TYPE_ALIAS
                 | symbol_flags::CLASS
@@ -1067,6 +1051,13 @@ impl<'a> CheckerState<'a> {
             return self.type_reference_symbol_type(sym_id);
         }
 
+        if (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0 {
+            let namespace_type = self.get_type_of_symbol(sym_id);
+            if namespace_type != TypeId::ERROR && namespace_type != TypeId::UNKNOWN {
+                return namespace_type;
+            }
+        }
+
         if (symbol.flags & symbol_flags::FUNCTION) != 0 && symbol.value_declaration.is_some() {
             let constructor_type = self.get_type_of_symbol(sym_id);
             if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
@@ -1075,6 +1066,19 @@ impl<'a> CheckerState<'a> {
                 &[],
             ) {
                 return instance_type;
+            }
+        }
+
+        if (symbol.flags
+            & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
+            != 0
+        {
+            let value_type = self.get_type_of_symbol(sym_id);
+            if let Some(instance_type) = self.instance_type_from_constructor_type(value_type) {
+                return instance_type;
+            }
+            if value_type != TypeId::ERROR && value_type != TypeId::UNKNOWN {
+                return value_type;
             }
         }
 

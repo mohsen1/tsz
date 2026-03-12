@@ -838,6 +838,9 @@ pub(crate) fn resolve_module_specifier(
     }
     let specifier = specifier.replace('\\', "/");
     if specifier.starts_with('#') {
+        if is_invalid_package_import_specifier(&specifier) {
+            return None;
+        }
         if options.resolve_package_json_imports {
             return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
         }
@@ -1063,20 +1066,10 @@ fn expand_module_path_candidates(
     for ext in extensions {
         candidates.extend(candidates_with_suffixes_and_extension(&base, ext, suffixes));
     }
-    if options.resolve_json_module {
-        candidates.extend(candidates_with_suffixes_and_extension(
-            &base, "json", suffixes,
-        ));
-    }
     let index = base.join("index");
     for ext in extensions {
         candidates.extend(candidates_with_suffixes_and_extension(
             &index, ext, suffixes,
-        ));
-    }
-    if options.resolve_json_module {
-        candidates.extend(candidates_with_suffixes_and_extension(
-            &index, "json", suffixes,
         ));
     }
     candidates
@@ -1525,6 +1518,10 @@ fn resolve_package_imports_specifier(
     }
 
     None
+}
+
+fn is_invalid_package_import_specifier(specifier: &str) -> bool {
+    specifier == "#" || specifier.starts_with("#/")
 }
 
 fn resolve_package_specifier(

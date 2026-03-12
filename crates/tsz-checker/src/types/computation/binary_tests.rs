@@ -561,6 +561,38 @@ fn no_ts2367_for_three_member_union_narrowed_in_loop() {
 }
 
 #[test]
+fn ts2367_emitted_after_switch_true_clause_narrowing() {
+    let diags = check_source_diagnostics(
+        r#"type Shape =
+    | { kind: "circle", radius: number }
+    | { kind: "square", sideLength: number };
+
+function wat(shape: Shape) {
+    switch (true) {
+        case shape.kind === "circle":
+            return Math.PI * shape.radius ** 2;
+        case shape.kind === "circle":
+    }
+
+    if (shape.kind === "circle") {
+        return Math.PI * shape.radius ** 2;
+    } else if (shape.kind === "circle") {
+    }
+}"#,
+    );
+    let ts2367_count = diags.iter().filter(|d| d.code == 2367).count();
+    assert_eq!(
+        ts2367_count,
+        2,
+        "Expected TS2367 after switch(true) clause narrowing, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn no_ts2363_for_constrained_type_parameter() {
     // `any * T` where T extends number should NOT emit TS2363
     // because constrained T is a valid arithmetic operand.

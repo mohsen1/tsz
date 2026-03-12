@@ -1567,32 +1567,51 @@ impl<'a> CheckerState<'a> {
         }?;
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration;
+        let node = self.ctx.arena.get(value_decl)?;
 
-        // Only handle plain function declarations (not classes)
+        // Only handle plain JS function constructors (not classes). This includes
+        // variable declarations whose initializer is a function expression.
         if symbol.flags & symbol_flags::CLASS != 0 {
             return None;
         }
-        if symbol.flags & symbol_flags::FUNCTION == 0 {
-            return None;
-        }
 
-        // Find the function body
-        let value_decl = symbol.value_declaration;
-        let node = self.ctx.arena.get(value_decl)?;
-        let func = self.ctx.arena.get_function(node)?;
+        let (func, func_name_str) = if let Some(func) = self.ctx.arena.get_function(node) {
+            let func_name = self
+                .ctx
+                .arena
+                .get(func.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.clone());
+            (func, func_name)
+        } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+            let init_node = self.ctx.arena.get(var_decl.initializer)?;
+            if init_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION {
+                return None;
+            }
+            let func = self.ctx.arena.get_function(init_node)?;
+            let func_name = self
+                .ctx
+                .arena
+                .get(func.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.clone())
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get(var_decl.name)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .map(|ident| ident.escaped_text.clone())
+                });
+            (func, func_name)
+        } else {
+            return None;
+        };
+
         let body_idx = func.body;
         if body_idx.is_none() {
             return None;
         }
-
-        // Get the function name for prototype pattern matching
-        let func_name = func.name;
-        let func_name_str = self
-            .ctx
-            .arena
-            .get(func_name)
-            .and_then(|n| self.ctx.arena.get_identifier(n))
-            .map(|ident| ident.escaped_text.clone());
 
         // Check if the constructor function has @template type params
         let func_shape =

@@ -41,6 +41,118 @@ impl<'a> CheckerState<'a> {
         self.commonjs_namespace_type_for_file(target_file_idx)
     }
 
+    pub(crate) fn commonjs_module_value_type(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
+
+        if let Some(json_type) = self.json_module_type_for_module(module_name, source_file_idx) {
+            return Some(json_type);
+        }
+
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name));
+
+        let exports_table = self
+            .resolve_effective_module_exports_from_file(module_name, source_file_idx)
+            .or_else(|| {
+                let target_file_idx = target_file_idx?;
+                let target_file_name = self
+                    .ctx
+                    .get_arena_for_file(target_file_idx as u32)
+                    .source_files
+                    .first()
+                    .map(|source_file| source_file.file_name.clone())?;
+                self.resolve_effective_module_exports(&target_file_name)
+            });
+
+        if let Some(exports_table) = exports_table {
+            let module_is_non_module_entity =
+                self.ctx.module_resolves_to_non_module_entity(module_name);
+            for (name, &sym_id) in exports_table.iter() {
+                self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
+            }
+
+            let export_equals_type = exports_table
+                .get("export=")
+                .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+            let mut props: Vec<tsz_solver::PropertyInfo> = Vec::new();
+            for (name, &sym_id) in exports_table.iter() {
+                if name == "export="
+                    || self.is_type_only_export_symbol(sym_id)
+                    || self.is_export_from_type_only_wildcard(module_name, name)
+                    || self.export_symbol_has_no_value(sym_id)
+                    || self.is_export_type_only_from_file(module_name, name, source_file_idx)
+                {
+                    continue;
+                }
+
+                let mut prop_type = self.get_type_of_symbol(sym_id);
+                prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+                let name_atom = self.ctx.types.intern_string(name);
+                props.push(tsz_solver::PropertyInfo {
+                    name: name_atom,
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: props.len() as u32,
+                });
+            }
+
+            if !module_is_non_module_entity
+                && let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name)
+            {
+                for aug in augmentations {
+                    let name_atom = self.ctx.types.intern_string(&aug.name);
+                    if props.iter().any(|p| p.name == name_atom) {
+                        continue;
+                    }
+                    props.push(tsz_solver::PropertyInfo {
+                        name: name_atom,
+                        type_id: TypeId::ANY,
+                        write_type: TypeId::ANY,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: props.len() as u32,
+                    });
+                }
+            }
+
+            let namespace_type = factory.object(props);
+            self.ctx.namespace_module_names.insert(
+                namespace_type,
+                self.imported_namespace_display_module_name(module_name),
+            );
+
+            if let Some(export_equals_type) = export_equals_type {
+                if module_is_non_module_entity {
+                    return Some(export_equals_type);
+                }
+                return Some(factory.intersection(vec![export_equals_type, namespace_type]));
+            }
+
+            return Some(namespace_type);
+        }
+
+        self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx)
+            .or_else(|| self.commonjs_define_property_namespace_type(module_name, source_file_idx))
+    }
+
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
         tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id)
             || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, type_id)
@@ -1427,11 +1539,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(module_specifier) =
                     self.get_require_module_specifier(import.module_specifier)
                 {
-                    if let Some(json_type) = self.json_module_type_for_module(
+                    if let Some(module_type) = self.commonjs_module_value_type(
                         &module_specifier,
                         Some(self.ctx.current_file_idx),
                     ) {
-                        return (json_type, Vec::new());
+                        return (module_type, Vec::new());
                     }
 
                     // Resolve the canonical export surface (module-specifier variants,
@@ -1533,6 +1645,14 @@ impl<'a> CheckerState<'a> {
                         }
 
                         return (namespace_type, Vec::new());
+                    }
+                    if let Some(module_export_type) = self
+                        .resolve_direct_commonjs_module_export_type(
+                            &module_specifier,
+                            Some(self.ctx.current_file_idx),
+                        )
+                    {
+                        return (module_export_type, Vec::new());
                     }
                     // Module not found - emit TS2307 error and return ANY
                     // TypeScript treats unresolved imports as `any` to avoid cascading errors

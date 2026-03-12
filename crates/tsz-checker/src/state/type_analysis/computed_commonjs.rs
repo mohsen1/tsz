@@ -589,6 +589,87 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().callable(new_shape)
     }
 
+    fn direct_commonjs_module_export_assignment_rhs(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let expr_idx = arena.skip_parenthesized(expr_idx);
+        let expr_node = arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let left_idx = arena.skip_parenthesized(binary.left);
+        let left_node = arena.get(left_idx)?;
+
+        if left_node.kind == SyntaxKind::Identifier as u16
+            && arena
+                .get_identifier(left_node)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+        {
+            return Some(binary.right);
+        }
+
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let left_access = arena.get_access_expr(left_node)?;
+        let target_idx = arena.skip_parenthesized(left_access.expression);
+        arena
+            .get_identifier_at(target_idx)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            .then_some(())
+            .and_then(|_| {
+                arena
+                    .get_identifier_at(left_access.name_or_argument)
+                    .filter(|ident| ident.escaped_text == "exports")
+            })?;
+        Some(binary.right)
+    }
+
+    pub(crate) fn resolve_direct_commonjs_module_export_type(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let source_file = target_arena.source_files.first()?;
+        let mut rhs_expr = None;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            if let Some(found_rhs) =
+                self.direct_commonjs_module_export_assignment_rhs(target_arena, stmt.expression)
+            {
+                rhs_expr = Some(found_rhs);
+            }
+        }
+
+        let rhs_expr = rhs_expr?;
+        let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_expr);
+        (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
+    }
+
     fn augment_namespace_props_with_direct_assignment_exports_for_file(
         &mut self,
         target_file_idx: usize,
