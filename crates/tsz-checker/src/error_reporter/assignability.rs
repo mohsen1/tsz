@@ -216,7 +216,7 @@ impl<'a> CheckerState<'a> {
         format!("Type '{source_str}' is not assignable to type '{target_str}'.\n  {detail}")
     }
 
-    fn visibility_name(visibility: tsz_solver::Visibility) -> &'static str {
+    const fn visibility_name(visibility: tsz_solver::Visibility) -> &'static str {
         match visibility {
             tsz_solver::Visibility::Private => "private",
             tsz_solver::Visibility::Protected => "protected",
@@ -1188,7 +1188,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                     diag.related_information.push(DiagnosticRelatedInformation {
-                        file: file_name.clone(),
+                        file: file_name,
                         start,
                         length,
                         message_text: detail,
@@ -1252,7 +1252,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                     diag.related_information.push(DiagnosticRelatedInformation {
-                        file: file_name.clone(),
+                        file: file_name,
                         start,
                         length,
                         message_text: detail,
