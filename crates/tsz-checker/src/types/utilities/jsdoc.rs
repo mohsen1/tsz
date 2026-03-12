@@ -112,6 +112,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve `typeof X` type queries to the type of symbol X.
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
+        use tsz_binder::symbol_flags;
         use tsz_solver::SymbolRef;
         match query::classify_type_query(self.ctx.types, type_id) {
             query::TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
@@ -123,11 +124,23 @@ impl<'a> CheckerState<'a> {
                     stack.insert(sym_id);
                 }
                 let sym = SymbolId(sym_id);
-                let result = if self.is_merged_interface_value_symbol(sym) {
-                    let vd = self
-                        .get_cross_file_symbol(sym)
-                        .map_or(NodeIndex::NONE, |s| s.value_declaration);
-                    self.type_of_value_declaration_for_symbol(sym, vd)
+                let value_decl = self.get_cross_file_symbol(sym).map_or_else(
+                    || self.ctx.binder.get_symbol(sym).map(|s| s.value_declaration),
+                    |s| Some(s.value_declaration),
+                );
+                let flags = self
+                    .get_cross_file_symbol(sym)
+                    .map(|s| s.flags)
+                    .or_else(|| self.ctx.binder.get_symbol(sym).map(|s| s.flags))
+                    .unwrap_or(0);
+                let result = if self.is_merged_interface_value_symbol(sym)
+                    || ((flags & symbol_flags::CLASS) != 0
+                        && value_decl.is_some_and(|decl| !decl.is_none()))
+                {
+                    self.type_of_value_declaration_for_symbol(
+                        sym,
+                        value_decl.unwrap_or(NodeIndex::NONE),
+                    )
                 } else {
                     self.get_type_of_symbol(sym)
                 };
