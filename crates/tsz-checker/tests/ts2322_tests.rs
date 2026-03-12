@@ -1464,6 +1464,37 @@ fn test_ts2322_object_destructuring_default_not_checked_for_required_property() 
 }
 
 #[test]
+fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
+    let source = r#"
+        const a: { x?: number; y?: number } = {};
+        let x: number;
+
+        ({ x = undefined } = a);
+        ({ x: x = undefined } = a);
+        ({ y: x = undefined } = a);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        3,
+        "Expected TS2322 for each undefined default in assignment destructuring, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| message.contains("Type 'undefined' is not assignable to type 'number'.")),
+        "Expected all assignment destructuring default mismatches to preserve 'undefined' source display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_type_query_in_type_assertion_uses_flow_narrowed_property_type() {
     let source = r#"
         interface I<T> {
