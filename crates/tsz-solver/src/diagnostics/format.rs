@@ -68,6 +68,9 @@ pub struct TypeFormatter<'a> {
     /// This should be set for error-message formatting (tsc doesn't optionalize
     /// union members in diagnostics, only in quickinfo/hover).
     skip_union_optionalize: bool,
+    /// When true, preserve the declared surface syntax of optional properties
+    /// instead of appending synthetic `| undefined`.
+    preserve_optional_property_surface_syntax: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -84,6 +87,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            preserve_optional_property_surface_syntax: false,
         }
     }
 
@@ -104,6 +108,7 @@ impl<'a> TypeFormatter<'a> {
             current_depth: 0,
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
+            preserve_optional_property_surface_syntax: false,
         }
     }
 
@@ -646,7 +651,9 @@ impl<'a> TypeFormatter<'a> {
         // (handled in format_params).
         let type_str: String = if prop.optional {
             let formatted = self.format(prop.type_id).into_owned();
-            if !self.type_contains_undefined(prop.type_id) {
+            if self.preserve_optional_property_surface_syntax {
+                formatted
+            } else if !self.type_contains_undefined(prop.type_id) {
                 format!("{formatted} | undefined")
             } else {
                 formatted
@@ -1221,10 +1228,14 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_conditional(&mut self, cond: &ConditionalType) -> String {
+        let prev = self.preserve_optional_property_surface_syntax;
+        self.preserve_optional_property_surface_syntax = true;
+        let extends_type = self.format(cond.extends_type).into_owned();
+        self.preserve_optional_property_surface_syntax = prev;
         format!(
             "{} extends {} ? {} : {}",
             self.format(cond.check_type),
-            self.format(cond.extends_type),
+            extends_type,
             self.format(cond.true_type),
             self.format(cond.false_type)
         )
