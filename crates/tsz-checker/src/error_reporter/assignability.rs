@@ -67,7 +67,7 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
         required_property_name: Option<tsz_common::interner::Atom>,
-    ) -> Option<(String, String)> {
+    ) -> Option<(String, String, tsz_solver::Visibility)> {
         let source_has_prop = |name| self.property_info_for_display(source_type, name).is_some();
 
         let find_missing = |props: &[tsz_solver::PropertyInfo]| {
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                     .map(|sym| sym.escaped_name.clone())
                     .unwrap_or_else(|| self.format_type_diagnostic(target_type));
-                Some((prop_name, owner_name))
+                Some((prop_name, owner_name, prop.visibility))
             })
         };
 
@@ -122,6 +122,33 @@ impl<'a> CheckerState<'a> {
             "reduceRight" => Some(19),
             _ => None,
         }
+    }
+
+    fn private_or_protected_assignability_message(
+        &self,
+        source_str: &str,
+        target_str: &str,
+        prop_name: &str,
+        owner_name: &str,
+        visibility: tsz_solver::Visibility,
+    ) -> String {
+        let detail = match visibility {
+            tsz_solver::Visibility::Private => {
+                format!(
+                    "Property '{prop_name}' is private in type '{owner_name}' but not in type '{source_str}'."
+                )
+            }
+            tsz_solver::Visibility::Protected => {
+                format!(
+                    "Property '{prop_name}' is protected in type '{owner_name}' but not in type '{source_str}'."
+                )
+            }
+            _ => format!(
+                "Property '{prop_name}' is not accessible in type '{owner_name}' from type '{source_str}'."
+            ),
+        };
+
+        format!("Type '{source_str}' is not assignable to type '{target_str}'.\n  {detail}")
     }
 
     fn sort_missing_property_names_for_display(
@@ -498,13 +525,23 @@ impl<'a> CheckerState<'a> {
                         .types
                         .resolve_atom_ref(missing_props[0])
                         .to_string();
-                    (
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                            &[&prop_name, &src_str, &tgt_str],
-                        ),
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    )
+                    if prop_name.starts_with("__private_brand") {
+                        (
+                            format_message(
+                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                &[&src_str, &tgt_str],
+                            ),
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        )
+                    } else {
+                        (
+                            format_message(
+                                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                                &[&prop_name, &src_str, &tgt_str],
+                            ),
+                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        )
+                    }
                 } else {
                     let prop_list: Vec<String> = missing_props
                         .iter()
@@ -912,7 +949,7 @@ impl<'a> CheckerState<'a> {
 
                 // If all missing properties were private brands, emit TS2322 instead.
                 if filtered_names.is_empty() {
-                    if let Some((prop_name, owner_name)) = self
+                    if let Some((prop_name, owner_name, visibility)) = self
                         .private_or_protected_member_missing_display(
                             *source_type,
                             *target_type,
@@ -925,16 +962,20 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.format_type_diagnostic(widened_source)
                         };
-                        let message = format_message(
-                            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                            &[&prop_name, &src_str, &owner_name],
+                        let tgt_str = self.format_type_diagnostic(*target_type);
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &prop_name,
+                            &owner_name,
+                            visibility,
                         );
                         return Diagnostic::error(
                             file_name,
                             start,
                             length,
                             message,
-                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         );
                     }
                     let src_str = self.format_type_diagnostic(*source_type);
@@ -1121,7 +1162,7 @@ impl<'a> CheckerState<'a> {
             }
 
             SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
-                if let Some((prop_name, owner_name)) = self
+                if let Some((prop_name, owner_name, visibility)) = self
                     .private_or_protected_member_missing_display(
                         source,
                         target,
@@ -1134,16 +1175,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.format_type_diagnostic(widened_source)
                     };
-                    let message = format_message(
-                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                        &[&prop_name, &src_str, &owner_name],
+                    let tgt_str = self.format_type_diagnostic(target);
+                    let message = self.private_or_protected_assignability_message(
+                        &src_str,
+                        &tgt_str,
+                        &prop_name,
+                        &owner_name,
+                        visibility,
                     );
                     return Diagnostic::error(
                         file_name,
                         start,
                         length,
                         message,
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 }
 
@@ -1528,19 +1573,22 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if depth == 0
-                    && let Some((prop_name, owner_name)) =
+                    && let Some((prop_name, owner_name, visibility)) =
                         self.private_or_protected_member_missing_display(source, target, None)
                 {
-                    let message = format_message(
-                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                        &[&prop_name, &source_str, &owner_name],
+                    let message = self.private_or_protected_assignability_message(
+                        &source_str,
+                        &target_str,
+                        &prop_name,
+                        &owner_name,
+                        visibility,
                     );
                     return Diagnostic::error(
                         file_name,
                         start,
                         length,
                         message,
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 }
 
@@ -1549,6 +1597,19 @@ impl<'a> CheckerState<'a> {
                         self.missing_single_required_property(source, target)
                 {
                     let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+                    if prop_name.starts_with("__private_brand") {
+                        let message = format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            &[&source_str, &target_str],
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
                     let message = format_message(
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
