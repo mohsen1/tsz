@@ -585,7 +585,12 @@ impl<'a> CheckerState<'a> {
                         .rsplit_once('.')
                         .map(|(base, _)| base)
                         .unwrap_or(file_name);
-                    Some(stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem).to_string())
+                    Some(
+                        stem.rsplit_once('/')
+                            .map(|(_, name)| name)
+                            .unwrap_or(stem)
+                            .to_string(),
+                    )
                 })?;
             return Some(format!("\"{module_name}\".{qualified}"));
         }
