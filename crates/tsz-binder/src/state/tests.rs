@@ -2799,13 +2799,13 @@ foo[sym] = 3;
         .get("foo")
         .expect("expected expando properties for foo");
 
-    assert!(props.contains("realName"), "should resolve const string keys");
+    assert!(
+        props.contains("realName"),
+        "should resolve const string keys"
+    );
     assert!(props.contains("42"), "should resolve const numeric keys");
 
-    let sym_id = binder
-        .file_locals
-        .get("sym")
-        .expect("expected sym local");
+    let sym_id = binder.file_locals.get("sym").expect("expected sym local");
     let unique_name = format!("__unique_{}", sym_id.0);
     assert!(
         props.contains(&unique_name),

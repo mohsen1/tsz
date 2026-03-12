@@ -70,7 +70,8 @@ impl<'a> CheckerState<'a> {
                     });
                 }
 
-                if let Some(sym_ref) = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type)
+                if let Some(sym_ref) =
+                    tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type)
                 {
                     return Some(format!("__unique_{}", sym_ref.0));
                 }
