@@ -1387,6 +1387,23 @@ impl<'a> CheckerState<'a> {
                 }
                 Some(related)
             }
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let source_str = self.format_type_diagnostic(_source);
+                let target_str = self.format_type_diagnostic(_target);
+                let msg = format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop_name, &source_str, &target_str],
+                );
+                Some(vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length: length.saturating_sub(start),
+                    message_text: msg,
+                }])
+            }
             _ => None,
         }
     }
