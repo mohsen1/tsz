@@ -333,10 +333,20 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(lhs_access.name_or_argument)
                     .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-            if let Some(method_name_str) =
+            let resolved_property_name = if is_computed_name {
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(lhs_access.name_or_argument);
+                self.ctx.preserve_literal_types = prev;
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))
+            } else {
                 self.get_property_name_resolved(lhs_access.name_or_argument)
-                && !is_computed_name
-            {
+            };
+            if let Some(method_name_str) = resolved_property_name {
                 let method_name_atom = self.ctx.types.intern_string(&method_name_str);
                 let rhs_type = self.get_type_of_node(binary.right);
                 let is_method_like = self
