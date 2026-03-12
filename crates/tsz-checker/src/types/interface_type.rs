@@ -1498,10 +1498,22 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
         use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
 
+        let guard_key = (module_spec.to_string(), interface_name.to_string(), base_type);
+        {
+            let mut active = self.ctx.module_augmentation_application_set.borrow_mut();
+            if !active.insert(guard_key.clone()) {
+                return base_type;
+            }
+        }
+
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
 
         if augmentation_members.is_empty() {
+            self.ctx
+                .module_augmentation_application_set
+                .borrow_mut()
+                .remove(&guard_key);
             return base_type;
         }
 
@@ -1528,7 +1540,7 @@ impl<'a> CheckerState<'a> {
         let kind = classify_for_augmentation(self.ctx.types, resolved_base);
         let factory = self.ctx.types.factory();
 
-        match kind {
+        let result = match kind {
             AugmentationTargetKind::Object(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
@@ -1589,7 +1601,14 @@ impl<'a> CheckerState<'a> {
                     base_type
                 }
             }
-        }
+        };
+
+        self.ctx
+            .module_augmentation_application_set
+            .borrow_mut()
+            .remove(&guard_key);
+
+        result
     }
 
     /// Get the interned Atom for a member name node, handling identifiers,

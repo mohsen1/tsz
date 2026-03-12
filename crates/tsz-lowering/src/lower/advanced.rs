@@ -695,6 +695,12 @@ impl<'a> TypeLowering<'a> {
                 _ => {}
             }
 
+            if self.preferred_self_name.as_deref() == Some(name.as_ref())
+                && let Some(def_id) = self.preferred_self_def_id
+            {
+                return self.interner.lazy(def_id);
+            }
+
             // Must resolve to DefId.
             //
             // Same-arena lowering should prefer the NodeIndex-based path because it

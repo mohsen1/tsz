@@ -62,6 +62,9 @@ pub struct TypeLowering<'a> {
     /// resolution. This is needed for cross-arena lowering where the same NodeIndex
     /// may refer to different identifiers in different arenas.
     pub(super) prefer_name_def_id_resolution: bool,
+    /// Optional direct self-reference for merged interface lowering.
+    pub(super) preferred_self_name: Option<String>,
+    pub(super) preferred_self_def_id: Option<DefId>,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
     pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
     /// Operation counter to prevent infinite loops
@@ -271,6 +274,8 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
+            preferred_self_name: None,
+            preferred_self_def_id: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -294,6 +299,8 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
+            preferred_self_name: None,
+            preferred_self_def_id: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -317,6 +324,8 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
+            preferred_self_name: None,
+            preferred_self_def_id: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -344,6 +353,8 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
+            preferred_self_name: None,
+            preferred_self_def_id: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -371,6 +382,8 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
+            preferred_self_name: None,
+            preferred_self_def_id: None,
             name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -393,6 +406,8 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: self.computed_name_resolver,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
+            preferred_self_name: self.preferred_self_name.clone(),
+            preferred_self_def_id: self.preferred_self_def_id,
             name_def_id_resolver: self.name_def_id_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
@@ -660,6 +675,13 @@ impl<'a> TypeLowering<'a> {
     /// collisions between declaration arenas are possible.
     pub fn prefer_name_def_id_resolution(mut self) -> Self {
         self.prefer_name_def_id_resolution = true;
+        self
+    }
+
+    /// Resolve merged interface self-references directly to the merged symbol.
+    pub fn with_preferred_self_reference(mut self, name: String, def_id: DefId) -> Self {
+        self.preferred_self_name = Some(name);
+        self.preferred_self_def_id = Some(def_id);
         self
     }
 
