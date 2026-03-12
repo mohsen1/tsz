@@ -3,12 +3,73 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, format_message};
 use crate::query_boundaries::diagnostics as query;
 use crate::state::{CheckerState, MemberAccessLevel};
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn param_matches_property_key_literal(&self, prop_name: Atom, ty: TypeId) -> bool {
+        let prop_name = self.ctx.types.resolve_atom_ref(prop_name);
+        if self.ctx.types.literal_string(prop_name.as_ref()) == ty {
+            return true;
+        }
+        prop_name
+            .parse::<f64>()
+            .ok()
+            .is_some_and(|num| self.ctx.types.literal_number(num) == ty)
+    }
+
+    fn normalize_excess_display_type_for_property(
+        &self,
+        prop_name: Option<Atom>,
+        ty: TypeId,
+    ) -> TypeId {
+        let ty = self.normalize_excess_display_type(ty);
+        let Some(prop_name) = prop_name else {
+            return ty;
+        };
+
+        if let Some(shape) = query::function_shape(self.ctx.types, ty) {
+            let params: Vec<_> = shape
+                .params
+                .iter()
+                .map(|param| {
+                    let normalized = self.normalize_excess_display_type(param.type_id);
+                    let type_id = if self.param_matches_property_key_literal(prop_name, normalized) {
+                        normalized
+                    } else {
+                        tsz_solver::widen_literal_type(self.ctx.types, normalized)
+                    };
+                    tsz_solver::ParamInfo {
+                        type_id,
+                        ..param.clone()
+                    }
+                })
+                .collect();
+
+            if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b) {
+                ty
+            } else {
+                self.ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape {
+                        type_params: shape.type_params.clone(),
+                        params,
+                        this_type: shape.this_type,
+                        return_type: shape.return_type,
+                        type_predicate: shape.type_predicate.clone(),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    })
+            }
+        } else {
+            ty
+        }
+    }
+
     pub(super) fn widen_function_like_display_type(&mut self, type_id: TypeId) -> TypeId {
         let constructor_display_def = self
             .ctx
@@ -162,8 +223,10 @@ impl<'a> CheckerState<'a> {
 
         for prop in &shape.properties {
             let mut cloned = prop.clone();
-            cloned.type_id = self.normalize_excess_display_type(cloned.type_id);
-            cloned.write_type = self.normalize_excess_display_type(cloned.write_type);
+            cloned.type_id =
+                self.normalize_excess_display_type_for_property(Some(cloned.name), cloned.type_id);
+            cloned.write_type = self
+                .normalize_excess_display_type_for_property(Some(cloned.name), cloned.write_type);
             if cloned.name == wildcard_name {
                 wildcard_props.push(cloned);
             } else {
@@ -208,7 +271,7 @@ impl<'a> CheckerState<'a> {
                         mapped_id,
                         &property_name,
                     )?;
-                let type_id = self.normalize_excess_display_type(type_id);
+                let type_id = self.normalize_excess_display_type_for_property(Some(name), type_id);
                 let mut property = tsz_solver::PropertyInfo::new(name, type_id);
                 property.optional =
                     mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);

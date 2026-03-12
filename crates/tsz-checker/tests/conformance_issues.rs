@@ -11258,6 +11258,47 @@ test4({
 }
 
 #[test]
+fn test_excess_property_display_widens_mapped_callback_value_param() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare function f2<T extends object>(
+  data: T,
+  handlers: { [P in keyof T as T[P] extends string ? P : never]: (value: T[P], prop: P) => void },
+): void;
+
+f2(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    foo: (value, key) => {},
+  },
+);
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(_, message)| message.contains("(value: string, prop: \"bar\") => void")),
+        "Expected excess-property target display to widen callback value parameter to string.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(_, message)| message.contains("(value: \"\", prop: \"bar\") => void")),
+        "Did not expect literal empty-string callback parameter in excess-property target display.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_async_generator_type_references_preserve_all_type_params() {
     if !lib_files_available() {
         return;
@@ -11873,6 +11914,81 @@ const unexpectedlyFailingExample: Mapped = {
     assert!(
         diagnostics.is_empty(),
         "Did not expect a false TS2322 when a mapped callback returns the exact contextual literal type.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_filtering_mapped_callbacks_use_widened_round2_context() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare function f1<T extends object>(
+  data: T,
+  handlers: { [P in keyof T as P]: (value: T[P], prop: P) => void },
+): void;
+
+f1(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    foo: (value, key) => {},
+    bar: (value, key) => {},
+  },
+);
+
+declare function f2<T extends object>(
+  data: T,
+  handlers: { [P in keyof T as T[P] extends string ? P : never]: (value: T[P], prop: P) => void },
+): void;
+
+f2(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    bar: (value, key) => {},
+  },
+);
+
+f2(
+  {
+    foo: 0,
+    bar: "",
+  },
+  {
+    foo: (value, key) => {
+    },
+  },
+);
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Did not expect false TS2322 callback assignability errors after round-2 generic contextual typing.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Did not expect a whole-object TS2345 when the filtered mapped handler should instead hit TS2353.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2353),
+        "Expected TS2353 for excess property 'foo' on the filtered mapped handlers object.\nActual diagnostics: {diagnostics:#?}"
+    );
+    let ts7006_count = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7006)
+        .count();
+    assert_eq!(
+        ts7006_count, 2,
+        "Expected exactly two TS7006 diagnostics for the excess-property callback parameters.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

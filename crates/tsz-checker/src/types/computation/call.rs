@@ -70,13 +70,11 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::ARROW_FUNCTION =>
             {
-                // Use the already-cached type from Round 2 inference.
-                // Previously this cleared the entire subtree cache and recomputed,
-                // but that destroys contextual typing for nested closures
-                // (arrow functions/function expressions inside object literal properties),
-                // causing false TS7006 when the recomputation happens without
-                // contextual type information.
-                self.get_type_of_node(arg_idx)
+                // Reuse the type already collected for the current call pass.
+                // Re-entering these subtrees here can re-emit provisional diagnostics
+                // (notably nested TS7006 in object-literal callbacks) after Round 2
+                // contextual typing has already stabilized the argument type.
+                cached_arg_type
             }
             _ => cached_arg_type,
         }
@@ -1154,11 +1152,16 @@ impl<'a> CheckerState<'a> {
                             if sensitive_args.get(i).copied().unwrap_or(false) {
                                 self.clear_type_cache_recursive(arg_idx);
                             }
+                            let contextual_substitution =
+                                self.widen_round2_contextual_substitution(
+                                    &shape,
+                                    &round2_substitution,
+                                );
                             let round2_contextual_types = self.compute_round2_contextual_types(
                                 &shape,
                                 round1_instantiated_params.as_deref(),
                                 &sensitive_args,
-                                &round2_substitution,
+                                &contextual_substitution,
                                 arg_count,
                             );
                             let expected_type = round2_contextual_types
@@ -1344,11 +1347,15 @@ impl<'a> CheckerState<'a> {
 
                         round2_arg_types
                     } else {
+                        let contextual_substitution = self.widen_round2_contextual_substitution(
+                            &shape,
+                            &round2_substitution,
+                        );
                         let round2_contextual_types = self.compute_round2_contextual_types(
                             &shape,
                             round1_instantiated_params.as_deref(),
                             &sensitive_args,
-                            &round2_substitution,
+                            &contextual_substitution,
                             arg_count,
                         );
 
@@ -1919,7 +1926,31 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or(TypeId::UNKNOWN);
                             let fresh_assignable =
                                 self.is_assignable_to_with_env(arg_type, expected_param);
-                            if !fresh_assignable {
+                            let excess_property_recovery = if !fresh_assignable {
+                                args.get(index)
+                                    .copied()
+                                    .filter(|&arg_idx| {
+                                        self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
+                                            arg_node.kind
+                                                == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                        })
+                                    })
+                                    .is_some_and(|arg_idx| {
+                                        if is_type_parameter_type(self.ctx.types, expected_param) {
+                                            return false;
+                                        }
+                                        let before = self.ctx.diagnostics.len();
+                                        self.check_object_literal_excess_properties(
+                                            arg_type,
+                                            expected_param,
+                                            arg_idx,
+                                        );
+                                        self.ctx.diagnostics.len() > before
+                                    })
+                            } else {
+                                false
+                            };
+                            if !fresh_assignable && !excess_property_recovery {
                                 allow_contextual_mismatch_deferral = false;
                             }
                             (
@@ -1929,7 +1960,7 @@ impl<'a> CheckerState<'a> {
                                     actual: arg_type,
                                     fallback_return,
                                 },
-                                fresh_assignable,
+                                fresh_assignable || excess_property_recovery,
                             )
                         } else {
                             (
