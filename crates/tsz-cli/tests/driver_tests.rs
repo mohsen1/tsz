@@ -152,6 +152,55 @@ fn compile_with_source_map_emits_map_outputs() {
 }
 
 #[test]
+fn private_static_accessor_on_derived_constructor_reports_ts2339_in_project_mode() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "noEmit": true
+          },
+          "include": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"
+class Base {
+    static get #prop(): number { return 123; }
+    static method(x: typeof Derived) {
+        console.log(x.#prop);
+    }
+}
+class Derived extends Base {
+    static method(x: typeof Derived) {
+        console.log(x.#prop);
+    }
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    let ts2339_count = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+        .count();
+    assert_eq!(
+        ts2339_count, 2,
+        "expected two TS2339 diagnostics in project mode, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_declaration_map_emits_map_outputs() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

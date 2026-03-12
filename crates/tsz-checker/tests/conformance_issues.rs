@@ -11072,6 +11072,46 @@ function test(a: A2) {
     );
 }
 
+#[test]
+fn test_static_private_accessor_not_visible_on_derived_constructor_type() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "privateNameStaticAccessorssDerivedClasses.ts",
+        r#"
+class Base {
+    static get #prop(): number { return 123; }
+    static method(x: typeof Derived) {
+        console.log(x.#prop);
+    }
+}
+class Derived extends Base {
+    static method(x: typeof Derived) {
+        console.log(x.#prop);
+    }
+}
+        "#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2339_count = relevant.iter().filter(|(code, _)| *code == 2339).count();
+
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected TS2339 at both static private accessor accesses through typeof Derived.\nActual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        !has_error(&relevant, 18013),
+        "Should not emit TS18013 for static private accessor access through a derived constructor type.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
 /// TS2416 base type name should include type arguments from the extends clause,
 /// not the generic parameter names. E.g., `Base<{ bar: string; }>` instead of `Base<T>`.
 #[test]
