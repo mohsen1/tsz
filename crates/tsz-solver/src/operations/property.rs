@@ -597,10 +597,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Recurse into the constraint to find the property
                     self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom))
                 } else {
-                    // TypeParameter with no constraint: fallback to Object members
-                    // In TypeScript, unconstrained type parameters allow access to Object members
-                    // like toString, hasOwnProperty, etc.
-                    self.resolve_object_member_or_not_found(obj_type, prop_name, prop_atom)
+                    PropertyAccessResult::PropertyNotFound {
+                        type_id: obj_type,
+                        property_name: prop_atom,
+                    }
                 }
             }
 
