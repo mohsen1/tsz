@@ -1605,10 +1605,18 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // Optional class methods are emitted in .d.ts as optional properties
-        // with function types.
-        if method.question_token {
-            self.write(": (");
+        let is_computed_name = self
+            .arena
+            .get(method.name)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+
+        // Computed class methods are emitted in .d.ts as property signatures
+        // with function types. Optional methods additionally include `| undefined`.
+        if method.question_token || is_computed_name {
+            self.write(": ");
+            if method.question_token {
+                self.write("(");
+            }
             if let Some(ref type_params) = method.type_parameters
                 && !type_params.nodes.is_empty()
             {
@@ -1618,7 +1626,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_parameters_with_body(&method.parameters, method.body);
             self.write(") => ");
             self.emit_method_function_type_return(method_idx, method);
-            self.write(") | undefined;");
+            if method.question_token {
+                self.write(") | undefined;");
+            } else {
+                self.write(";");
+            }
             self.write_line();
             if let Some(body_node) = self.arena.get(method.body) {
                 self.skip_comments_in_node(body_node.pos, body_node.end);
