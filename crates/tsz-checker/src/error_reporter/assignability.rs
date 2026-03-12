@@ -1148,14 +1148,27 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    // TODO: tsc emits property type mismatch elaboration as related information
-                    return Diagnostic::error(
-                        file_name,
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let detail = format_message(
+                        diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                        &[&prop_name],
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
                         base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: detail,
+                        category: DiagnosticCategory::Message,
+                        code: reason.diagnostic_code(),
+                    });
+                    return diag;
                 }
 
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
