@@ -48,8 +48,50 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
 const MAX_AWAIT_DEPTH: u32 = 10;
 
 impl<'a> CheckerState<'a> {
+    fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(key_expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(key_expr_idx);
+                self.ctx.preserve_literal_types = prev;
+
+                if let Some(lit) = tsz_solver::visitor::literal_value(self.ctx.types, key_type) {
+                    return Some(match lit {
+                        tsz_solver::types::LiteralValue::String(s) => {
+                            self.ctx.types.resolve_atom(s).to_string()
+                        }
+                        tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
+                        tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
+                        tsz_solver::types::LiteralValue::BigInt(b) => {
+                            self.ctx.types.resolve_atom(b).to_string()
+                        }
+                    });
+                }
+
+                if let Some(sym_ref) = tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type)
+                {
+                    return Some(format!("__unique_{}", sym_ref.0));
+                }
+
+                self.ctx
+                    .arena
+                    .get_identifier(node)
+                    .map(|ident| ident.escaped_text.clone())
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
     fn is_expando_element_access_read(
-        &self,
+        &mut self,
         object_expr_idx: NodeIndex,
         key_expr_idx: NodeIndex,
     ) -> bool {
@@ -68,26 +110,10 @@ impl<'a> CheckerState<'a> {
             None
         }
 
-        fn expando_element_key(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-            let node = arena.get(idx)?;
-            match node.kind {
-                k if k == SyntaxKind::Identifier as u16 => {
-                    arena.get_identifier(node).map(|id| id.escaped_text.clone())
-                }
-                k if k == SyntaxKind::StringLiteral as u16
-                    || k == SyntaxKind::NumericLiteral as u16
-                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-                {
-                    arena.get_literal(node).map(|lit| lit.text.clone())
-                }
-                _ => None,
-            }
-        }
-
         let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
             return false;
         };
-        let Some(prop_key) = expando_element_key(self.ctx.arena, key_expr_idx) else {
+        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
             return false;
         };
 

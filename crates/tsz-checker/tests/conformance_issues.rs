@@ -215,6 +215,32 @@ const bad: number = Holder["x"];
 }
 
 #[test]
+fn test_const_alias_expando_element_reads_do_not_emit_ts7053_in_declaration_mode() {
+    let source = r#"
+function foo() {}
+const writeKey = "late-bound";
+const readKey = writeKey;
+foo[writeKey] = "ok";
+const value: string = foo[readKey];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 once expando element keys resolve through const aliases. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {

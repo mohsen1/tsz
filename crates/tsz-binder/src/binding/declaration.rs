@@ -1794,6 +1794,25 @@ impl BinderState {
     /// Tracks both simple identifiers (`X.prop`) and dotted receiver chains
     /// (`A.B.prop`) so function members on namespaces can collect expandos.
     fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex, rhs: NodeIndex) {
+        fn symbol_call(arena: &NodeArena, idx: NodeIndex) -> bool {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return false;
+            }
+            let Some(call) = arena.get_call_expr(node) else {
+                return false;
+            };
+            let Some(callee) = arena.get(call.expression) else {
+                return false;
+            };
+            callee.kind == SyntaxKind::Identifier as u16
+                && arena
+                    .get_identifier(callee)
+                    .is_some_and(|ident| ident.escaped_text == "Symbol")
+        }
+
         fn is_undefined_like_rhs(arena: &NodeArena, idx: NodeIndex) -> bool {
             let Some(node) = arena.get(idx) else {
                 return false;
@@ -1843,7 +1862,75 @@ impl BinderState {
             None
         }
 
-        fn expando_member_key(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        fn resolved_const_expando_key(
+            binder: &BinderState,
+            arena: &NodeArena,
+            sym_id: SymbolId,
+            depth: u8,
+        ) -> Option<String> {
+            if depth > 8 {
+                return None;
+            }
+
+            let symbol = binder.symbols.get(sym_id)?;
+            let decl_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else {
+                symbol
+                    .declarations
+                    .iter()
+                    .copied()
+                    .find(|decl| !decl.is_none())?
+            };
+            if !arena.is_const_variable_declaration(decl_idx) {
+                return None;
+            }
+
+            let decl_node = arena.get(decl_idx)?;
+            let var_decl = arena.get_variable_declaration(decl_node)?;
+            let init_idx = var_decl.initializer;
+            if init_idx.is_none() {
+                return None;
+            }
+            let init_node = arena.get(init_idx)?;
+
+            match init_node.kind {
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                {
+                    arena.get_literal(init_node).map(|lit| lit.text.clone())
+                }
+                k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    let unary = arena.get_unary_expr(init_node)?;
+                    let operand = arena.get(unary.operand)?;
+                    if operand.kind != SyntaxKind::NumericLiteral as u16 {
+                        return None;
+                    }
+                    let lit = arena.get_literal(operand)?;
+                    match unary.operator {
+                        k if k == SyntaxKind::MinusToken as u16 => Some(format!("-{}", lit.text)),
+                        k if k == SyntaxKind::PlusToken as u16 => Some(lit.text.clone()),
+                        _ => None,
+                    }
+                }
+                k if k == SyntaxKind::Identifier as u16 => {
+                    let name = arena.get_identifier(init_node)?.escaped_text.clone();
+                    let next_sym = binder.file_locals.get(&name)?;
+                    resolved_const_expando_key(binder, arena, next_sym, depth + 1)
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    symbol_call(arena, init_idx).then(|| format!("__unique_{}", sym_id.0))
+                }
+                _ => None,
+            }
+        }
+
+        fn expando_member_key(
+            binder: &BinderState,
+            arena: &NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
             let node = arena.get(idx)?;
             match node.kind {
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
@@ -1857,9 +1944,16 @@ impl BinderState {
                     let access = arena.get_access_expr(node)?;
                     let key_node = arena.get(access.name_or_argument)?;
                     match key_node.kind {
-                        k if k == SyntaxKind::Identifier as u16 => arena
-                            .get_identifier(key_node)
-                            .map(|ident| ident.escaped_text.clone()),
+                        k if k == SyntaxKind::Identifier as u16 => {
+                            let ident = arena.get_identifier(key_node)?;
+                            binder
+                                .file_locals
+                                .get(&ident.escaped_text)
+                                .and_then(|sym_id| {
+                                    resolved_const_expando_key(binder, arena, sym_id, 0)
+                                })
+                                .or_else(|| Some(ident.escaped_text.clone()))
+                        }
                         k if k == SyntaxKind::StringLiteral as u16
                             || k == SyntaxKind::NumericLiteral as u16
                             || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
@@ -1884,7 +1978,7 @@ impl BinderState {
         let Some(access) = arena.get_access_expr(lhs_node) else {
             return;
         };
-        let Some(prop_name) = expando_member_key(arena, lhs) else {
+        let Some(prop_name) = expando_member_key(self, arena, lhs) else {
             return;
         };
 

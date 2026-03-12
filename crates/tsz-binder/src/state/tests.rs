@@ -2780,6 +2780,39 @@ o.y = void 0;
     );
 }
 
+#[test]
+fn expando_element_assignments_resolve_const_literal_keys() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+function foo() {}
+const key = "realName";
+const num = 42;
+const sym = Symbol();
+foo[key] = 1;
+foo[num] = 2;
+foo[sym] = 3;
+"#,
+    );
+
+    let props = binder
+        .expando_properties
+        .get("foo")
+        .expect("expected expando properties for foo");
+
+    assert!(props.contains("realName"), "should resolve const string keys");
+    assert!(props.contains("42"), "should resolve const numeric keys");
+
+    let sym_id = binder
+        .file_locals
+        .get("sym")
+        .expect("expected sym local");
+    let unique_name = format!("__unique_{}", sym_id.0);
+    assert!(
+        props.contains(&unique_name),
+        "should resolve const Symbol() keys to internal unique-symbol names"
+    );
+}
+
 // =============================================================================
 // 21. SHORTHAND AMBIENT MODULES
 // =============================================================================
