@@ -11460,6 +11460,7 @@ class Derived extends Base {
 }
         "#,
         CheckerOptions {
+            strict: true,
             target: ScriptTarget::ES2015,
             ..Default::default()
         },
