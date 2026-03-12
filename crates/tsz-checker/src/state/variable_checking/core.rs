@@ -1430,8 +1430,10 @@ impl<'a> CheckerState<'a> {
                     // distinct from lib declarations and never trigger TS2403:
                     // - Namespace bodies (whether exported or not)
                     // - Function scopes (e.g. `var top` vs global `window.top`)
+                    // - Module files (files with import/export have their own scope)
                     let is_in_namespace = current_ns_export_status.is_some();
                     let is_in_function_scope = self.find_enclosing_function(decl_idx).is_some();
+                    let is_external_module = self.ctx.binder.is_external_module();
                     if let Some(name) = symbol_name {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
@@ -1456,10 +1458,11 @@ impl<'a> CheckerState<'a> {
                                         lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
-                                        if !is_in_namespace {
+                                        if !is_in_namespace && !is_external_module {
                                             // Check compatibility (skip for bare declarations).
                                             // Function-scoped variables shadow globals and
                                             // never trigger TS2403 against lib types.
+                                            // Module-scoped variables are distinct from globals.
                                             if !is_in_function_scope
                                                 && !is_bare_declaration
                                                 && !self.are_var_decl_types_compatible(
