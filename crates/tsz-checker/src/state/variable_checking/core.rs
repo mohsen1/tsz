@@ -1426,10 +1426,12 @@ impl<'a> CheckerState<'a> {
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
                     // Only compare against lib declarations when the current variable
-                    // is at file scope. Variables inside namespace bodies (whether
-                    // exported or not) are distinct from global declarations and
-                    // should never trigger TS2403 against lib.d.ts types.
+                    // is at global file scope. Variables in non-global scopes are
+                    // distinct from lib declarations and never trigger TS2403:
+                    // - Namespace bodies (whether exported or not)
+                    // - Function scopes (e.g. `var top` vs global `window.top`)
                     let is_in_namespace = current_ns_export_status.is_some();
+                    let is_in_function_scope = self.find_enclosing_function(decl_idx).is_some();
                     if let Some(name) = symbol_name {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
@@ -1454,11 +1456,12 @@ impl<'a> CheckerState<'a> {
                                         lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
-                                        // Skip entirely for namespace-local variables —
-                                        // they don't merge with lib globals.
                                         if !is_in_namespace {
-                                            // Check compatibility (skip for bare declarations)
-                                            if !is_bare_declaration
+                                            // Check compatibility (skip for bare declarations).
+                                            // Function-scoped variables shadow globals and
+                                            // never trigger TS2403 against lib types.
+                                            if !is_in_function_scope
+                                                && !is_bare_declaration
                                                 && !self.are_var_decl_types_compatible(
                                                     lib_type, final_type,
                                                 )
