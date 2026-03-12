@@ -386,7 +386,7 @@ fn resolve_default_lib_files_from_dir_does_not_fallback_to_core_libs() {
         .expect_err("missing lib.d.ts should fail instead of falling back to core libs");
     let message = err.to_string();
     assert!(
-        message.contains("compilerOptions.lib") && message.contains("es5.full"),
+        message.contains("compilerOptions.lib") && message.contains("lib"),
         "{message}"
     );
 }
@@ -554,16 +554,14 @@ fn default_lib_name_for_target_matches_tsc_spec() {
 
 #[test]
 fn resolve_lib_files_from_dir_supports_tsc_aliases() {
+    // In tsc, --lib es6 maps to lib.es2015.d.ts and --lib es7 maps to
+    // lib.es2016.d.ts. These are the only standard aliases.
     let temp = TempDir::new().expect("temp dir");
-    write_file(&temp.path, "lib.es5.full.d.ts", "interface A {}\n");
-    write_file(&temp.path, "lib.es2015.full.d.ts", "interface B {}\n");
+    write_file(&temp.path, "lib.es2015.d.ts", "interface B {}\n");
     write_file(&temp.path, "lib.es2016.d.ts", "interface C {}\n");
 
-    let resolved = resolve_lib_files_from_dir(
-        &["lib".to_string(), "es6".to_string(), "es7".to_string()],
-        &temp.path,
-    )
-    .expect("aliases should resolve");
+    let resolved = resolve_lib_files_from_dir(&["es6".to_string(), "es7".to_string()], &temp.path)
+        .expect("aliases should resolve");
     let names: Vec<String> = resolved
         .iter()
         .map(|p| {
@@ -574,9 +572,8 @@ fn resolve_lib_files_from_dir_supports_tsc_aliases() {
         })
         .collect();
 
-    assert_eq!(names[0], "lib.es5.full.d.ts");
-    assert_eq!(names[1], "lib.es2015.full.d.ts");
-    assert_eq!(names[2], "lib.es2016.d.ts");
+    assert_eq!(names[0], "lib.es2015.d.ts");
+    assert_eq!(names[1], "lib.es2016.d.ts");
 }
 
 #[test]

@@ -47,8 +47,7 @@ fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_co
 
     assert_eq!(
         error_count, expected_errors,
-        "Expected {} errors with codes {:?}, got {}: {:?}",
-        expected_errors, error_codes, error_count, diagnostics
+        "Expected {expected_errors} errors with codes {error_codes:?}, got {error_count}: {diagnostics:?}"
     );
 }
 
