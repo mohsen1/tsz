@@ -1174,6 +1174,17 @@ impl ModuleResolver {
         import_kind: ImportKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let candidate = containing_dir.join(specifier);
+        let prefer_directory = specifier == "."
+            || specifier == ".."
+            || specifier.ends_with('/')
+            || specifier.ends_with('\\');
+        let try_resolve_candidate = |path: &Path| {
+            if prefer_directory {
+                self.try_directory(path)
+            } else {
+                self.try_file_or_directory(path)
+            }
+        };
 
         // Check if specifier has an explicit extension
         let specifier_has_extension = Path::new(specifier)
@@ -1219,7 +1230,7 @@ impl ModuleResolver {
 
         if needs_extension_check {
             // Try to resolve to determine what extension to suggest (TS2835)
-            if let Some(resolved) = self.try_file_or_directory(&candidate) {
+            if let Some(resolved) = try_resolve_candidate(&candidate) {
                 // Resolution succeeded implicitly - this is an error in ESM mode
                 let resolved_ext = ModuleExtension::from_path(&resolved);
                 // Suggest the .js extension (TypeScript convention: import .js, compile from .ts)
@@ -1250,7 +1261,7 @@ impl ModuleResolver {
             });
         }
 
-        if let Some(resolved) = self.try_file_or_directory(&candidate) {
+        if let Some(resolved) = try_resolve_candidate(&candidate) {
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
                 is_external: false,
@@ -2146,6 +2157,33 @@ impl ModuleResolver {
         }
     }
 
+    fn try_directory(&self, path: &Path) -> Option<PathBuf> {
+        if !path.is_dir() {
+            return None;
+        }
+
+        let package_json_path = path.join("package.json");
+        if package_json_path.exists()
+            && let Ok(pj) = self.read_package_json(&package_json_path)
+        {
+            if let Some(types) = pj.types.or(pj.typings) {
+                let types_path = path.join(&types);
+                if let Some(resolved) = self.try_types_entry(&types_path) {
+                    return Some(resolved);
+                }
+            }
+            if let Some(main) = &pj.main {
+                let main_path = path.join(main);
+                if let Some(resolved) = self.try_file(&main_path) {
+                    return Some(resolved);
+                }
+            }
+        }
+
+        let index = path.join("index");
+        self.try_file(&index)
+    }
+
     /// Try to resolve a path as a file or directory
     fn try_file_or_directory(&self, path: &Path) -> Option<PathBuf> {
         // Try as file first
@@ -2153,33 +2191,7 @@ impl ModuleResolver {
             return Some(resolved);
         }
 
-        // Try as directory: check package.json for types/main, then index
-        if path.is_dir() {
-            let package_json_path = path.join("package.json");
-            if package_json_path.exists()
-                && let Ok(pj) = self.read_package_json(&package_json_path)
-            {
-                // Try types/typings field first. These entries are
-                // declaration-oriented and must not resolve to runtime JS files.
-                if let Some(types) = pj.types.or(pj.typings) {
-                    let types_path = path.join(&types);
-                    if let Some(resolved) = self.try_types_entry(&types_path) {
-                        return Some(resolved);
-                    }
-                }
-                // Try main field with extension remapping
-                if let Some(main) = &pj.main {
-                    let main_path = path.join(main);
-                    if let Some(resolved) = self.try_file(&main_path) {
-                        return Some(resolved);
-                    }
-                }
-            }
-            let index = path.join("index");
-            return self.try_file(&index);
-        }
-
-        None
+        self.try_directory(path)
     }
 
     /// Resolve an exports target without Node16 extension substitution.
@@ -3482,6 +3494,69 @@ mod tests {
             assert_eq!(module.resolved_path, dir.join("utils").join("index.ts"));
             assert_eq!(module.extension, ModuleExtension::Ts);
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolver_dot_and_trailing_slash_prefer_directory_index() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_resolver_dot_imports");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("a").join("b")).unwrap();
+
+        fs::write(dir.join("a.ts"), "export default { a: 0 };").unwrap();
+        fs::write(
+            dir.join("a").join("index.ts"),
+            "export default { aIndex: 0 };",
+        )
+        .unwrap();
+        fs::write(dir.join("a").join("test.ts"), "import value from '.';").unwrap();
+        fs::write(
+            dir.join("a").join("b").join("test.ts"),
+            "import value from '..';",
+        )
+        .unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Bundler),
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let dot = resolver
+            .resolve(".", &dir.join("a").join("test.ts"), Span::new(0, 1))
+            .expect("Expected '.' to resolve");
+        assert_eq!(dot.resolved_path, dir.join("a").join("index.ts"));
+
+        let dot_slash = resolver
+            .resolve("./", &dir.join("a").join("test.ts"), Span::new(0, 2))
+            .expect("Expected './' to resolve");
+        assert_eq!(dot_slash.resolved_path, dir.join("a").join("index.ts"));
+
+        let dotdot = resolver
+            .resolve(
+                "..",
+                &dir.join("a").join("b").join("test.ts"),
+                Span::new(0, 2),
+            )
+            .expect("Expected '..' to resolve");
+        assert_eq!(
+            fs::canonicalize(&dotdot.resolved_path).unwrap(),
+            fs::canonicalize(dir.join("a").join("index.ts")).unwrap()
+        );
+
+        let dotdot_slash = resolver
+            .resolve(
+                "../",
+                &dir.join("a").join("b").join("test.ts"),
+                Span::new(0, 3),
+            )
+            .expect("Expected '../' to resolve");
+        assert_eq!(
+            fs::canonicalize(&dotdot_slash.resolved_path).unwrap(),
+            fs::canonicalize(dir.join("a").join("index.ts")).unwrap()
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

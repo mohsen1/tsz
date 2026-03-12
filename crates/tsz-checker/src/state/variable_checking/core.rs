@@ -1014,12 +1014,20 @@ impl<'a> CheckerState<'a> {
             // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid.
             let is_redeclaration = self.ctx.var_decl_types.contains_key(&sym_id);
             if var_decl.type_annotation.is_some() && !is_redeclaration {
+                let accessor_circular =
+                    self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
                 // Try AST-based check first (catches complex circularities that confuse the solver)
-                let ast_circular = self
-                    .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
-                    .is_some();
+                let ast_circular = !accessor_circular
+                    && self
+                        .find_circular_reference_in_type_node(
+                            var_decl.type_annotation,
+                            sym_id,
+                            false,
+                        )
+                        .is_some();
                 // Then try semantic check
-                let semantic_circular = !ast_circular
+                let semantic_circular = !accessor_circular
+                    && !ast_circular
                     && query::has_type_query_for_symbol(
                         self.ctx.types,
                         final_type,
@@ -1030,10 +1038,12 @@ impl<'a> CheckerState<'a> {
                 // E.g., `var d: typeof e; var e: typeof d;` — the AST check only
                 // sees `typeof e` doesn't directly reference `d`, but following the
                 // chain through `e`'s annotation reveals `typeof d`.
-                let transitive_circular = !ast_circular
+                let transitive_circular = !accessor_circular
+                    && !ast_circular
                     && !semantic_circular
                     && self.check_transitive_type_query_circularity(final_type, sym_id);
-                if (ast_circular || semantic_circular || transitive_circular)
+                if !accessor_circular
+                    && (ast_circular || semantic_circular || transitive_circular)
                     && let Some(ref name) = var_name
                 {
                     let message = format!(

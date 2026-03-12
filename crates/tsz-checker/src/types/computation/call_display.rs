@@ -1,8 +1,9 @@
-//! Display skeleton and constructor-propagation helpers for call expression resolution.
+//! Display skeleton, constructor-propagation, and IIFE helpers for call expression resolution.
 //!
 //! Extracted from `call.rs` to keep that file under the 2000 LOC limit.
 //! Contains:
-//! - `refreshed_generic_call_arg_type_with_context` — re-evaluate context-sensitive args
+//! - `refreshed_generic_call_arg_type` / `refreshed_generic_call_arg_type_with_context` — re-evaluate context-sensitive args
+//! - `setup_iife_contextual_type` — IIFE contextual type wrapping
 //! - `type_display_skeleton` / `call_signature_display_skeleton` — structural fingerprint helpers
 //! - `propagate_generic_constructor_display_defs` — DefId propagation after generic inference
 //! - `object_literal_has_computed_property_names` — computed property name detection
@@ -10,9 +11,87 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{FunctionShape, TypeId};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn refreshed_generic_call_arg_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        cached_arg_type: TypeId,
+    ) -> TypeId {
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return cached_arg_type;
+        };
+
+        match arg_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                // Use the already-cached type from Round 2 inference.
+                // Previously this cleared the entire subtree cache and recomputed,
+                // but that destroys contextual typing for nested closures
+                // (arrow functions/function expressions inside object literal properties),
+                // causing false TS7006 when the recomputation happens without
+                // contextual type information.
+                self.get_type_of_node(arg_idx)
+            }
+            _ => cached_arg_type,
+        }
+    }
+
+    /// For IIFEs (immediately invoked function expressions), wrap the call expression's
+    /// contextual type into a callable type so the function expression resolver can extract
+    /// the return type (and for generators, the yield type).
+    ///
+    /// Returns `Some(original_ctx_type)` if wrapping was performed (caller should restore
+    /// the contextual type after call resolution), or `None` if no wrapping was needed.
+    pub(crate) fn setup_iife_contextual_type(
+        &mut self,
+        callee_expression: NodeIndex,
+    ) -> Option<TypeId> {
+        let ctx_type = self.ctx.contextual_type?;
+
+        // Unwrap parenthesized expressions to find the actual callee.
+        // Handles both `function*(){}()` and `(function*(){})()`.
+        let is_function_expr = {
+            let mut expr_idx = callee_expression;
+            loop {
+                match self.ctx.arena.get(expr_idx) {
+                    Some(n)
+                        if n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || n.kind == syntax_kind_ext::ARROW_FUNCTION =>
+                    {
+                        break true;
+                    }
+                    Some(n) if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                        if let Some(paren) = self.ctx.arena.get_parenthesized(n) {
+                            expr_idx = paren.expression;
+                        } else {
+                            break false;
+                        }
+                    }
+                    _ => break false,
+                }
+            }
+        };
+
+        if is_function_expr {
+            // Wrap contextual type as `() => ctx_type` so the function expression
+            // resolver can use get_return_type() to extract the expected return type.
+            let wrapper_fn = self
+                .ctx
+                .types
+                .factory()
+                .function(FunctionShape::new(vec![], ctx_type));
+            self.ctx.contextual_type = Some(wrapper_fn);
+            Some(ctx_type) // save original to restore later
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn refreshed_generic_call_arg_type_with_context(
         &mut self,
         arg_idx: NodeIndex,

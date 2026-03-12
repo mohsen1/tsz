@@ -903,7 +903,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &mut placeholder_visited,
                     )
                 });
-            if !appears_in_other_params {
+            let has_covariant_candidates = var_map
+                .get(&target_type)
+                .copied()
+                .and_then(|var| infer_ctx.get_constraints(var))
+                .is_some_and(|constraints| !constraints.lower_bounds.is_empty());
+            if !appears_in_other_params || !has_covariant_candidates {
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,

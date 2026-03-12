@@ -1,6 +1,7 @@
 //! Element access, super keyword, await type computation, and optional chain detection.
 
 use crate::state::{CheckerState, EnumKind};
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -157,7 +158,20 @@ impl<'a> CheckerState<'a> {
         // resolve_type_for_property_access replaces it with its constraint. But for
         // generic indexed access (e.g., U[keyof T] where U extends T), we need to
         // keep the original type parameter to produce the correct deferred type.
-        let pre_resolution_object_type = object_type;
+        //
+        // Instance `this[K]` writes in class members need the same preservation:
+        // the expression `this` evaluates to the concrete class instance type, but
+        // generic writes like `this[key] = value` should still target deferred
+        // `this[K]` so the polymorphic `this` relationship survives assignability.
+        let pre_resolution_object_type = if self.is_this_expression(access.expression)
+            && self.ctx.enclosing_class.is_some()
+            && !self.is_this_in_nested_function_inside_class(idx)
+            && !self.is_this_in_static_class_member(idx)
+        {
+            self.ctx.types.this_type()
+        } else {
+            object_type
+        };
 
         let literal_string = self.get_literal_string_from_node(access.name_or_argument);
         let numeric_string_index = literal_string
@@ -302,8 +316,11 @@ impl<'a> CheckerState<'a> {
         // write target collapses to the constraint's index-signature value type
         // (e.g. `number`) and incorrectly accepts writes that should produce
         // generic TS2322 errors.
+        let is_generic_receiver =
+            tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+                || tsz_solver::visitor::is_this_type(self.ctx.types, pre_resolution_object_type);
         if self.ctx.skip_flow_narrowing
-            && tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+            && is_generic_receiver
             && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
         {
             return self
@@ -401,6 +418,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 return TypeId::ERROR;
+            }
+
+            // For merged class/function/enum + namespace symbols, literal element
+            // access should see exported namespace members just like property access.
+            if let Some(expr_node) = self.ctx.arena.get(access.expression)
+                && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
+            {
+                let expr_name = &expr_ident.escaped_text;
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
+                        && (symbol.flags
+                            & (symbol_flags::CLASS
+                                | symbol_flags::FUNCTION
+                                | symbol_flags::REGULAR_ENUM))
+                            != 0;
+
+                    if is_merged
+                        && let Some(exports) = symbol.exports.as_ref()
+                        && let Some(member_id) = exports.get(name)
+                    {
+                        result_type = Some(self.get_type_of_symbol(member_id));
+                        use_index_signature_check = false;
+                    }
+                }
             }
 
             if let Some(member_type) =

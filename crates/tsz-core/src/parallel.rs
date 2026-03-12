@@ -37,7 +37,8 @@ use crate::config::resolve_default_lib_files;
 use crate::emitter::ScriptTarget;
 use crate::lib_loader;
 use crate::parser::NodeIndex;
-use crate::parser::node::NodeArena;
+use crate::parser::NodeList;
+use crate::parser::node::{NodeArena, SourceFileData};
 use crate::parser::{ParseDiagnostic, ParserState};
 use anyhow::{Context, Result, bail};
 #[cfg(not(target_arch = "wasm32"))]
@@ -50,9 +51,73 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Once;
 use tsz_common::interner::{Atom, Interner};
+use tsz_scanner::SyntaxKind;
 
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
 type Reexports = FxHashMap<String, ModuleExportEntry>;
+
+fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindResult {
+    let mut arena = NodeArena::new();
+    let end_pos = source_text.len() as u32;
+    let eof_token = arena.add_token(SyntaxKind::EndOfFileToken as u16, end_pos, end_pos);
+    let source_file = arena.add_source_file(
+        0,
+        end_pos,
+        SourceFileData {
+            statements: NodeList::default(),
+            end_of_file_token: eof_token,
+            file_name: file_name.clone(),
+            text: Arc::<str>::from(source_text),
+            language_version: 99,
+            language_variant: 0,
+            script_kind: 3,
+            is_declaration_file: false,
+            has_no_default_lib: false,
+            comments: Vec::new(),
+            parent: NodeIndex::NONE,
+            id: 0,
+            modifier_flags: 0,
+            transform_flags: 0,
+        },
+    );
+
+    let mut binder = BinderState::new();
+    binder.set_debug_file(&file_name);
+    binder.bind_source_file(&arena, source_file);
+
+    BindResult {
+        file_name,
+        source_file,
+        arena: Arc::new(arena),
+        symbols: binder.symbols,
+        file_locals: binder.file_locals,
+        declared_modules: binder.declared_modules,
+        module_exports: binder.module_exports,
+        node_symbols: binder.node_symbols,
+        module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
+        symbol_arenas: binder.symbol_arenas,
+        declaration_arenas: binder.declaration_arenas,
+        scopes: binder.scopes,
+        node_scope_ids: binder.node_scope_ids,
+        parse_diagnostics: Vec::new(),
+        shorthand_ambient_modules: binder.shorthand_ambient_modules,
+        global_augmentations: binder.global_augmentations,
+        module_augmentations: binder.module_augmentations,
+        reexports: binder.reexports,
+        wildcard_reexports: binder.wildcard_reexports,
+        wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
+        lib_binders: Vec::new(),
+        lib_arenas: Vec::new(),
+        lib_symbol_ids: binder.lib_symbol_ids,
+        lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
+        flow_nodes: binder.flow_nodes,
+        node_flow: binder.node_flow,
+        switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
+        is_external_module: binder.is_external_module,
+        expando_properties: std::mem::take(&mut binder.expando_properties),
+        alias_partners: binder.alias_partners,
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBuf>> {
@@ -279,45 +344,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
             // JSON module imports should be resolved during module resolution and
             // emit TS2732 if resolveJsonModule is false.
             if file_name.ends_with(".json") {
-                // Create empty result for JSON files
-                let arena = NodeArena::new();
-                let source_file = NodeIndex::NONE;
-                let parse_diagnostics = Vec::new();
-
-                let binder = BinderState::new();
-
-                return BindResult {
-                    file_name,
-                    source_file,
-                    arena: Arc::new(arena),
-                    symbols: binder.symbols,
-                    file_locals: binder.file_locals,
-                    declared_modules: binder.declared_modules,
-                    module_exports: binder.module_exports,
-                    node_symbols: binder.node_symbols,
-                    module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
-                    symbol_arenas: binder.symbol_arenas,
-                    declaration_arenas: binder.declaration_arenas,
-                    scopes: binder.scopes,
-                    node_scope_ids: binder.node_scope_ids,
-                    parse_diagnostics,
-                    shorthand_ambient_modules: binder.shorthand_ambient_modules,
-                    global_augmentations: binder.global_augmentations,
-                    module_augmentations: binder.module_augmentations,
-                    reexports: binder.reexports,
-                    wildcard_reexports: binder.wildcard_reexports,
-                    wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-                    lib_binders: Vec::new(),
-                    lib_arenas: Vec::new(),
-                    lib_symbol_ids: binder.lib_symbol_ids,
-                    lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
-                    flow_nodes: binder.flow_nodes,
-                    node_flow: binder.node_flow,
-                    switch_clause_to_switch: binder.switch_clause_to_switch,
-                    is_external_module: false,
-                    expando_properties: FxHashMap::default(),
-                    alias_partners: FxHashMap::default(),
-                };
+                return synthesize_json_bind_result(file_name, source_text);
             }
 
             // Parse
@@ -369,6 +396,10 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
 
 /// Bind a single file (for comparison/testing)
 pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResult {
+    if file_name.ends_with(".json") {
+        return synthesize_json_bind_result(file_name, source_text);
+    }
+
     let mut parser = ParserState::new(file_name.clone(), source_text);
     let source_file = parser.parse_source_file();
 
@@ -701,46 +732,7 @@ fn bind_file_with_libs(
     // JSON module imports should be resolved during module resolution and
     // emit TS2732 if resolveJsonModule is false.
     if file_name.ends_with(".json") {
-        // Create empty result for JSON files
-        let arena = NodeArena::new();
-        let source_file = NodeIndex::NONE;
-        let parse_diagnostics = Vec::new();
-
-        let binder = BinderState::new();
-        let lib_binders = binder.lib_binders.clone();
-
-        return BindResult {
-            file_name,
-            source_file,
-            arena: Arc::new(arena),
-            symbols: binder.symbols,
-            file_locals: binder.file_locals,
-            declared_modules: binder.declared_modules,
-            module_exports: binder.module_exports,
-            node_symbols: binder.node_symbols,
-            module_declaration_exports_publicly: binder.module_declaration_exports_publicly,
-            symbol_arenas: binder.symbol_arenas,
-            declaration_arenas: binder.declaration_arenas,
-            scopes: binder.scopes,
-            node_scope_ids: binder.node_scope_ids,
-            parse_diagnostics,
-            shorthand_ambient_modules: binder.shorthand_ambient_modules,
-            global_augmentations: binder.global_augmentations,
-            module_augmentations: binder.module_augmentations,
-            reexports: binder.reexports,
-            wildcard_reexports: binder.wildcard_reexports,
-            wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-            lib_binders,
-            lib_arenas: Vec::new(), // JSON files don't use libs
-            lib_symbol_ids: binder.lib_symbol_ids,
-            lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
-            flow_nodes: binder.flow_nodes,
-            node_flow: binder.node_flow,
-            switch_clause_to_switch: binder.switch_clause_to_switch,
-            is_external_module: false,
-            expando_properties: FxHashMap::default(),
-            alias_partners: FxHashMap::default(),
-        };
+        return synthesize_json_bind_result(file_name, source_text);
     }
 
     // Parse
@@ -2598,6 +2590,12 @@ pub fn create_binder_from_bound_file(
             alias_partners: program.alias_partners.clone(),
         },
     );
+
+    binder.is_external_module = file.is_external_module;
+    if let Some(root_scope) = binder.scopes.first() {
+        binder.current_scope = root_scope.table.clone();
+        binder.current_scope_id = crate::binder::ScopeId(0);
+    }
 
     binder.declared_modules = program.declared_modules.clone();
 

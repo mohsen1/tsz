@@ -1651,6 +1651,40 @@ fn test_rest_any_bivariant_subtyping_toggle() {
 }
 
 #[test]
+fn test_never_param_is_not_subtype_of_any_rest_target() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.allow_bivariant_rest = true;
+
+    let target = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: interner.array(TypeId::ANY),
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let source = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::NEVER)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(!checker.is_subtype_of(source, target));
+}
+
+#[test]
 fn test_tuple_subtyping_extra_elements() {
     // CRITICAL: [number, string] is NOT assignable to [number]
     let interner = TypeInterner::new();

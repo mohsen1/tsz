@@ -20,7 +20,7 @@ pub(crate) struct DiagnosticFormatInput<'a> {
 }
 
 impl Server {
-    fn should_omit_per_file_semantic_diagnostic(
+    const fn should_omit_per_file_semantic_diagnostic(
         diag: &tsz::checker::diagnostics::Diagnostic,
     ) -> bool {
         diag.code == tsz::checker::diagnostics::diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE

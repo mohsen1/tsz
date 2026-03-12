@@ -102,6 +102,7 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             };
+            let _ = self.type_reference_symbol_type(sym_id);
             // Use Lazy(DefId) instead of Ref(SymbolRef)
             let base_type = self.ctx.create_lazy_type_ref(sym_id);
             if has_type_args {
@@ -124,6 +125,32 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
             let name = ident.escaped_text.as_str();
+
+            // Type literal members inside namespaces should prefer same-namespace
+            // type declarations before falling back to file/global symbols.
+            if self.lookup_type_parameter(name).is_none()
+                && let Some(sym_id) =
+                    self.resolve_unqualified_name_in_enclosing_namespace(type_name_idx, name)
+            {
+                let _ = self.type_reference_symbol_type(sym_id);
+                let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                if has_type_args {
+                    let type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| {
+                                    self.get_type_from_type_node_in_type_literal(arg_idx)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    return factory.application(base_type, type_args);
+                }
+                return base_type;
+            }
 
             if has_type_args {
                 // Handle compiler-intrinsic types that need special TypeData
@@ -240,6 +267,7 @@ impl<'a> CheckerState<'a> {
                 let base_type = if let Some(type_param) = type_param {
                     type_param
                 } else if let Some(sym_id) = sym_id {
+                    let _ = self.type_reference_symbol_type(sym_id);
                     // Use Lazy(DefId) instead of Ref(SymbolRef)
                     self.ctx.create_lazy_type_ref(sym_id)
                 } else {
@@ -263,6 +291,7 @@ impl<'a> CheckerState<'a> {
                 if let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
+                    let _ = self.type_reference_symbol_type(sym_id);
                     // Use Lazy(DefId) instead of Ref(SymbolRef)
                     return self.ctx.create_lazy_type_ref(sym_id);
                 }
@@ -327,6 +356,7 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
+                let _ = self.type_reference_symbol_type(sym_id);
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false
@@ -384,6 +414,220 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn enclosing_type_literal_owner_name(&self, idx: NodeIndex) -> Option<String> {
+        let mut current = idx;
+        let mut depth = 0usize;
+        while depth < 64 {
+            depth += 1;
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+            let node = self.ctx.arena.get(current)?;
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    let alias = self.ctx.arena.get_type_alias(node)?;
+                    let ident = self.ctx.arena.get_identifier_at(alias.name)?;
+                    return Some(ident.escaped_text.clone());
+                }
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.ctx.arena.get_variable_declaration(node)?;
+                    let ident = self.ctx.arena.get_identifier_at(decl.name)?;
+                    return Some(ident.escaped_text.clone());
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn type_literal_accessor_circular_reference(
+        &self,
+        type_node_idx: NodeIndex,
+        accessor_name_idx: NodeIndex,
+        owner_name: &str,
+    ) -> bool {
+        let Some(accessor_name) = self.get_property_name(accessor_name_idx) else {
+            return false;
+        };
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+
+        if type_node.kind == syntax_kind_ext::TYPE_QUERY {
+            let Some(query) = self.ctx.arena.get_type_query(type_node) else {
+                return false;
+            };
+            let Some(expr_node) = self.ctx.arena.get(query.expr_name) else {
+                return false;
+            };
+
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+                    return false;
+                };
+                let object_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .map(|ident| ident.escaped_text.as_str());
+                let property_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.as_str());
+                return object_name == Some(owner_name)
+                    && property_name == Some(accessor_name.as_str());
+            }
+
+            if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) else {
+                    return false;
+                };
+                let object_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(qn.left)
+                    .map(|ident| ident.escaped_text.as_str());
+                let property_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(qn.right)
+                    .map(|ident| ident.escaped_text.as_str());
+                return object_name == Some(owner_name)
+                    && property_name == Some(accessor_name.as_str());
+            }
+        }
+
+        if type_node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            let Some(indexed) = self.ctx.arena.get_indexed_access_type(type_node) else {
+                return false;
+            };
+            let Some(object_type_node) = self.ctx.arena.get(indexed.object_type) else {
+                return false;
+            };
+            if object_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            let Some(type_ref) = self.ctx.arena.get_type_ref(object_type_node) else {
+                return false;
+            };
+            let object_name = self
+                .ctx
+                .arena
+                .get_identifier_at(type_ref.type_name)
+                .map(|ident| ident.escaped_text.as_str());
+            if object_name != Some(owner_name) {
+                return false;
+            }
+
+            let Some(index_node) = self.ctx.arena.get(indexed.index_type) else {
+                return false;
+            };
+            if let Some(lit) = self.ctx.arena.get_literal(index_node) {
+                return lit.text == accessor_name;
+            }
+            if let Some(lit_type) = self.ctx.arena.get_literal_type(index_node)
+                && let Some(inner) = self.ctx.arena.get(lit_type.literal)
+                && let Some(lit) = self.ctx.arena.get_literal(inner)
+            {
+                return lit.text == accessor_name;
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn type_literal_has_circular_accessor_reference(
+        &self,
+        type_node_idx: NodeIndex,
+    ) -> bool {
+        struct AccessorMemberInfo {
+            circular_self_reference: bool,
+        }
+
+        #[derive(Default)]
+        struct AccessorAggregate {
+            getter: Option<AccessorMemberInfo>,
+            setter: Option<AccessorMemberInfo>,
+        }
+
+        let Some(owner_name) = self.enclosing_type_literal_owner_name(type_node_idx) else {
+            return false;
+        };
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return false;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+            return false;
+        };
+
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
+
+        for &member_idx in &type_lit.members.nodes {
+            let Some(member) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if (member.kind != syntax_kind_ext::GET_ACCESSOR
+                && member.kind != syntax_kind_ext::SET_ACCESSOR)
+                || self.ctx.arena.get_accessor(member).is_none()
+            {
+                continue;
+            }
+            let Some(accessor) = self.ctx.arena.get_accessor(member) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(accessor.name) else {
+                continue;
+            };
+            let name_atom = self.ctx.types.intern_string(&name);
+            let entry = accessors.entry(name_atom).or_default();
+
+            if member.kind == syntax_kind_ext::GET_ACCESSOR {
+                let circular_self_reference = accessor.type_annotation.is_some()
+                    && self.type_literal_accessor_circular_reference(
+                        accessor.type_annotation,
+                        accessor.name,
+                        &owner_name,
+                    );
+                entry.getter = Some(AccessorMemberInfo {
+                    circular_self_reference,
+                });
+            } else {
+                let mut circular_self_reference = false;
+                if let Some(&param_idx) = accessor.parameters.nodes.first()
+                    && let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    circular_self_reference = param.type_annotation.is_some()
+                        && self.type_literal_accessor_circular_reference(
+                            param.type_annotation,
+                            accessor.name,
+                            &owner_name,
+                        );
+                }
+                entry.setter = Some(AccessorMemberInfo {
+                    circular_self_reference,
+                });
+            }
+        }
+
+        accessors.values().any(|accessor| {
+            accessor
+                .getter
+                .as_ref()
+                .is_some_and(|getter| getter.circular_self_reference)
+                || accessor
+                    .setter
+                    .as_ref()
+                    .is_some_and(|setter| setter.circular_self_reference)
+        })
+    }
+
     // =========================================================================
     // Type Literal Resolution
     // =========================================================================
@@ -431,10 +675,18 @@ impl<'a> CheckerState<'a> {
         let Some(data) = self.ctx.arena.get_type_literal(node) else {
             return TypeId::ERROR; // Missing type literal data - propagate error
         };
+        let owner_name = self.enclosing_type_literal_owner_name(idx);
+
+        struct AccessorMemberInfo {
+            name_idx: NodeIndex,
+            type_annotation: NodeIndex,
+            resolved_type: TypeId,
+            circular_self_reference: bool,
+        }
 
         struct AccessorAggregate {
-            getter: Option<TypeId>,
-            setter: Option<TypeId>,
+            getter: Option<AccessorMemberInfo>,
+            setter: Option<AccessorMemberInfo>,
             declaration_order: u32,
         }
 
@@ -679,38 +931,111 @@ impl<'a> CheckerState<'a> {
                 });
 
                 if member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR {
-                    let getter_type = if accessor.type_annotation.is_some() {
-                        self.get_type_from_type_node_in_type_literal(accessor.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    };
-                    entry.getter = Some(getter_type);
+                    let circular_self_reference = accessor.type_annotation.is_some()
+                        && owner_name.as_deref().is_some_and(|owner_name| {
+                            self.type_literal_accessor_circular_reference(
+                                accessor.type_annotation,
+                                accessor.name,
+                                owner_name,
+                            )
+                        });
+                    let resolved_type =
+                        if accessor.type_annotation.is_some() && !circular_self_reference {
+                            self.get_type_from_type_node_in_type_literal(accessor.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                    entry.getter = Some(AccessorMemberInfo {
+                        name_idx: accessor.name,
+                        type_annotation: accessor.type_annotation,
+                        resolved_type,
+                        circular_self_reference,
+                    });
                 } else {
-                    let setter_type = accessor
-                        .parameters
-                        .nodes
-                        .first()
-                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                        .and_then(|param| {
-                            (param.type_annotation.is_some()).then(|| {
-                                self.get_type_from_type_node_in_type_literal(param.type_annotation)
-                            })
-                        })
-                        .unwrap_or(TypeId::UNKNOWN);
-                    entry.setter = Some(setter_type);
+                    let mut type_annotation = NodeIndex::NONE;
+                    let mut circular_self_reference = false;
+                    let mut resolved_type = TypeId::UNKNOWN;
+                    if let Some(&param_idx) = accessor.parameters.nodes.first()
+                        && let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                    {
+                        type_annotation = param.type_annotation;
+                        circular_self_reference = param.type_annotation.is_some()
+                            && owner_name.as_deref().is_some_and(|owner_name| {
+                                self.type_literal_accessor_circular_reference(
+                                    param.type_annotation,
+                                    accessor.name,
+                                    owner_name,
+                                )
+                            });
+                        if param.type_annotation.is_some() && !circular_self_reference {
+                            resolved_type =
+                                self.get_type_from_type_node_in_type_literal(param.type_annotation);
+                        }
+                    }
+                    entry.setter = Some(AccessorMemberInfo {
+                        name_idx: accessor.name,
+                        type_annotation,
+                        resolved_type,
+                        circular_self_reference,
+                    });
                 }
             }
         }
 
         // Convert accessors to properties (getter-only implies readonly)
         for (name, accessor) in accessors {
-            let read_type = accessor
-                .getter
-                .or(accessor.setter)
-                .unwrap_or(TypeId::UNKNOWN);
-            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
-            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            let getter_requires_ts2502 = accessor.getter.as_ref().is_some_and(|getter| {
+                getter.circular_self_reference
+                    && accessor.setter.as_ref().is_none_or(|setter| {
+                        setter.type_annotation.is_none() || setter.circular_self_reference
+                    })
+            });
+            let setter_requires_ts2502 = accessor.setter.as_ref().is_some_and(|setter| {
+                setter.circular_self_reference
+                    && accessor.getter.as_ref().is_none_or(|getter| {
+                        getter.type_annotation.is_none() || getter.circular_self_reference
+                    })
+            });
+
+            let getter_type = accessor.getter.as_ref().map(|getter| {
+                if getter_requires_ts2502 {
+                    let name = self.ctx.types.resolve_atom_ref(name).to_string();
+                    let message = format!(
+                        "'{name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(getter.name_idx, &message, 2502);
+                    TypeId::ANY
+                } else if getter.circular_self_reference {
+                    accessor
+                        .setter
+                        .as_ref()
+                        .map_or(TypeId::ANY, |setter| setter.resolved_type)
+                } else {
+                    getter.resolved_type
+                }
+            });
+            let setter_type = accessor.setter.as_ref().map(|setter| {
+                if setter_requires_ts2502 {
+                    let name = self.ctx.types.resolve_atom_ref(name).to_string();
+                    let message = format!(
+                        "'{name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(setter.name_idx, &message, 2502);
+                    TypeId::ANY
+                } else if setter.circular_self_reference {
+                    accessor
+                        .getter
+                        .as_ref()
+                        .map_or(TypeId::UNKNOWN, |getter| getter.resolved_type)
+                } else {
+                    setter.resolved_type
+                }
+            });
+
+            let read_type = getter_type.or(setter_type).unwrap_or(TypeId::UNKNOWN);
+            let write_type = setter_type.or(getter_type).unwrap_or(read_type);
+            let readonly = getter_type.is_some() && setter_type.is_none();
             properties.push(PropertyInfo {
                 name,
                 type_id: read_type,

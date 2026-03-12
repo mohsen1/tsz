@@ -521,7 +521,7 @@ impl<'a> CheckerState<'a> {
 
         let mut formatter = self.ctx.create_type_formatter();
         let index_str = formatter.format(index_type);
-        let object_str = formatter.format(object_type);
+        let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
         let message = format!(
             "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
         );

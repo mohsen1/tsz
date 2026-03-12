@@ -402,6 +402,79 @@ impl<'a> CheckerState<'a> {
         Some(ty)
     }
 
+    pub(crate) fn contextual_parameter_type_with_env_from_expected(
+        &mut self,
+        expected: TypeId,
+        index: usize,
+        is_rest: bool,
+    ) -> Option<TypeId> {
+        let expected = self.normalize_contextual_signature_with_env(expected);
+        if expected == TypeId::ERROR {
+            return None;
+        }
+        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            expected,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+
+        if is_rest {
+            helper.get_rest_parameter_type(index)
+        } else {
+            helper.get_parameter_type(index)
+        }
+    }
+
+    pub(crate) fn contextual_parameter_type_for_call_with_env_from_expected(
+        &mut self,
+        expected: TypeId,
+        index: usize,
+        arg_count: usize,
+    ) -> Option<TypeId> {
+        let expected = self.normalize_contextual_signature_with_env(expected);
+        if expected == TypeId::ERROR {
+            return None;
+        }
+        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            expected,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+
+        helper.get_parameter_type_for_call(index, arg_count)
+    }
+
+    pub(crate) fn normalize_contextual_signature_with_env(&mut self, expected: TypeId) -> TypeId {
+        if tsz_solver::is_union_type(self.ctx.types, expected)
+            || tsz_solver::is_intersection_type(self.ctx.types, expected)
+        {
+            return expected;
+        }
+
+        let Some(mut shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            expected,
+        ) else {
+            return expected;
+        };
+
+        let mut changed = false;
+        for param in &mut shape.params {
+            let resolved = self.resolve_type_query_type(param.type_id);
+            let evaluated = self.evaluate_type_with_env(resolved);
+            if evaluated != param.type_id {
+                param.type_id = evaluated;
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.ctx.types.factory().function(shape)
+        } else {
+            expected
+        }
+    }
+
     /// Assign contextual types to destructuring parameters (binding patterns).
     ///
     /// When a function has a contextual type (e.g., from a callback position),

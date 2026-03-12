@@ -605,13 +605,27 @@ impl<'a> CheckerState<'a> {
                     value_decl = ?value_decl,
                     "get_type_of_identifier: merged interface+value path"
                 );
+                let class_constructor_type = if (flags & tsz_binder::symbol_flags::CLASS) != 0 {
+                    let direct_type = self.get_type_of_symbol(sym_id);
+                    (direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR)
+                        .then_some(direct_type)
+                } else {
+                    None
+                };
+                let preferred_value_decl = self
+                    .preferred_value_declaration(sym_id, value_decl, &symbol_declarations)
+                    .unwrap_or(value_decl);
                 // NOTE: tsc 6.0 does NOT emit TS2585 based on target version.
                 // Value declarations from transitively loaded libs are available.
                 // Prefer value-declaration resolution for merged symbols so we pick
                 // the constructor-side type (e.g. Promise -> PromiseConstructor).
-                let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
+                let mut value_type =
+                    self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl);
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     for &decl_idx in &symbol_declarations {
+                        if decl_idx == preferred_value_decl {
+                            continue;
+                        }
                         let candidate = self.type_of_value_declaration_for_symbol(sym_id, decl_idx);
                         if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
                             value_type = candidate;
@@ -669,7 +683,16 @@ impl<'a> CheckerState<'a> {
                         "get_type_of_identifier: *Constructor type"
                     );
                     if constructor_type != TypeId::UNKNOWN && constructor_type != TypeId::ERROR {
-                        value_type = constructor_type;
+                        value_type = if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR
+                        {
+                            constructor_type
+                        } else if value_type == constructor_type {
+                            value_type
+                        } else if (flags & tsz_binder::symbol_flags::CLASS) != 0 {
+                            self.merge_interface_types(value_type, constructor_type)
+                        } else {
+                            constructor_type
+                        };
                     }
                 } else {
                     trace!(
@@ -691,6 +714,10 @@ impl<'a> CheckerState<'a> {
                         // Don't let a fallback *Constructor type overwrite a correct direct type.
                         if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                             value_type = constructor_type;
+                        } else if value_type != constructor_type
+                            && (flags & tsz_binder::symbol_flags::CLASS) != 0
+                        {
+                            value_type = self.merge_interface_types(value_type, constructor_type);
                         }
                     } else {
                         trace!(
@@ -706,12 +733,21 @@ impl<'a> CheckerState<'a> {
                 // lib arena. Use resolve_lib_type_by_name to get the complete interface
                 // type merged from all lib files.
                 if !self.ctx.lib_contexts.is_empty()
-                    && self.is_self_referential_var_type(sym_id, value_decl, name)
+                    && self.is_self_referential_var_type(sym_id, preferred_value_decl, name)
                     && let Some(lib_type) = self.resolve_lib_type_by_name(name)
                     && lib_type != TypeId::UNKNOWN
                     && lib_type != TypeId::ERROR
                 {
                     value_type = lib_type;
+                }
+                if let Some(class_constructor_type) = class_constructor_type {
+                    value_type = if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
+                        class_constructor_type
+                    } else if value_type == class_constructor_type {
+                        value_type
+                    } else {
+                        self.merge_interface_types(class_constructor_type, value_type)
+                    };
                 }
                 // Final fallback: if value_type is still a Lazy type (e.g., due to
                 // check_variable_declaration overwriting the symbol_types cache with the
@@ -1548,6 +1584,42 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_results,
         )
         .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos)
+    }
+
+    /// For a merged interface+value symbol (e.g. `Promise`, `Symbol`), pick the
+    /// best value declaration from the list. Prefers `VariableDeclaration` nodes
+    /// (corresponding to `declare var X: XConstructor`) over interface or other
+    /// declaration kinds, since those carry the constructor-side type.
+    fn preferred_value_declaration(
+        &self,
+        _sym_id: SymbolId,
+        default_decl: NodeIndex,
+        declarations: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        // Among all declarations, prefer a VariableDeclaration with a type
+        // annotation — this is the `declare var X: XConstructor` pattern that
+        // gives us the constructor type for merged interface+value symbols.
+        for &decl_idx in declarations {
+            if decl_idx == default_decl || decl_idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+                && var_decl.type_annotation.is_some()
+            {
+                return Some(decl_idx);
+            }
+        }
+        // Also check the default declaration itself
+        if let Some(node) = self.ctx.arena.get(default_decl)
+            && node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            return Some(default_decl);
+        }
+        None
     }
 
     /// Extract the module specifier string from an import declaration.
