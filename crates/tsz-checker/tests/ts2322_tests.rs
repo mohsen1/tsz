@@ -1354,6 +1354,40 @@ fn test_ts2345_optional_property_required_includes_related_missing_property_deta
 }
 
 #[test]
+fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
+    let source = r#"
+        declare function takes(cb: () => number): void;
+        const cb: () => string = () => "";
+        takes(cb);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for function return type mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Return type 'string' is not assignable to 'number'.")
+        }),
+        "Expected TS2345 to include return-type elaboration, got: {ts2345:?}"
+    );
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && info
+                    .message_text
+                    .contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "Expected TS2345 to include nested type mismatch under the return-type detail, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;
