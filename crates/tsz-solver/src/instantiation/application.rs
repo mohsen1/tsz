@@ -163,7 +163,10 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         // Create substitution and instantiate
         let substitution =
             TypeSubstitution::from_args(self.interner, &type_params, &evaluated_args);
-        let instantiated = instantiate_type(self.interner, body_type, &substitution);
+        let mut instantiated = instantiate_type(self.interner, body_type, &substitution);
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+        }
 
         // Recursively evaluate for nested applications
         match self.evaluate(instantiated) {

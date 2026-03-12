@@ -77,6 +77,18 @@ impl BinderState {
             return true;
         }
 
+        // Functions declared across lib files contribute overloads to the same symbol.
+        if (existing_flags & symbol_flags::FUNCTION) != 0
+            && (new_flags & symbol_flags::FUNCTION) != 0
+        {
+            return true;
+        }
+
+        // Methods declared across lib files also contribute overloads (e.g. Intl augmentations).
+        if (existing_flags & symbol_flags::METHOD) != 0 && (new_flags & symbol_flags::METHOD) != 0 {
+            return true;
+        }
+
         // Interface can merge with VALUE symbols (e.g., `interface Promise<T>` + `declare var Promise`)
         // This enables global types like Object, Array, Promise to be used as both types and constructors
         if (existing_flags & symbol_flags::INTERFACE) != 0 && (new_flags & symbol_flags::VALUE) != 0

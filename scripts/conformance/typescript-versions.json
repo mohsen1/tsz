@@ -16,7 +16,7 @@
     "35ff23d4b0cc715691323ebe54f523c16fe6e3a5": {
       "npm": "6.0.1-rc",
       "date": "2026-03-03",
-      "note": "TypeScript 6.0 RC (v6.0-rc tag)"
+      "note": "TypeScript release-6.0 RC commit. package.json reports 6.0.1-rc even though the git tag is v6.0-rc."
     }
   },
   "default": {

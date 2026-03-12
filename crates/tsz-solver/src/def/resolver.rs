@@ -170,6 +170,14 @@ pub trait TypeResolver {
         None
     }
 
+    /// Resolve the concrete class/interface instance type for the current polymorphic `this`.
+    ///
+    /// When the caller is inside a class or interface member, this lets the solver
+    /// substitute `ThisType` with the enclosing instance type for relation checks.
+    fn resolve_this_type(&self, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
     /// Reverse-lookup: get the class `DefId` for a resolved instance `TypeId`.
     ///
     /// When a class instance type (Object with properties) was registered via

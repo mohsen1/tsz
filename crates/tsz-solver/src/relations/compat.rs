@@ -1510,7 +1510,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 _ => return None,
             }
         }
-        saw_empty_object.then_some((allow_null, allow_undefined))
+        (saw_empty_object && allow_null && allow_undefined).then_some((allow_null, allow_undefined))
     }
 
     fn is_assignable_to_empty_object_or_nullish(
@@ -1519,6 +1519,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         allow_null: bool,
         allow_undefined: bool,
     ) -> bool {
+        if allow_null && allow_undefined {
+            return true;
+        }
         match source {
             TypeId::NULL => return allow_null,
             TypeId::UNDEFINED => return allow_undefined,
@@ -1563,6 +1566,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 members
                     .iter()
                     .any(|member| self.is_assignable_to_empty_object(*member))
+            }
+            TypeData::IndexAccess(object_type, _) => {
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, source);
+                if evaluated != source {
+                    return self.is_assignable_to_empty_object(evaluated);
+                }
+
+                !crate::type_queries::is_type_parameter_like(self.interner, object_type)
             }
             TypeData::TypeParameter(param) => match param.constraint {
                 Some(constraint) => self.is_assignable_to_empty_object(constraint),

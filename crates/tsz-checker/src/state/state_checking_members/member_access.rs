@@ -1771,40 +1771,38 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Cross-check accessors against properties/methods for TS2300
-        // A field+getter, field+setter, or method+getter/setter conflict is TS2300
-        // Method conflicts report on both declarations. Field conflicts are order-sensitive:
-        // if the accessor comes first, only the later field gets TS2300.
+        // Cross-check accessors against properties/methods for TS2300.
+        // Getter/setter pairs are allowed on their own, so conflicts with fields/methods
+        // are reported only on declarations that appear after the opposing kind first
+        // established the member name.
         for (key, accessor_indices) in &accessor_plain_names {
             if let Some(member_info) = seen_names.get(key) {
-                // Report TS2300 on the conflicting property/method declarations
+                let first_member_pos = member_info
+                    .indices
+                    .iter()
+                    .filter_map(|&idx| self.ctx.arena.get(idx).map(|node| node.pos))
+                    .min()
+                    .unwrap_or(u32::MAX);
+                let first_accessor_pos = accessor_indices
+                    .iter()
+                    .filter_map(|&idx| self.ctx.arena.get(idx).map(|node| node.pos))
+                    .min()
+                    .unwrap_or(u32::MAX);
+
                 for &idx in &member_info.indices {
-                    self.report_duplicate_class_member_ts2300(idx);
+                    let Some(pos) = self.ctx.arena.get(idx).map(|node| node.pos) else {
+                        continue;
+                    };
+                    if pos > first_accessor_pos {
+                        self.report_duplicate_class_member_ts2300(idx);
+                    }
                 }
 
-                let has_method = member_info
-                    .is_property
-                    .iter()
-                    .any(|is_property| !*is_property);
-                let should_report_accessors = if has_method {
-                    true
-                } else {
-                    let first_member_pos = member_info
-                        .indices
-                        .first()
-                        .and_then(|&idx| self.ctx.arena.get(idx))
-                        .map(|node| node.pos)
-                        .unwrap_or(u32::MAX);
-                    let first_accessor_pos = accessor_indices
-                        .first()
-                        .and_then(|&idx| self.ctx.arena.get(idx))
-                        .map(|node| node.pos)
-                        .unwrap_or(u32::MAX);
-                    first_member_pos <= first_accessor_pos
-                };
-
-                if should_report_accessors {
-                    for &idx in accessor_indices {
+                for &idx in accessor_indices {
+                    let Some(pos) = self.ctx.arena.get(idx).map(|node| node.pos) else {
+                        continue;
+                    };
+                    if pos > first_member_pos {
                         self.report_duplicate_class_member_ts2300(idx);
                     }
                 }

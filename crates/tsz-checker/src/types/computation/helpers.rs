@@ -2,6 +2,7 @@
 //! This module extends `CheckerState` with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -14,6 +15,96 @@ use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn expression_is_intrinsically_non_promise_like(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.ctx.arena.get_parenthesized(node).is_some_and(|expr| {
+                    self.expression_is_intrinsically_non_promise_like(expr.expression)
+                })
+            }
+            k if k == syntax_kind_ext::AS_EXPRESSION => {
+                self.ctx.arena.get_type_assertion(node).is_some_and(|expr| {
+                    self.expression_is_intrinsically_non_promise_like(expr.expression)
+                })
+            }
+            k if k == syntax_kind_ext::SATISFIES_EXPRESSION => {
+                self.ctx.arena.get_type_assertion(node).is_some_and(|expr| {
+                    self.expression_is_intrinsically_non_promise_like(expr.expression)
+                })
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                self.ctx.arena.get_unary_expr_ex(node).is_some_and(|expr| {
+                    self.expression_is_intrinsically_non_promise_like(expr.expression)
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16
+                || k == tsz_scanner::SyntaxKind::RegularExpressionLiteral as u16
+                || k == tsz_scanner::SyntaxKind::TrueKeyword as u16
+                || k == tsz_scanner::SyntaxKind::FalseKeyword as u16
+                || k == tsz_scanner::SyntaxKind::NullKeyword as u16 =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn contextual_type_for_conditional_branch(
+        &self,
+        contextual: TypeId,
+        branch_idx: NodeIndex,
+    ) -> TypeId {
+        if !self.expression_is_intrinsically_non_promise_like(branch_idx) {
+            return contextual;
+        }
+
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, contextual)
+        else {
+            return contextual;
+        };
+
+        let mut non_promise_members = Vec::new();
+        let mut saw_promise_member = false;
+        for member in members {
+            if self.type_ref_is_promise_like(member) {
+                saw_promise_member = true;
+            } else {
+                non_promise_members.push(member);
+            }
+        }
+
+        if saw_promise_member && !non_promise_members.is_empty() {
+            self.ctx.types.factory().union(non_promise_members)
+        } else {
+            contextual
+        }
+    }
+
+    fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
+        match tsz_solver::type_queries::classify_promise_type(self.ctx.types, type_id) {
+            tsz_solver::type_queries::PromiseTypeKind::Application { args, .. }
+                if self.type_ref_is_promise_like(type_id) =>
+            {
+                args.first().and_then(|&inner| {
+                    tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, inner)
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn empty_array_literal_prefers_never(&self, idx: NodeIndex) -> bool {
         let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
             return false;
@@ -46,6 +137,13 @@ impl<'a> CheckerState<'a> {
             if let Some(applicable) =
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
             {
+                if !applicable_shapes.contains(&applicable) {
+                    applicable_shapes.push(applicable);
+                }
+                continue;
+            }
+
+            if let Some(applicable) = self.promise_like_array_context_shape(member) {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
                 }
@@ -316,6 +414,8 @@ impl<'a> CheckerState<'a> {
         // Compute branch types with the outer contextual type for inference.
         // Branch typing may mutate contextual state while recursing, so restore
         // it explicitly before each branch.
+        self.ctx.contextual_type = prev_context
+            .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_true));
         let when_true = if condition_is_false {
             // Dead branch — suppress diagnostics but still compute type.
             // Must save/restore BOTH the diagnostics vec AND the dedup set,
@@ -335,7 +435,8 @@ impl<'a> CheckerState<'a> {
             ty
         };
 
-        self.ctx.contextual_type = prev_context;
+        self.ctx.contextual_type = prev_context
+            .map(|ctx| self.contextual_type_for_conditional_branch(ctx, cond.when_false));
         let when_false = if condition_is_true {
             // Dead branch — suppress diagnostics but still compute type.
             let diag_len = self.ctx.diagnostics.len();
@@ -770,6 +871,21 @@ impl<'a> CheckerState<'a> {
             && context_element_type != TypeId::UNKNOWN
             && context_element_type != TypeId::NEVER
         {
+            let context_requires_assignability_overrides = {
+                let resolved = self.resolve_ref_type(context_element_type);
+                query_common::has_construct_signatures(self.ctx.types, resolved)
+                    || self.type_contains_abstract_class(resolved)
+            };
+
+            let element_requires_assignability_overrides: Vec<bool> = element_types
+                .iter()
+                .map(|&ty| {
+                    let resolved = self.resolve_ref_type(ty);
+                    query_common::has_construct_signatures(self.ctx.types, resolved)
+                        || self.type_contains_abstract_class(resolved)
+                })
+                .collect();
+
             // Check if all elements are structurally compatible with the contextual type.
             // IMPORTANT: Use is_subtype_of (structural check) instead of is_assignable_to
             // because is_assignable_to includes excess property checking which would
@@ -777,7 +893,16 @@ impl<'a> CheckerState<'a> {
             // Excess properties should be checked separately, not block contextual typing.
             if element_types
                 .iter()
-                .all(|&elem_type| self.is_subtype_of(elem_type, context_element_type))
+                .zip(element_requires_assignability_overrides.iter())
+                .all(|(&elem_type, &elem_requires_assignability_overrides)| {
+                    if elem_requires_assignability_overrides
+                        || context_requires_assignability_overrides
+                    {
+                        self.is_assignable_to(elem_type, context_element_type)
+                    } else {
+                        self.is_subtype_of(elem_type, context_element_type)
+                    }
+                })
             {
                 // Check excess properties on each element before collapsing to contextual type.
                 // Fresh object literal types would be lost after returning Array<ContextualType>,

@@ -23,6 +23,40 @@ pub(crate) fn get_contextual_signature_for_arity(
     tsz_solver::get_contextual_signature_for_arity_with_compat_checker(db, type_id, arg_count)
 }
 
+pub(crate) fn stable_call_recovery_return_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+        return Some(shape.return_type);
+    }
+
+    if let Some(shape) = tsz_solver::type_queries::get_callable_shape(db, type_id) {
+        let first = shape.call_signatures.first()?.return_type;
+        return shape
+            .call_signatures
+            .iter()
+            .all(|sig| sig.return_type == first)
+            .then_some(first);
+    }
+
+    let members = tsz_solver::type_queries::get_intersection_members(db, type_id)?;
+    let mut candidate = None;
+    for member in members {
+        let Some(return_type) = stable_call_recovery_return_type(db, member) else {
+            continue;
+        };
+        if let Some(existing) = candidate {
+            if existing != return_type {
+                return None;
+            }
+        } else {
+            candidate = Some(return_type);
+        }
+    }
+    candidate
+}
+
 /// Get the construct signature of a type, preferring a generic one.
 /// Used for two-pass inference in `new` expressions where the construct
 /// signature may have type parameters that need to be inferred.

@@ -745,6 +745,31 @@ pub(crate) fn extract_param_type_at_for_call(
     extract_param_type_at_inner(db, params, index, Some(arg_count))
 }
 
+fn repair_array_callback_value_param(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    index: usize,
+    ty: TypeId,
+) -> TypeId {
+    if index != 0 || params.len() < 3 {
+        return ty;
+    }
+
+    let Some(array_elem) = crate::type_queries::get_array_element_type(db, params[2].type_id)
+    else {
+        return ty;
+    };
+
+    if ty != array_elem
+        && crate::is_subtype_of(db, ty, array_elem)
+        && !crate::is_subtype_of(db, array_elem, ty)
+    {
+        array_elem
+    } else {
+        ty
+    }
+}
+
 /// Extract the contextual type for a **rest** callback parameter at position `index`.
 ///
 /// Unlike `extract_param_type_at` which returns the individual element type at that position,
@@ -1092,6 +1117,7 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
     fn visit_function(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.function_shape(FunctionShapeId(shape_id));
         extract_param_type_at(self.db, &shape.params, self.index)
+            .map(|ty| repair_array_callback_value_param(self.db, &shape.params, self.index, ty))
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
@@ -1113,7 +1139,11 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         let param_types: Vec<TypeId> = shape
             .call_signatures
             .iter()
-            .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
+            .filter_map(|sig| {
+                extract_param_type_at(self.db, &sig.params, self.index).map(|ty| {
+                    repair_array_callback_value_param(self.db, &sig.params, self.index, ty)
+                })
+            })
             .collect();
 
         if param_types.is_empty() {
@@ -1419,7 +1449,7 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
             }
         }
 
-        collect_single_or_union(self.db, param_types)
+        collect_single_or_union_no_reduce(self.db, param_types)
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {

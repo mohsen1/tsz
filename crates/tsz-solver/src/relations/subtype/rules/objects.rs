@@ -91,8 +91,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &ObjectShape,
         source_shape_id: Option<ObjectShapeId>,
+        source_receiver: Option<TypeId>,
         target: &ObjectShape,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
+        let source_receiver = self
+            .receiver_type_from_shape_symbol(source)
+            .or(source_receiver);
+        let target_receiver = self
+            .receiver_type_from_shape_symbol(target)
+            .or(target_receiver);
         // Private brand checking for nominal typing of classes with private fields
         if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
             return SubtypeResult::False;
@@ -111,7 +119,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::False;
             };
 
-            let result = self.check_property_compatibility(s_prop, t_prop);
+            let result =
+                self.check_property_compatibility(s_prop, t_prop, source_receiver, target_receiver);
             if !result.is_true() {
                 return result;
             }
@@ -123,7 +132,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_shape_id.is_none() || source_len <= target_len.saturating_mul(4);
 
         if use_merge_scan {
-            return self.check_object_subtype_merge_scan(source, target);
+            return self.check_object_subtype_merge_scan(
+                source,
+                target,
+                source_receiver,
+                target_receiver,
+            );
         }
 
         // For each property in target, source must have a compatible property
@@ -135,7 +149,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_prop = self.lookup_property(&source.properties, source_shape_id, t_prop.name);
 
             let result = match s_prop {
-                Some(sp) => self.check_property_compatibility(sp, t_prop),
+                Some(sp) => {
+                    self.check_property_compatibility(sp, t_prop, source_receiver, target_receiver)
+                }
                 None => {
                     // Private/Protected properties cannot be missing, even if optional
                     if t_prop.visibility != Visibility::Public {
@@ -163,6 +179,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &ObjectShape,
         target: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         let s_props = &source.properties;
         let t_props = &target.properties;
@@ -178,7 +196,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if s_idx < s_props.len() && s_props[s_idx].name == t_prop.name {
-                let result = self.check_property_compatibility(&s_props[s_idx], t_prop);
+                let result = self.check_property_compatibility(
+                    &s_props[s_idx],
+                    t_prop,
+                    source_receiver,
+                    target_receiver,
+                );
                 if !result.is_true() {
                     return result;
                 }
@@ -271,6 +294,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &PropertyInfo,
         target: &PropertyInfo,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         // Rule: Private and Protected properties are nominal.
         if target.visibility != Visibility::Public {
@@ -335,8 +360,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // For mutable properties, we check both read and write types
 
         // 1. Check READ type (covariant): source.read <: target.read
-        let source_read = self.optional_property_type(source);
-        let target_read = self.optional_property_type(target);
+        let source_read =
+            self.bind_property_receiver_this(source_receiver, self.optional_property_type(source));
+        let target_read =
+            self.bind_property_receiver_this(target_receiver, self.optional_property_type(target));
         let allow_bivariant = source.is_method || target.is_method;
 
         // Rule #26: Split Accessors - Covariant reads
@@ -365,8 +392,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source.write_type != source.type_id || target.write_type != target.type_id;
 
         if !target.readonly && has_split_accessor {
-            let source_write = self.optional_property_write_type(source);
-            let target_write = self.optional_property_write_type(target);
+            let source_write = self.bind_property_receiver_this(
+                source_receiver,
+                self.optional_property_write_type(source),
+            );
+            let target_write = self.bind_property_receiver_this(
+                target_receiver,
+                self.optional_property_write_type(target),
+            );
 
             // Contravariant writes: target.write must be subtype of source.write
             // This ensures that anything we can write to target is also safe to write to source
@@ -380,6 +413,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::True
+    }
+
+    fn receiver_type_from_shape_symbol(&self, shape: &ObjectShape) -> Option<TypeId> {
+        let sym_id = shape.symbol?;
+        let symbol_ref = crate::SymbolRef(sym_id.0);
+        Some(
+            self.resolver
+                .symbol_to_def_id(symbol_ref)
+                .map(|def_id| self.interner.lazy(def_id))
+                .unwrap_or_else(|| self.interner.reference(symbol_ref)),
+        )
+    }
+
+    fn bind_property_receiver_this(&self, receiver: Option<TypeId>, type_id: TypeId) -> TypeId {
+        if let Some(receiver) = receiver.map(|receiver| self.normalize_receiver_type(receiver))
+            && crate::contains_this_type(self.interner, type_id)
+        {
+            crate::substitute_this_type(self.interner, type_id, receiver)
+        } else {
+            type_id
+        }
+    }
+
+    fn normalize_receiver_type(&self, receiver: TypeId) -> TypeId {
+        match self.interner.lookup(receiver) {
+            Some(crate::types::TypeData::Object(shape_id))
+            | Some(crate::types::TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                if let Some(sym_id) = shape.symbol {
+                    let symbol_ref = crate::SymbolRef(sym_id.0);
+                    return self
+                        .resolver
+                        .symbol_to_def_id(symbol_ref)
+                        .map(|def_id| self.interner.lazy(def_id))
+                        .unwrap_or_else(|| self.interner.reference(symbol_ref));
+                }
+                receiver
+            }
+            _ => receiver,
+        }
     }
 
     /// Check string index signature compatibility between source and target.
@@ -396,7 +469,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_string_index_compatibility(
         &mut self,
         source: &ObjectShape,
+        source_receiver: Option<TypeId>,
         target: &ObjectShape,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         let Some(ref t_string_idx) = target.string_index else {
             return SubtypeResult::True; // Target has no string index constraint
@@ -408,10 +483,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if s_string_idx.readonly && !t_string_idx.readonly {
                     return SubtypeResult::False;
                 }
-                if !self
-                    .check_subtype(s_string_idx.value_type, t_string_idx.value_type)
-                    .is_true()
-                {
+                let source_value =
+                    self.bind_property_receiver_this(source_receiver, s_string_idx.value_type);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
+                if !self.check_subtype(source_value, target_value).is_true() {
                     return SubtypeResult::False;
                 }
                 SubtypeResult::True
@@ -426,7 +502,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if s_number_idx.readonly && !t_string_idx.readonly {
                         return SubtypeResult::False;
                     }
-                    return self.check_subtype(s_number_idx.value_type, t_string_idx.value_type);
+                    let source_value =
+                        self.bind_property_receiver_this(source_receiver, s_number_idx.value_type);
+                    let target_value =
+                        self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
+                    return self.check_subtype(source_value, target_value);
                 }
 
                 // An empty source vacuously satisfies the string index constraint.
@@ -439,11 +519,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if !t_string_idx.readonly && prop.readonly {
                         return SubtypeResult::False;
                     }
-                    let prop_type = self.optional_property_type(prop);
-                    if !self
-                        .check_subtype(prop_type, t_string_idx.value_type)
-                        .is_true()
-                    {
+                    let prop_type = self.bind_property_receiver_this(
+                        source_receiver,
+                        self.optional_property_type(prop),
+                    );
+                    let target_value =
+                        self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
+                    if !self.check_subtype(prop_type, target_value).is_true() {
                         return SubtypeResult::False;
                     }
                 }
@@ -466,7 +548,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_number_index_compatibility(
         &mut self,
         source: &ObjectShape,
+        source_receiver: Option<TypeId>,
         target: &ObjectShape,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         let Some(ref t_number_idx) = target.number_index else {
             return SubtypeResult::True; // Target has no number index constraint
@@ -478,10 +562,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if s_number_idx.readonly && !t_number_idx.readonly {
                     return SubtypeResult::False;
                 }
-                if !self
-                    .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
-                    .is_true()
-                {
+                let source_value =
+                    self.bind_property_receiver_this(source_receiver, s_number_idx.value_type);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
+                if !self.check_subtype(source_value, target_value).is_true() {
                     return SubtypeResult::False;
                 }
                 SubtypeResult::True
@@ -494,10 +579,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if s_string_idx.readonly && !t_number_idx.readonly {
                     return SubtypeResult::False;
                 }
-                if !self
-                    .check_subtype(s_string_idx.value_type, t_number_idx.value_type)
-                    .is_true()
-                {
+                let source_value =
+                    self.bind_property_receiver_this(source_receiver, s_string_idx.value_type);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
+                if !self.check_subtype(source_value, target_value).is_true() {
                     return SubtypeResult::False;
                 }
                 SubtypeResult::True
@@ -537,13 +623,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return SubtypeResult::False;
                     }
 
-                    let prop_type = self.optional_property_type(prop);
+                    let prop_type = self.bind_property_receiver_this(
+                        source_receiver,
+                        self.optional_property_type(prop),
+                    );
+                    let target_value =
+                        self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
                     if !self
-                        .check_subtype_with_method_variance(
-                            prop_type,
-                            t_number_idx.value_type,
-                            prop.is_method,
-                        )
+                        .check_subtype_with_method_variance(prop_type, target_value, prop.is_method)
                         .is_true()
                     {
                         return SubtypeResult::False;
@@ -576,12 +663,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &ObjectShape,
         source_shape_id: Option<ObjectShapeId>,
+        source_receiver: Option<TypeId>,
         target: &ObjectShape,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
+        let source_receiver = self
+            .receiver_type_from_shape_symbol(source)
+            .or(source_receiver);
+        let target_receiver = self
+            .receiver_type_from_shape_symbol(target)
+            .or(target_receiver);
         // First check named properties (nominal + structural)
         // Note: We pass the full shapes to enable nominal inheritance check
         if !self
-            .check_object_subtype(source, source_shape_id, target)
+            .check_object_subtype(
+                source,
+                source_shape_id,
+                source_receiver,
+                target,
+                target_receiver,
+            )
             .is_true()
         {
             return SubtypeResult::False;
@@ -589,7 +690,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check string index signature compatibility
         if !self
-            .check_string_index_compatibility(source, target)
+            .check_string_index_compatibility(source, source_receiver, target, target_receiver)
             .is_true()
         {
             return SubtypeResult::False;
@@ -597,14 +698,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check number index signature compatibility
         if !self
-            .check_number_index_compatibility(source, target)
+            .check_number_index_compatibility(source, source_receiver, target, target_receiver)
             .is_true()
         {
             return SubtypeResult::False;
         }
 
         if !self
-            .check_properties_against_index_signatures(&source.properties, target)
+            .check_properties_against_index_signatures(
+                &source.properties,
+                source_receiver,
+                target,
+                target_receiver,
+            )
             .is_true()
         {
             return SubtypeResult::False;
@@ -621,7 +727,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .flags
                 .contains(crate::types::ObjectFlags::FRESH_LITERAL)
             && !self
-                .check_subtype(s_number_idx.value_type, s_string_idx.value_type)
+                .check_subtype(
+                    self.bind_property_receiver_this(source_receiver, s_number_idx.value_type),
+                    self.bind_property_receiver_this(source_receiver, s_string_idx.value_type),
+                )
                 .is_true()
         {
             return SubtypeResult::False;
@@ -641,8 +750,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &ObjectShape,
         source_shape_id: ObjectShapeId,
+        source_receiver: Option<TypeId>,
         target: &[PropertyInfo],
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
+        let source_receiver = self
+            .receiver_type_from_shape_symbol(source)
+            .or(source_receiver);
         for t_prop in target {
             if let Some(sp) =
                 self.lookup_property(&source.properties, Some(source_shape_id), t_prop.name)
@@ -663,8 +777,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // NOTE: TypeScript allows readonly source to satisfy mutable target
                 // (readonly is a constraint on the reference, not structural compatibility)
-                let source_type = self.optional_property_type(sp);
-                let target_type = self.optional_property_type(t_prop);
+                let source_type = self
+                    .bind_property_receiver_this(source_receiver, self.optional_property_type(sp));
+                let target_type = self.bind_property_receiver_this(
+                    target_receiver,
+                    self.optional_property_type(t_prop),
+                );
                 let allow_bivariant = sp.is_method || t_prop.is_method;
                 if !self
                     .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
@@ -675,8 +793,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if !t_prop.readonly
                     && (sp.write_type != sp.type_id || t_prop.write_type != t_prop.type_id)
                 {
-                    let source_write = self.optional_property_write_type(sp);
-                    let target_write = self.optional_property_write_type(t_prop);
+                    let source_write = self.bind_property_receiver_this(
+                        source_receiver,
+                        self.optional_property_write_type(sp),
+                    );
+                    let target_write = self.bind_property_receiver_this(
+                        target_receiver,
+                        self.optional_property_write_type(t_prop),
+                    );
                     if !self
                         .check_subtype_with_method_variance(
                             target_write,
@@ -689,7 +813,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             } else if !self
-                .check_missing_property_against_index_signatures(source, t_prop)
+                .check_missing_property_against_index_signatures(
+                    source,
+                    source_receiver,
+                    t_prop,
+                    target_receiver,
+                )
                 .is_true()
             {
                 return SubtypeResult::False;
@@ -708,7 +837,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_missing_property_against_index_signatures(
         &mut self,
         source: &ObjectShape,
+        source_receiver: Option<TypeId>,
         target_prop: &PropertyInfo,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         // Required properties cannot be satisfied by index signatures (soundness).
         // An index signature { [k: string]: V } admits the empty object {},
@@ -727,7 +858,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check if property name matches index signatures
         // Numeric property names can match number index signatures
         // All property names can match string index signatures (numbers convert to strings)
-        let target_type = self.optional_property_type(target_prop);
+        let target_type = self
+            .bind_property_receiver_this(target_receiver, self.optional_property_type(target_prop));
 
         if utils::is_numeric_property_name(self.interner, target_prop.name)
             && let Some(number_idx) = &source.number_index
@@ -735,9 +867,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if number_idx.readonly && !target_prop.readonly {
                 return SubtypeResult::False;
             }
+            let source_value =
+                self.bind_property_receiver_this(source_receiver, number_idx.value_type);
             if !self
                 .check_subtype_with_method_variance(
-                    number_idx.value_type,
+                    source_value,
                     target_type,
                     target_prop.is_method,
                 )
@@ -752,9 +886,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if string_idx.readonly && !target_prop.readonly {
                 return SubtypeResult::False;
             }
+            let source_value =
+                self.bind_property_receiver_this(source_receiver, string_idx.value_type);
             if !self
                 .check_subtype_with_method_variance(
-                    string_idx.value_type,
+                    source_value,
                     target_type,
                     target_prop.is_method,
                 )
@@ -783,7 +919,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_properties_against_index_signatures(
         &mut self,
         source: &[PropertyInfo],
+        source_receiver: Option<TypeId>,
         target: &ObjectShape,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         let string_index = target.string_index.as_ref();
         let number_index = target.number_index.as_ref();
@@ -805,16 +943,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
-            let prop_type = self.optional_property_type(prop);
+            let prop_type = self
+                .bind_property_receiver_this(source_receiver, self.optional_property_type(prop));
             let allow_bivariant = prop.is_method;
 
             if let Some(number_idx) = number_index {
                 let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, number_idx.value_type);
                 if is_numeric
                     && !self
                         .check_subtype_with_method_variance(
                             prop_type,
-                            number_idx.value_type,
+                            target_value,
                             allow_bivariant,
                         )
                         .is_true()
@@ -830,12 +971,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if !string_idx.readonly && prop.readonly {
                     return SubtypeResult::False;
                 }
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, string_idx.value_type);
                 if !self
-                    .check_subtype_with_method_variance(
-                        prop_type,
-                        string_idx.value_type,
-                        allow_bivariant,
-                    )
+                    .check_subtype_with_method_variance(prop_type, target_value, allow_bivariant)
                     .is_true()
                 {
                     return SubtypeResult::False;
@@ -856,7 +995,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &[PropertyInfo],
         source_shape_id: Option<ObjectShapeId>,
+        source_receiver: Option<TypeId>,
         target: &ObjectShape,
+        target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
         // Preserve the original shape identity when available. Named interface/class
         // types follow different index-signature rules than anonymous object types,
@@ -873,8 +1014,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 .into()
             });
+        let source_receiver = self
+            .receiver_type_from_shape_symbol(&source_shape)
+            .or(source_receiver);
+        let target_receiver = self
+            .receiver_type_from_shape_symbol(target)
+            .or(target_receiver);
         if !self
-            .check_object_subtype(&source_shape, source_shape_id, target)
+            .check_object_subtype(
+                &source_shape,
+                source_shape_id,
+                source_receiver,
+                target,
+                target_receiver,
+            )
             .is_true()
         {
             return SubtypeResult::False;
@@ -885,12 +1038,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // A plain object with only named properties cannot satisfy arbitrary
         // numeric index access.
         if !self
-            .check_number_index_compatibility(&source_shape, target)
+            .check_number_index_compatibility(
+                &source_shape,
+                source_receiver,
+                target,
+                target_receiver,
+            )
             .is_true()
         {
             return SubtypeResult::False;
         }
-        self.check_properties_against_index_signatures(source, target)
+        self.check_properties_against_index_signatures(
+            source,
+            source_receiver,
+            target,
+            target_receiver,
+        )
     }
 
     /// Get the effective type of an optional property for reading.

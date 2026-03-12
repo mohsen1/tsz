@@ -210,7 +210,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(param_type) = self.param_type_for_arg_index(params, i, arg_count) else {
                 break;
             };
-
             if *arg_type == param_type {
                 continue;
             }
@@ -270,17 +269,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     param_type
                 }
             };
-            let expanded_arg_type =
-                if crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
-                    && crate::type_queries::is_callable_type(self.interner, effective_param_type)
-                {
-                    self.instantiate_generic_function_argument_against_target(
-                        expanded_arg_type,
-                        effective_param_type,
-                    )
-                } else {
-                    expanded_arg_type
-                };
+            let expanded_arg_type = if Self::get_contextual_signature(
+                self.interner.as_type_database(),
+                expanded_arg_type,
+            )
+            .is_some()
+                && Self::get_contextual_signature(
+                    self.interner.as_type_database(),
+                    effective_param_type,
+                )
+                .is_some()
+            {
+                self.instantiate_generic_function_argument_against_target(
+                    expanded_arg_type,
+                    effective_param_type,
+                )
+            } else {
+                expanded_arg_type
+            };
 
             // Fast-path: skip the full assignability check when the arg type
             // matches either the declared or effective param type by identity.
@@ -456,6 +462,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.tuple_rest_element_type(&elements, offset, rest_arg_count)
             }
             other => {
+                let extracted = crate::contextual::rest_argument_element_type(
+                    self.interner,
+                    self.checker.evaluate_type(rest_param_type),
+                );
+                if extracted != rest_param_type {
+                    trace!(
+                        original_id = %rest_param_type.0,
+                        extracted_id = %extracted.0,
+                        extracted_key = ?self.interner.lookup(extracted),
+                        "Extracted element type from rest wrapper fallback"
+                    );
+                    return Some(extracted);
+                }
                 trace!(?other, "Rest param is not Array or Tuple, returning as-is");
                 Some(rest_param_type)
             }
@@ -962,7 +981,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // participate in Round 1 generic inference.
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
-                self.function_signature_is_contextually_sensitive(&shape.params)
+                !shape.type_params.is_empty()
+                    || self.function_signature_is_contextually_sensitive(&shape.params)
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
@@ -970,7 +990,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .call_signatures
                     .iter()
                     .chain(shape.construct_signatures.iter())
-                    .any(|sig| self.function_signature_is_contextually_sensitive(&sig.params))
+                    .any(|sig| {
+                        !sig.type_params.is_empty()
+                            || self.function_signature_is_contextually_sensitive(&sig.params)
+                    })
             }
 
             // Union/Intersection: contextually sensitive if any member is

@@ -20,11 +20,10 @@ fn diagnostic_contains(diagnostic: &Diagnostic, fragment: &str) -> bool {
     format!("{diagnostic:?}").contains(fragment)
 }
 
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [
         manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
         manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
         manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
@@ -43,13 +42,35 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     lib_files
 }
 
+fn load_es5_and_dom_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let mut lib_files = load_es5_lib_files_for_test();
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("../../TypeScript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
+    ];
+
+    for lib_path in &lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
+            let lib_file = LibFile::from_source(file_name, content);
+            lib_files.push(Arc::new(lib_file));
+        }
+    }
+
+    lib_files
+}
+
 /// Helper function to check source with lib.es5.d.ts and return diagnostics.
 /// Loads lib files to avoid TS2318 errors for missing global types.
 /// Creates the checker with the parser's arena directly to ensure proper node resolution.
 fn check_without_lib(source: &str) -> Vec<Diagnostic> {
-    // We still need lib files to avoid TS2318 errors for global types
-    // The "without lib" name is a misnomer - we need basic global types
-    let lib_files = load_lib_files_for_test();
+    // Load ES5 only so base global types exist without pulling in DOM globals.
+    let lib_files = load_es5_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -95,8 +116,8 @@ fn check_without_lib(source: &str) -> Vec<Diagnostic> {
 
 /// Helper function to check source WITH lib.es5.d.ts and return diagnostics.
 fn check_with_lib(source: &str) -> Vec<Diagnostic> {
-    // Load lib.es5.d.ts which contains actual type definitions
-    let lib_files = load_lib_files_for_test();
+    // Load ES5 plus DOM so built-in browser globals like `console` resolve.
+    let lib_files = load_es5_and_dom_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -132,7 +153,7 @@ fn check_with_lib(source: &str) -> Vec<Diagnostic> {
 }
 
 fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
-    let lib_files = load_lib_files_for_test();
+    let lib_files = load_es5_lib_files_for_test();
 
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -257,7 +278,6 @@ C.prototype.bar.foo = {};
 }
 
 #[test]
-#[ignore = "TODO: TS2584 for console without lib.d.ts not yet emitted after remote merge"]
 fn test_ts2304_emitted_for_console_without_lib() {
     let diagnostics = check_without_lib(r#"console.log("hello");"#);
 

@@ -51,7 +51,6 @@ impl<'a> CheckerState<'a> {
     /// This is the type that instances of the class will have. It includes:
     /// - Instance properties and methods
     /// - Inherited members from base classes
-    /// - Members from implemented interfaces
     /// - Index signatures
     /// - Private brand property for nominal typing (if class has private/protected members)
     ///
@@ -102,9 +101,8 @@ impl<'a> CheckerState<'a> {
     /// 2. Processing constructor parameter properties
     /// 3. Handling index signatures
     /// 4. Merging base class members
-    /// 5. Merging implemented interface members
-    /// 6. Adding private brand for nominal typing if needed
-    /// 7. Inheriting Object prototype members
+    /// 5. Adding private brand for nominal typing if needed
+    /// 6. Inheriting Object prototype members
     pub(crate) fn get_class_instance_type_inner(
         &mut self,
         class_idx: NodeIndex,
@@ -1171,98 +1169,6 @@ impl<'a> CheckerState<'a> {
                 }
 
                 break;
-            }
-        }
-
-        // Merge implemented interface properties (class members take precedence)
-        if let Some(ref heritage_clauses) = class.heritage_clauses {
-            for &clause_idx in &heritage_clauses.nodes {
-                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                    continue;
-                };
-                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
-                    continue;
-                };
-                if heritage.token != SyntaxKind::ImplementsKeyword as u16 {
-                    continue;
-                }
-
-                for &type_idx in &heritage.types.nodes {
-                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
-                        continue;
-                    };
-
-                    let (expr_idx, type_arguments) = if let Some(expr_type_args) =
-                        self.ctx.arena.get_expr_type_args(type_node)
-                    {
-                        (
-                            expr_type_args.expression,
-                            expr_type_args.type_arguments.as_ref(),
-                        )
-                    } else {
-                        (type_idx, None)
-                    };
-
-                    let Some(interface_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
-                        continue;
-                    };
-
-                    let mut type_args = Vec::new();
-                    if let Some(args) = type_arguments {
-                        for &arg_idx in &args.nodes {
-                            type_args.push(self.get_type_from_type_node(arg_idx));
-                        }
-                    }
-
-                    let mut interface_type = self.type_reference_symbol_type(interface_sym_id);
-                    let interface_type_params = self.get_type_params_for_symbol(interface_sym_id);
-
-                    if type_args.len() < interface_type_params.len() {
-                        for param in interface_type_params.iter().skip(type_args.len()) {
-                            let fallback = param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN);
-                            type_args.push(fallback);
-                        }
-                    }
-                    if type_args.len() > interface_type_params.len() {
-                        type_args.truncate(interface_type_params.len());
-                    }
-
-                    // Resolve Lazy(DefId) to structural type BEFORE instantiation.
-                    // If we instantiate a Lazy(DefId), the substitution is lost because
-                    // Lazy types don't recursively hold their structure.
-                    interface_type = self.resolve_lazy_type(interface_type);
-
-                    if !interface_type_params.is_empty() {
-                        let substitution = TypeSubstitution::from_args(
-                            self.ctx.types,
-                            &interface_type_params,
-                            &type_args,
-                        );
-                        interface_type =
-                            instantiate_type(self.ctx.types, interface_type, &substitution);
-                    }
-
-                    if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
-                        for prop in &shape.properties {
-                            properties.entry(prop.name).or_insert_with(|| prop.clone());
-                        }
-                        if let Some(ref idx) = shape.string_index {
-                            Self::merge_index_signature(&mut string_index, idx.clone());
-                        }
-                        if let Some(ref idx) = shape.number_index {
-                            Self::merge_index_signature(&mut number_index, idx.clone());
-                        }
-                    } else if let Some(shape) =
-                        callable_shape_for_type(self.ctx.types, interface_type)
-                    {
-                        for prop in &shape.properties {
-                            properties.entry(prop.name).or_insert_with(|| prop.clone());
-                        }
-                    }
-                }
             }
         }
 

@@ -326,25 +326,12 @@ pub fn check_application_variance<R: TypeResolver>(
 
     let def_id = lazy_def_id(db, s_app.base)?;
 
-    // Query variance: first try the QueryDatabase cache, then the resolver,
-    // and finally compute it on the fly from the resolver's type params + body.
     let variances = query_db
         .and_then(|qdb| QueryDatabase::get_type_param_variance(qdb, def_id))
-        .or_else(|| resolver.get_type_param_variance(def_id))
         .or_else(|| {
-            // Compute variance on the fly using the resolver's type params + body
-            let qdb = query_db?;
-            let params = resolver.get_lazy_type_params(def_id)?;
-            if params.is_empty() {
-                return None;
-            }
-            let body = resolver.resolve_lazy(def_id, db)?;
-            let mut variances = Vec::with_capacity(params.len());
-            for param in &params {
-                let v = crate::relations::variance::compute_variance(qdb, body, param.name);
-                variances.push(v);
-            }
-            Some(std::sync::Arc::from(variances))
+            crate::relations::variance::compute_type_param_variances_with_resolver(
+                db, resolver, def_id,
+            )
         });
 
     let variances = variances?;
@@ -368,6 +355,7 @@ pub fn check_application_variance<R: TypeResolver>(
         checker.set_query_db(qdb);
     }
 
+    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
     let mut all_ok = true;
     let mut any_checked = false;
     for (i, variance) in variances.iter().enumerate() {
@@ -407,19 +395,16 @@ pub fn check_application_variance<R: TypeResolver>(
         // Fall through to structural comparison. This handles cases like
         // Required<{a?}> vs Required<{b?}> where args are mutually assignable
         // but the mapped type results are structurally incompatible.
-        if variances.iter().any(|v| v.needs_structural_fallback()) {
+        if needs_structural_fallback {
             return None;
         }
         return Some(true);
     }
 
-    // For non-transparent types (classes, enums), fast-fail.
-    // For interfaces/type aliases, fall through to structural checking.
-    let def_kind = resolver.get_def_kind(def_id);
-    if !matches!(
-        def_kind,
-        Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
-    ) {
+    if !needs_structural_fallback {
+        // Same-base generic application variance failure is itself conclusive.
+        // Letting the checker re-expand structurally here erases the generic
+        // application identity and suppresses legitimate TS2322/TS2345 errors.
         return Some(false);
     }
 

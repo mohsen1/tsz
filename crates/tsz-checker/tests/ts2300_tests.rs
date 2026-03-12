@@ -307,6 +307,32 @@ fn getter_setter_pair_allowed() {
     verify_errors("class C { get x() { return 1; } set x(v) {} }", &[]);
 }
 
+/// A method followed by accessor declarations with the same computed symbol name
+/// should only report duplicates on the later accessors, not on the original method.
+#[test]
+fn computed_symbol_method_and_accessor_pair_only_reports_late_accessors() {
+    let diagnostics = verify_errors(
+        r#"
+class C {
+    [Symbol.toPrimitive](x: string) { return x; }
+    get [Symbol.toPrimitive]() { return ""; }
+    set [Symbol.toPrimitive](x: string) {}
+}
+"#,
+        &[
+            (4, 9, "Duplicate identifier '[Symbol.toPrimitive]'."),
+            (5, 9, "Duplicate identifier '[Symbol.toPrimitive]'."),
+        ],
+    );
+
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert_eq!(
+        ts2300_errors.len(),
+        2,
+        "expected only the later accessor declarations to report TS2300, got: {diagnostics:?}"
+    );
+}
+
 /// Test that numeric class members with equivalent numeric values are detected as duplicates.
 #[test]
 fn numeric_class_member_duplicates() {

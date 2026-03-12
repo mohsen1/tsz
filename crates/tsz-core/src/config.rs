@@ -281,6 +281,13 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub no_unchecked_indexed_access: Option<bool>,
+    /// Enforce bracket access for properties that come only from an index signature
+    #[serde(
+        default,
+        alias = "noPropertyAccessFromIndexSignature",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub no_property_access_from_index_signature: Option<bool>,
     /// Check that the arguments for 'bind', 'call', and 'apply' methods match the original function
     #[serde(
         default,
@@ -790,6 +797,9 @@ pub fn resolve_compiler_options(
     }
     if let Some(v) = options.no_unchecked_indexed_access {
         resolved.checker.no_unchecked_indexed_access = v;
+    }
+    if let Some(v) = options.no_property_access_from_index_signature {
+        resolved.checker.no_property_access_from_index_signature = v;
     }
     if let Some(v) = options.no_implicit_this {
         resolved.checker.no_implicit_this = v;
@@ -2577,6 +2587,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             use_unknown_in_catch_variables,
             strict_bind_call_apply,
             no_unchecked_indexed_access,
+            no_property_access_from_index_signature,
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
@@ -4681,6 +4692,19 @@ mod tests {
             resolved.incremental,
             "composite should imply incremental:true"
         );
+    }
+
+    #[test]
+    fn test_no_property_access_from_index_signature_resolves_from_tsconfig() {
+        let source = r#"{
+            "compilerOptions": {
+                "noPropertyAccessFromIndexSignature": true
+            }
+        }"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.checker.no_property_access_from_index_signature);
     }
 
     #[test]

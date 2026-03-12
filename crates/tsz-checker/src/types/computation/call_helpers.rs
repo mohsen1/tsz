@@ -2,6 +2,7 @@
 
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
+use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -424,6 +425,96 @@ impl<'a> CheckerState<'a> {
 
         Self::leave_cross_arena_delegation();
         result
+    }
+
+    /// Resolve a declaration node type, delegating to the declaration's arena when needed.
+    ///
+    /// Unlike `type_of_value_declaration_for_symbol`, this works for non-value declaration
+    /// nodes too, such as merged interface methods that live across multiple lib arenas.
+    pub(crate) fn type_of_declaration_node_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> TypeId {
+        if decl_idx.is_none() {
+            return TypeId::ERROR;
+        }
+
+        let mut arena_ptrs = rustc_hash::FxHashSet::default();
+        let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
+
+        if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+            for arena in arenas {
+                let arena_ref = arena.as_ref();
+                let arena_ptr = arena_ref as *const NodeArena as usize;
+                if arena_ptrs.insert(arena_ptr) {
+                    candidate_arenas.push(arena_ref);
+                }
+            }
+        }
+
+        if candidate_arenas.is_empty() {
+            if self.ctx.arena.get(decl_idx).is_some()
+                && !self.ctx.binder.symbol_arenas.contains_key(&sym_id)
+            {
+                return self.get_type_of_node(decl_idx);
+            }
+            if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+                let arena_ref = symbol_arena.as_ref();
+                let arena_ptr = arena_ref as *const NodeArena as usize;
+                if arena_ptrs.insert(arena_ptr) {
+                    candidate_arenas.push(arena_ref);
+                }
+            }
+            if candidate_arenas.is_empty() && self.ctx.arena.get(decl_idx).is_some() {
+                candidate_arenas.push(self.ctx.arena);
+            }
+        }
+
+        let mut merged = TypeId::ERROR;
+        let mut has_type = false;
+
+        for decl_arena in candidate_arenas {
+            let decl_type = if std::ptr::eq(decl_arena, self.ctx.arena) {
+                self.get_type_of_node(decl_idx)
+            } else {
+                if !Self::enter_cross_arena_delegation() {
+                    continue;
+                }
+
+                let mut checker = Box::new(CheckerState::with_parent_cache(
+                    decl_arena,
+                    self.ctx.binder,
+                    self.ctx.types,
+                    self.ctx.file_name.clone(),
+                    self.ctx.compiler_options.clone(),
+                    self,
+                ));
+                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+                checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+                checker
+                    .ctx
+                    .symbol_resolution_depth
+                    .set(self.ctx.symbol_resolution_depth.get());
+                let result = checker.get_type_of_node(decl_idx);
+                Self::leave_cross_arena_delegation();
+                result
+            };
+
+            if matches!(decl_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                continue;
+            }
+
+            if has_type {
+                merged = self.merge_interface_types(merged, decl_type);
+            } else {
+                merged = decl_type;
+                has_type = true;
+            }
+        }
+
+        if has_type { merged } else { TypeId::ERROR }
     }
 
     /// Resolve a value-side type by global name, preferring value declarations.

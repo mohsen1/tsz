@@ -197,6 +197,34 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.db.as_type_database()
     }
 
+    pub(crate) fn bind_object_receiver_this(&self, receiver: TypeId, type_id: TypeId) -> TypeId {
+        let receiver = self.nominalize_object_receiver(receiver);
+        if crate::contains_this_type(self.interner(), type_id) {
+            crate::substitute_this_type(self.interner(), type_id, receiver)
+        } else {
+            type_id
+        }
+    }
+
+    fn nominalize_object_receiver(&self, receiver: TypeId) -> TypeId {
+        match self.interner().lookup(receiver) {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                if let Some(sym_id) = shape.symbol {
+                    let symbol_ref = crate::SymbolRef(sym_id.0);
+                    return self
+                        .db
+                        .as_type_resolver()
+                        .symbol_to_def_id(symbol_ref)
+                        .map(|def_id| self.interner().lazy(def_id))
+                        .unwrap_or_else(|| self.interner().reference(symbol_ref));
+                }
+                receiver
+            }
+            _ => receiver,
+        }
+    }
+
     /// Try to resolve a member from the global `Object` type, returning
     /// `PropertyNotFound` if no such member exists.
     fn resolve_object_member_or_not_found(
@@ -847,6 +875,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Resolve the lazy type using the resolver
                 if let Some(resolved) = self.db.resolve_lazy(def_id, self.interner()) {
+                    let resolved = if crate::contains_this_type(self.interner(), resolved) {
+                        crate::substitute_this_type(self.interner(), resolved, obj_type)
+                    } else {
+                        resolved
+                    };
                     // Successfully resolved - resolve property on the concrete type
                     self.resolve_property_access_inner(resolved, prop_name, prop_atom)
                 } else {

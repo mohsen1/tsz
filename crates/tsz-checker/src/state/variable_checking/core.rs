@@ -1158,6 +1158,13 @@ impl<'a> CheckerState<'a> {
             let is_ambient = self.is_ambient_declaration(decl_idx);
             let is_const = self.is_const_variable_declaration(decl_idx);
             let is_exported = self.is_declaration_exported(self.ctx.arena, decl_idx);
+            if is_exported && var_decl.type_annotation.is_none() {
+                self.maybe_report_unnameable_exported_variable_type(
+                    var_decl.name,
+                    var_name.as_deref().unwrap_or(""),
+                    final_type,
+                );
+            }
             if self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
                 && !sym_already_cached
@@ -1419,10 +1426,12 @@ impl<'a> CheckerState<'a> {
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
                     // Only compare against lib declarations when the current variable
-                    // is at file scope. Variables inside namespace bodies (whether
-                    // exported or not) are distinct from global declarations and
-                    // should never trigger TS2403 against lib.d.ts types.
+                    // is at global file scope. Variables in non-global scopes are
+                    // distinct from lib declarations and never trigger TS2403:
+                    // - Namespace bodies (whether exported or not)
+                    // - Function scopes (e.g. `var top` vs global `window.top`)
                     let is_in_namespace = current_ns_export_status.is_some();
+                    let is_in_function_scope = self.find_enclosing_function(decl_idx).is_some();
                     if let Some(name) = symbol_name {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
@@ -1447,11 +1456,12 @@ impl<'a> CheckerState<'a> {
                                         lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
-                                        // Skip entirely for namespace-local variables —
-                                        // they don't merge with lib globals.
                                         if !is_in_namespace {
-                                            // Check compatibility (skip for bare declarations)
-                                            if !is_bare_declaration
+                                            // Check compatibility (skip for bare declarations).
+                                            // Function-scoped variables shadow globals and
+                                            // never trigger TS2403 against lib types.
+                                            if !is_in_function_scope
+                                                && !is_bare_declaration
                                                 && !self.are_var_decl_types_compatible(
                                                     lib_type, final_type,
                                                 )
@@ -2049,6 +2059,237 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn maybe_report_unnameable_exported_variable_type(
+        &mut self,
+        name_idx: NodeIndex,
+        name: &str,
+        inferred_type: TypeId,
+    ) {
+        if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() || name.is_empty() {
+            return;
+        }
+
+        let Some((referenced_name, module_specifier)) =
+            self.first_unnameable_external_unique_symbol_reference(inferred_type)
+        else {
+            return;
+        };
+
+        let quoted_module = format!("\"{module_specifier}\"");
+        self.error_at_node_msg(
+            name_idx,
+            crate::diagnostics::diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED,
+            &[name, &referenced_name, &quoted_module],
+        );
+    }
+
+    fn first_unnameable_external_unique_symbol_reference(
+        &self,
+        inferred_type: TypeId,
+    ) -> Option<(String, String)> {
+        let mut result = None;
+
+        tsz_solver::visitor::walk_referenced_types(self.ctx.types, inferred_type, |type_id| {
+            if result.is_some() {
+                return;
+            }
+
+            if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types.as_type_database(),
+                type_id,
+            ) && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
+            {
+                result = Some(info);
+                return;
+            }
+            if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(
+                self.ctx.types.as_type_database(),
+                type_id,
+            ) && let Some(info) = self.inspect_unique_symbol_properties(&shape.properties)
+            {
+                result = Some(info);
+            }
+        });
+
+        result
+    }
+
+    fn inspect_unique_symbol_properties(
+        &self,
+        properties: &[tsz_solver::PropertyInfo],
+    ) -> Option<(String, String)> {
+        for prop in properties {
+            let prop_name = self.ctx.types.resolve_atom(prop.name);
+            let Some(symbol_id) = prop_name.strip_prefix("__unique_") else {
+                continue;
+            };
+            let Ok(symbol_raw) = symbol_id.parse::<u32>() else {
+                continue;
+            };
+            if let Some(info) = self.unique_symbol_emit_nameability_info(SymbolId(symbol_raw)) {
+                return Some(info);
+            }
+        }
+        None
+    }
+
+    fn unique_symbol_emit_nameability_info(&self, sym_id: SymbolId) -> Option<(String, String)> {
+        let (reported_name, root_sym_id, file_idx) = self.unique_symbol_report_target(sym_id)?;
+        if file_idx == u32::MAX || file_idx == self.ctx.current_file_idx as u32 {
+            return None;
+        }
+
+        if !self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .is_some_and(tsz_binder::BinderState::is_external_module)
+        {
+            return None;
+        }
+
+        if self.local_value_name_resolves_to(root_sym_id) {
+            return None;
+        }
+
+        let module_specifier = self.module_specifier_for_file(file_idx)?;
+        Some((reported_name, module_specifier))
+    }
+
+    fn unique_symbol_report_target(&self, sym_id: SymbolId) -> Option<(String, SymbolId, u32)> {
+        let symbol = self.get_symbol_from_any_binder(sym_id)?;
+        let file_idx = symbol.decl_file_idx;
+        let owner_binder = self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .unwrap_or(self.ctx.binder);
+
+        let mut decl_candidates = symbol.declarations.clone();
+        if symbol.value_declaration.is_some()
+            && !decl_candidates.contains(&symbol.value_declaration)
+        {
+            decl_candidates.push(symbol.value_declaration);
+        }
+
+        for decl_idx in decl_candidates {
+            if !decl_idx.is_some() {
+                continue;
+            }
+
+            let mut candidate_arenas: Vec<&tsz_parser::parser::node::NodeArena> = Vec::new();
+            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+            }
+            if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            if std::ptr::eq(owner_binder, self.ctx.binder) {
+                candidate_arenas.push(self.ctx.arena);
+            }
+
+            for arena in candidate_arenas {
+                let Some(node) = arena.get(decl_idx) else {
+                    continue;
+                };
+                if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                    continue;
+                }
+
+                let mut namespace_names = Vec::new();
+                let mut namespace_nodes = Vec::new();
+                let mut parent = arena
+                    .get_extended(decl_idx)
+                    .map_or(NodeIndex::NONE, |info| info.parent);
+                while !parent.is_none() {
+                    let Some(parent_node) = arena.get(parent) else {
+                        break;
+                    };
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        && let Some(module) = arena.get_module(parent_node)
+                        && let Some(name_node) = arena.get(module.name)
+                        && name_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(name_ident) = arena.get_identifier(name_node)
+                    {
+                        namespace_names.push(name_ident.escaped_text.clone());
+                        namespace_nodes.push(parent);
+                    }
+                    parent = arena
+                        .get_extended(parent)
+                        .map_or(NodeIndex::NONE, |info| info.parent);
+                }
+
+                if !namespace_names.is_empty() {
+                    namespace_names.reverse();
+                    let display_name = namespace_names.join(".");
+                    let root_namespace_idx = *namespace_nodes.last().unwrap_or(&NodeIndex::NONE);
+                    let root_sym_id = self
+                        .ctx
+                        .get_binder_for_arena(arena)
+                        .and_then(|binder| binder.get_node_symbol(root_namespace_idx))
+                        .unwrap_or(sym_id);
+                    return Some((display_name, root_sym_id, file_idx));
+                }
+
+                return Some((symbol.escaped_name.clone(), sym_id, file_idx));
+            }
+        }
+
+        Some((symbol.escaped_name.clone(), sym_id, file_idx))
+    }
+
+    fn get_symbol_from_any_binder(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| {
+                self.ctx
+                    .all_binders
+                    .as_ref()
+                    .and_then(|binders| binders.iter().find_map(|binder| binder.get_symbol(sym_id)))
+            })
+            .or_else(|| {
+                self.ctx
+                    .lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.get_symbol(sym_id))
+            })
+    }
+
+    fn local_value_name_resolves_to(&self, target_sym_id: SymbolId) -> bool {
+        self.ctx
+            .binder
+            .file_locals
+            .iter()
+            .any(|(_, &local_sym_id)| {
+                let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id) else {
+                    return false;
+                };
+                if symbol.is_type_only {
+                    return false;
+                }
+                if local_sym_id == target_sym_id {
+                    return true;
+                }
+
+                self.ctx.binder.resolve_import_symbol(local_sym_id) == Some(target_sym_id)
+            })
+    }
+
+    fn module_specifier_for_file(&self, file_idx: u32) -> Option<String> {
+        if let Some(specifier) = self.ctx.module_specifiers.get(&file_idx) {
+            return Some(specifier.clone());
+        }
+
+        let arena = self.ctx.get_arena_for_file(file_idx);
+        let source_file = arena.source_files.first()?;
+        let file_name = &source_file.file_name;
+        let stem = file_name
+            .rsplit_once('.')
+            .map(|(base, _)| base)
+            .unwrap_or(file_name);
+        let basename = stem.rsplit_once('/').map(|(_, name)| name).unwrap_or(stem);
+        Some(basename.to_string())
     }
 }
 

@@ -500,6 +500,16 @@ impl<'a> CheckerState<'a> {
             callee_type_for_context,
             self.ctx.compiler_options.no_implicit_any,
         );
+        let base_contextual_param_types: Vec<Option<TypeId>> = (0..args.len())
+            .map(|i| {
+                self.contextual_parameter_type_for_call_with_env_from_expected(
+                    callee_type_for_context,
+                    i,
+                    args.len(),
+                )
+                .or_else(|| ctx_helper.get_parameter_type_for_call(i, args.len()))
+            })
+            .collect();
         // For union callees, skip excess property checking during argument collection.
         // The solver's resolve_union_call intersects parameter types across members,
         // so `{x: 0, y: 0}` is valid for `((a: {x}) => R) | ((a: {y}) => R)` even
@@ -519,7 +529,14 @@ impl<'a> CheckerState<'a> {
                 // evaluation would reduce the union to just the never-parameterized
                 // callback, losing contextual type information.
 
-                if should_preserve_contextual_application_shape(this.ctx.types, param_type) {
+                if tsz_solver::is_function_type(this.ctx.types.as_type_database(), param_type)
+                    || tsz_solver::visitor::callable_shape_id(
+                        this.ctx.types.as_type_database(),
+                        param_type,
+                    )
+                    .is_some()
+                    || should_preserve_contextual_application_shape(this.ctx.types, param_type)
+                {
                     param_type
                 } else if let Some(members) =
                     tsz_solver::type_queries::get_union_members(this.ctx.types, param_type)
@@ -665,7 +682,7 @@ impl<'a> CheckerState<'a> {
                     // from being emitted before inference completes.
                     let mut round1_arg_types = self.collect_call_argument_types_with_context(
                         args,
-                        |i, arg_count| {
+                        |i, _arg_count| {
                             // Skip contextually sensitive arguments in Round 1.
                             // Guard against out-of-bounds: large indices are used to probe
                             // for rest parameters (see call_checker.rs spread handling).
@@ -676,7 +693,7 @@ impl<'a> CheckerState<'a> {
                             if skip_round1_context {
                                 None
                             } else {
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                base_contextual_param_types.get(i).copied().flatten()
                             }
                         },
                         check_excess_properties,
@@ -1167,7 +1184,7 @@ impl<'a> CheckerState<'a> {
                                 .get(i)
                                 .copied()
                                 .flatten()
-                                .or_else(|| ctx_helper.get_parameter_type_for_call(i, arg_count));
+                                .or_else(|| base_contextual_param_types.get(i).copied().flatten());
                             let arg_type = self.compute_single_call_argument_type(
                                 arg_idx,
                                 expected_type,
@@ -1358,11 +1375,11 @@ impl<'a> CheckerState<'a> {
 
                         self.collect_call_argument_types_with_context(
                             args,
-                            |i, arg_count| {
+                            |i, _arg_count| {
                                 if i < round2_contextual_types.len() {
                                     round2_contextual_types[i]
                                 } else {
-                                    ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                    base_contextual_param_types.get(i).copied().flatten()
                                 }
                             },
                             check_excess_properties,
@@ -1391,7 +1408,7 @@ impl<'a> CheckerState<'a> {
                     let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                         .map(|i| {
                             let param_type =
-                                ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                                base_contextual_param_types.get(i).copied().flatten()?;
                             let is_empty_array_literal = arena.get(args[i]).is_some_and(|n| {
                                 n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                     && arena
@@ -1415,11 +1432,11 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let initial_arg_types = self.collect_call_argument_types_with_context(
                         args,
-                        |i, arg_count| {
+                        |i, _arg_count| {
                             if i < single_pass_contextual_types.len() {
                                 single_pass_contextual_types[i]
                             } else {
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                base_contextual_param_types.get(i).copied().flatten()
                             }
                         },
                         check_excess_properties,
@@ -1476,13 +1493,13 @@ impl<'a> CheckerState<'a> {
                                 .collect();
                             self.collect_call_argument_types_with_context(
                                 args,
-                                |i, arg_count| {
+                                |i, _arg_count| {
                                     refreshed_contextual_types
                                         .get(i)
                                         .copied()
                                         .flatten()
                                         .or_else(|| {
-                                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                            base_contextual_param_types.get(i).copied().flatten()
                                         })
                                 },
                                 check_excess_properties,
@@ -1532,13 +1549,13 @@ impl<'a> CheckerState<'a> {
                                 .collect();
                             self.collect_call_argument_types_with_context(
                                 args,
-                                |i, arg_count| {
+                                |i, _arg_count| {
                                     refreshed_contextual_types
                                         .get(i)
                                         .copied()
                                         .flatten()
                                         .or_else(|| {
-                                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                                            base_contextual_param_types.get(i).copied().flatten()
                                         })
                                 },
                                 check_excess_properties,
@@ -1553,7 +1570,7 @@ impl<'a> CheckerState<'a> {
                 // Shouldn't happen for generic call detection, but keep single-pass fallback.
                 let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                     .map(|i| {
-                        let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                        let param_type = base_contextual_param_types.get(i).copied().flatten()?;
                         Some(normalize_contextual_param_type(
                             self,
                             &ctx_helper,
@@ -1565,11 +1582,11 @@ impl<'a> CheckerState<'a> {
                     .collect();
                 self.collect_call_argument_types_with_context(
                     args,
-                    |i, arg_count| {
+                    |i, _arg_count| {
                         if i < single_pass_contextual_types.len() {
                             single_pass_contextual_types[i]
                         } else {
-                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            base_contextual_param_types.get(i).copied().flatten()
                         }
                     },
                     check_excess_properties,
@@ -1581,7 +1598,7 @@ impl<'a> CheckerState<'a> {
             // Non-generic calls or calls with explicit type arguments use the standard flow.
             let single_pass_contextual_types: Vec<Option<TypeId>> = (0..args.len())
                 .map(|i| {
-                    let param_type = ctx_helper.get_parameter_type_for_call(i, args.len())?;
+                    let param_type = base_contextual_param_types.get(i).copied().flatten()?;
                     Some(normalize_contextual_param_type(
                         self,
                         &ctx_helper,
@@ -1594,11 +1611,11 @@ impl<'a> CheckerState<'a> {
             non_generic_contextual_types = Some(single_pass_contextual_types.clone());
             self.collect_call_argument_types_with_context(
                 args,
-                |i, arg_count| {
+                |i, _arg_count| {
                     if i < single_pass_contextual_types.len() {
                         single_pass_contextual_types[i]
                     } else {
-                        ctx_helper.get_parameter_type_for_call(i, arg_count)
+                        base_contextual_param_types.get(i).copied().flatten()
                     }
                 },
                 check_excess_properties,
@@ -1704,8 +1721,11 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .and_then(|types| types.get(index).copied().flatten())
                 .map(|expected| self.evaluate_contextual_type(expected))
-            && let Some(actual) = arg_types.get(index).copied()
             && let Some(&arg_idx) = args.get(index)
+            && let Some(actual) = Some(self.refreshed_generic_call_arg_type(
+                arg_idx,
+                arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
+            ))
         {
             let fresh_subtype = assign_query::is_fresh_subtype_of(self.ctx.types, actual, expected);
             let recover_object_literal =
@@ -1789,12 +1809,12 @@ impl<'a> CheckerState<'a> {
                 .collect();
             arg_types = self.collect_call_argument_types_with_context(
                 args,
-                |i, arg_count| {
+                |i, _arg_count| {
                     refreshed_contextual_types
                         .get(i)
                         .copied()
                         .flatten()
-                        .or_else(|| ctx_helper.get_parameter_type_for_call(i, arg_count))
+                        .or_else(|| base_contextual_param_types.get(i).copied().flatten())
                 },
                 check_excess_properties,
                 None,
@@ -1984,7 +2004,6 @@ impl<'a> CheckerState<'a> {
                 other => (other, false),
             };
             if should_epc {
-                let mut did_epc = false;
                 for (i, &arg_idx) in args.iter().enumerate() {
                     if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                         && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -2003,7 +2022,6 @@ impl<'a> CheckerState<'a> {
                                 evaluated_param,
                                 arg_idx,
                             );
-                            did_epc = true;
                         }
                     }
                 }
@@ -2024,7 +2042,127 @@ impl<'a> CheckerState<'a> {
                 } else {
                     result
                 };
-                (result, did_epc)
+                let recovered_mismatch = matches!(
+                    &result,
+                    CallResult::ArgumentTypeMismatch {
+                        fallback_return,
+                        ..
+                    } if *fallback_return != TypeId::ERROR
+                );
+                let (result, should_epc) = match result {
+                    CallResult::Success(return_type) => (CallResult::Success(return_type), true),
+                    CallResult::ArgumentTypeMismatch {
+                        index,
+                        actual,
+                        expected,
+                        fallback_return,
+                    } => {
+                        // The final check may fail due to stale cache entries. Verify with
+                        // a fresh structural check on the evaluated instantiated param, and
+                        // keep the refreshed types for downstream diagnostics.
+                        if let Some(param) = instantiated_params.get(index).or_else(|| {
+                            let last = instantiated_params.last()?;
+                            last.rest.then_some(last)
+                        }) {
+                            let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                            let expected_param = expected_signature
+                                .and_then(|signature| {
+                                    self.contextual_parameter_type_for_call_with_env_from_expected(
+                                        signature,
+                                        index,
+                                        arg_types.len(),
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    if param.rest {
+                                        self.rest_argument_element_type_with_env(evaluated_param)
+                                    } else {
+                                        evaluated_param
+                                    }
+                                });
+                            let arg_type = args
+                                .get(index)
+                                .copied()
+                                .map(|arg_idx| {
+                                    self.refreshed_generic_call_arg_type(
+                                        arg_idx,
+                                        arg_types.get(index).copied().unwrap_or(TypeId::UNKNOWN),
+                                    )
+                                })
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let fresh_assignable =
+                                self.is_assignable_to_with_env(arg_type, expected_param);
+                            if !fresh_assignable {
+                                allow_contextual_mismatch_deferral = false;
+                            }
+                            (
+                                CallResult::ArgumentTypeMismatch {
+                                    index,
+                                    expected: expected_param,
+                                    actual: arg_type,
+                                    fallback_return,
+                                },
+                                fresh_assignable,
+                            )
+                        } else {
+                            (
+                                CallResult::ArgumentTypeMismatch {
+                                    index,
+                                    actual,
+                                    expected,
+                                    fallback_return,
+                                },
+                                false,
+                            )
+                        }
+                    }
+                    other => (other, false),
+                };
+                if should_epc {
+                    let mut _did_epc = false;
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                            && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            && let Some(param) = instantiated_params.get(i)
+                            && param.type_id != TypeId::ANY
+                            && param.type_id != TypeId::UNKNOWN
+                        {
+                            let evaluated_param = self.evaluate_type_with_env(param.type_id);
+                            if !is_type_parameter_type(self.ctx.types, evaluated_param) {
+                                let arg_type = self.refreshed_generic_call_arg_type(
+                                    arg_idx,
+                                    arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN),
+                                );
+                                self.check_object_literal_excess_properties(
+                                    arg_type,
+                                    evaluated_param,
+                                    arg_idx,
+                                );
+                                _did_epc = true;
+                            }
+                        }
+                    }
+                    // If the result was ArgumentTypeMismatch but fresh check passed,
+                    // convert to Success so the caller doesn't report TS2345.
+                    // This recovery is not limited to object-literal EPC cases:
+                    // generic constructor/class arguments can also fail the cached
+                    // solver check and succeed on the fresh env-aware retry.
+                    let result = if recovered_mismatch {
+                        if let CallResult::ArgumentTypeMismatch {
+                            fallback_return, ..
+                        } = &result
+                        {
+                            CallResult::Success(*fallback_return)
+                        } else {
+                            result
+                        }
+                    } else {
+                        result
+                    };
+                    (result, false)
+                } else {
+                    (result, false)
+                }
             } else {
                 (result, false)
             }

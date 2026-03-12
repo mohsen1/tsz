@@ -436,10 +436,13 @@ impl<'a> CheckerState<'a> {
         // Create substitution and instantiate
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
-        let (instantiated, depth_exceeded) =
+        let (mut instantiated, depth_exceeded) =
             instantiate_type_with_depth_status(self.ctx.types, body_type, &substitution);
         if depth_exceeded {
             *self.ctx.depth_exceeded.borrow_mut() = true;
+        }
+        if tsz_solver::contains_this_type(self.ctx.types, instantiated) {
+            instantiated = tsz_solver::substitute_this_type(self.ctx.types, instantiated, type_id);
         }
         // Recursively evaluate in case the result contains more applications
         let result = self.evaluate_application_type(instantiated);

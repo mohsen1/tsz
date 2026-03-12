@@ -1304,19 +1304,7 @@ impl<'a> CheckerState<'a> {
                     } => {
                         if type_id == TypeId::ANY
                             && !from_index_signature
-                            && (tsz_solver::is_index_access_type(
-                                self.ctx.types.as_type_database(),
-                                member,
-                            ) || tsz_solver::is_mapped_type(
-                                self.ctx.types.as_type_database(),
-                                member,
-                            ) || tsz_solver::is_conditional_type(
-                                self.ctx.types.as_type_database(),
-                                member,
-                            ) || tsz_solver::is_type_query_type(
-                                self.ctx.types.as_type_database(),
-                                member,
-                            ))
+                            && query::needs_env_eval(self.ctx.types, member)
                         {
                             saw_deferred_any_fallback = true;
                             continue;

@@ -404,7 +404,11 @@ impl<'a> InferenceContext<'a> {
         } else {
             resolved
         };
+        let has_index_signature_candidates = filtered_no_never
+            .iter()
+            .any(|candidate| candidate.from_index_signature);
         if all_from_object_properties
+            && !has_index_signature_candidates
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
         {
             let member_count = self.interner.type_list(member_list_id).len();

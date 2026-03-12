@@ -171,6 +171,7 @@ pub struct FlowAnalyzer<'a> {
     /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
     pub(crate) shared_symbol_last_assignment_pos:
         Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>>,
+    pub(crate) concrete_this_type: Option<TypeId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -215,6 +216,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_visited: None,
             flow_results: None,
             shared_symbol_last_assignment_pos: None,
+            concrete_this_type: None,
         }
     }
 
@@ -247,6 +249,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_visited: None,
             flow_results: None,
             shared_symbol_last_assignment_pos: None,
+            concrete_this_type: None,
         }
     }
 
@@ -316,7 +319,23 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
+    pub const fn with_concrete_this_type(mut self, concrete_this_type: TypeId) -> Self {
+        self.concrete_this_type = Some(concrete_this_type);
+        self
+    }
+
+    fn substitute_this_type_if_available(&self, type_id: TypeId) -> TypeId {
+        if let Some(concrete_this_type) = self.concrete_this_type
+            && tsz_solver::contains_this_type(self.interner, type_id)
+        {
+            return tsz_solver::substitute_this_type(self.interner, type_id, concrete_this_type);
+        }
+        type_id
+    }
+
     pub(crate) fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        let source = self.substitute_this_type_if_available(source);
+        let target = self.substitute_this_type_if_available(target);
         if let Some(env) = &self.type_environment {
             return query::is_assignable_with_env(
                 self.interner,
@@ -330,6 +349,8 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn is_assignable_to_strict_null(&self, source: TypeId, target: TypeId) -> bool {
+        let source = self.substitute_this_type_if_available(source);
+        let target = self.substitute_this_type_if_available(target);
         if let Some(env) = &self.type_environment {
             return query::is_assignable_with_env(
                 self.interner,

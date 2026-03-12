@@ -4367,6 +4367,212 @@ fn test_generic_call_uses_contextual_return_inference_for_application() {
 }
 
 #[test]
+fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let callback_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let callback_t_type = interner.intern(TypeData::TypeParameter(callback_t_param.clone()));
+    let generic_callback = interner.function(FunctionShape {
+        type_params: vec![callback_t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: callback_t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: callback_t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: callback_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let outer_t_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let outer_t_type = interner.intern(TypeData::TypeParameter(outer_t_param.clone()));
+    let expected_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: outer_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let higher_order = interner.function(FunctionShape {
+        type_params: vec![outer_t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("cb")),
+            type_id: expected_callback,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: outer_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(higher_order, &[generic_callback]);
+    assert!(
+        matches!(result, CallResult::ArgumentTypeMismatch { index: 0, .. }),
+        "Expected callback parameter conflict to surface as ArgumentTypeMismatch, got {result:?}"
+    );
+}
+
+#[test]
+fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let tuple_arg = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let tuple_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(interner.array(TypeId::UNKNOWN)),
+        default: None,
+        is_const: false,
+    };
+    let tuple_t_type = interner.intern(TypeData::TypeParameter(tuple_t_param.clone()));
+
+    let return_t_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let return_t_type = interner.intern(TypeData::TypeParameter(return_t_param.clone()));
+
+    let rest_callback = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: tuple_t_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: return_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let higher_order = interner.function(FunctionShape {
+        type_params: vec![tuple_t_param, return_t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("args")),
+                type_id: tuple_t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("f")),
+                type_id: rest_callback,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: return_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let a_param = TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let a_type = interner.intern(TypeData::TypeParameter(a_param.clone()));
+    let b_param = TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let b_type = interner.intern(TypeData::TypeParameter(b_param.clone()));
+    let generic_binary = interner.function(FunctionShape {
+        type_params: vec![a_param, b_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("a")),
+                type_id: a_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("b")),
+                type_id: b_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: interner.union2(a_type, b_type),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(higher_order, &[tuple_arg, generic_binary]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected tuple-rest higher-order call to accept generic binary callback, got {result:?}"
+    );
+}
+
+#[test]
 fn test_array_union_is_not_strictly_assignable_to_tuple() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
