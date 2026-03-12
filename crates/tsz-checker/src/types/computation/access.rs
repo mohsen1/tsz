@@ -244,8 +244,17 @@ impl<'a> CheckerState<'a> {
         let index_type = self.get_type_of_node(access.name_or_argument);
         self.ctx.preserve_literal_types = prev_preserve;
 
-        // Propagate error from index expression to suppress cascading errors
+        // Preserve the write target when the index expression already errored.
         if index_type == TypeId::ERROR {
+            if self.ctx.skip_flow_narrowing
+                && let Some(recovered_type) = self
+                    .recover_assignment_target_type_for_errored_element_index(
+                        object_type_for_access,
+                        access.name_or_argument,
+                    )
+            {
+                return recovered_type;
+            }
             return TypeId::ERROR;
         }
 
@@ -1084,6 +1093,48 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    fn recover_assignment_target_type_for_errored_element_index(
+        &mut self,
+        object_type: TypeId,
+        index_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        if matches!(
+            object_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return None;
+        }
+
+        if let Some(index) = self
+            .get_number_value_from_element_index(index_expr)
+            .filter(|value| value.is_finite() && value.fract() == 0.0 && *value >= 0.0)
+            .and_then(|value| self.get_numeric_index_from_number(value))
+        {
+            let recovered = self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+            if recovered != TypeId::ERROR {
+                return Some(recovered);
+            }
+        }
+
+        let candidate_indices: &[TypeId] = if self.is_array_like_type(object_type) {
+            &[TypeId::NUMBER, TypeId::STRING]
+        } else {
+            &[TypeId::STRING, TypeId::NUMBER]
+        };
+
+        for &candidate_index in candidate_indices {
+            if self.should_report_no_index_signature(object_type, candidate_index, None) {
+                continue;
+            }
+            let recovered = self.get_element_access_type(object_type, candidate_index, None);
+            if recovered != TypeId::ERROR {
+                return Some(recovered);
+            }
+        }
+
+        None
     }
 
     fn union_has_missing_concrete_element_access(

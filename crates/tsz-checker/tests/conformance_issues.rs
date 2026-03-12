@@ -606,7 +606,6 @@ if (typeof c === "string") {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_index_write_with_errored_key_still_checks_value_type() {
     let source = r#"
 class Box {
