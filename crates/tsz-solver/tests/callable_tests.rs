@@ -1167,6 +1167,70 @@ fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
 }
 
 #[test]
+fn test_contextual_instantiation_generic_source_rejects_incomparable_param_candidates() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let source = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::UNKNOWN,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(!checker.check_subtype(source, target).is_true());
+}
+
+#[test]
 fn test_contextual_instantiation_generic_target_from_source_type_param() {
     // Mirrors contextualOuterTypeParameters-style assignment where source uses a
     // contextual free type parameter and target is explicitly generic.

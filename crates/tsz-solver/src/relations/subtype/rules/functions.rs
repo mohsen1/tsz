@@ -12,12 +12,14 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId,
     InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId,
     TypeParamInfo, TypePredicate, Visibility,
 };
 use crate::visitor::contains_this_type;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -56,6 +58,98 @@ fn resolve_contextual_source_inference_candidate(
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn has_conflicting_contextual_param_candidates(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> bool {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let tracked_type_params: FxHashSet<_> =
+            source.type_params.iter().map(|tp| tp.name).collect();
+        if tracked_type_params.is_empty() {
+            return false;
+        }
+
+        let source_params_unpacked: Vec<ParamInfo> = source
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+        let target_params_unpacked: Vec<ParamInfo> = target
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+
+        let target_has_rest = target_params_unpacked.last().is_some_and(|p| p.rest);
+        let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
+        let target_fixed_count = if target_has_rest {
+            target_params_unpacked.len().saturating_sub(1)
+        } else {
+            target_params_unpacked.len()
+        };
+        let source_fixed_count = if source_has_rest {
+            source_params_unpacked.len().saturating_sub(1)
+        } else {
+            source_params_unpacked.len()
+        };
+
+        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+        let mut contextual_candidates: FxHashMap<_, Vec<TypeId>> = FxHashMap::default();
+
+        for i in 0..fixed_compare_count {
+            let s_param = &source_params_unpacked[i];
+            let t_param = &target_params_unpacked[i];
+
+            let s_effective = if s_param.optional {
+                self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
+            } else {
+                s_param.type_id
+            };
+            let t_effective = if t_param.optional {
+                self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
+            } else {
+                t_param.type_id
+            };
+
+            if self.is_uninformative_contextual_inference_input(t_effective) {
+                continue;
+            }
+
+            let referenced_type_params: FxHashSet<_> =
+                crate::visitor::collect_all_types(self.interner, s_effective)
+                    .into_iter()
+                    .filter_map(|ty| type_param_info(self.interner, ty))
+                    .map(|info| info.name)
+                    .filter(|name| tracked_type_params.contains(name))
+                    .collect();
+
+            for type_param_name in referenced_type_params {
+                contextual_candidates
+                    .entry(type_param_name)
+                    .or_default()
+                    .push(t_effective);
+            }
+        }
+
+        contextual_candidates.values().any(|candidates| {
+            for (idx, &left) in candidates.iter().enumerate() {
+                for &right in candidates.iter().skip(idx + 1) {
+                    if left == right {
+                        continue;
+                    }
+                    let comparable = self.check_subtype(left, right).is_true()
+                        || self.check_subtype(right, left).is_true();
+                    if !comparable {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
+
     /// Check if parameter types are compatible based on variance settings.
     ///
     /// In strict mode (contravariant): `target_type` <: `source_type`
@@ -813,6 +907,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // is contextually typed by a concrete callback/function type.
         if !source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty()
         {
+            if self.has_conflicting_contextual_param_candidates(
+                &source_instantiated,
+                &target_instantiated,
+            ) {
+                return SubtypeResult::False;
+            }
             let substitution = match self
                 .infer_source_type_param_substitution(&source_instantiated, &target_instantiated)
             {
