@@ -12626,7 +12626,6 @@ function f(obj: { a: number, b: 0 | 1 }, k: 'a' | 'b') {
 }
 
 #[test]
-#[ignore = "TODO: diagnostic now says Item[K] instead of T[K] after behavior change"]
 fn test_assignment_diagnostic_widens_literal_for_generic_indexed_write() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

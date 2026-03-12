@@ -1664,7 +1664,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let access = self.ctx.arena.get_access_expr(node)?;
-        let object_type = self.get_type_of_node(access.expression);
+        let object_type = self
+            .resolve_identifier_symbol(access.expression)
+            .and_then(|sym_id| self.assignment_target_declared_type(sym_id))
+            .filter(|declared| {
+                tsz_solver::visitor::is_type_parameter(self.ctx.types, *declared)
+                    || tsz_solver::visitor::is_this_type(self.ctx.types, *declared)
+            })
+            .unwrap_or_else(|| self.get_type_of_node(access.expression));
         if !tsz_solver::visitor::is_type_parameter(self.ctx.types, object_type) {
             return None;
         }
@@ -1684,6 +1691,29 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .index_access(object_type, index_type),
         )
+    }
+
+    fn assignment_target_declared_type(&mut self, sym_id: tsz_binder::SymbolId) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration;
+        if !value_decl.is_some() {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(value_decl)?;
+        if let Some(param) = self.ctx.arena.get_parameter(node)
+            && param.type_annotation.is_some()
+        {
+            return Some(self.get_type_from_type_node(param.type_annotation));
+        }
+
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+            && var_decl.type_annotation.is_some()
+        {
+            return Some(self.get_type_from_type_node(var_decl.type_annotation));
+        }
+
+        None
     }
 }
 
