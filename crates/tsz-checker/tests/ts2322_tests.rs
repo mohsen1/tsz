@@ -1234,6 +1234,28 @@ fn test_ts2322_optional_property_required_includes_related_missing_property_deta
 }
 
 #[test]
+fn test_ts2322_property_type_mismatch_includes_related_property_detail() {
+    let source = r#"
+        let source: { one: string } = { one: "" };
+        let target: { one: number } = source;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322 for property type mismatch assignment");
+
+    assert!(
+        ts2322.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Types of property 'one' are incompatible.")
+        }),
+        "Expected TS2322 to include property incompatibility elaboration, got: {ts2322:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;
