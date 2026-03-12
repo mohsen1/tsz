@@ -8,6 +8,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -373,6 +374,90 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         self.find_jsdoc_for_function(func_idx)
+    }
+
+    /// Resolve a function's JSDoc `@type` annotation into a callable type when
+    /// it actually carries call signatures (including callback typedef aliases).
+    ///
+    /// Broad object-ish annotations like `Function` should not count here
+    /// because they do not provide concrete parameter types and should still
+    /// allow TS7006 to fire.
+    pub(crate) fn jsdoc_callable_type_annotation_for_function(
+        &mut self,
+        func_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let jsdoc = self.get_jsdoc_for_function(func_idx)?;
+        let sf = self.source_file_data_for_node(func_idx)?;
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let node = self.ctx.arena.get(func_idx)?;
+        let mut candidates = Vec::new();
+
+        if let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc) {
+            if let Some(ty) = self.resolve_jsdoc_type_str(&type_expr) {
+                candidates.push(ty);
+                candidates.push(self.judge_evaluate(ty));
+                candidates.push(self.evaluate_contextual_type(ty));
+            }
+            if let Some(ty) =
+                self.resolve_jsdoc_typedef_type(&type_expr, node.pos, &comments, &source_text)
+            {
+                candidates.push(ty);
+                candidates.push(self.judge_evaluate(ty));
+                candidates.push(self.evaluate_contextual_type(ty));
+            }
+        }
+
+        if let Some(ty) = self.jsdoc_type_annotation_for_node(func_idx) {
+            candidates.push(ty);
+            candidates.push(self.judge_evaluate(ty));
+            candidates.push(self.evaluate_contextual_type(ty));
+        }
+
+        for ty in candidates {
+            let ty = self.evaluate_application_type(ty);
+            if tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
+                || tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
+                    .is_some_and(|sigs| !sigs.is_empty())
+            {
+                return Some(ty);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn jsdoc_type_tag_references_callback_typedef(
+        &self,
+        func_idx: NodeIndex,
+        jsdoc: &str,
+    ) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(jsdoc) else {
+            return false;
+        };
+        let Some(sf) = self.source_file_data_for_node(func_idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+
+        for comment in &sf.comments {
+            if comment.end > node.pos || !is_jsdoc_comment(comment, &sf.text) {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, &sf.text);
+            if Self::parse_jsdoc_typedefs(&content)
+                .into_iter()
+                .any(|(name, info)| name == type_expr && info.callback.is_some())
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Find the JSDoc comment for a function node without checking compiler options.

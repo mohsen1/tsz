@@ -1752,6 +1752,45 @@ var ooscope2 = s => s.length > 0;
 }
 
 #[test]
+fn test_jsdoc_callback_typedef_contextually_types_function_declaration_parameters() {
+    let source = r#"
+/**
+ * @callback Cb
+ * @param {unknown} x
+ * @return {x is number}
+ */
+
+/** @type {Cb} */
+function isNumber(x) { return typeof x === "number"; }
+
+/** @param {unknown} x */
+function g(x) {
+    if (isNumber(x)) {
+        x * 2;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Did not expect TS7006 for function declaration typed from JSDoc callback typedef. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_function_return_mismatch_reports_inner_body_error_only() {
     let source = r#"
 // @ts-check
