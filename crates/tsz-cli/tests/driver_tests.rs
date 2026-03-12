@@ -368,6 +368,48 @@ fn compile_with_project_dir_uses_tsconfig() {
 }
 
 #[test]
+fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("node_modules/foo/package.json"),
+        r#"{
+          "name": "foo",
+          "version": "1.0.0",
+          "exports": {
+            "./*.json": "./configs/*.json"
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/foo/configs/strict.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{"extends":"foo/strict.json"}"#,
+    );
+    write_file(&base.join("index.ts"), "let x: string;\nx.toLowerCase();\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED),
+        "Expected TS2454 from package-exported tsconfig extends, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_jsx_preserve_emits_jsx_extension() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
