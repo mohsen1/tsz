@@ -725,6 +725,17 @@ impl<'a> CheckerState<'a> {
             &mut inherited_member_types,
         );
 
+        // Also collect names of inherited PRIVATE/PROTECTED members. These don't
+        // satisfy interface requirements, but when an interface extends the same base
+        // class, these members appear in the interface type shape and must not be
+        // reported as "missing" — they're inherited through the shared base class.
+        let mut inherited_private_member_names: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        self.collect_inherited_private_member_names(
+            class_data,
+            &mut inherited_private_member_names,
+        );
+
         // Get the class name for error messages
         let class_name = self.class_declaration_display_name(class_data);
         let class_error_idx = if class_data.name.is_some() {
@@ -930,6 +941,13 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        // Skip private brand properties — these are synthetic markers
+                        // for private member compatibility and are handled by the
+                        // type-level assignability check, not member-by-member.
+                        if member_name.starts_with("__private_brand_") {
+                            continue;
+                        }
+
                         // Check if class has this member
                         if let Some(&class_member_idx) = class_members.get(&member_name) {
                             // For overloaded methods, use the combined type from the
@@ -1034,7 +1052,9 @@ impl<'a> CheckerState<'a> {
                                     actual_str,
                                 ));
                             }
-                        } else {
+                        } else if !inherited_private_member_names.contains(&member_name) {
+                            // Only report as missing if it's not a private/protected
+                            // member inherited from the same base class chain.
                             missing_members.push(member_name);
                         }
                     }
