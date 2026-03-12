@@ -11087,7 +11087,6 @@ type Outer<WithC extends { name: string }> = Inner<WithC>;
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_ts2344_unconstrained_type_param_fails_object_constraint() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -12184,7 +12183,6 @@ fn test_computed_binding_element_identifier_key_unions_pre_and_default_assignmen
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_computed_assignment_pattern_order_uses_exact_rhs_tuple_access() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
