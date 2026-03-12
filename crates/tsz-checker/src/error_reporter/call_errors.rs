@@ -1477,6 +1477,21 @@ impl<'a> CheckerState<'a> {
                     },
                 ])
             }
+            SubtypeFailureReason::MissingIndexSignature { index_kind } => {
+                let source_str = self.format_type_diagnostic(_source);
+                let msg = format_message(
+                    diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
+                    &[index_kind, &source_str],
+                );
+                Some(vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: diagnostic_codes::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length: length.saturating_sub(start),
+                    message_text: msg,
+                }])
+            }
             _ => None,
         }
     }

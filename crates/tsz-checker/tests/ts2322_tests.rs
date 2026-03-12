@@ -1423,6 +1423,34 @@ fn test_ts2345_index_signature_mismatch_includes_related_detail() {
 }
 
 #[test]
+fn test_ts2345_missing_index_signature_includes_related_detail() {
+    let source = r#"
+        declare function takes(value: { [index: number]: number }): void;
+        interface Arg { one: number; two?: string; }
+        const arg: Arg = { one: 1 };
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for missing-index-signature mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE
+                && info
+                    .message_text
+                    .contains("Index signature for type 'number' is missing in type 'Arg'.")
+        }),
+        "Expected TS2345 to include missing-index-signature elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;
