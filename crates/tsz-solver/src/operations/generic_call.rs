@@ -59,6 +59,36 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn get_overloaded_source_signature(
+        db: &dyn crate::TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<FunctionShape> {
+        let signatures = crate::type_queries::get_call_signatures(db, type_id)
+            .filter(|signatures| !signatures.is_empty())
+            .or_else(|| {
+                crate::type_queries::get_construct_signatures(db, type_id)
+                    .filter(|signatures| !signatures.is_empty())
+            })?;
+        let sig = signatures.last()?;
+        Some(FunctionShape {
+            type_params: sig.type_params.clone(),
+            params: sig.params.clone(),
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate.clone(),
+            is_constructor: false,
+            is_method: sig.is_method,
+        })
+    }
+
+    fn get_source_signature_for_inference(
+        db: &dyn crate::TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<FunctionShape> {
+        Self::get_overloaded_source_signature(db, type_id)
+            .or_else(|| Self::get_contextual_signature(db, type_id))
+    }
+
     fn should_use_contextual_return_substitution(
         &self,
         inferred: TypeId,
@@ -1773,14 +1803,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let raw_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty),
+            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
             Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
             _ => None,
         };
         let evaluated_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), evaluated_source_ty),
+            Self::get_source_signature_for_inference(
+                self.interner.as_type_database(),
+                evaluated_source_ty,
+            ),
             Self::get_contextual_signature(self.interner.as_type_database(), evaluated_target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
@@ -2047,7 +2080,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) -> bool {
         let raw_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty),
+            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
             Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
@@ -2056,7 +2089,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
         let evaluated_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), evaluated_source_ty),
+            Self::get_source_signature_for_inference(
+                self.interner.as_type_database(),
+                evaluated_source_ty,
+            ),
             Self::get_contextual_signature(self.interner.as_type_database(), evaluated_target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
@@ -2139,12 +2175,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
         let function_info = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty),
+            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
             Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
             _ => match (
-                Self::get_contextual_signature(
+                Self::get_source_signature_for_inference(
                     self.interner.as_type_database(),
                     evaluated_source_ty,
                 ),

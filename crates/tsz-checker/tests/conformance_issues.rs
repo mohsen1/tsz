@@ -13206,6 +13206,39 @@ var c = bar(1, "one", g);
 }
 
 #[test]
+fn test_generic_call_with_overloaded_callback_uses_last_source_signature() {
+    let source = r#"
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+declare function testFunction(n: number): Promise<number>;
+declare function testFunction(s: string): Promise<string>;
+
+declare var numPromise: Promise<number>;
+var newPromise = numPromise.then(testFunction);
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 1,
+        "Expected TS2345 for overloaded callback generic call.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
