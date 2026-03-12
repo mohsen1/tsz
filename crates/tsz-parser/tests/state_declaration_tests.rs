@@ -399,7 +399,8 @@ fn dotted_decimal_bigint_suffix_does_not_duplicate_ts1353_from_lookahead() {
         .filter(|d| d.code == 1353)
         .count();
     assert_eq!(
-        ts1353_count, 1,
+        ts1353_count,
+        1,
         "expected a single TS1353 after speculative scans, got {:?}",
         parser.get_diagnostics()
     );
