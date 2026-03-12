@@ -799,8 +799,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             fallback_return: TypeId::ERROR,
                         };
                     }
+                    if !is_rest_param_arg {
+                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                            target_type,
+                            &var_map,
+                            &mut placeholder_probe_map,
+                            &mut placeholder_visited,
+                        ));
+                    }
                 } else {
                     // Target type contains placeholders - check against their constraints
+                    if !is_rest_param_arg {
+                        direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                            target_type,
+                            &var_map,
+                            &mut placeholder_probe_map,
+                            &mut placeholder_visited,
+                        ));
+                    }
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
                         && let Some(constraint) = tp.constraint
                     {
@@ -1223,7 +1239,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 constraint = ?tp.constraint,
                 "Resolving type parameter"
             );
-
             let ty = if has_constraints {
                 let mut resolved_direct = None;
                 let contra_only = infer_ctx.has_only_contra_candidates(var);
@@ -1878,12 +1893,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut result = FxHashSet::default();
-        for (&placeholder_id, &var) in var_map.iter() {
-            probe_map.clear();
-            probe_map.insert(placeholder_id, var);
-            visited.clear();
-            if self.type_contains_placeholder(ty, probe_map, visited) {
+        for nested in crate::visitor::collect_all_types(self.interner.as_type_database(), ty) {
+            if let Some(&var) = var_map.get(&nested) {
                 result.insert(var);
+            }
+        }
+        let evaluated_ty = self.interner.evaluate_type(ty);
+        if evaluated_ty != ty {
+            for nested in
+                crate::visitor::collect_all_types(self.interner.as_type_database(), evaluated_ty)
+            {
+                if let Some(&var) = var_map.get(&nested) {
+                    result.insert(var);
+                }
+            }
+        }
+        if result.is_empty() {
+            for (&placeholder_id, &var) in var_map.iter() {
+                probe_map.clear();
+                probe_map.insert(placeholder_id, var);
+                visited.clear();
+                if self.type_contains_placeholder(ty, probe_map, visited) {
+                    result.insert(var);
+                }
             }
         }
 
@@ -2238,6 +2270,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn is_mergeable_direct_inference_candidate(&self, ty: TypeId) -> bool {
+        let evaluated_ty = self.interner.evaluate_type(ty);
         // Primitives (null, undefined, string, number, boolean, void, never, etc.)
         // are always safe to merge into a union — they don't indicate structural
         // ambiguity. Without this, `equal(B, D | undefined)` would discard the
@@ -2260,6 +2293,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 | TypeId::BOOLEAN_FALSE
         ) {
             return true;
+        }
+        // Nominal private brands should never be merged into a union during
+        // direct argument inference. TypeScript fixes `T` to the first such
+        // candidate and reports the later mismatch (`C` vs `D`) instead of
+        // inferring `C | D`.
+        if crate::type_queries::get_private_brand_name(self.interner.as_type_database(), ty)
+            .is_some()
+            || crate::type_queries::get_private_field_name(self.interner.as_type_database(), ty)
+                .is_some()
+            || crate::type_queries::get_private_brand_name(
+                self.interner.as_type_database(),
+                evaluated_ty,
+            )
+            .is_some()
+            || crate::type_queries::get_private_field_name(
+                self.interner.as_type_database(),
+                evaluated_ty,
+            )
+            .is_some()
+        {
+            return false;
         }
         match self.interner.lookup(ty) {
             Some(

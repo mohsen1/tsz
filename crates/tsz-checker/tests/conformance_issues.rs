@@ -13239,6 +13239,63 @@ var newPromise = numPromise.then(testFunction);
 }
 
 #[test]
+fn test_direct_generic_inference_does_not_union_nominal_private_candidates() {
+    let source = r#"
+class C { private x: string; }
+class D { private x: string; }
+function id2<T>(a: T, b: T): T { return a; }
+let r = id2(new C(), new D());
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 1,
+        "Expected TS2345 for nominal direct generic inference.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_nested_generic_inference_does_not_union_nominal_private_candidates() {
+    let source = r#"
+class C { private x: string; }
+class D { private x: string; }
+class X<T> { x!: T; }
+function foo<T>(a: X<T>, b: X<T>): T { return a.x; }
+let r = foo(new X<C>(), new X<D>());
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 1,
+        "Expected TS2345 for nested nominal generic inference.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
