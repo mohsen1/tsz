@@ -447,8 +447,8 @@ b.m(2);
 }
 
 #[test]
-fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types(
-) {
+fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types()
+ {
     let source = r#"
 var A = function A() {
     this.a = 1;
