@@ -772,8 +772,10 @@ fn convert_options_to_tsconfig(
     //
     // Only expand when the test explicitly set `@strict`.
     if strict_explicit {
-        if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-            let strict = *strict;
+        if let Some(serde_json::Value::Bool(true)) = opts.get("strict") {
+            // Only expand sub-options when strict: true. When strict: false,
+            // the sub-options already default to false — explicitly setting them
+            // triggers false TS5107 deprecation warnings for options like alwaysStrict.
             for key in [
                 "noImplicitAny",
                 "noImplicitThis",
@@ -785,7 +787,7 @@ fn convert_options_to_tsconfig(
                 "alwaysStrict",
             ] {
                 opts.entry(key.to_string())
-                    .or_insert(serde_json::Value::Bool(strict));
+                    .or_insert(serde_json::Value::Bool(true));
             }
         }
     }
