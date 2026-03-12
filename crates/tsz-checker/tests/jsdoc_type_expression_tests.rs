@@ -118,6 +118,42 @@ var x = ["hello"];
 }
 
 // =============================================================================
+// JSDoc tuple types
+// =============================================================================
+
+#[test]
+fn jsdoc_type_tuple_basic_assignment() {
+    let diags = check_js(
+        r#"/** @type {[string, number]} */
+var tuple = ["hello", 1];
+/** @type {[number, string]} */
+var other;
+other = tuple;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for [string, number] assigned to [number, string], got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn jsdoc_type_tuple_optional_and_rest_assignment() {
+    let diags = check_js(
+        r#"/** @type {[f?: any, ...any[]]} */
+var tuple = [1, 2];
+tuple = 1;
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for number assigned to optional/rest JSDoc tuple, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
 // ?Type nullable prefix and !Type non-nullable prefix
 // =============================================================================
 

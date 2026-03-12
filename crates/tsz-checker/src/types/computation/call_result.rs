@@ -199,16 +199,6 @@ impl<'a> CheckerState<'a> {
                 actual,
                 fallback_return,
             } => {
-                let normalized_rest_expected = self.rest_argument_element_type_with_env(expected);
-                if normalized_rest_expected != expected
-                    && self.is_assignable_to_with_env(actual, normalized_rest_expected)
-                {
-                    return if fallback_return != TypeId::ERROR {
-                        fallback_return
-                    } else {
-                        TypeId::ERROR
-                    };
-                }
                 if actual == TypeId::ERROR
                     || actual == TypeId::UNKNOWN
                     || expected == TypeId::ERROR
@@ -218,6 +208,25 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                let mismatch_is_spread_arg = arg_idx.is_some_and(|arg_idx| {
+                    self.ctx
+                        .arena
+                        .get(arg_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                });
+                if mismatch_is_spread_arg {
+                    let normalized_rest_expected =
+                        self.rest_argument_element_type_with_env(expected);
+                    if normalized_rest_expected != expected
+                        && self.is_assignable_to_with_env(actual, normalized_rest_expected)
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
+                }
                 let reported_actual = arg_types.get(index).copied().unwrap_or(actual);
                 let reported_expected =
                     self.preferred_literal_expected_for_mismatch(arg_types, index, expected);
