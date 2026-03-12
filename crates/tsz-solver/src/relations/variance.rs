@@ -27,7 +27,9 @@
 //! Also supports lazy type resolution, recursive variance composition,
 //! and Ref(SymbolRef) type handling.
 
+use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::def::resolver::TypeResolver;
 use crate::def::DefId;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
@@ -37,6 +39,7 @@ use crate::types::{
 use crate::visitor::lazy_def_id;
 use crate::visitors::visitor::TypeVisitor;
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -78,8 +81,86 @@ use tsz_common::interner::Atom;
 /// assert!(variance.is_invariant());
 /// ```
 pub fn compute_variance(db: &dyn QueryDatabase, type_id: TypeId, target_param: Atom) -> Variance {
-    let visitor = VarianceVisitor::new(db, target_param);
-    visitor.compute(type_id)
+    let mut computer = VarianceComputer::new(db.as_type_database(), db.as_type_resolver());
+    computer.compute(type_id, target_param)
+}
+
+/// Compute the variance of a type parameter using an explicit resolver.
+///
+/// This is the resolver-aware equivalent of `compute_variance`. It is used by
+/// relation checks that need to preserve local alias identity even when the
+/// shared query cache cannot resolve those alias definitions.
+pub fn compute_variance_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+    target_param: Atom,
+) -> Variance {
+    let mut computer = VarianceComputer::new(db, resolver);
+    computer.compute(type_id, target_param)
+}
+
+/// Compute the full variance mask for a generic definition using an explicit resolver.
+///
+/// Returns `None` when the definition cannot be resolved to a generic body.
+pub fn compute_type_param_variances_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    def_id: DefId,
+) -> Option<Arc<[Variance]>> {
+    let mut computer = VarianceComputer::new(db, resolver);
+    computer.compute_def_variances(def_id)
+}
+
+struct VarianceComputer<'a> {
+    db: &'a dyn TypeDatabase,
+    resolver: &'a dyn TypeResolver,
+    active_defs: FxHashSet<DefId>,
+    cached_def_variances: FxHashMap<DefId, Option<Arc<[Variance]>>>,
+}
+
+impl<'a> VarianceComputer<'a> {
+    fn new(db: &'a dyn TypeDatabase, resolver: &'a dyn TypeResolver) -> Self {
+        Self {
+            db,
+            resolver,
+            active_defs: FxHashSet::default(),
+            cached_def_variances: FxHashMap::default(),
+        }
+    }
+
+    fn compute(&mut self, type_id: TypeId, target_param: Atom) -> Variance {
+        let visitor = VarianceVisitor::new(self, target_param);
+        visitor.compute(type_id)
+    }
+
+    fn compute_def_variances(&mut self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        if let Some(cached) = self.cached_def_variances.get(&def_id) {
+            return cached.clone();
+        }
+
+        if !self.active_defs.insert(def_id) {
+            return None;
+        }
+
+        let result = (|| {
+            let params = self.resolver.get_lazy_type_params(def_id)?;
+            if params.is_empty() {
+                return None;
+            }
+
+            let body = self.resolver.resolve_lazy(def_id, self.db)?;
+            let mut variances = Vec::with_capacity(params.len());
+            for param in &params {
+                variances.push(self.compute(body, param.name));
+            }
+            Some(Arc::from(variances))
+        })();
+
+        self.active_defs.remove(&def_id);
+        self.cached_def_variances.insert(def_id, result.clone());
+        result
+    }
 }
 
 /// Visitor that computes variance for a specific type parameter.
@@ -87,9 +168,9 @@ pub fn compute_variance(db: &dyn QueryDatabase, type_id: TypeId, target_param: A
 /// The visitor tracks the current polarity (positive for covariant positions,
 /// negative for contravariant positions) as it traverses the type graph.
 /// When it encounters the target type parameter, it records the current polarity.
-struct VarianceVisitor<'a> {
-    /// The type database for looking up type structures and resolving lazy types.
-    db: &'a dyn QueryDatabase,
+struct VarianceVisitor<'a, 'b> {
+    /// Shared variance computation host.
+    computer: &'b mut VarianceComputer<'a>,
     /// The name of the type parameter we're searching for (e.g., 'T').
     target_param: Atom,
     /// The accumulated variance result so far.
@@ -101,11 +182,11 @@ struct VarianceVisitor<'a> {
     polarity_stack: Vec<bool>,
 }
 
-impl<'a> VarianceVisitor<'a> {
+impl<'a, 'b> VarianceVisitor<'a, 'b> {
     /// Create a new `VarianceVisitor`.
-    fn new(db: &'a dyn QueryDatabase, target_param: Atom) -> Self {
+    fn new(computer: &'b mut VarianceComputer<'a>, target_param: Atom) -> Self {
         Self {
-            db,
+            computer,
             target_param,
             result: Variance::empty(),
             guard: crate::recursion::RecursionGuard::with_profile(
@@ -135,7 +216,7 @@ impl<'a> VarianceVisitor<'a> {
 
         // Dispatch via TypeVisitor trait - the visitor implementations below
         // will use get_current_polarity() to get the current polarity
-        self.visit_type(self.db, type_id);
+        self.visit_type(self.computer.db, type_id);
 
         // Pop polarity from stack
         self.polarity_stack.pop();
@@ -158,7 +239,7 @@ impl<'a> VarianceVisitor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for VarianceVisitor<'a> {
+impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     type Output = ();
 
     fn default_output() -> Self::Output {}
@@ -178,22 +259,22 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Union types: variance is the union of variances from all members.
     fn visit_union(&mut self, list_id: u32) {
-        let members = self.db.type_list(TypeListId(list_id));
+        let members = self.computer.db.type_list(TypeListId(list_id));
         // For unions, collect variance from all members
         // The union of covariant/contravariant gives us the overall variance
         for &member in members.iter() {
             // Polarity is preserved for union members
-            self.visit_type(self.db, member);
+            self.visit_type(self.computer.db, member);
         }
     }
 
     /// Intersection types: variance is the union of variances from all members.
     fn visit_intersection(&mut self, list_id: u32) {
-        let members = self.db.type_list(TypeListId(list_id));
+        let members = self.computer.db.type_list(TypeListId(list_id));
         // For intersections, collect variance from all members
         for &member in members.iter() {
             // Polarity is preserved for intersection members
-            self.visit_type(self.db, member);
+            self.visit_type(self.computer.db, member);
         }
     }
 
@@ -207,7 +288,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Tuple types: element types are in covariant position.
     fn visit_tuple(&mut self, list_id: u32) {
-        let elements = self.db.tuple_list(TupleListId(list_id));
+        let elements = self.computer.db.tuple_list(TupleListId(list_id));
         let current_polarity = self.get_current_polarity();
         for element in elements.iter() {
             self.visit_with_polarity(element.type_id, current_polarity);
@@ -216,7 +297,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Function types: parameters are contravariant, return type is covariant.
     fn visit_function(&mut self, shape_id: u32) {
-        let shape = self.db.function_shape(FunctionShapeId(shape_id));
+        let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
         // CRITICAL FIX: Method bivariance - methods have bivariant parameters
@@ -245,7 +326,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Callable types: same variance rules as functions.
     fn visit_callable(&mut self, shape_id: u32) {
-        let callable = self.db.callable_shape(CallableShapeId(shape_id));
+        let callable = self.computer.db.callable_shape(CallableShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
         // Call signatures
@@ -298,7 +379,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Object types: properties are covariant (readonly) or invariant (mutable).
     fn visit_object(&mut self, shape_id: u32) {
-        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        let shape = self.computer.db.object_shape(ObjectShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
         for prop in &shape.properties {
@@ -356,7 +437,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
     fn visit_lazy(&mut self, def_id: u32) {
         // Resolve the Lazy(DefId) to its underlying TypeId
         let def_id = DefId(def_id);
-        if let Some(resolved) = self.db.resolve_lazy(def_id, self.db.as_type_database()) {
+        if let Some(resolved) = self.computer.resolver.resolve_lazy(def_id, self.computer.db) {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
         }
@@ -367,9 +448,9 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         let symbol_ref = SymbolRef(symbol_ref);
 
         // Try to convert Ref to DefId (migration path)
-        if let Some(def_id) = self.db.symbol_to_def_id(symbol_ref) {
+        if let Some(def_id) = self.computer.resolver.symbol_to_def_id(symbol_ref) {
             // Convert to Lazy and resolve
-            if let Some(resolved) = self.db.resolve_lazy(def_id, self.db.as_type_database()) {
+            if let Some(resolved) = self.computer.resolver.resolve_lazy(def_id, self.computer.db) {
                 let current_polarity = self.get_current_polarity();
                 self.visit_with_polarity(resolved, current_polarity);
                 return;
@@ -378,8 +459,9 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
         // Fallback: resolve legacy symbols when DefId is unavailable.
         if let Some(resolved) = self
-            .db
-            .resolve_symbol_ref(symbol_ref, self.db.as_type_database())
+            .computer
+            .resolver
+            .resolve_symbol_ref(symbol_ref, self.computer.db)
         {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
@@ -399,16 +481,12 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
     /// This enables recursive variance calculation for nested generics like
     /// `type Wrapper<T> = Box<T>` where `Box` is covariant, so `Wrapper` should also be covariant.
     fn visit_application(&mut self, app_id: u32) {
-        let app = self.db.type_application(TypeApplicationId(app_id));
+        let app = self.computer.db.type_application(TypeApplicationId(app_id));
         let current_polarity = self.get_current_polarity();
 
         // 1. Extract DefId from the base type
-        let base_def_id = lazy_def_id(self.db.as_type_database(), app.base);
-
-        // 2. Look up variance of the base type's parameters (disambiguate QueryDatabase trait)
-        use crate::caches::db::QueryDatabase as QDB;
-        let variances: Option<Arc<[Variance]>> =
-            base_def_id.and_then(|def_id| QDB::get_type_param_variance(self.db, def_id));
+        let base_def_id = lazy_def_id(self.computer.db, app.base);
+        let variances = base_def_id.and_then(|def_id| self.computer.compute_def_variances(def_id));
 
         if let Some(variances) = variances {
             // 3. Compose variance: for each argument, apply base param's variance rules
@@ -437,43 +515,15 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
                 }
                 // Note: Invariant (both bits) visits both. Independent (no bits) visits neither.
             }
-        } else if let Some(def_id) = base_def_id {
-            // Variance not cached — try to compute on the fly for the base type
-            let params = self.db.get_lazy_type_params(def_id);
-            let body = self.db.resolve_lazy(def_id, self.db.as_type_database());
-            if let (Some(params), Some(body)) = (params, body) {
-                let params: Vec<TypeParamInfo> = params;
-                let mut computed_variances = Vec::with_capacity(params.len());
-                for param in params.iter() {
-                    let v = compute_variance(self.db, body, param.name);
-                    computed_variances.push(v);
-                }
-                for (i, &arg) in app.args.iter().enumerate() {
-                    let base_param_variance = computed_variances
-                        .get(i)
-                        .copied()
-                        .unwrap_or(Variance::COVARIANT | Variance::CONTRAVARIANT);
-
-                    if base_param_variance.needs_structural_fallback() {
-                        self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
-                    }
-                    if base_param_variance.contains(Variance::COVARIANT) {
-                        self.visit_with_polarity(arg, current_polarity);
-                    }
-                    if base_param_variance.contains(Variance::CONTRAVARIANT) {
-                        self.visit_with_polarity(arg, !current_polarity);
-                    }
-                }
-            } else {
-                // Can't compute — assume invariance + structural fallback.
-                // We have a DefId but can't resolve the body/params, so we
-                // can't verify whether the inner type has mapped type modifiers
-                // that would make the variance shortcut unsound.
-                self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
-                for &arg in &app.args {
-                    self.visit_with_polarity(arg, current_polarity);
-                    self.visit_with_polarity(arg, !current_polarity);
-                }
+        } else if base_def_id.is_some() {
+            // Can't compute — assume invariance + structural fallback.
+            // We have a DefId but can't resolve the body/params, so we
+            // can't verify whether the inner type has mapped type modifiers
+            // that would make the variance shortcut unsound.
+            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
+            for &arg in &app.args {
+                self.visit_with_polarity(arg, current_polarity);
+                self.visit_with_polarity(arg, !current_polarity);
             }
         } else {
             // No DefId available — assume invariance (safest choice)
@@ -486,7 +536,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Conditional types: `check_type` is COVARIANT, `extends_type` is CONTRAVARIANT.
     fn visit_conditional(&mut self, cond_id: u32) {
-        let cond = self.db.conditional_type(ConditionalTypeId(cond_id));
+        let cond = self.computer.db.conditional_type(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();
 
         // In TypeScript, conditional types `T extends U ? X : Y` determine variance
@@ -502,7 +552,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Mapped types: constraint is contravariant, template is covariant.
     fn visit_mapped(&mut self, mapped_id: u32) {
-        let mapped = self.db.mapped_type(MappedTypeId(mapped_id));
+        let mapped = self.computer.db.mapped_type(MappedTypeId(mapped_id));
         let current_polarity = self.get_current_polarity();
 
         // If the mapped type has modifiers that change optional/readonly status,
@@ -541,7 +591,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
 
     /// Template literals: types in spans are at current polarity.
     fn visit_template_literal(&mut self, template_id: u32) {
-        let spans = self.db.template_list(TemplateLiteralId(template_id));
+        let spans = self.computer.db.template_list(TemplateLiteralId(template_id));
         let current_polarity = self.get_current_polarity();
 
         for span in spans.iter() {

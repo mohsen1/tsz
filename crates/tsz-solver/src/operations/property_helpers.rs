@@ -398,6 +398,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     ) -> PropertyAccessResult {
         let app = self.interner().type_application(app_id);
         let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+        let app_type = self.interner().application(app.base, app.args.clone());
 
         // Get the base type (should be a Ref to class/interface/alias)
         let base_key = match self.interner().lookup(app.base) {
@@ -590,8 +591,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let Some(type_params) = type_params else {
-            // No type params - resolve on the body directly
-            return self.resolve_property_access_inner(body_type, prop_name, Some(prop_atom));
+            // No type params - still rebind polymorphic `this` to the concrete application.
+            let resolved_body = if crate::contains_this_type(self.interner(), body_type) {
+                crate::substitute_this_type(self.interner(), body_type, app_type)
+            } else {
+                body_type
+            };
+            return self.resolve_property_access_inner(resolved_body, prop_name, Some(prop_atom));
         };
 
         // The body should be an Object type with properties
@@ -623,6 +629,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         instantiate_type(self.interner(), prop.type_id, &substitution);
                     let instantiated_write_type =
                         instantiate_type(self.interner(), prop.write_type, &substitution);
+                    let instantiated_read_type =
+                        if crate::contains_this_type(self.interner(), instantiated_read_type) {
+                            crate::substitute_this_type(
+                                self.interner(),
+                                instantiated_read_type,
+                                app_type,
+                            )
+                        } else {
+                            instantiated_read_type
+                        };
+                    let instantiated_write_type =
+                        if crate::contains_this_type(self.interner(), instantiated_write_type) {
+                            crate::substitute_this_type(
+                                self.interner(),
+                                instantiated_write_type,
+                                app_type,
+                            )
+                        } else {
+                            instantiated_write_type
+                        };
                     let read_type = self.optional_property_type(&PropertyInfo {
                         name: prop.name,
                         type_id: instantiated_read_type,
@@ -651,6 +677,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     let instantiated_value =
                         instantiate_type(self.interner(), idx.value_type, &substitution);
+                    let instantiated_value =
+                        if crate::contains_this_type(self.interner(), instantiated_value) {
+                            crate::substitute_this_type(
+                                self.interner(),
+                                instantiated_value,
+                                app_type,
+                            )
+                        } else {
+                            instantiated_value
+                        };
 
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(instantiated_value),
@@ -667,6 +703,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
                     let instantiated_value =
                         instantiate_type(self.interner(), idx.value_type, &substitution);
+                    let instantiated_value =
+                        if crate::contains_this_type(self.interner(), instantiated_value) {
+                            crate::substitute_this_type(
+                                self.interner(),
+                                instantiated_value,
+                                app_type,
+                            )
+                        } else {
+                            instantiated_value
+                        };
 
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(instantiated_value),

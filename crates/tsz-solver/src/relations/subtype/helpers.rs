@@ -200,7 +200,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.lookup_property(&t_shape.properties, Some(t_shape_id), s_prop.name)
             {
                 // Found potential conflict: check compatibility
-                let result = self.check_property_compatibility(s_prop, t_prop);
+                let result = self.check_property_compatibility(s_prop, t_prop, None, None);
                 if !result.is_true() {
                     return result;
                 }

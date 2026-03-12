@@ -492,6 +492,65 @@ fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
 }
 
 #[test]
+fn compile_with_project_dir_preserves_invariant_generic_error_elaboration_ts2322() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"// Repro from #19746
+
+const wat: Runtype<any> = Num;
+const Foo = Obj({ foo: Num })
+
+interface Runtype<A> {
+  constraint: Constraint<this>
+  witness: A
+}
+
+interface Num extends Runtype<number> {
+  tag: 'number'
+}
+declare const Num: Num
+
+interface Obj<O extends { [_ in string]: Runtype<any> }> extends Runtype<{[K in keyof O]: O[K]['witness'] }> {}
+declare function Obj<O extends { [_: string]: Runtype<any> }>(fields: O): Obj<O>;
+
+interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
+  underlying: A,
+  check: (x: A['witness']) => void,
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2322_count = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected two TS2322 diagnostics for invariant generic error elaboration, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_jsx_preserve_emits_jsx_extension() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

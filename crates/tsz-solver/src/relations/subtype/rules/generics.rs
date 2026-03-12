@@ -58,6 +58,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_resolved: Option<TypeId>,
         t_resolved: Option<TypeId>,
     ) -> SubtypeResult {
+        let s_resolved = s_resolved.map(|resolved| self.bind_polymorphic_this(source, resolved));
+        let t_resolved = t_resolved.map(|resolved| self.bind_polymorphic_this(target, resolved));
         match (s_resolved, t_resolved) {
             (Some(s_type), Some(t_type)) => self.check_subtype(s_type, t_type),
             (Some(s_type), None) => self.check_subtype(s_type, target),
@@ -258,26 +260,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let def_id = variance_def_id;
 
             if let Some(def_id) = def_id {
-                // Try to get variance from query_db first (if available).
-                // This enables O(1) variance-based generic assignability checking.
-                // Fallback to resolver-provided variance for tests/unit setups where
-                // a full query cache is not configured.
                 use crate::caches::db::QueryDatabase;
                 let variances = self
                     .query_db
                     .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-                    .or_else(|| self.resolver.get_type_param_variance(def_id));
+                    .or_else(|| {
+                        crate::relations::variance::compute_type_param_variances_with_resolver(
+                            self.interner,
+                            self.resolver,
+                            def_id,
+                        )
+                    });
 
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
                     if variances.len() == s_app.args.len() {
+                        let needs_structural_fallback =
+                            variances.iter().any(|v| v.needs_structural_fallback());
                         let mut all_ok = true;
+                        let mut any_checked = false;
                         for (i, variance) in variances.iter().enumerate() {
                             let s_arg = s_app.args[i];
                             let t_arg = t_app.args[i];
 
                             // Apply variance rules for each type argument
                             if variance.is_invariant() {
+                                any_checked = true;
                                 // Invariant: Must be mutually assignable (effectively equal)
                                 // Both directions must hold for soundness
                                 if !self.check_subtype(s_arg, t_arg).is_true()
@@ -287,12 +295,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     break;
                                 }
                             } else if variance.is_covariant() {
+                                any_checked = true;
                                 // Covariant: source <: target (normal direction)
                                 if !self.check_subtype(s_arg, t_arg).is_true() {
                                     all_ok = false;
                                     break;
                                 }
                             } else if variance.is_contravariant() {
+                                any_checked = true;
                                 // Contravariant: target <: source (reversed direction)
                                 // Function parameters are the classic example
                                 if !self.check_subtype(t_arg, s_arg).is_true() {
@@ -303,28 +313,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // Independent: No check needed (type parameter not used)
                         }
 
-                        if all_ok {
+                        if any_checked && all_ok {
                             // When any type parameter's variance is marked as needing
                             // structural fallback (due to mapped type modifiers like -?/+?),
                             // don't trust the variance shortcut — fall through to structural
                             // comparison. This handles cases like Required<{a?}> vs Required<{b?}>
                             // where the type args are mutually assignable but the mapped results
                             // are structurally incompatible.
-                            if !variances.iter().any(|v| v.needs_structural_fallback()) {
+                            if !needs_structural_fallback {
                                 return SubtypeResult::True;
                             }
                         }
-
-                        let is_interface = self.resolver.get_def_kind(def_id);
-
-                        // If variance check failed for SAME base applications, we can
-                        // often fast-fail to avoid structural false-positives.
-                        // Allow a fallback only for transparent type aliases and
-                        // interfaces; keep classes/other kinds strict here.
-                        if !matches!(
-                            is_interface,
-                            Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
-                        ) {
+                        if any_checked && !all_ok && !needs_structural_fallback {
+                            // For two applications of the same generic definition, a
+                            // conclusive variance failure is the relation result. Falling
+                            // back to structural expansion here incorrectly accepts cases
+                            // like `T<A> <: T<B>` even though TypeScript keeps the generic
+                            // application identity and reports an incompatibility.
                             return SubtypeResult::False;
                         }
                     }
@@ -492,11 +497,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-        Some(instantiate_type(
-            self.interner,
-            effective_body,
-            &substitution,
-        ))
+        let app_type = self.interner.application(app.base, app.args.clone());
+        let mut instantiated = instantiate_type(self.interner, effective_body, &substitution);
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::substitute_this_type(self.interner, instantiated, app_type);
+        }
+        Some(instantiated)
     }
 
     /// Check Application expansion to target (one-sided Application case).
@@ -1017,7 +1023,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Create substitution and instantiate
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-        let instantiated = instantiate_type(self.interner, effective_body, &substitution);
+        let app_type = self.interner.application(app.base, app.args.clone());
+        let mut instantiated = instantiate_type(self.interner, effective_body, &substitution);
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::substitute_this_type(self.interner, instantiated, app_type);
+        }
 
         // Return the instantiated type for recursive checking
         Some(instantiated)
@@ -1164,7 +1174,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(def_id) = lazy_def_id(self.interner, operand) {
-            let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
+            let resolved = self
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .map(|resolved| self.bind_polymorphic_this(operand, resolved))?;
             if resolved == operand {
                 return None; // Avoid infinite recursion
             }

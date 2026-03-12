@@ -355,9 +355,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
             self.resolver
                 .resolve_lazy(def_id, self.interner)
+                .map(|resolved| self.bind_polymorphic_this(type_id, resolved))
                 .unwrap_or(type_id)
         } else {
             type_id
+        }
+    }
+
+    pub(crate) fn bind_polymorphic_this(&self, receiver: TypeId, resolved: TypeId) -> TypeId {
+        if crate::contains_this_type(self.interner, resolved) {
+            crate::substitute_this_type(self.interner, resolved, receiver)
+        } else {
+            resolved
         }
     }
 
@@ -409,7 +418,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let result = self.check_object_subtype(&shape, None, &t_shape);
+                let result =
+                    self.check_object_subtype(&shape, None, Some(source), &t_shape, Some(target));
                 if result.is_true() {
                     return result;
                 }
@@ -447,7 +457,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                     return SubtypeResult::False;
                 }
-                let result = self.check_object_with_index_subtype(&shape, None, &t_shape);
+                let result = self.check_object_with_index_subtype(
+                    &shape,
+                    None,
+                    Some(source),
+                    &t_shape,
+                    Some(target),
+                );
                 if result.is_true() {
                     return result;
                 }
@@ -1059,12 +1075,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // Already visiting this symbol pair — coinductive cycle
                     return self.cycle_result();
                 }
-                let result = self.check_object_subtype(&s_shape, Some(s_shape_id), &t_shape);
+                let result = self.check_object_subtype(
+                    &s_shape,
+                    Some(s_shape_id),
+                    Some(source),
+                    &t_shape,
+                    Some(target),
+                );
                 self.sym_visiting.remove(&sym_pair);
                 return result;
             }
 
-            return self.check_object_subtype(&s_shape, Some(s_shape_id), &t_shape);
+            return self.check_object_subtype(
+                &s_shape,
+                Some(s_shape_id),
+                Some(source),
+                &t_shape,
+                Some(target),
+            );
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
@@ -1089,13 +1117,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if !self.sym_visiting.insert(sym_pair) {
                     return self.cycle_result();
                 }
-                let result =
-                    self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
+                let result = self.check_object_with_index_subtype(
+                    &s_shape,
+                    Some(s_shape_id),
+                    Some(source),
+                    &t_shape,
+                    Some(target),
+                );
                 self.sym_visiting.remove(&sym_pair);
                 return result;
             }
 
-            return self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
+            return self.check_object_with_index_subtype(
+                &s_shape,
+                Some(s_shape_id),
+                Some(source),
+                &t_shape,
+                Some(target),
+            );
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
@@ -1107,7 +1146,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_object_with_index_to_object(
                 &s_shape,
                 s_shape_id,
+                Some(source),
                 &t_shape.properties,
+                Some(target),
             );
         }
 
@@ -1117,7 +1158,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
-            return self.check_object_to_indexed(&s_shape.properties, Some(s_shape_id), &t_shape);
+            return self.check_object_to_indexed(
+                &s_shape.properties,
+                Some(s_shape_id),
+                Some(source),
+                &t_shape,
+                Some(target),
+            );
         }
 
         if let (Some(s_fn_id), Some(t_fn_id)) = (
@@ -1476,7 +1523,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // If source is a CallableShape with properties, check structural compatibility
                 if let Some(ref s_shape) = source_props {
-                    return self.check_object_subtype(s_shape, None, &t_shape);
+                    return self.check_object_subtype(
+                        s_shape,
+                        None,
+                        Some(source),
+                        &t_shape,
+                        Some(target),
+                    );
                 }
                 // FunctionShape has no properties - not assignable to non-empty object
                 if let Some(tracer) = &mut self.tracer
@@ -1496,7 +1549,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // If source is a CallableShape with properties, check structural compatibility
                 if let Some(ref s_shape) = source_props {
-                    return self.check_object_subtype(s_shape, None, &t_shape);
+                    return self.check_object_subtype(
+                        s_shape,
+                        None,
+                        Some(source),
+                        &t_shape,
+                        Some(target),
+                    );
                 }
                 // FunctionShape has no properties - not assignable to non-empty indexed object
                 if let Some(tracer) = &mut self.tracer
