@@ -322,27 +322,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !crate::visitor::is_this_type(self.interner, constraint)
         {
             self.collect_index_access_upper_bound_candidates(
-                constraint,
-                key_type,
-                original,
-                candidates,
+                constraint, key_type, original, candidates,
             );
         }
 
         if let Some(info) = type_param_info(self.interner, key_type)
             && let Some(constraint) = info.constraint
         {
-            let constrained = self.evaluate_type(self.interner.index_access(object_type, constraint));
+            let constrained =
+                self.evaluate_type(self.interner.index_access(object_type, constraint));
             if constrained != original && !candidates.contains(&constrained) {
                 candidates.push(constrained);
             }
         }
 
-        if let Some(intersection_id) = crate::visitor::intersection_list_id(self.interner, object_type)
+        if let Some(intersection_id) =
+            crate::visitor::intersection_list_id(self.interner, object_type)
         {
             let members = self.interner.type_list(intersection_id);
             for &member in members.iter() {
-                self.collect_index_access_upper_bound_candidates(member, key_type, original, candidates);
+                self.collect_index_access_upper_bound_candidates(
+                    member, key_type, original, candidates,
+                );
             }
         }
     }

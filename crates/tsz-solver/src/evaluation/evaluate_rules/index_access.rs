@@ -195,10 +195,14 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         }
 
         let interner = self.evaluator.interner();
-        let same_type_param_name = match (interner.lookup(constraint), interner.lookup(self.index_type)) {
-            (Some(TypeData::TypeParameter(constraint_tp)), Some(TypeData::TypeParameter(index_tp))) => {
-                constraint_tp.name == index_tp.name
-            }
+        let same_type_param_name = match (
+            interner.lookup(constraint),
+            interner.lookup(self.index_type),
+        ) {
+            (
+                Some(TypeData::TypeParameter(constraint_tp)),
+                Some(TypeData::TypeParameter(index_tp)),
+            ) => constraint_tp.name == index_tp.name,
             _ => false,
         };
         if same_type_param_name {
@@ -209,7 +213,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             .or_else(|| intersection_list_id(interner, constraint))
             .map(|list_id| interner.type_list(list_id).to_vec());
         members.is_some_and(|members| {
-            members.into_iter().any(|member| self.mapped_constraint_contains_index_type(member))
+            members
+                .into_iter()
+                .any(|member| self.mapped_constraint_contains_index_type(member))
         })
     }
 
