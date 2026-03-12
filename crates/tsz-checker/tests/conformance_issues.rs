@@ -82,6 +82,30 @@ fn diagnostic_message(diagnostics: &[(u32, String)], code: u32) -> Option<&str> 
 }
 
 #[test]
+fn test_source_pragma_enables_no_property_access_from_index_signature() {
+    let source = r#"
+// @noPropertyAccessFromIndexSignature: true
+interface B { [k: string]: string }
+declare const b: B;
+declare const c: B | undefined;
+b.foo;
+c?.foo;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts4111_count = diagnostics.iter().filter(|(code, _)| *code == 4111).count();
+
+    assert!(
+        has_error(&diagnostics, 4111),
+        "Expected TS4111 under @noPropertyAccessFromIndexSignature pragma, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts4111_count, 2,
+        "Expected both direct and optional property accesses from index signatures to report TS4111, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {
