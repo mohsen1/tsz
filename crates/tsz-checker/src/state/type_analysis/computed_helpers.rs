@@ -1355,9 +1355,7 @@ impl<'a> CheckerState<'a> {
 
     fn class_decl_hint_from_expression(&mut self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.ctx.arena.get(expr_idx)?;
-        if self.ctx.arena.get_identifier(node).is_none() {
-            return None;
-        }
+        self.ctx.arena.get_identifier(node)?;
 
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         self.get_class_declaration_from_symbol(sym_id).or_else(|| {
