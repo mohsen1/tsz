@@ -7190,6 +7190,102 @@ let x = 2;
     );
 }
 
+#[test]
+fn test_block_scoped_function_duplicate_identifier_matches_catch_block_baseline() {
+    let source = "\
+var v;
+try { } catch (e) {
+    function v() { }
+}
+
+function w() { }
+try { } catch (e) {
+    var w;
+}
+
+try { } catch (e) {
+    var x;
+    function x() { }
+    function e() { }
+    var p: string;
+    var p: number;
+}
+";
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let expected_ts2300_starts: FxHashSet<u32> = FxHashSet::from_iter([
+        u32::try_from(source.find("var v;").unwrap() + 4).unwrap(),
+        u32::try_from(source.find("function v()").unwrap() + 9).unwrap(),
+        u32::try_from(source.find("function w()").unwrap() + 9).unwrap(),
+        u32::try_from(source.find("var w;").unwrap() + 4).unwrap(),
+        u32::try_from(source.find("var x;").unwrap() + 4).unwrap(),
+        u32::try_from(source.find("function x()").unwrap() + 9).unwrap(),
+    ]);
+    let actual_ts2300_starts: FxHashSet<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2300)
+        .map(|d| d.start)
+        .collect();
+
+    assert_eq!(
+        actual_ts2300_starts, expected_ts2300_starts,
+        "Expected exact TS2300 anchors for v/w/x duplicate identifiers.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2403
+                && d.start == u32::try_from(source.rfind("var p: number;").unwrap() + 4).unwrap()
+        }),
+        "Expected TS2403 on the second `p` declaration.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == 2300 && d.message_text.contains("identifier 'e'")),
+        "Catch parameter shadowing should not produce TS2300 for `function e()`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_block_scoped_function_skips_catch_parameter_and_conflicts_with_outer_var() {
+    let source = "\
+var e;
+try {} catch (e) { if (true) { function e() {} } }
+";
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let actual_ts2300_starts: FxHashSet<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2300)
+        .map(|d| d.start)
+        .collect();
+    let expected_ts2300_starts: FxHashSet<u32> = FxHashSet::from_iter([
+        u32::try_from(source.find("var e;").unwrap() + 4).unwrap(),
+        u32::try_from(source.rfind("function e()").unwrap() + 9).unwrap(),
+    ]);
+
+    assert_eq!(
+        actual_ts2300_starts, expected_ts2300_starts,
+        "Expected the nested block function to ignore the catch parameter and conflict with the outer `var e`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
 // =============================================================================
 // JSX Intrinsic Element Resolution (TS2339)
 // =============================================================================
