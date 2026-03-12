@@ -541,7 +541,54 @@ impl<'a> CheckerState<'a> {
                         inferred_type
                     };
                     if inferred_type == TypeId::ANY && param.initializer.is_some() {
-                        let init_type = self.get_type_of_node(param.initializer);
+                        let mut init_type = self.get_type_of_node(param.initializer);
+                        if self.is_js_file()
+                            && (init_type == TypeId::ANY || init_type == TypeId::UNKNOWN)
+                            && self.ctx.arena.get(param.initializer).is_some_and(|n| {
+                                n.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                            })
+                        {
+                            let current_param_sym = self
+                                .ctx
+                                .arena
+                                .get(param.name)
+                                .and_then(|name_node| {
+                                    (name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+                                        .then(|| self.resolve_identifier_symbol(param.name))
+                                })
+                                .flatten();
+                            if let Some(sym_id) = self.resolve_identifier_symbol(param.initializer)
+                                && Some(sym_id) != current_param_sym
+                            {
+                                let jsdoc_decl_type = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol(sym_id)
+                                    .and_then(|sym| {
+                                        if sym.value_declaration.is_some() {
+                                            Some(sym.value_declaration)
+                                        } else {
+                                            sym.declarations.first().copied()
+                                        }
+                                    })
+                                    .and_then(|decl_idx| {
+                                        self.jsdoc_type_annotation_for_node(decl_idx)
+                                    });
+                                let resolved_init_type = jsdoc_decl_type
+                                    .filter(|t| {
+                                        *t != TypeId::ANY
+                                            && *t != TypeId::UNKNOWN
+                                            && *t != TypeId::ERROR
+                                    })
+                                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id));
+                                if resolved_init_type != TypeId::ANY
+                                    && resolved_init_type != TypeId::UNKNOWN
+                                    && resolved_init_type != TypeId::ERROR
+                                {
+                                    init_type = resolved_init_type;
+                                }
+                            }
+                        }
                         // Only widen when the initializer is a "fresh" literal expression
                         let is_enum_member = self.is_enum_member_type_for_widening(init_type);
                         if is_enum_member || self.is_fresh_literal_expression(param.initializer) {
