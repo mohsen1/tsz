@@ -1534,6 +1534,24 @@ fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
 }
 
 #[test]
+fn test_ts2322_nested_assignment_destructuring_default_is_not_whole_pattern_checked() {
+    let source = r#"
+        let a: 0 | 1 = 0;
+        let b: 0 | 1 | 9;
+        [{ [(a = 1)]: b } = [9, a] as const] = [];
+        const bb: 0 = b;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no whole-pattern TS2322 for nested assignment destructuring default, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_type_query_in_type_assertion_uses_flow_narrowed_property_type() {
     let source = r#"
         interface I<T> {

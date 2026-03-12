@@ -383,6 +383,16 @@ impl<'a> CheckerState<'a> {
             && target_type != TypeId::UNKNOWN
             && !self.type_contains_error(target_type)
         {
+            // Nested assignment patterns are validated as the pattern is walked.
+            // A whole-pattern default check here is too eager and rejects valid
+            // array/tuple defaults used through numeric property destructuring.
+            if self.ctx.arena.get(diag_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            }) {
+                return;
+            }
+
             let source_type = self
                 .ctx
                 .arena
