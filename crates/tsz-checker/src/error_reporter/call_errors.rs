@@ -423,6 +423,10 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display) = self.contextual_constraint_parameter_display(param_type, arg_idx) {
+            return display;
+        }
+
         self.format_type_for_assignability_message(param_type)
     }
 
@@ -475,6 +479,122 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn contextual_constraint_parameter_display(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let evaluated_param = self.evaluate_type_for_assignability(param_type);
+        let mut current = arg_idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.ctx.arena.get_call_expr(node)
+                && let Some(args) = &call.arguments
+            {
+                let arg_pos = args
+                    .nodes
+                    .iter()
+                    .position(|&candidate| candidate == arg_idx)?;
+                let callee_type = self.get_type_of_node(call.expression);
+                let arg_count = args.nodes.len();
+
+                let mut display = None;
+                let mut ambiguous = false;
+
+                if let Some(shape) =
+                    tsz_solver::type_queries::get_function_shape(self.ctx.types, callee_type)
+                {
+                    let sig = tsz_solver::CallSignature {
+                        type_params: shape.type_params.clone(),
+                        params: shape.params.clone(),
+                        this_type: shape.this_type,
+                        return_type: shape.return_type,
+                        type_predicate: shape.type_predicate.clone(),
+                        is_method: shape.is_method,
+                    };
+                    if self.call_signature_accepts_arg_count(&sig, arg_count) {
+                        self.collect_constraint_parameter_display_candidate(
+                            &sig,
+                            arg_pos,
+                            evaluated_param,
+                            &mut display,
+                            &mut ambiguous,
+                        );
+                    }
+                }
+
+                if let Some(signatures) =
+                    tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type)
+                {
+                    for sig in signatures {
+                        if !self.call_signature_accepts_arg_count(&sig, arg_count) {
+                            continue;
+                        }
+                        self.collect_constraint_parameter_display_candidate(
+                            &sig,
+                            arg_pos,
+                            evaluated_param,
+                            &mut display,
+                            &mut ambiguous,
+                        );
+                        if ambiguous {
+                            break;
+                        }
+                    }
+                }
+
+                return (!ambiguous).then_some(display).flatten();
+            }
+
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+
+        None
+    }
+
+    fn collect_constraint_parameter_display_candidate(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+        arg_pos: usize,
+        evaluated_param: TypeId,
+        display: &mut Option<String>,
+        ambiguous: &mut bool,
+    ) {
+        if *ambiguous {
+            return;
+        }
+
+        let Some(raw_param) = self.raw_param_for_argument_index(sig, arg_pos) else {
+            return;
+        };
+        let Some(type_param) = tsz_solver::type_param_info(self.ctx.types, raw_param.type_id)
+        else {
+            return;
+        };
+        let Some(raw_constraint) = type_param.constraint else {
+            return;
+        };
+
+        let evaluated_constraint = self.evaluate_type_for_assignability(raw_constraint);
+        let matches_evaluated = evaluated_constraint == evaluated_param
+            || (self.is_assignable_to(evaluated_constraint, evaluated_param)
+                && self.is_assignable_to(evaluated_param, evaluated_constraint));
+        if !matches_evaluated {
+            return;
+        }
+
+        let candidate = self.format_type_for_assignability_message(raw_constraint);
+        if display
+            .as_ref()
+            .is_some_and(|existing| existing != &candidate)
+        {
+            *ambiguous = true;
+            return;
+        }
+        *display = Some(candidate);
     }
 
     /// Try to elaborate a generic assignability mismatch when the source expression is

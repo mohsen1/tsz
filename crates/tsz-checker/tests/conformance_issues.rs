@@ -13797,6 +13797,36 @@ fn test_type_only_namespace_reexport_chain_does_not_emit_ts2305() {
 }
 
 #[test]
+fn test_unbounded_generic_constraint_mismatch_preserves_record_alias_display() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+function f3<T extends Record<string, any>>(o: T) {}
+
+function user<T>(t: T) {
+  f3(t);
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2345 && message.contains("Record<string, any>") }),
+        "Expected TS2345 to preserve Record<string, any> in the parameter display. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_type_only_namespace_export_is_importable_from_reexporting_module() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
