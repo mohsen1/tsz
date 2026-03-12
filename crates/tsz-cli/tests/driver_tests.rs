@@ -368,6 +368,48 @@ fn compile_with_project_dir_uses_tsconfig() {
 }
 
 #[test]
+fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("node_modules/foo/package.json"),
+        r#"{
+          "name": "foo",
+          "version": "1.0.0",
+          "exports": {
+            "./*.json": "./configs/*.json"
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/foo/configs/strict.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{"extends":"foo/strict.json"}"#,
+    );
+    write_file(&base.join("index.ts"), "let x: string;\nx.toLowerCase();\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED),
+        "Expected TS2454 from package-exported tsconfig extends, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_with_jsx_preserve_emits_jsx_extension() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1479,6 +1521,51 @@ fn compile_resolves_package_imports_wildcard() {
             .any(|diag| diag.file.contains("types/widget.d.ts"))
     );
     assert!(!base.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_rejects_root_slash_package_import_specifier_under_node16() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist",
+            "moduleResolution": "node16",
+            "noEmitOnError": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r##"{
+          "name": "package",
+          "private": true,
+          "type": "module",
+          "imports": {
+            "#/*": "./src/*"
+          }
+        }"##,
+    );
+    write_file(&base.join("src/foo.ts"), "export const foo = 'foo';");
+    write_file(
+        &base.join("index.ts"),
+        "import { foo } from '#/foo.js';\nfoo;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 for invalid #/ package import, got diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(!base.join("dist/index.js").is_file());
 }
 
 #[test]

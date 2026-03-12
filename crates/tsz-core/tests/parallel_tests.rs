@@ -944,6 +944,189 @@ b;
 }
 
 #[test]
+fn test_check_files_parallel_jsdoc_import_type_preserves_ts2454_for_commonjs_class_exports() {
+    let files = vec![
+        (
+            "mod1.ts".to_string(),
+            r#"
+class Chunk {
+    chunk = 1;
+}
+export = Chunk;
+"#
+            .to_string(),
+        ),
+        (
+            "use.js".to_string(),
+            r#"
+/** @typedef {import("./mod1")} C
+ * @type {C} */
+var c;
+c.chunk;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_lib: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let user_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "use.js")
+        .expect("expected use.js result");
+
+    let relevant: Vec<_> = user_file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code != 2318)
+        .collect();
+    let ts2454_count = relevant.iter().filter(|diag| diag.code == 2454).count();
+
+    assert_eq!(
+        ts2454_count, 1,
+        "Expected exactly one TS2454 diagnostic in use.js. Actual diagnostics: {:#?}",
+        user_file.diagnostics
+    );
+    assert!(
+        !relevant.iter().any(|diag| diag.code == 2339),
+        "Did not expect TS2339 once JSDoc CommonJS import types resolve. Actual diagnostics: {:#?}",
+        user_file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_jsdoc_require_alias_preserves_ts2454_for_commonjs_class_exports() {
+    let files = vec![
+        (
+            "mod1.ts".to_string(),
+            r#"
+class Chunk {
+    chunk = 1;
+}
+export = Chunk;
+"#
+            .to_string(),
+        ),
+        (
+            "use.js".to_string(),
+            r#"
+const D = require("./mod1");
+/** @type {D} */
+var d;
+d.chunk;
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            strict_null_checks: true,
+            no_lib: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let user_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "use.js")
+        .expect("expected use.js result");
+
+    let relevant: Vec<_> = user_file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code != 2318)
+        .collect();
+    let ts2454_count = relevant.iter().filter(|diag| diag.code == 2454).count();
+
+    assert_eq!(
+        ts2454_count, 1,
+        "Expected exactly one TS2454 diagnostic in use.js. Actual diagnostics: {:#?}",
+        user_file.diagnostics
+    );
+    assert!(
+        !relevant.iter().any(|diag| diag.code == 2339),
+        "Did not expect TS2339 once JSDoc require aliases resolve to the instance type. Actual diagnostics: {:#?}",
+        user_file.diagnostics
+    );
+}
+
+#[test]
+fn test_check_files_parallel_jsdoc_import_type_default_namespace_emits_ts2352() {
+    let files = vec![
+        (
+            "GeometryType.d.ts".to_string(),
+            r#"
+declare namespace _default {
+  export const POINT: string;
+}
+export default _default;
+"#
+            .to_string(),
+        ),
+        (
+            "Main.js".to_string(),
+            r#"
+export default function () {
+  return /** @type {import('./GeometryType.js').default} */ ('Point');
+}
+"#
+            .to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let main_file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "Main.js")
+        .expect("expected Main.js result");
+
+    assert!(
+        main_file.diagnostics.iter().any(|diag| diag.code == 2352),
+        "Expected TS2352 in Main.js for JSDoc import default namespace cast. Actual diagnostics: {:#?}",
+        main_file.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts2451() {
     let files = vec![
         ("a.ts".to_string(), "const Bar = 3;\n".to_string()),

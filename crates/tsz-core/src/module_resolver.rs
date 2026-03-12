@@ -831,6 +831,16 @@ impl ModuleResolver {
         // Step 1: Handle #-prefixed imports (package.json imports field)
         // This is a Node16/NodeNext feature for subpath imports
         if specifier.starts_with('#') {
+            if Self::is_invalid_package_import_specifier(specifier) {
+                return (
+                    Err(ResolutionFailure::NotFound {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    }),
+                    false,
+                );
+            }
             if !self.resolve_package_json_imports {
                 return (
                     Err(ResolutionFailure::NotFound {
@@ -1032,6 +1042,10 @@ impl ModuleResolver {
         }
 
         None
+    }
+
+    fn is_invalid_package_import_specifier(specifier: &str) -> bool {
+        specifier == "#" || specifier.starts_with("#/")
     }
 
     /// Resolve an export/import value to a string path
@@ -2092,22 +2106,12 @@ impl ModuleResolver {
                 return Some(resolved);
             }
         }
-        if self.resolve_json_module
-            && let Some(resolved) = try_file_with_suffixes_and_extension(path, "json", suffixes)
-        {
-            return Some(resolved);
-        }
 
         let index = path.join("index");
         for ext in extensions {
             if let Some(resolved) = try_file_with_suffixes_and_extension(&index, ext, suffixes) {
                 return Some(resolved);
             }
-        }
-        if self.resolve_json_module
-            && let Some(resolved) = try_file_with_suffixes_and_extension(&index, "json", suffixes)
-        {
-            return Some(resolved);
         }
 
         None
@@ -2515,6 +2519,43 @@ mod tests {
             Some("helpers/bar".to_string())
         );
         assert_eq!(match_imports_pattern("#utils/*", "#other/foo"), None);
+    }
+
+    #[test]
+    fn test_resolver_rejects_root_slash_package_import_specifier() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_package_import_root_slash");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        fs::write(
+            dir.join("package.json"),
+            r##"{
+                "name": "package",
+                "private": true,
+                "imports": {
+                    "#/*": "./src/*"
+                }
+            }"##,
+        )
+        .unwrap();
+        fs::write(dir.join("src/foo.ts"), "export const foo = 'foo';").unwrap();
+        fs::write(dir.join("index.ts"), "import { foo } from '#/foo.js'; foo;").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_imports: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+        let result = resolver.resolve("#/foo.js", &dir.join("index.ts"), Span::new(0, 8));
+
+        let failure =
+            result.expect_err("Expected #/foo.js to remain unresolved under package imports");
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, 2307);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3691,6 +3732,34 @@ mod tests {
             result.expect_err("Expected JSON resolution to fail without resolveJsonModule");
         let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, 2732); // TS2732
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_extensionless_json_import");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("app.ts"), "import data = require('./data');").unwrap();
+        fs::write(dir.join("data.json"), "{\"value\": 42}").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            resolve_json_module: true,
+            module_resolution: Some(ModuleResolutionKind::Node),
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        let result = resolver.resolve("./data", &dir.join("app.ts"), Span::new(0, 10));
+
+        let failure = result.expect_err(
+            "Expected extensionless resolution to reject ./data even when data.json exists",
+        );
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, 2307);
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -1071,6 +1071,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Clear the contextual resolution cache.
+    ///
+    /// This is used before recomputing argument types during generic call
+    /// inference rounds so that stale contextual type resolutions are not reused.
+    pub(crate) fn clear_contextual_resolution_cache(&mut self) {
+        self.ctx
+            .narrowing_cache
+            .contextual_resolve_cache
+            .borrow_mut()
+            .clear();
+    }
+
     /// Clear type cache for a node and all its children recursively.
     ///
     /// This is used when we need to recompute types with different contextual information,
@@ -1314,14 +1326,6 @@ impl<'a> CheckerState<'a> {
             }
             _ => {}
         }
-    }
-
-    pub(crate) fn clear_contextual_resolution_cache(&mut self) {
-        self.ctx
-            .narrowing_cache
-            .contextual_resolve_cache
-            .borrow_mut()
-            .clear();
     }
 
     pub(crate) fn is_keyword_type_used_as_value_position(&self, idx: NodeIndex) -> bool {

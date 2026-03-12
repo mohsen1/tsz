@@ -831,7 +831,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 None
             }
 
-            // Future: Handle Union (return None or intersect of params)
+            fn visit_union(&mut self, list_id: u32) -> Self::Output {
+                let members = self.db.type_list(TypeListId(list_id));
+                let mut callable_member: Option<FunctionShape> = None;
+
+                for &member in members.iter() {
+                    if member.is_nullable() || matches!(member, TypeId::VOID | TypeId::NEVER) {
+                        continue;
+                    }
+
+                    let shape = self.visit_type(self.db, member)?;
+
+                    if callable_member.is_some() {
+                        // Optional callback unions like `Fn | undefined` should preserve
+                        // the callable shape, but we intentionally stay conservative for
+                        // true unions of multiple callable members.
+                        return None;
+                    }
+
+                    callable_member = Some(shape);
+                }
+
+                callable_member
+            }
         }
 
         let mut visitor = ContextualSignatureVisitor { db, arg_count };

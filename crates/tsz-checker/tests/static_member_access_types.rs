@@ -1,7 +1,10 @@
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, ParserState};
+use tsz_parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 
 fn variable_declaration_initializer_at(
@@ -25,6 +28,57 @@ fn variable_declaration_initializer_at(
         .and_then(|node| parser.get_arena().get_variable_declaration(node))
         .map(|decl| decl.initializer)
         .expect("missing variable declaration")
+}
+
+fn first_identifier_named(parser: &ParserState, text: &str) -> NodeIndex {
+    parser
+        .get_arena()
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == SyntaxKind::Identifier as u16
+                && parser
+                    .get_arena()
+                    .get_identifier_text(NodeIndex(idx as u32))
+                    .is_some_and(|candidate| candidate == text))
+            .then_some(NodeIndex(idx as u32))
+        })
+        .unwrap_or_else(|| panic!("missing identifier {text}"))
+}
+
+fn first_object_literal(parser: &ParserState) -> NodeIndex {
+    parser
+        .get_arena()
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                .then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing object literal")
+}
+
+fn first_call_with_property_name(parser: &ParserState, property_name: &str) -> NodeIndex {
+    parser
+        .get_arena()
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = parser.get_arena().get_call_expr(node)?;
+            let callee = parser.get_arena().get(call.expression)?;
+            let access = parser.get_arena().get_access_expr(callee)?;
+            let name = parser
+                .get_arena()
+                .get_identifier_text(access.name_or_argument)?;
+            (name == property_name).then_some(NodeIndex(idx as u32))
+        })
+        .unwrap_or_else(|| panic!("missing call for property {property_name}"))
 }
 
 #[test]
@@ -117,6 +171,7 @@ class C {
         this[0] = [seed];
     }
 }
+
 const instance = new C(1);
 const xValue = instance.x;
 const yValue = instance.y;
@@ -198,5 +253,85 @@ const staticZ = StaticC.z;
         checker.format_type(static_z),
         "number",
         "expected static auto-accessor type from later static block"
+    );
+}
+
+#[test]
+fn object_entries_computed_object_literal_keeps_string_unknown_shape() {
+    let source = r#"
+type ArrayLike<T> = {
+    length: number;
+    [n: number]: T;
+};
+
+declare const Object: {
+    entries<T>(o: { [s: string]: T; } | ArrayLike<T>): [string, T][];
+    entries(o: {}): [string, any][];
+};
+
+type State = {
+    a: number;
+    b: string;
+};
+
+class Test {
+    setState(state: State) {}
+
+    test = (e: any) => {
+        for (const [key, value] of Object.entries(e)) {
+            this.setState({
+                [key]: value,
+            });
+        }
+    };
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            strict: true,
+            target: tsz_common::common::ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    );
+    checker.check_source_file(root);
+
+    let key_type = checker.get_type_of_node(first_identifier_named(&parser, "key"));
+    let value_type = checker.get_type_of_node(first_identifier_named(&parser, "value"));
+    let entries_call_type =
+        checker.get_type_of_node(first_call_with_property_name(&parser, "entries"));
+    let object_literal_type = checker.get_type_of_node(first_object_literal(&parser));
+
+    assert_eq!(
+        checker.format_type(entries_call_type),
+        "[string, unknown][]",
+        "expected Object.entries call to preserve the generic overload result"
+    );
+
+    assert_eq!(
+        checker.format_type(key_type),
+        "string",
+        "expected Object.entries key binding to infer string"
+    );
+    assert_eq!(
+        checker.format_type(value_type),
+        "unknown",
+        "expected Object.entries value binding to infer unknown"
+    );
+    assert_eq!(
+        checker.format_type(object_literal_type),
+        "{ [x: string]: unknown; }",
+        "expected computed object literal to keep a string index signature"
     );
 }

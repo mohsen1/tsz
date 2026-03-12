@@ -689,7 +689,17 @@ impl<'a> CheckerState<'a> {
                 // Use format_type_pair for import-qualification when the source and target
                 // types have the same name but come from different modules.
                 let widened_source = self.widen_type_for_display(*source_type);
-                let (src_str, tgt_str_qualified) = if *source_type == TypeId::OBJECT {
+                let (src_str, tgt_str_qualified) = if depth == 0 {
+                    let src = if *source_type == TypeId::OBJECT {
+                        "{}".to_string()
+                    } else {
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    };
+                    (
+                        src,
+                        self.format_assignability_type_for_message(target, source),
+                    )
+                } else if *source_type == TypeId::OBJECT {
                     ("{}".to_string(), tgt_str)
                 } else {
                     self.format_type_pair_diagnostic(widened_source, target)
@@ -871,9 +881,16 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *source_type
                 };
-                let src_str =
-                    self.format_type_diagnostic(self.widen_type_for_display(display_source));
-                let tgt_str = self.format_type_diagnostic(*target_type);
+                let src_str = if depth == 0 {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(self.widen_type_for_display(display_source))
+                };
+                let tgt_str = if depth == 0 {
+                    self.format_assignability_type_for_message(target, source)
+                } else {
+                    self.format_type_diagnostic(*target_type)
+                };
                 let ordered_names =
                     self.sort_missing_property_names_for_display(*target_type, &filtered_names);
                 let prop_list: Vec<String> = ordered_names

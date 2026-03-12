@@ -15,6 +15,8 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+type OuterDeclResult = Option<(tsz_binder::SymbolId, Vec<(NodeIndex, u32)>)>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DuplicateDeclarationOrigin {
     SymbolDeclaration,
@@ -1215,8 +1217,282 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        self.check_block_scoped_function_outer_conflicts();
         self.check_cross_file_global_augmentation_member_conflicts();
         self.check_cross_file_module_augmentation_member_conflicts();
+    }
+
+    fn check_block_scoped_function_outer_conflicts(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let mut seen = FxHashSet::default();
+
+        let block_function_decls: Vec<(tsz_binder::SymbolId, NodeIndex, String)> = self
+            .ctx
+            .binder
+            .symbols
+            .iter()
+            .filter(|symbol| (symbol.flags & symbol_flags::FUNCTION) != 0)
+            .flat_map(|symbol| {
+                symbol.declarations.iter().filter_map(|&decl_idx| {
+                    let node = self.ctx.arena.get(decl_idx)?;
+                    if node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION {
+                        return None;
+                    }
+                    if self.get_enclosing_block_scope(decl_idx).is_none() {
+                        return None;
+                    }
+                    let name = self.get_declaration_name_text(decl_idx)?;
+                    Some((symbol.id, decl_idx, name))
+                })
+            })
+            .collect();
+
+        for (current_sym_id, decl_idx, name) in block_function_decls {
+            let Some((outer_sym_id, outer_decls)) = self
+                .find_visible_outer_declarations_for_block_function(
+                    decl_idx,
+                    current_sym_id,
+                    &name,
+                )
+            else {
+                continue;
+            };
+
+            if !seen.insert((decl_idx, outer_sym_id)) {
+                continue;
+            }
+
+            let block_function_has_body = self.function_has_body(decl_idx);
+            let block_error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+
+            let outer_function_impls: Vec<NodeIndex> = outer_decls
+                .iter()
+                .filter_map(|(outer_decl_idx, flags)| {
+                    ((flags & symbol_flags::FUNCTION) != 0
+                        && self.function_has_body(*outer_decl_idx)
+                        && !self.is_ambient_declaration(*outer_decl_idx))
+                    .then_some(*outer_decl_idx)
+                })
+                .collect();
+            if block_function_has_body && !outer_function_impls.is_empty() {
+                for outer_decl_idx in outer_function_impls {
+                    let error_node = self
+                        .get_declaration_name_node(outer_decl_idx)
+                        .unwrap_or(outer_decl_idx);
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                        diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                    );
+                }
+                self.error_at_node(
+                    block_error_node,
+                    diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                    diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                );
+                continue;
+            }
+
+            let has_ambient_outer_function = outer_decls.iter().any(|(outer_decl_idx, flags)| {
+                (flags & symbol_flags::FUNCTION) != 0
+                    && self.is_ambient_declaration(*outer_decl_idx)
+                    && !self.function_has_body(*outer_decl_idx)
+            });
+            if block_function_has_body && has_ambient_outer_function {
+                self.error_at_node(
+                    block_error_node,
+                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                );
+                continue;
+            }
+
+            let outer_class_decls: Vec<NodeIndex> = outer_decls
+                .iter()
+                .filter_map(|(outer_decl_idx, flags)| {
+                    ((flags & symbol_flags::CLASS) != 0).then_some(*outer_decl_idx)
+                })
+                .collect();
+            if !outer_class_decls.is_empty() {
+                let all_classes_ambient = outer_class_decls
+                    .iter()
+                    .all(|outer_decl_idx| self.is_ambient_declaration(*outer_decl_idx));
+                if block_function_has_body && !all_classes_ambient {
+                    let message = format_message(
+                        diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                        &[&name],
+                    );
+                    for outer_decl_idx in outer_class_decls {
+                        let error_node = self
+                            .get_declaration_name_node(outer_decl_idx)
+                            .unwrap_or(outer_decl_idx);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                        );
+                    }
+                    self.error_at_node(
+                        block_error_node,
+                        diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                        diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                    );
+                }
+                continue;
+            }
+
+            let block_flags = self
+                .declaration_symbol_flags(self.ctx.arena, decl_idx)
+                .unwrap_or(symbol_flags::FUNCTION);
+            let conflicting_outer_decls: Vec<(NodeIndex, u32)> = outer_decls
+                .iter()
+                .copied()
+                .filter(|(_, flags)| Self::declarations_conflict(block_flags, *flags))
+                .collect();
+            if conflicting_outer_decls.is_empty() {
+                continue;
+            }
+
+            let first_decl = conflicting_outer_decls
+                .iter()
+                .copied()
+                .chain(std::iter::once((decl_idx, block_flags)))
+                .min_by_key(|(decl_idx, _)| {
+                    self.ctx
+                        .arena
+                        .get(*decl_idx)
+                        .map_or(u32::MAX, |node| node.pos)
+                });
+
+            let use_ts2451 = first_decl
+                .map(|(_, flags)| (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0)
+                .unwrap_or(false);
+            let (message, code) = if use_ts2451 {
+                (
+                    format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[&name],
+                    ),
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                )
+            } else {
+                (
+                    format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                )
+            };
+
+            for (outer_decl_idx, _) in conflicting_outer_decls {
+                let error_node = self
+                    .get_declaration_name_node(outer_decl_idx)
+                    .unwrap_or(outer_decl_idx);
+                self.error_at_node(error_node, &message, code);
+            }
+            self.error_at_node(block_error_node, &message, code);
+        }
+    }
+
+    fn find_visible_outer_declarations_for_block_function(
+        &self,
+        decl_idx: NodeIndex,
+        current_sym_id: tsz_binder::SymbolId,
+        name: &str,
+    ) -> OuterDeclResult {
+        let containing_scope_id = self.get_containing_scope_id(decl_idx)?;
+        let mut scope_id = self
+            .ctx
+            .binder
+            .scopes
+            .get(containing_scope_id.0 as usize)?
+            .parent;
+
+        while scope_id.is_some() {
+            let scope = self.ctx.binder.scopes.get(scope_id.0 as usize)?;
+            if let Some(sym_id) = scope.table.get(name) {
+                if sym_id == current_sym_id {
+                    return None;
+                }
+
+                let local_decls = self.local_declarations_for_symbol(sym_id, name);
+                if local_decls.is_empty() {
+                    return None;
+                }
+
+                let non_catch_local_decls: Vec<(NodeIndex, u32)> = local_decls
+                    .into_iter()
+                    .filter(|(outer_decl_idx, _)| {
+                        !self.is_catch_clause_variable_declaration(*outer_decl_idx)
+                    })
+                    .collect();
+                if !non_catch_local_decls.is_empty() {
+                    return Some((sym_id, non_catch_local_decls));
+                }
+            }
+            scope_id = scope.parent;
+        }
+
+        None
+    }
+
+    fn get_containing_scope_id(&self, decl_idx: NodeIndex) -> Option<tsz_binder::ScopeId> {
+        let mut current = decl_idx;
+
+        loop {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            if let Some(&scope_id) = self.ctx.binder.node_scope_ids.get(&parent.0) {
+                return Some(scope_id);
+            }
+            current = parent;
+        }
+    }
+
+    fn local_declarations_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        expected_name: &str,
+    ) -> Vec<(NodeIndex, u32)> {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return Vec::new();
+        };
+
+        let mut declarations = Vec::new();
+        let mut seen = FxHashSet::default();
+
+        for &decl_idx in &symbol.declarations {
+            let mut push_local_decl = |arena: &tsz_parser::parser::node::NodeArena| {
+                if !std::ptr::eq(arena, self.ctx.arena) {
+                    return;
+                }
+                if !seen.insert(decl_idx) || !self.declaration_name_matches(decl_idx, expected_name)
+                {
+                    return;
+                }
+                if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
+                    declarations.push((decl_idx, flags));
+                }
+            };
+
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena_arc in arenas {
+                    push_local_decl(arena_arc.as_ref());
+                }
+            } else {
+                push_local_decl(self.ctx.arena);
+            }
+        }
+
+        declarations.sort_by_key(|(decl_idx, _)| {
+            self.ctx
+                .arena
+                .get(*decl_idx)
+                .map_or(u32::MAX, |node| node.pos)
+        });
+        declarations
     }
 
     pub(crate) fn get_enclosing_namespace(&self, decl_idx: NodeIndex) -> NodeIndex {

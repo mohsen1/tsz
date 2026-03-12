@@ -696,14 +696,31 @@ impl<'a> CheckerState<'a> {
             // For typeof expressions, use the typeof result type (union of all
             // valid typeof return strings) so that comparisons like
             // `typeof x == "Object"` correctly detect no overlap.
+            let left_comparison_type = if self.ctx.arena.get(left_idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            }) {
+                self.apply_flow_narrowing(left_idx, left_type)
+            } else {
+                left_type
+            };
+            let right_comparison_type = if self.ctx.arena.get(right_idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            }) {
+                self.apply_flow_narrowing(right_idx, right_type)
+            } else {
+                right_type
+            };
+
             let left_narrow = self
                 .typeof_result_type_if_typeof(left_idx)
                 .or_else(|| self.literal_type_from_initializer(left_idx))
-                .unwrap_or(left_type);
+                .unwrap_or(left_comparison_type);
             let right_narrow = self
                 .typeof_result_type_if_typeof(right_idx)
                 .or_else(|| self.literal_type_from_initializer(right_idx))
-                .unwrap_or(right_type);
+                .unwrap_or(right_comparison_type);
 
             let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
             let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
@@ -782,8 +799,18 @@ impl<'a> CheckerState<'a> {
                 // while (...) { code = code === 1 ? 0 : 1; }` — flow narrows `code` to `0`
                 // but the declared type `0 | 1` overlaps with `1`. tsc widens at the loop
                 // boundary; we compensate by checking declared types here.
-                && !self.declared_type_has_overlap(left_idx, left_narrow, right_narrow)
-                && !self.declared_type_has_overlap(right_idx, right_narrow, left_narrow)
+                && !self.declared_type_has_overlap_in_loop(
+                    node_idx,
+                    left_idx,
+                    left_narrow,
+                    right_narrow,
+                )
+                && !self.declared_type_has_overlap_in_loop(
+                    node_idx,
+                    right_idx,
+                    right_narrow,
+                    left_narrow,
+                )
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 // tsc preserves literal types within the same primitive family
@@ -1331,12 +1358,17 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the identifier's declared type is wider than `narrow_type` and
     /// has overlap with `other_type`. This prevents false TS2367 when flow narrowing
     /// inside loops makes the narrowed type too specific (e.g., `0` instead of `0 | 1`).
-    fn declared_type_has_overlap(
+    fn declared_type_has_overlap_in_loop(
         &mut self,
+        comparison_idx: NodeIndex,
         idx: NodeIndex,
         narrow_type: TypeId,
         other_type: TypeId,
     ) -> bool {
+        if !self.is_inside_loop(comparison_idx) {
+            return false;
+        }
+
         let node = match self.ctx.arena.get(idx) {
             Some(n) => n,
             None => return false,
@@ -1368,6 +1400,31 @@ impl<'a> CheckerState<'a> {
         }
         // Check if the declared type overlaps with the other operand
         !self.types_have_no_overlap(declared_type, other_type)
+    }
+
+    fn is_inside_loop(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if matches!(
+                parent_node.kind,
+                k if k == syntax_kind_ext::WHILE_STATEMENT
+                    || k == syntax_kind_ext::DO_STATEMENT
+                    || k == syntax_kind_ext::FOR_STATEMENT
+                    || k == syntax_kind_ext::FOR_IN_STATEMENT
+                    || k == syntax_kind_ext::FOR_OF_STATEMENT
+            ) {
+                return true;
+            }
+            current = parent;
+        }
+        false
     }
 
     /// Check if a binary operation with `IndexAccess` operands is valid through assignability.

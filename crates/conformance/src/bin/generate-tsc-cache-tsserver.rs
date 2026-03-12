@@ -464,6 +464,7 @@ fn convert_options_to_tsconfig(
     options: &std::collections::HashMap<String, String>,
 ) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
+    let mut strict_explicit = false;
 
     for (key, value) in options {
         let key_lower = key.to_lowercase();
@@ -472,6 +473,10 @@ fn convert_options_to_tsconfig(
             .any(|&d| d.to_lowercase() == key_lower)
         {
             continue;
+        }
+
+        if key_lower == "strict" {
+            strict_explicit = true;
         }
 
         let canonical_key = canonical_option_name(&key_lower);
@@ -513,21 +518,27 @@ fn convert_options_to_tsconfig(
         opts.insert(canonical_key.to_string(), json_value);
     }
 
+    if !strict_explicit {
+        opts.insert("strict".to_string(), serde_json::Value::Bool(false));
+    }
+
     // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
-    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-        let strict = *strict;
-        for key in [
-            "noImplicitAny",
-            "noImplicitThis",
-            "strictNullChecks",
-            "strictFunctionTypes",
-            "strictBindCallApply",
-            "strictPropertyInitialization",
-            "useUnknownInCatchVariables",
-            "alwaysStrict",
-        ] {
-            opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(strict));
+    if strict_explicit {
+        if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+            let strict = *strict;
+            for key in [
+                "noImplicitAny",
+                "noImplicitThis",
+                "strictNullChecks",
+                "strictFunctionTypes",
+                "strictBindCallApply",
+                "strictPropertyInitialization",
+                "useUnknownInCatchVariables",
+                "alwaysStrict",
+            ] {
+                opts.entry(key.to_string())
+                    .or_insert(serde_json::Value::Bool(strict));
+            }
         }
     }
 

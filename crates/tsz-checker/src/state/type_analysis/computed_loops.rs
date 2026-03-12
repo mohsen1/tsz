@@ -4,7 +4,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn compute_for_in_of_variable_type(
+    pub(crate) fn compute_for_in_of_variable_type(
         &mut self,
         decl_idx: NodeIndex,
     ) -> Option<TypeId> {
