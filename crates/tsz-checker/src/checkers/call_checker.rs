@@ -977,7 +977,9 @@ impl<'a> CheckerState<'a> {
                     }));
                 self.ctx.emitted_diagnostics = emitted_before;
                 for diag in self.ctx.diagnostics.iter().skip(diag_len) {
-                    self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
+                    self.ctx
+                        .emitted_diagnostics
+                        .insert(self.ctx.diagnostic_dedup_key(diag));
                 }
             }
             arg_types.push(arg_type);

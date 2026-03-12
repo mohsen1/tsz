@@ -48,7 +48,9 @@ impl<'a> CheckerState<'a> {
         self.ctx.diagnostics.extend(kept_new_diags.iter().cloned());
         self.ctx.emitted_diagnostics = emitted_before.clone();
         for diag in &kept_new_diags {
-            self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
+            self.ctx
+                .emitted_diagnostics
+                .insert(self.ctx.diagnostic_dedup_key(diag));
         }
     }
 
