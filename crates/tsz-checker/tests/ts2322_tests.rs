@@ -426,20 +426,9 @@ var r = foo<number>({ bar: 1, baz: '' });
         .iter()
         .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
-
-    if errors.is_empty() {
-        // Accept TS2345 at argument level as an alternative to property-level TS2322
-        let has_assignability_error = diagnostics.iter().any(|d| {
-            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || d.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-        });
-        assert!(
-            diagnostics.is_empty() || has_assignability_error,
-            "Expected TS2322, TS2345, or no diagnostics for current generic-inference behavior, got: {diagnostics:?}"
-        );
-        return;
-    }
+    let has_ts2345 = diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+    });
 
     assert_eq!(
         errors.len(),
@@ -455,6 +444,10 @@ var r = foo<number>({ bar: 1, baz: '' });
         expected_messages.contains(&diag.message_text.as_str()),
         "Unexpected TS2322 message: {}",
         diag.message_text
+    );
+    assert!(
+        !has_ts2345,
+        "Did not expect outer TS2345 once property-level TS2322 elaboration applies, got: {diagnostics:?}"
     );
 
     let expected_baz_start = source
