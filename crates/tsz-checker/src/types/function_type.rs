@@ -3,6 +3,7 @@ use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
 use crate::diagnostics::format_message;
+use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -669,15 +670,17 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.evaluate_type_with_env(type_id)
                     };
-                    if matches!(
+                    let array_like = matches!(
+                        type_query::classify_array_like(self.ctx.types, evaluated),
+                        type_query::ArrayLikeKind::Array(_)
+                            | type_query::ArrayLikeKind::Tuple
+                            | type_query::ArrayLikeKind::Readonly(_)
+                    );
+                    let no_infer = matches!(
                         self.ctx.types.lookup(evaluated),
-                        Some(
-                            tsz_solver::TypeData::Array(_)
-                                | tsz_solver::TypeData::Tuple(_)
-                                | tsz_solver::TypeData::ReadonlyType(_)
-                                | tsz_solver::TypeData::NoInfer(_)
-                        )
-                    ) {
+                        Some(tsz_solver::TypeData::NoInfer(_))
+                    );
+                    if array_like || no_infer {
                         type_id = evaluated;
                     }
                 }
