@@ -448,6 +448,36 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn normalize_contextual_signature_with_env(&mut self, expected: TypeId) -> TypeId {
+        fn should_preserve_contextual_param_type(
+            db: &dyn tsz_solver::TypeDatabase,
+            ty: TypeId,
+        ) -> bool {
+            fn is_constructor_like_context(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+                if let Some(shape_id) = tsz_solver::callable_shape_id(db, ty) {
+                    let shape = db.callable_shape(shape_id);
+                    if !shape.construct_signatures.is_empty() {
+                        return true;
+                    }
+                }
+                if let Some(shape_id) = tsz_solver::visitor::function_shape_id(db, ty) {
+                    let shape = db.function_shape(shape_id);
+                    if shape.is_constructor {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            if let Some(members) = tsz_solver::type_queries::get_union_members(db, ty) {
+                return members
+                    .iter()
+                    .copied()
+                    .any(|member| is_constructor_like_context(db, member));
+            }
+
+            false
+        }
+
         if tsz_solver::is_union_type(self.ctx.types, expected)
             || tsz_solver::is_intersection_type(self.ctx.types, expected)
         {
@@ -464,7 +494,11 @@ impl<'a> CheckerState<'a> {
         let mut changed = false;
         for param in &mut shape.params {
             let resolved = self.resolve_type_query_type(param.type_id);
-            let evaluated = self.evaluate_type_with_env(resolved);
+            let evaluated = if should_preserve_contextual_param_type(self.ctx.types, resolved) {
+                resolved
+            } else {
+                self.evaluate_type_with_env(resolved)
+            };
             if evaluated != param.type_id {
                 param.type_id = evaluated;
                 changed = true;
