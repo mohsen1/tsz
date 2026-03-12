@@ -716,15 +716,17 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         arg_types: &[TypeId],
     ) -> CallResult {
+        let success_return = if let CallResult::Success(return_type) = result {
+            return_type
+        } else {
+            return result;
+        };
         let expected_signature = (!instantiated_params.is_empty()).then(|| {
             self.ctx.types.factory().function(FunctionShape::new(
                 instantiated_params.to_vec(),
                 TypeId::UNKNOWN,
             ))
         });
-        if !matches!(result, CallResult::Success(_)) {
-            return result;
-        }
 
         for (index, &cached_actual) in arg_types.iter().enumerate() {
             let expected = expected_signature.and_then(|signature| {
@@ -758,12 +760,12 @@ impl<'a> CheckerState<'a> {
                     index,
                     expected,
                     actual,
-                    fallback_return: TypeId::ERROR,
+                    fallback_return: success_return,
                 };
             }
         }
 
-        result
+        CallResult::Success(success_return)
     }
 
     pub(crate) fn compute_round2_contextual_types(

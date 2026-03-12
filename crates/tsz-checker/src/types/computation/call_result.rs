@@ -199,6 +199,16 @@ impl<'a> CheckerState<'a> {
                 actual,
                 fallback_return,
             } => {
+                let normalized_rest_expected = self.rest_argument_element_type_with_env(expected);
+                if normalized_rest_expected != expected
+                    && self.is_assignable_to_with_env(actual, normalized_rest_expected)
+                {
+                    return if fallback_return != TypeId::ERROR {
+                        fallback_return
+                    } else {
+                        TypeId::ERROR
+                    };
+                }
                 if actual == TypeId::ERROR
                     || actual == TypeId::UNKNOWN
                     || expected == TypeId::ERROR
