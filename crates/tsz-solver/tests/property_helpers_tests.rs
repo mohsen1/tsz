@@ -391,6 +391,43 @@ fn test_union_ignores_deferred_any_fallback_when_other_member_has_property() {
     );
 }
 
+#[test]
+fn test_unconstrained_type_parameter_property_is_not_found() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.intern(TypeData::TypeParameter(t_info));
+
+    assert_property_not_found(&evaluator.resolve_property_access(t_param, "toString"));
+}
+
+#[test]
+fn test_constrained_object_like_type_parameter_keeps_object_members() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.intern(TypeData::TypeParameter(t_info));
+
+    assert!(
+        evaluator
+            .resolve_property_access(t_param, "toString")
+            .is_success(),
+        "constrained object-like type parameter should still expose Object members"
+    );
+}
+
 // =============================================================================
 // Index signature access
 // =============================================================================

@@ -1276,21 +1276,11 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             if block_function_has_body && !outer_function_impls.is_empty() {
-                for outer_decl_idx in outer_function_impls {
-                    let error_node = self
-                        .get_declaration_name_node(outer_decl_idx)
-                        .unwrap_or(outer_decl_idx);
-                    self.error_at_node(
-                        error_node,
-                        diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                        diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                    );
-                }
-                self.error_at_node(
-                    block_error_node,
-                    diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                    diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                );
+                // Block-scoped or nested function with a body that shadows an outer
+                // function also with a body is legal shadowing in TypeScript — not a
+                // duplicate implementation.  TS2393 only applies to duplicate function
+                // implementations within the *same* scope, which is already handled by
+                // the scope-grouped check above.
                 continue;
             }
 

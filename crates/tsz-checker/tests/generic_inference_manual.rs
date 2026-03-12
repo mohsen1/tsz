@@ -9,7 +9,7 @@ use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::{TypeId, TypeInterner};
 
 fn variable_declaration_initializer_at(
     parser: &ParserState,
@@ -222,6 +222,53 @@ const result = process(42, x => x.toString());
         type_errors.is_empty(),
         "Expected no type errors for process inference, got: {type_errors:?}"
     );
+}
+
+#[test]
+fn test_overloaded_function_symbol_preserves_declaration_signature_order() {
+    let source = r#"
+declare function testFunction(n: number): Promise<number>;
+declare function testFunction(s: string): Promise<string>;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let sym_id = binder
+        .file_locals
+        .get("testFunction")
+        .expect("expected testFunction symbol");
+    let ty = checker.get_type_of_symbol(sym_id);
+    let signatures = tsz_solver::type_queries::get_call_signatures(&types, ty)
+        .expect("expected overloaded call signatures");
+
+    assert_eq!(signatures.len(), 2, "expected two overload signatures");
+    assert_eq!(
+        signatures[0].params.len(),
+        1,
+        "expected unary first overload"
+    );
+    assert_eq!(
+        signatures[1].params.len(),
+        1,
+        "expected unary second overload"
+    );
+    assert_eq!(signatures[0].params[0].type_id, TypeId::NUMBER);
+    assert_eq!(signatures[1].params[0].type_id, TypeId::STRING);
 }
 
 #[test]

@@ -270,6 +270,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     param_type
                 }
             };
+            let expanded_arg_type =
+                if crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
+                    && crate::type_queries::is_callable_type(self.interner, effective_param_type)
+                {
+                    self.instantiate_generic_function_argument_against_target(
+                        expanded_arg_type,
+                        effective_param_type,
+                    )
+                } else {
+                    expanded_arg_type
+                };
 
             // Fast-path: skip the full assignability check when the arg type
             // matches either the declared or effective param type by identity.

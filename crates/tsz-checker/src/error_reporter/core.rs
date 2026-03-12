@@ -555,6 +555,10 @@ impl<'a> CheckerState<'a> {
             ));
         }
 
+        if parts.is_empty() {
+            return Some("{}".to_string());
+        }
+
         Some(format!("{{ {}; }}", parts.join("; ")))
     }
 
@@ -1156,6 +1160,10 @@ impl<'a> CheckerState<'a> {
                 "{display_name}: {}",
                 self.format_type_for_assignability_message(self.widen_type_for_display(value_type))
             ));
+        }
+
+        if parts.is_empty() {
+            return Some("{}".to_string());
         }
 
         Some(format!("{{ {}; }}", parts.join("; ")))

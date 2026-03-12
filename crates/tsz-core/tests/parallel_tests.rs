@@ -565,6 +565,51 @@ foo.ns.b;
 }
 
 #[test]
+fn test_check_files_parallel_preserves_same_file_namespace_exports() {
+    let files = vec![
+        ("a.ts".to_string(), "export class A {}\n".to_string()),
+        (
+            "b.ts".to_string(),
+            "export * as a from \"./a\";\n".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "import type { a } from \"./b\";\nexport { a };\n".to_string(),
+        ),
+    ];
+
+    let program = compile_files(files);
+    let result = check_files_parallel(
+        &program,
+        &crate::checker::context::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            no_lib: true,
+            ..Default::default()
+        },
+        &[],
+    );
+
+    let file = result
+        .file_results
+        .iter()
+        .find(|file| file.file_name == "c.ts")
+        .expect("expected c.ts result");
+    let relevant_codes: Vec<u32> = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code != 2318)
+        .map(|diag| diag.code)
+        .collect();
+
+    assert!(
+        !relevant_codes.contains(&2305),
+        "Did not expect TS2305 in c.ts. Actual diagnostics: {:#?}",
+        file.diagnostics
+    );
+}
+
+#[test]
 fn test_check_files_parallel_keeps_namespace_local_component_for_create_element_inference() {
     let files = vec![(
         "test.ts".to_string(),

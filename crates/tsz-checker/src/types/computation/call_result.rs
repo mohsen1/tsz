@@ -7,7 +7,7 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::visitor;
-use tsz_solver::{CallResult, TypeId};
+use tsz_solver::{CallResult, TypeData, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -21,6 +21,69 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn finalize_call_return_like_success(
+        &mut self,
+        callee_expr: NodeIndex,
+        arg_types: &[TypeId],
+        return_type: TypeId,
+        is_optional_chain: bool,
+    ) -> TypeId {
+        let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
+        let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
+        let return_type = if !self.ctx.compiler_options.sound_mode {
+            tsz_solver::relations::freshness::widen_freshness(self.ctx.types, return_type)
+        } else {
+            return_type
+        };
+        if is_optional_chain {
+            self.ctx
+                .types
+                .factory()
+                .union(vec![return_type, TypeId::UNDEFINED])
+        } else {
+            return_type
+        }
+    }
+
+    fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
+        match self.ctx.types.lookup(callee_type) {
+            Some(TypeData::Function(shape_id)) => {
+                Some(self.ctx.types.function_shape(shape_id).return_type)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                let first = shape.call_signatures.first()?.return_type;
+                if shape
+                    .call_signatures
+                    .iter()
+                    .all(|sig| sig.return_type == first)
+                {
+                    Some(first)
+                } else {
+                    None
+                }
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                let mut candidate = None;
+                for &member in members.iter() {
+                    let Some(return_type) = self.stable_call_recovery_return_type(member) else {
+                        continue;
+                    };
+                    if let Some(existing) = candidate {
+                        if existing != return_type {
+                            return None;
+                        }
+                    } else {
+                        candidate = Some(return_type);
+                    }
+                }
+                candidate
+            }
+            _ => None,
+        }
+    }
+
     fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {
         let expected = self.evaluate_type_with_env(expected);
         let expected = self.resolve_type_for_property_access(expected);
@@ -171,23 +234,12 @@ impl<'a> CheckerState<'a> {
                 if is_super_call {
                     return TypeId::VOID;
                 }
-                let return_type =
-                    self.apply_this_substitution_to_call_return(return_type, callee_expr);
-                let return_type =
-                    self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
-                let return_type = if !self.ctx.compiler_options.sound_mode {
-                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, return_type)
-                } else {
-                    return_type
-                };
-                if is_optional_chain {
-                    self.ctx
-                        .types
-                        .factory()
-                        .union(vec![return_type, TypeId::UNDEFINED])
-                } else {
-                    return_type
-                }
+                self.finalize_call_return_like_success(
+                    callee_expr,
+                    arg_types,
+                    return_type,
+                    is_optional_chain,
+                )
             }
             CallResult::NonVoidFunctionCalledWithNew | CallResult::VoidFunctionCalledWithNew => {
                 self.error_non_void_function_called_with_new_at(callee_expr);
@@ -263,7 +315,19 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-                TypeId::ERROR
+                if is_super_call {
+                    TypeId::VOID
+                } else if let Some(return_type) = self.stable_call_recovery_return_type(callee_type)
+                {
+                    self.finalize_call_return_like_success(
+                        callee_expr,
+                        arg_types,
+                        return_type,
+                        is_optional_chain,
+                    )
+                } else {
+                    TypeId::ERROR
+                }
             }
             CallResult::OverloadArgumentCountMismatch {
                 actual,

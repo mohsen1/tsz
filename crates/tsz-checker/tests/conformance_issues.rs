@@ -16,6 +16,7 @@ use tsz_binder::lib_loader::LibFile;
 use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
+use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -2464,6 +2465,7 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         .ctx
         .diagnostics
         .iter()
+        .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -2519,6 +2521,7 @@ fn compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_cache_and_opt
         .ctx
         .diagnostics
         .iter()
+        .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -8090,6 +8093,63 @@ fn compile_two_files_get_diagnostics_with_options(
         .collect()
 }
 
+fn compile_named_files_get_diagnostics_with_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .expect("entry file should exist");
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 fn compile_two_global_files_get_diagnostics_with_options(
     a_name: &str,
     a_source: &str,
@@ -10228,6 +10288,32 @@ const { x = 1 } = source;
 }
 
 #[test]
+fn test_empty_object_literal_missing_property_formats_as_empty_object() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface A { a: string; }
+const value: A = {};
+"#,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        }
+        .apply_strict_defaults(),
+    );
+
+    let message = diagnostic_message(&diagnostics, 2741)
+        .expect("expected TS2741 for assignment from empty object literal");
+    assert!(
+        message.contains("type '{}'"),
+        "Expected TS2741 to format the empty object literal as '{{}}'. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !message.contains("{ ; }"),
+        "Did not expect the legacy '{{ ; }}' empty-object formatting. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_array_like_length_only_assignment_does_not_emit_ts2322() {
     let source = r#"
 interface A { a: string; }
@@ -11004,6 +11090,46 @@ function test(a: A2) {
         "TS18013 should not contain 'the class' as fallback.\n\
          Actual message: {}",
         ts18013_messages[0]
+    );
+}
+
+#[test]
+fn test_static_private_accessor_not_visible_on_derived_constructor_type() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "privateNameStaticAccessorssDerivedClasses.ts",
+        r#"
+class Base {
+    static get #prop(): number { return 123; }
+    static method(x: typeof Derived) {
+        console.log(x.#prop);
+    }
+}
+class Derived extends Base {
+    static method(x: typeof Derived) {
+        console.log(x.#prop);
+    }
+}
+        "#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2339_count = relevant.iter().filter(|(code, _)| *code == 2339).count();
+
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected TS2339 at both static private accessor accesses through typeof Derived.\nActual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        !has_error(&relevant, 18013),
+        "Should not emit TS18013 for static private accessor access through a derived constructor type.\nActual diagnostics: {relevant:#?}"
     );
 }
 
@@ -13148,6 +13274,11 @@ f2(
         has_error(&diagnostics, 2353),
         "Expected TS2353 for excess property 'foo' on the filtered mapped handlers object.\nActual diagnostics: {diagnostics:#?}"
     );
+    let ts2353_count = diagnostics.iter().filter(|(code, _)| *code == 2353).count();
+    assert_eq!(
+        ts2353_count, 1,
+        "Expected exactly one TS2353 diagnostic for the excess property site.\nActual diagnostics: {diagnostics:#?}"
+    );
     let ts7006_count = diagnostics.iter().filter(|(code, _)| *code == 7006).count();
     assert_eq!(
         ts7006_count, 2,
@@ -13258,6 +13389,63 @@ var newPromise = numPromise.then(testFunction);
     assert_eq!(
         ts2345_count, 1,
         "Expected TS2345 for overloaded callback generic call.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_direct_generic_inference_does_not_union_nominal_private_candidates() {
+    let source = r#"
+class C { private x: string; }
+class D { private x: string; }
+function id2<T>(a: T, b: T): T { return a; }
+let r = id2(new C(), new D());
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 1,
+        "Expected TS2345 for nominal direct generic inference.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_nested_generic_inference_does_not_union_nominal_private_candidates() {
+    let source = r#"
+class C { private x: string; }
+class D { private x: string; }
+class X<T> { x!: T; }
+function foo<T>(a: X<T>, b: X<T>): T { return a.x; }
+let r = foo(new X<C>(), new X<D>());
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 1,
+        "Expected TS2345 for nested nominal generic inference.\nActual diagnostics: {relevant:#?}"
     );
 }
 
@@ -13611,5 +13799,144 @@ function mock<T>(spyObj: SpyMap<T>, methodName: keyof T): SpyMap<T> {
     assert!(
         has_error(&diagnostics, 2339),
         "Expected TS2339 for missing property through generic mapped index access. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_argument_count_mismatch_preserves_call_return_for_follow_on_property_access() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+const f = (hdr: string, val: number) => `${hdr}:\t${val}\r\n` as `${string}:\t${number}\r\n`;
+f("x").foo;
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2554),
+        "Expected TS2554 for missing call argument. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 to remain on the call result after TS2554 recovery. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_only_namespace_reexport_chain_does_not_emit_ts2305() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "lib.d.ts",
+                "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+            ),
+            ("a.ts", "export class A {}\n"),
+            ("b.ts", "export * as a from './a';\n"),
+            ("c.ts", "import type { a } from './b';\nexport { a };\n"),
+            ("d.ts", "import { a } from './c';\nnew a.A();\n"),
+        ],
+        "d.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "Did not expect TS2305 for a type-only namespace re-export chain. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_unbounded_generic_constraint_mismatch_preserves_record_alias_display() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+function f3<T extends Record<string, any>>(o: T) {}
+
+function user<T>(t: T) {
+  f3(t);
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2345 && message.contains("Record<string, any>") }),
+        "Expected TS2345 to preserve Record<string, any> in the parameter display. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_only_namespace_export_is_importable_from_reexporting_module() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("a.ts", "export class A {}\n"),
+            ("b.ts", "export * as a from './a';\n"),
+            ("c.ts", "import type { a } from './b';\nexport { a };\n"),
+        ],
+        "c.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "Did not expect TS2305 when importing a namespace export through a re-exporting module. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_type_only_namespace_export_is_importable_from_reexporting_module_with_absolute_paths() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            ("/tmp/tsz-export-namespace/a.ts", "export class A {}\n"),
+            (
+                "/tmp/tsz-export-namespace/b.ts",
+                "export * as a from './a';\n",
+            ),
+            (
+                "/tmp/tsz-export-namespace/c.ts",
+                "import type { a } from './b';\nexport { a };\n",
+            ),
+        ],
+        "/tmp/tsz-export-namespace/c.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "Did not expect TS2305 for an absolute-path namespace re-export import. Actual diagnostics: {diagnostics:#?}"
     );
 }

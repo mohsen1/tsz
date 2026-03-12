@@ -11,6 +11,56 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn module_export_file_key_candidates(&self, file_name: &str) -> Vec<String> {
+        let mut candidates = Vec::new();
+        let mut push_unique = |value: String| {
+            if !candidates.contains(&value) {
+                candidates.push(value);
+            }
+        };
+
+        push_unique(file_name.to_string());
+
+        let normalized = file_name.replace('\\', "/");
+        if normalized != file_name {
+            push_unique(normalized.clone());
+        }
+
+        for candidate in [file_name, normalized.as_str()] {
+            if let Some(stripped) = candidate.strip_prefix("./") {
+                push_unique(stripped.to_string());
+            } else if !candidate.starts_with("../")
+                && !candidate.starts_with('/')
+                && !candidate.starts_with(".\\")
+                && !candidate.starts_with("..\\")
+            {
+                push_unique(format!("./{candidate}"));
+            }
+        }
+
+        candidates
+    }
+
+    fn module_exports_for_file<'b>(
+        &self,
+        binder: &'b tsz_binder::BinderState,
+        file_name: &str,
+    ) -> Option<&'b tsz_binder::SymbolTable> {
+        self.module_export_file_key_candidates(file_name)
+            .into_iter()
+            .find_map(|candidate| binder.module_exports.get(&candidate))
+    }
+
+    fn keyed_exports_for_file<'b, T>(
+        &self,
+        map: &'b rustc_hash::FxHashMap<String, T>,
+        file_name: &str,
+    ) -> Option<&'b T> {
+        self.module_export_file_key_candidates(file_name)
+            .into_iter()
+            .find_map(|candidate| map.get(&candidate))
+    }
+
     /// Resolve a named type reference to its `TypeId`.
     ///
     /// This is a core function for resolving type names like `User`, `Array`, `Promise`,
@@ -264,7 +314,7 @@ impl<'a> CheckerState<'a> {
 
         // Look up the export in the target binder's module_exports.
         // Prefer canonical file key, then module specifier fallback.
-        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports_table) = self.module_exports_for_file(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
         {
@@ -402,7 +452,7 @@ impl<'a> CheckerState<'a> {
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
         // Check direct exports (module_exports)
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports) = self.module_exports_for_file(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports, export_name)
         {
@@ -411,7 +461,8 @@ impl<'a> CheckerState<'a> {
 
         // Check named re-exports before file_locals so that
         // `export { X } from './other'` is resolved through the chain.
-        if let Some(reexports) = target_binder.reexports.get(&target_file_name)
+        if let Some(reexports) =
+            self.keyed_exports_for_file(&target_binder.reexports, &target_file_name)
             && let Some((source_module, original_name)) = reexports.get(export_name)
         {
             let name = original_name.as_deref().unwrap_or(export_name);
@@ -427,7 +478,9 @@ impl<'a> CheckerState<'a> {
         // Check wildcard re-exports before file_locals so that
         // `export * from './other'` is followed to the actual declaring file.
         // file_locals may contain merged globals that shadow re-exported symbols.
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+        if let Some(source_modules) =
+            self.keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+        {
             let source_modules = source_modules.clone();
             for source_module in &source_modules {
                 if let Some(source_idx) = self
@@ -476,9 +529,8 @@ impl<'a> CheckerState<'a> {
 
         // Try to find exports in the target binder's module_exports.
         // Prefer canonical file key first, then module specifier fallback.
-        let direct_exports = target_binder
-            .module_exports
-            .get(&target_file_name)
+        let direct_exports = self
+            .module_exports_for_file(target_binder, &target_file_name)
             .or_else(|| target_binder.module_exports.get(module_specifier));
 
         if let Some(exports) = direct_exports {
@@ -493,10 +545,12 @@ impl<'a> CheckerState<'a> {
         // No direct exports found, but the module may still re-export symbols
         // via `export * from './other'` or `export { X } from './other'`.
         // Collect re-exported symbols even when there are no direct exports.
-        let has_reexports = target_binder
-            .wildcard_reexports
-            .contains_key(&target_file_name)
-            || target_binder.reexports.contains_key(&target_file_name);
+        let has_reexports = self
+            .keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+            .is_some()
+            || self
+                .keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+                .is_some();
         if has_reexports {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
@@ -531,7 +585,7 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let direct_exports = target_binder.module_exports.get(&target_file_name);
+        let direct_exports = self.module_exports_for_file(target_binder, &target_file_name);
 
         if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
@@ -542,10 +596,12 @@ impl<'a> CheckerState<'a> {
             return Some(combined);
         }
 
-        let has_reexports = target_binder
-            .wildcard_reexports
-            .contains_key(&target_file_name)
-            || target_binder.reexports.contains_key(&target_file_name);
+        let has_reexports = self
+            .keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+            .is_some()
+            || self
+                .keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+                .is_some();
         if has_reexports {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
@@ -581,16 +637,6 @@ impl<'a> CheckerState<'a> {
         source_file_idx: Option<usize>,
     ) -> Option<tsz_binder::SymbolTable> {
         for candidate in module_specifier_candidates(module_specifier) {
-            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
-                let mut combined = exports.clone();
-                self.merge_export_equals_members(self.ctx.binder, exports, &mut combined);
-                return Some(combined);
-            }
-
-            if let Some(exports) = self.resolve_cross_file_namespace_exports(&candidate) {
-                return Some(exports);
-            }
-
             // When resolving from a specific source file (cross-file symbol),
             // also try resolving the module specifier from that file's perspective
             if let Some(source_idx) = source_file_idx
@@ -601,6 +647,16 @@ impl<'a> CheckerState<'a> {
                     self.resolve_cross_file_namespace_exports_for_file(target_idx)
             {
                 return Some(exports);
+            }
+
+            if let Some(exports) = self.resolve_cross_file_namespace_exports(&candidate) {
+                return Some(exports);
+            }
+
+            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
+                let mut combined = exports.clone();
+                self.merge_export_equals_members(self.ctx.binder, exports, &mut combined);
+                return Some(combined);
             }
         }
 
@@ -677,12 +733,16 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect from wildcard re-exports (export * from './module')
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+        if let Some(source_modules) =
+            self.keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+        {
             let source_modules = source_modules.clone();
             // Get type-only flags for wildcard re-exports to skip `export type *` members
-            let type_only_flags = target_binder
-                .wildcard_reexports_type_only
-                .get(&target_file_name)
+            let type_only_flags = self
+                .keyed_exports_for_file(
+                    &target_binder.wildcard_reexports_type_only,
+                    &target_file_name,
+                )
                 .cloned();
             for (i, source_module) in source_modules.iter().enumerate() {
                 // Skip `export type * from '...'` — these exports should not appear as
@@ -701,7 +761,16 @@ impl<'a> CheckerState<'a> {
                     && let Some(source_binder) = self.ctx.get_binder_for_file(source_idx)
                 {
                     // Add all exports from the source module
-                    if let Some((_, exports)) = source_binder.module_exports.iter().next() {
+                    let source_file_name = self
+                        .ctx
+                        .get_arena_for_file(source_idx as u32)
+                        .source_files
+                        .first()
+                        .map(|sf| sf.file_name.clone());
+                    if let Some(source_file_name) = source_file_name
+                        && let Some(exports) =
+                            self.module_exports_for_file(source_binder, &source_file_name)
+                    {
                         for (name, sym_id) in exports.iter() {
                             if !result.has(name) {
                                 result.set(name.to_string(), *sym_id);
@@ -715,7 +784,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Collect from named re-exports (export { X } from './module')
-        if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
+        if let Some(reexports) =
+            self.keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+        {
             let reexports = reexports.clone();
             for (exported_name, (source_module, original_name)) in &reexports {
                 if !result.has(exported_name) {
