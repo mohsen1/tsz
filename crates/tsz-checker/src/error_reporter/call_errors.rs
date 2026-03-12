@@ -1444,6 +1444,39 @@ impl<'a> CheckerState<'a> {
                 }
                 Some(related)
             }
+            SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind,
+                source_value_type,
+                target_value_type,
+            } => {
+                let source_str = self.format_type_diagnostic(*source_value_type);
+                let target_str = self.format_type_diagnostic(*target_value_type);
+                let msg = format!(
+                    "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
+                );
+                let nested = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                Some(vec![
+                    DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Error,
+                        code: reason.diagnostic_code(),
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: length.saturating_sub(start),
+                        message_text: msg,
+                    },
+                    DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: length.saturating_sub(start),
+                        message_text: nested,
+                    },
+                ])
+            }
             _ => None,
         }
     }
