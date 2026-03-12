@@ -30,6 +30,7 @@ const DEFAULT_TIMEOUT_MS = 5000;
 
 interface Config {
   maxTests: number;
+  offset: number;
   filter: string;
   verbose: boolean;
   jsOnly: boolean;
@@ -816,6 +817,7 @@ function parseArgs(): Config {
   const args = process.argv.slice(2);
   const config: Config = {
     maxTests: Infinity,
+    offset: 0,
     filter: '',
     verbose: false,
     jsOnly: false,
@@ -836,6 +838,8 @@ function parseArgs(): Config {
         }
         config.maxTests = parsed;
       }
+    } else if (arg.startsWith('--offset=')) {
+      config.offset = Math.max(0, parseInt(arg.slice(9), 10));
     } else if (arg.startsWith('--filter=')) {
       config.filter = arg.slice(9);
     } else if (arg.startsWith('--concurrency=') || arg.startsWith('-j')) {
@@ -901,7 +905,12 @@ async function main() {
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
   console.log(pc.dim('Discovering test cases...'));
-  const testCases = await findTestCases(config.filter, config.maxTests, config.dtsOnly);
+  // Discover more tests than needed when offset is used, then slice
+  const discoveredLimit = config.offset > 0 ? config.maxTests + config.offset : config.maxTests;
+  let testCases = await findTestCases(config.filter, discoveredLimit, config.dtsOnly);
+  if (config.offset > 0) {
+    testCases = testCases.slice(config.offset, config.offset + config.maxTests);
+  }
   console.log(pc.dim(`Found ${testCases.length} test cases`));
   console.log('');
 
