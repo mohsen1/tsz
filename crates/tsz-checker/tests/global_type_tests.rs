@@ -158,9 +158,11 @@ declare function Record<T>(defaultValues: T, name?: string): Record.Class<T>;
         "Expected the object-constraint failure to surface as TS2344 instead of being masked by helper-global TS2318 noise. Actual diagnostics: {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .all(|d| !matches!(d.message_text.as_str(), "Cannot find global type 'CallableFunction'." | "Cannot find global type 'NewableFunction'.")),
+        diagnostics.iter().all(|d| !matches!(
+            d.message_text.as_str(),
+            "Cannot find global type 'CallableFunction'."
+                | "Cannot find global type 'NewableFunction'."
+        )),
         "CallableFunction/NewableFunction should not be treated as unconditional core globals in no-lib tests. Actual diagnostics: {diagnostics:?}"
     );
 }

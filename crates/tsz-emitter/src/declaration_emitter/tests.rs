@@ -2474,7 +2474,9 @@ const a = fn!();
 
     let mut type_cache = TypeCacheView::default();
     type_cache.node_types.insert(fn_decl.name.0, callable);
-    type_cache.node_types.insert(non_null.expression.0, callable);
+    type_cache
+        .node_types
+        .insert(non_null.expression.0, callable);
 
     let mut emitter =
         DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
