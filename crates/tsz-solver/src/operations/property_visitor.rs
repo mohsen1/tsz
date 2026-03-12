@@ -522,6 +522,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut any_from_index = false; // ANY member used index signature (for noUncheckedIndexedAccess)
         let mut all_from_index = true; // ALL members used index signature (for TS2540 vs TS2542)
         let mut has_unknown_members = false;
+        let mut saw_deferred_any_fallback = false;
 
         for &member in &non_unknown_members {
             // Check for null/undefined directly
@@ -541,6 +542,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     write_type,
                     from_index_signature,
                 } => {
+                    if type_id == TypeId::ANY
+                        && !from_index_signature
+                        && self.is_deferred_any_fallback_member(member)
+                    {
+                        saw_deferred_any_fallback = true;
+                        continue;
+                    }
                     valid_results.push(type_id);
                     if let Some(wt) = write_type {
                         valid_write_results.push(wt);
@@ -599,6 +607,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // If no non-nullable members had the property, it's a PropertyNotFound error
         if valid_results.is_empty() && nullable_causes.is_empty() {
+            if saw_deferred_any_fallback {
+                return Some(PropertyAccessResult::simple(TypeId::ANY));
+            }
+
             // Before giving up, check union-level index signatures
             let resolver = IndexSignatureResolver::new(self.interner());
             let obj_type = obj_type_for_error();
