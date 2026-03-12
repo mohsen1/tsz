@@ -109,8 +109,9 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        let field_name = self
-            .get_private_field_name_from_brand(source)
+        let field_name = shared_nominal_member(source)
+            .map(|(member_name, _)| member_name)
+            .or_else(|| self.get_private_field_name_from_brand(source))
             .unwrap_or_else(|| "[private field]".to_string());
 
         Some(format!(
