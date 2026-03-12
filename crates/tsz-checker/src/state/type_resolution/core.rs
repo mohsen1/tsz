@@ -2103,7 +2103,11 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings)
-                .with_name_def_id_resolver(&name_resolver);
+                .with_name_def_id_resolver(&name_resolver)
+                .with_preferred_self_reference(
+                    symbol.escaped_name.clone(),
+                    self.ctx.get_or_create_def_id(sym_id),
+                );
 
                 // Use merged interface lowering for multi-arena declarations
                 let has_multi_arenas = has_declaration_arenas;

@@ -678,6 +678,11 @@ pub struct CheckerContext<'a> {
     /// Keyed by a canonical module key (resolved file index or specifier).
     pub module_augmentation_value_decls: FxHashMap<String, FxHashMap<String, NodeIndex>>,
 
+    /// Recursion guard for module augmentation application.
+    /// Prevents infinite re-entry when applying the same augmentation to the
+    /// same base type through callable/prototype or lazy-evaluation loops.
+    pub module_augmentation_application_set: RefCell<FxHashSet<(String, String, TypeId)>>,
+
     /// Per-file cache of `is_external_module` values to preserve state across files.
     /// Maps file path -> whether that file is an external module (has imports/exports).
     /// This prevents state corruption when binding multiple files sequentially.
