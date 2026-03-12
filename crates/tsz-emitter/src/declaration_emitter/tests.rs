@@ -501,6 +501,37 @@ class C {
 }
 
 #[test]
+fn test_computed_methods_emit_as_property_signatures() {
+    let output = emit_dts(
+        r#"
+const key: string = Math.random() > 0.5 ? "a" : "b";
+export class C {
+    [key](): string {
+        return "x";
+    }
+
+    regular(): number {
+        return 1;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("[key]: () => string;"),
+        "Expected computed method to emit as a property signature: {output}"
+    );
+    assert!(
+        !output.contains("[key](): string;"),
+        "Did not expect computed method syntax in declaration emit: {output}"
+    );
+    assert!(
+        output.contains("regular(): number;"),
+        "Expected ordinary methods to stay as methods: {output}"
+    );
+}
+
+#[test]
 fn test_declaration_file_exports_do_not_gain_duplicate_declare() {
     let source = r#"
 export class A {}
