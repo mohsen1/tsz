@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_common::comments::CommentRange;
-use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node::{MethodDeclData, Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -1593,12 +1593,36 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Name
         self.emit_node(method.name);
+        if method.question_token {
+            self.write("?");
+        }
 
         // For private methods (no overloads), emit just the name without signature
         if is_private {
             self.write(";");
             self.write_line();
             self.skip_comments_in_node(method_node.pos, method_node.end);
+            return;
+        }
+
+        // Optional class methods are emitted in .d.ts as optional properties
+        // with function types.
+        if method.question_token {
+            self.write(": (");
+            if let Some(ref type_params) = method.type_parameters
+                && !type_params.nodes.is_empty()
+            {
+                self.emit_type_parameters(type_params);
+            }
+            self.write("(");
+            self.emit_parameters_with_body(&method.parameters, method.body);
+            self.write(") => ");
+            self.emit_method_function_type_return(method_idx, method);
+            self.write(") | undefined;");
+            self.write_line();
+            if let Some(body_node) = self.arena.get(method.body) {
+                self.skip_comments_in_node(body_node.pos, body_node.end);
+            }
             return;
         }
 
@@ -1615,6 +1639,25 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         // Return type - SPECIAL CASE: For private methods, TypeScript omits return type in .d.ts
+        let method_body = method.body;
+        self.emit_method_return_type(method_idx, method, is_private);
+
+        self.write(";");
+        self.write_line();
+
+        // Skip comments within the method body to prevent them from
+        // leaking as leading comments on the next statement.
+        if let Some(body_node) = self.arena.get(method_body) {
+            self.skip_comments_in_node(body_node.pos, body_node.end);
+        }
+    }
+
+    fn emit_method_return_type(
+        &mut self,
+        method_idx: NodeIndex,
+        method: &MethodDeclData,
+        is_private: bool,
+    ) {
         let method_body = method.body;
         let method_name = method.name;
         if method.type_annotation.is_some() && !is_private {
@@ -1634,8 +1677,6 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
             {
-                // If solver returned `any` but the method body clearly returns void,
-                // prefer void (the solver's `any` is a fallback, not an actual inference)
                 if return_type_id == tsz_solver::types::TypeId::ANY
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
@@ -1646,8 +1687,6 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&self.print_type_id(return_type_id));
                 }
             } else if let Some(method_type_id) = method_type_id {
-                // Cached value is a direct return type (not a function type),
-                // e.g. from checker's inferred body return type
                 if method_type_id == tsz_solver::types::TypeId::ANY
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
@@ -1664,7 +1703,6 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": any");
                 }
             } else if !self.source_is_declaration_file {
-                // Ambient method without body or type annotation: emit `: any`
                 self.write(": any");
             }
         } else if !is_private {
@@ -1675,18 +1713,62 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": any");
                 }
             } else if !self.source_is_declaration_file {
-                // Ambient method without body or type annotation: emit `: any`
                 self.write(": any");
             }
         }
+    }
 
-        self.write(";");
-        self.write_line();
+    fn emit_method_function_type_return(&mut self, method_idx: NodeIndex, method: &MethodDeclData) {
+        let method_body = method.body;
+        let method_name = method.name;
+        if method.type_annotation.is_some() {
+            self.emit_type(method.type_annotation);
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            let method_type_id = cache
+                .node_types
+                .get(&method_idx.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[method_name]))
+                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name));
 
-        // Skip comments within the method body to prevent them from
-        // leaking as leading comments on the next statement.
-        if let Some(body_node) = self.arena.get(method_body) {
-            self.skip_comments_in_node(body_node.pos, body_node.end);
+            if let Some(method_type_id) = method_type_id
+                && let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, method_type_id)
+            {
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && method_body.is_some()
+                    && self.body_returns_void(method_body)
+                {
+                    self.write("void");
+                } else {
+                    self.write(&self.print_type_id(return_type_id));
+                }
+            } else if let Some(method_type_id) = method_type_id {
+                if method_type_id == tsz_solver::types::TypeId::ANY
+                    && method_body.is_some()
+                    && self.body_returns_void(method_body)
+                {
+                    self.write("void");
+                } else {
+                    self.write(&self.print_type_id(method_type_id));
+                }
+            } else if method_body.is_some() {
+                if self.body_returns_void(method_body) {
+                    self.write("void");
+                } else if !self.source_is_declaration_file {
+                    self.write("any");
+                }
+            } else if !self.source_is_declaration_file {
+                self.write("any");
+            }
+        } else if method_body.is_some() {
+            if self.body_returns_void(method_body) {
+                self.write("void");
+            } else if !self.source_is_declaration_file {
+                self.write("any");
+            }
+        } else if !self.source_is_declaration_file {
+            self.write("any");
         }
     }
 
