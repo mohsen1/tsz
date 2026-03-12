@@ -333,10 +333,20 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(lhs_access.name_or_argument)
                     .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-            if let Some(method_name_str) =
+            let resolved_property_name = if is_computed_name {
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(lhs_access.name_or_argument);
+                self.ctx.preserve_literal_types = prev;
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))
+            } else {
                 self.get_property_name_resolved(lhs_access.name_or_argument)
-                && !is_computed_name
-            {
+            };
+            if let Some(method_name_str) = resolved_property_name {
                 let method_name_atom = self.ctx.types.intern_string(&method_name_str);
                 let rhs_type = self.get_type_of_node(binary.right);
                 let is_method_like = self
@@ -384,6 +394,11 @@ impl<'a> CheckerState<'a> {
                 &mut method_this_props,
                 Some(parent_sym),
             );
+            self.collect_nested_arrow_this_properties(
+                method_body,
+                &mut method_this_props,
+                Some(parent_sym),
+            );
 
             for (name, prop) in method_this_props {
                 this_props.push((name, prop));
@@ -391,6 +406,50 @@ impl<'a> CheckerState<'a> {
         }
 
         (method_bindings, this_props, has_prototype_evidence)
+    }
+
+    fn collect_nested_arrow_this_properties(
+        &mut self,
+        body_idx: NodeIndex,
+        properties: &mut rustc_hash::FxHashMap<
+            tsz_common::interner::Atom,
+            tsz_solver::PropertyInfo,
+        >,
+        parent_sym: Option<tsz_binder::SymbolId>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return;
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION {
+                continue;
+            }
+            let Some(arrow) = self.ctx.arena.get_function(expr_node) else {
+                continue;
+            };
+            if arrow.body.is_none() {
+                continue;
+            }
+            self.collect_js_constructor_this_properties(arrow.body, properties, parent_sym);
+        }
     }
 
     fn is_object_define_property_on_function_prototype(
