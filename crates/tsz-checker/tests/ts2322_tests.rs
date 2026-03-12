@@ -1292,6 +1292,41 @@ fn test_ts2345_property_type_mismatch_includes_related_property_detail() {
 }
 
 #[test]
+fn test_ts2345_missing_many_properties_formats_related_detail_once() {
+    let source = r#"
+        declare function takes(value: { a: number; b: number; c: number; d: number; e: number }): void;
+        const arg = {};
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for missing-properties argument mismatch");
+
+    let related = ts2345
+        .related_information
+        .iter()
+        .find(|info| {
+            info.code
+                == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        })
+        .expect("expected TS2740 related detail under TS2345");
+
+    assert!(
+        related.message_text.contains("a, b, c, d, and 1 more."),
+        "Expected TS2345 related detail to format the extra-property suffix once, got: {related:?}"
+    );
+    assert!(
+        !related.message_text.contains("and 1 more., and 1 more."),
+        "Expected TS2345 related detail to avoid duplicating the extra-property suffix, got: {related:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;
