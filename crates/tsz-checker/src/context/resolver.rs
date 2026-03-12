@@ -170,6 +170,15 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         None
     }
 
+    fn resolve_this_type(
+        &self,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::TypeId> {
+        self.enclosing_class
+            .as_ref()
+            .and_then(|info| info.cached_instance_this_type)
+    }
+
     /// Get type parameters for a symbol reference (deprecated).
     ///
     /// Type parameters are embedded in the type itself rather than stored separately.

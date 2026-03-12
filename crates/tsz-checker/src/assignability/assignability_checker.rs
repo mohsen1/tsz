@@ -683,7 +683,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let needs_substitution = tsz_solver::is_this_type(self.ctx.types, type_id);
+        let needs_substitution = tsz_solver::contains_this_type(self.ctx.types, type_id);
 
         if !needs_substitution {
             return type_id;
@@ -760,6 +760,7 @@ impl<'a> CheckerState<'a> {
     /// resolve lazy refs, substitute `ThisType`, and evaluate both sides.
     fn prepare_assignability_inputs(&mut self, source: TypeId, target: TypeId) -> (TypeId, TypeId) {
         self.ensure_relation_inputs_ready(&[source, target]);
+        let source = self.substitute_this_type_if_needed(source);
         let target = self.substitute_this_type_if_needed(target);
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
@@ -776,6 +777,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         self.ensure_relation_inputs_ready(&[source, target]);
+        let source = self.substitute_this_type_if_needed(source);
         let target = self.substitute_this_type_if_needed(target);
 
         if source != TypeId::NEVER

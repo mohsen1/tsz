@@ -189,6 +189,30 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         false
     }
 
+    fn mapped_constraint_contains_index_type(&mut self, constraint: TypeId) -> bool {
+        if constraint == self.index_type {
+            return true;
+        }
+
+        let interner = self.evaluator.interner();
+        let same_type_param_name = match (interner.lookup(constraint), interner.lookup(self.index_type)) {
+            (Some(TypeData::TypeParameter(constraint_tp)), Some(TypeData::TypeParameter(index_tp))) => {
+                constraint_tp.name == index_tp.name
+            }
+            _ => false,
+        };
+        if same_type_param_name {
+            return true;
+        }
+
+        let members = union_list_id(interner, constraint)
+            .or_else(|| intersection_list_id(interner, constraint))
+            .map(|list_id| interner.type_list(list_id).to_vec());
+        members.is_some_and(|members| {
+            members.into_iter().any(|member| self.mapped_constraint_contains_index_type(member))
+        })
+    }
+
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
@@ -340,6 +364,30 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // causing false TS2322 because {a:string}["b"] doesn't exist.
         // Fix: merge the intersection into a single object first, then index into it.
         if self.is_generic_index() {
+            let members = self.evaluator.interner().type_list(TypeListId(list_id));
+            let mut concrete_results = Vec::new();
+            for &member in members.iter() {
+                let result = self.evaluator.recurse_index_access(member, self.index_type);
+                if result == TypeId::ERROR {
+                    return Some(TypeId::ERROR);
+                }
+                if result != TypeId::UNDEFINED
+                    && !matches!(
+                        self.evaluator.interner().lookup(result),
+                        Some(TypeData::IndexAccess(_, _))
+                    )
+                {
+                    concrete_results.push(result);
+                }
+            }
+
+            if !concrete_results.is_empty() {
+                return Some(crate::utils::intersection_or_single(
+                    self.evaluator.interner(),
+                    concrete_results,
+                ));
+            }
+
             let intersection_type = self.object_type;
             match collect_properties(
                 intersection_type,
@@ -539,6 +587,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         let can_substitute = mapped.constraint == self.index_type
             // Same-named TypeParameters with different TypeIds (see above)
             || same_type_param_name
+            // Union/intersection constraints that directly include the index type
+            || self.mapped_constraint_contains_index_type(mapped.constraint)
             // TypeParameter whose constraint matches the mapped constraint
             || type_param_constraint_matches
             // Implicit index signature: when the constraint is `keyof T`,
