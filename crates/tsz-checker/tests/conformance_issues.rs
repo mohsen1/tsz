@@ -12062,6 +12062,22 @@ function multipleGenericExhaustive<X extends L, Y extends R>(xy: X | Y): [X, str
 }
 
 #[test]
+fn test_recursive_function_assignment_does_not_stack_overflow() {
+    let _diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Expression = ['and', ...Expression[]] | ['not', Expression] | 'true' | 'false';
+declare const sink: (x: Expression) => boolean;
+const f: (x: Expression) => boolean = sink;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+}
+
+#[test]
 fn test_any_rest_assignment_rejects_never_parameter_source() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
