@@ -25,6 +25,34 @@ struct VarianceState<'a> {
 }
 
 impl<'a> InferenceContext<'a> {
+    fn resolve_from_contra_candidates(
+        &self,
+        contra_candidates: &[crate::inference::infer::InferenceCandidate],
+    ) -> TypeId {
+        let mut contra_types: Vec<TypeId> = Vec::new();
+        for candidate in contra_candidates {
+            if !contra_types.contains(&candidate.type_id) {
+                contra_types.push(candidate.type_id);
+            }
+        }
+
+        let mut most_specific = Vec::new();
+        for &candidate in &contra_types {
+            if contra_types
+                .iter()
+                .all(|&other| candidate == other || self.is_subtype(candidate, other))
+            {
+                most_specific.push(candidate);
+            }
+        }
+
+        if let [best] = most_specific.as_slice() {
+            *best
+        } else {
+            self.interner.intersection(contra_types)
+        }
+    }
+
     // =========================================================================
     // Bounds Checking and Resolution
     // =========================================================================
@@ -259,8 +287,7 @@ impl<'a> InferenceContext<'a> {
         } else if !contra_candidates.is_empty() {
             // Only contravariant candidates: use intersection (matches tsc behavior).
             // In tsc, when only contraCandidates exist, getIntersectionType is used.
-            let contra_types: Vec<TypeId> = contra_candidates.iter().map(|c| c.type_id).collect();
-            self.interner.intersection(contra_types)
+            self.resolve_from_contra_candidates(&contra_candidates)
         } else if !upper_bounds.is_empty() {
             // RESTORED: Fall back to upper bounds (constraints) when no candidates exist.
             // This matches TypeScript: un-inferred generics default to their constraint.
@@ -1160,7 +1187,7 @@ impl<'a> InferenceContext<'a> {
             }
 
             // Skip if no candidates yet (might get info from Round 2)
-            if info.candidates.is_empty() {
+            if info.candidates.is_empty() && info.contra_candidates.is_empty() {
                 continue;
             }
 
@@ -1169,8 +1196,11 @@ impl<'a> InferenceContext<'a> {
             // validate against upper bounds yet (that happens in final resolution)
             let is_const = self.is_var_const(root);
             let dc = self.declared_constraints.get(&root).copied();
-            let result =
-                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds, dc);
+            let result = if !info.candidates.is_empty() {
+                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds, dc)
+            } else {
+                self.resolve_from_contra_candidates(&info.contra_candidates)
+            };
 
             // Check for occurs (recursive type)
             if self.occurs_in(root, result) {
@@ -1222,6 +1252,7 @@ impl<'a> InferenceContext<'a> {
                     tracing::trace!(
                         ?name, ?var,
                         candidates_count = info.candidates.len(),
+                        contra_candidates_count = info.contra_candidates.len(),
                         upper_bounds_count = info.upper_bounds.len(),
                         upper_bounds = ?info.upper_bounds,
                         "get_current_substitution: not resolved"
@@ -1236,6 +1267,8 @@ impl<'a> InferenceContext<'a> {
                             &info.upper_bounds,
                             dc,
                         )
+                    } else if !info.contra_candidates.is_empty() {
+                        self.resolve_from_contra_candidates(&info.contra_candidates)
                     } else if !info.upper_bounds.is_empty() {
                         // No candidates yet, but we have a constraint (upper bound).
                         // Use the constraint as contextual fallback so that mapped types

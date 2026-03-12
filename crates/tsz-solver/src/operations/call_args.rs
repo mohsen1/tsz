@@ -697,20 +697,47 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Check if a type evaluates to or contains a function type.
     /// This includes:
     /// - Direct Function or Callable types
-    /// - Union types where any member is a Function or Callable
+    /// - Union/intersection members that evaluate to functions
+    /// - Aliases/applications that only become callable after evaluation
     pub(crate) fn type_evaluates_to_function(&self, type_id: TypeId) -> bool {
+        let mut visited = FxHashSet::default();
+        self.type_evaluates_to_function_inner(type_id, &mut visited)
+    }
+
+    pub(crate) fn should_directly_constrain_same_base_application(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let evaluated_source = self.checker.evaluate_type(source);
+        let evaluated_target = self.checker.evaluate_type(target);
+        !self.type_evaluates_to_function(evaluated_source)
+            && !self.type_evaluates_to_function(evaluated_target)
+    }
+
+    fn type_evaluates_to_function_inner(
+        &self,
+        type_id: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if !visited.insert(type_id) {
+            return false;
+        }
+
         match self.interner.lookup(type_id) {
             Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
-            Some(TypeData::Union(members)) => {
-                let members = self.interner.type_list(members);
-                members.iter().any(|&m| {
-                    matches!(
-                        self.interner.lookup(m),
-                        Some(TypeData::Function(_) | TypeData::Callable(_))
-                    )
-                })
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.type_evaluates_to_function_inner(member, visited)),
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.type_evaluates_to_function_inner(inner, visited)
             }
-            _ => false,
+            _ => {
+                let evaluated = self.interner.evaluate_type(type_id);
+                evaluated != type_id && self.type_evaluates_to_function_inner(evaluated, visited)
+            }
         }
     }
 

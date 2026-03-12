@@ -907,13 +907,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
                 if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
-                    // Check if evaluation produces function types (variance-sensitive).
-                    // This includes unions that contain functions (e.g., Func2<T> = ((x: T) => void) | undefined).
-                    // Function types have variance-sensitive parameters, and direct arg matching
-                    // would add covariant candidates where contravariant ones are needed.
-                    let evaluated_target = self.checker.evaluate_type(contextual_target_type);
-                    let evaluates_to_function = self.type_evaluates_to_function(evaluated_target);
-                    if !evaluates_to_function {
+                    if self.should_directly_constrain_same_base_application(
+                        source_for_inference,
+                        contextual_target_type,
+                    ) {
                         for (arg_inner, target_inner) in
                             arg_app.args.iter().zip(target_app.args.iter())
                         {
@@ -1229,6 +1226,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let ty = if has_constraints {
                 let mut resolved_direct = None;
+                let contra_only = infer_ctx.has_only_contra_candidates(var);
 
                 if direct_param_vars.contains(&var)
                     && let Some(constraint_ty) = tp.constraint
@@ -1283,11 +1281,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 self.resolve_return_position_inference_type(&lower_bounds, ty)
                             } else if direct_param_vars.contains(&var) {
                                 self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
-                            } else {
-                                ty
-                            };
-                            let ty = if !tp.is_const {
-                                crate::widen_literal_type(self.interner.as_type_database(), ty)
                             } else {
                                 ty
                             };
@@ -1348,14 +1341,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             } else {
                                 fallback
                             };
-                            let fallback = if !tp.is_const {
-                                crate::widen_literal_type(
-                                    self.interner.as_type_database(),
-                                    fallback,
-                                )
-                            } else {
-                                fallback
-                            };
                             trace!(
                                 fallback_type = ?fallback,
                                 use_inferred = use_inferred,
@@ -1380,7 +1365,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
                 } else {
-                    ty
+                    if !tp.is_const && !contra_only {
+                        crate::widen_literal_type(self.interner.as_type_database(), ty)
+                    } else {
+                        ty
+                    }
                 }
             } else if let Some(default) = tp.default {
                 let ty =
@@ -1794,7 +1783,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some((s_app_id, t_app_id)) = raw_apps.or(evaluated_apps) {
             let s_app = self.interner.type_application(s_app_id);
             let t_app = self.interner.type_application(t_app_id);
-            if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+            if s_app.base == t_app.base
+                && s_app.args.len() == t_app.args.len()
+                && self.should_directly_constrain_same_base_application(source_ty, target_ty)
+            {
                 constrained_structurally = true;
                 for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                     self.constrain_types(infer_ctx, var_map, *s_arg, *t_arg, priority);
@@ -2749,7 +2741,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
-                if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
+                if arg_app.base == target_app.base
+                    && arg_app.args.len() == target_app.args.len()
+                    && self.should_directly_constrain_same_base_application(
+                        contextual_arg_type,
+                        contextual_target_type,
+                    )
+                {
                     for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
                     {
                         self.constrain_types(
