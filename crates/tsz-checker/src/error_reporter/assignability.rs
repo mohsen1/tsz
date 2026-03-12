@@ -98,6 +98,38 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn private_or_protected_brand_backing_member_display(
+        &self,
+        target_type: TypeId,
+        required_property_name: Option<tsz_common::interner::Atom>,
+    ) -> Option<(String, String, tsz_solver::Visibility)> {
+        let find_member = |props: &[tsz_solver::PropertyInfo]| {
+            props.iter().find_map(|prop| {
+                let prop_name = self.ctx.types.resolve_atom(prop.name);
+                if prop_name.starts_with("__private_brand_")
+                    || required_property_name.is_some_and(|required| prop.name != required)
+                    || prop.visibility == tsz_solver::Visibility::Public
+                {
+                    return None;
+                }
+
+                let owner_name = prop
+                    .parent_id
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .map(|sym| sym.escaped_name.clone())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_type));
+                Some((prop_name, owner_name, prop.visibility))
+            })
+        };
+
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)
+            .and_then(|shape| find_member(&shape.properties))
+            .or_else(|| {
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_type)
+                    .and_then(|shape| find_member(&shape.properties))
+            })
+    }
+
     fn canonical_array_display_rank(name: &str) -> Option<usize> {
         match name {
             "length" => Some(0),
@@ -526,13 +558,28 @@ impl<'a> CheckerState<'a> {
                         .resolve_atom_ref(missing_props[0])
                         .to_string();
                     if prop_name.starts_with("__private_brand") {
-                        (
-                            format_message(
-                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                &[&src_str, &tgt_str],
-                            ),
-                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        )
+                        if let Some((display_prop, owner_name, visibility)) =
+                            self.private_or_protected_brand_backing_member_display(target, None)
+                        {
+                            (
+                                self.private_or_protected_assignability_message(
+                                    &src_str,
+                                    &tgt_str,
+                                    &display_prop,
+                                    &owner_name,
+                                    visibility,
+                                ),
+                                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            )
+                        } else {
+                            (
+                                format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                    &[&src_str, &tgt_str],
+                                ),
+                                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            )
+                        }
                     } else {
                         (
                             format_message(
@@ -1598,10 +1645,23 @@ impl<'a> CheckerState<'a> {
                 {
                     let prop_name = self.ctx.types.resolve_atom_ref(property_name);
                     if prop_name.starts_with("__private_brand") {
-                        let message = format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&source_str, &target_str],
-                        );
+                        let message = self
+                            .private_or_protected_brand_backing_member_display(target, None)
+                            .map(|(display_prop, owner_name, visibility)| {
+                                self.private_or_protected_assignability_message(
+                                    &source_str,
+                                    &target_str,
+                                    &display_prop,
+                                    &owner_name,
+                                    visibility,
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                    &[&source_str, &target_str],
+                                )
+                            });
                         return Diagnostic::error(
                             file_name,
                             start,

@@ -38,6 +38,21 @@ fn has_error_code(source: &str, code: u32) -> bool {
 }
 
 fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_codes: &[u32]) {
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| error_codes.contains(&d.code))
+        .count();
+
+    assert_eq!(
+        error_count, expected_errors,
+        "Expected {} errors with codes {:?}, got {}: {:?}",
+        expected_errors, error_codes, error_count, diagnostics
+    );
+}
+
+fn collect_private_brand_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -55,18 +70,7 @@ fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_co
 
     checker.check_source_file(root);
 
-    let error_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| error_codes.contains(&d.code))
-        .count();
-
-    assert_eq!(
-        error_count, expected_errors,
-        "Expected {} errors with codes {:?}, got {}: {:?}",
-        expected_errors, error_codes, error_count, checker.ctx.diagnostics
-    );
+    checker.ctx.diagnostics.clone()
 }
 
 /// Test that private members are nominal - different classes with same private member shape
@@ -95,9 +99,20 @@ fn test_private_member_prevents_structural_assignment() {
         ";
 
     test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for private-brand structural assignment");
     assert!(
         !has_error_code(source, 2741),
         "Private-brand structural assignment should report TS2322, not TS2741"
+    );
+    assert!(
+        ts2322
+            .message_text
+            .contains("Property 'x' is private in type 'A'"),
+        "Expected private-member detail in TS2322 message, got: {ts2322:?}"
     );
 }
 
