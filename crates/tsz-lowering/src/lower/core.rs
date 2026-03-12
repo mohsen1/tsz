@@ -59,7 +59,7 @@ pub struct TypeLowering<'a> {
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
     /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
-    /// resolution. This is needed for cross-arena lowering where the same NodeIndex
+    /// resolution. This is needed for cross-arena lowering where the same `NodeIndex`
     /// may refer to different identifiers in different arenas.
     pub(super) prefer_name_def_id_resolution: bool,
     /// Optional direct self-reference for merged interface lowering.
@@ -480,13 +480,12 @@ impl<'a> TypeLowering<'a> {
             // Only prefer name-based DefId resolution when we are lowering across
             // arenas. Same-arena declarations should keep the normal NodeIndex-based
             // path because it preserves namespace-local bindings precisely.
-            let lowerer = if is_lib_decl(decl_arena, *decl_idx)
-                && !std::ptr::eq(self.arena, *decl_arena)
-            {
-                self.with_arena(decl_arena).prefer_name_def_id_resolution()
-            } else {
-                self.with_arena(decl_arena)
-            };
+            let lowerer =
+                if is_lib_decl(decl_arena, *decl_idx) && !std::ptr::eq(self.arena, *decl_arena) {
+                    self.with_arena(decl_arena).prefer_name_def_id_resolution()
+                } else {
+                    self.with_arena(decl_arena)
+                };
 
             let Some(node) = decl_arena.get(*decl_idx) else {
                 continue;
@@ -671,9 +670,9 @@ impl<'a> TypeLowering<'a> {
 
     /// Prefer identifier-text DefId resolution over raw NodeIndex-based resolution.
     ///
-    /// This should only be enabled in cross-arena lowering contexts where NodeIndex
+    /// This should only be enabled in cross-arena lowering contexts where `NodeIndex`
     /// collisions between declaration arenas are possible.
-    pub fn prefer_name_def_id_resolution(mut self) -> Self {
+    pub const fn prefer_name_def_id_resolution(mut self) -> Self {
         self.prefer_name_def_id_resolution = true;
         self
     }
