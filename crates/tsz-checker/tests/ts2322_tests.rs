@@ -232,6 +232,22 @@ fn test_ts2322_return_wrong_array_element() {
 }
 
 #[test]
+fn test_promise_is_assignable_to_promise_like_with_real_libs() {
+    let source = r#"
+declare const p: Promise<number>;
+const q: PromiseLike<number> = p;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let relevant: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected Promise<T> to be assignable to PromiseLike<T>, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_return_alias_instantiation_mismatch() {
     let source = r#"
         type Box<T> = { value: T };
@@ -1460,6 +1476,37 @@ fn test_ts2322_object_destructuring_default_not_checked_for_required_property() 
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected no TS2322 for required-property object destructuring default initializer, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
+    let source = r#"
+        const a: { x?: number; y?: number } = {};
+        let x: number;
+
+        ({ x = undefined } = a);
+        ({ x: x = undefined } = a);
+        ({ y: x = undefined } = a);
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        3,
+        "Expected TS2322 for each undefined default in assignment destructuring, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| message.contains("Type 'undefined' is not assignable to type 'number'.")),
+        "Expected all assignment destructuring default mismatches to preserve 'undefined' source display, got: {diagnostics:?}"
     );
 }
 

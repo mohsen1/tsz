@@ -38,6 +38,66 @@ pub(super) fn is_object_prototype_method(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    fn property_info_for_display(
+        &self,
+        ty: TypeId,
+        name: tsz_common::interner::Atom,
+    ) -> Option<tsz_solver::PropertyInfo> {
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)
+            .and_then(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .find(|candidate| candidate.name == name)
+                    .cloned()
+            })
+            .or_else(|| {
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty).and_then(|shape| {
+                    shape
+                        .properties
+                        .iter()
+                        .find(|candidate| candidate.name == name)
+                        .cloned()
+                })
+            })
+    }
+
+    fn private_or_protected_member_missing_display(
+        &self,
+        source_type: TypeId,
+        target_type: TypeId,
+        required_property_name: Option<tsz_common::interner::Atom>,
+    ) -> Option<(String, String)> {
+        let source_has_prop = |name| self.property_info_for_display(source_type, name).is_some();
+
+        let find_missing = |props: &[tsz_solver::PropertyInfo]| {
+            props.iter().find_map(|prop| {
+                let prop_name = self.ctx.types.resolve_atom(prop.name);
+                if prop_name.starts_with("__private_brand_")
+                    || required_property_name.is_some_and(|required| prop.name != required)
+                    || prop.visibility == tsz_solver::Visibility::Public
+                    || source_has_prop(prop.name)
+                {
+                    return None;
+                }
+
+                let owner_name = prop
+                    .parent_id
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .map(|sym| sym.escaped_name.clone())
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_type));
+                Some((prop_name, owner_name))
+            })
+        };
+
+        tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)
+            .and_then(|shape| find_missing(&shape.properties))
+            .or_else(|| {
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_type)
+                    .and_then(|shape| find_missing(&shape.properties))
+            })
+    }
+
     fn canonical_array_display_rank(name: &str) -> Option<usize> {
         match name {
             "length" => Some(0),
@@ -355,7 +415,6 @@ impl<'a> CheckerState<'a> {
                 "assignability failure diagnostics"
             );
         }
-
         match reason {
             Some(failure_reason) => {
                 // Skip ExcessProperty diagnostics here — they are handled by
@@ -853,6 +912,31 @@ impl<'a> CheckerState<'a> {
 
                 // If all missing properties were private brands, emit TS2322 instead.
                 if filtered_names.is_empty() {
+                    if let Some((prop_name, owner_name)) = self
+                        .private_or_protected_member_missing_display(
+                            *source_type,
+                            *target_type,
+                            None,
+                        )
+                    {
+                        let widened_source = self.widen_type_for_display(*source_type);
+                        let src_str = if *source_type == TypeId::OBJECT {
+                            "{}".to_string()
+                        } else {
+                            self.format_type_diagnostic(widened_source)
+                        };
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                            &[&prop_name, &src_str, &owner_name],
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        );
+                    }
                     let src_str = self.format_type_diagnostic(*source_type);
                     let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
@@ -1036,7 +1120,33 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
-            SubtypeFailureReason::PropertyNominalMismatch { .. } => {
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                if let Some((prop_name, owner_name)) = self
+                    .private_or_protected_member_missing_display(
+                        source,
+                        target,
+                        Some(*property_name),
+                    )
+                {
+                    let widened_source = self.widen_type_for_display(source);
+                    let src_str = if source == TypeId::OBJECT {
+                        "{}".to_string()
+                    } else {
+                        self.format_type_diagnostic(widened_source)
+                    };
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &src_str, &owner_name],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    );
+                }
+
                 let (source_str, target_str) =
                     self.format_top_level_assignability_message_types(source, target);
                 let base = format_message(
@@ -1407,6 +1517,23 @@ impl<'a> CheckerState<'a> {
                     let message = format_message(
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[prop_name, &source_str, &target_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    );
+                }
+
+                if depth == 0
+                    && let Some((prop_name, owner_name)) =
+                        self.private_or_protected_member_missing_display(source, target, None)
+                {
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &source_str, &owner_name],
                     );
                     return Diagnostic::error(
                         file_name,

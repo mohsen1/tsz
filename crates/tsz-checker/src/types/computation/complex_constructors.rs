@@ -158,7 +158,6 @@ impl<'a> CheckerState<'a> {
             has_prototype_evidence,
         );
     }
-
     const fn is_property_like_access_kind(kind: u16) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -533,17 +532,11 @@ impl<'a> CheckerState<'a> {
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && let Some(body_type) = def.body
         {
-            let is_abstract = (symbol.flags & symbol_flags::ABSTRACT) != 0;
-            if is_abstract {
-                return true;
-            }
-            if symbol.flags & symbol_flags::TYPE_ALIAS != 0
-                && let Some(def) = self.ctx.definition_store.get(def_id)
-                && let Some(body_type) = def.body
-            {
-                return self.type_contains_abstract_class_inner(body_type, visited);
-            }
+            return self.type_contains_abstract_class_inner(body_type, visited);
         }
 
         match query::classify_for_abstract_check(self.ctx.types, type_id) {

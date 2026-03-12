@@ -62,8 +62,18 @@ pub struct InferenceCandidate {
     pub priority: InferencePriority,
     pub is_fresh_literal: bool,
     pub from_object_property: bool,
+    pub from_index_signature: bool,
     pub object_property_index: Option<u32>,
     pub object_property_name: Option<Atom>,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+struct CandidateContext {
+    from_object_property: bool,
+    from_index_signature: bool,
+    object_property_index: Option<u32>,
+    object_property_name: Option<Atom>,
+    source_is_fresh: bool,
 }
 
 /// Value stored for each inference variable root.
@@ -486,6 +496,7 @@ impl<'a> InferenceContext<'a> {
                 priority: InferencePriority::Circular,
                 is_fresh_literal: candidate.is_fresh_literal,
                 from_object_property: candidate.from_object_property,
+                from_index_signature: candidate.from_index_signature,
                 object_property_index: candidate.object_property_index,
                 object_property_name: candidate.object_property_name,
             });
@@ -980,7 +991,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Add an inference candidate for a variable.
     pub fn add_candidate(&mut self, var: InferenceVar, ty: TypeId, priority: InferencePriority) {
-        self.add_candidate_with_context(var, ty, priority, false, None, None, false);
+        self.add_candidate_with_context(var, ty, priority, CandidateContext::default());
     }
 
     /// Add a contravariant inference candidate for a variable.
@@ -1000,6 +1011,7 @@ impl<'a> InferenceContext<'a> {
             priority,
             is_fresh_literal: is_literal_type(self.interner, ty),
             from_object_property: false,
+            from_index_signature: false,
             object_property_index: None,
             object_property_name: None,
         };
@@ -1031,10 +1043,35 @@ impl<'a> InferenceContext<'a> {
             var,
             ty,
             priority,
-            true,
-            Some(object_property_index),
-            object_property_name,
-            source_is_fresh,
+            CandidateContext {
+                from_object_property: true,
+                object_property_index: Some(object_property_index),
+                object_property_name,
+                source_is_fresh,
+                ..CandidateContext::default()
+            },
+        );
+    }
+
+    pub fn add_index_signature_candidate_with_index(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+        object_property_index: u32,
+        source_is_fresh: bool,
+    ) {
+        self.add_candidate_with_context(
+            var,
+            ty,
+            priority,
+            CandidateContext {
+                from_object_property: true,
+                from_index_signature: true,
+                object_property_index: Some(object_property_index),
+                source_is_fresh,
+                ..CandidateContext::default()
+            },
         );
     }
 
@@ -1043,10 +1080,7 @@ impl<'a> InferenceContext<'a> {
         var: InferenceVar,
         ty: TypeId,
         priority: InferencePriority,
-        from_object_property: bool,
-        object_property_index: Option<u32>,
-        object_property_name: Option<Atom>,
-        source_is_fresh: bool,
+        context: CandidateContext,
     ) {
         let root = self.table.find(var);
         // A candidate is a "fresh literal" (eligible for widening) when:
@@ -1059,11 +1093,12 @@ impl<'a> InferenceContext<'a> {
         let candidate = InferenceCandidate {
             type_id: ty,
             priority,
-            is_fresh_literal: (!from_object_property || source_is_fresh)
+            is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
                 && is_literal_type(self.interner, ty),
-            from_object_property,
-            object_property_index,
-            object_property_name,
+            from_object_property: context.from_object_property,
+            from_index_signature: context.from_index_signature,
+            object_property_index: context.object_property_index,
+            object_property_name: context.object_property_name,
         };
         if self.in_contra_mode {
             // In contravariant context (e.g., callback parameter structural
@@ -1139,6 +1174,14 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         info.candidates.is_empty() && !info.contra_candidates.is_empty()
+    }
+
+    pub fn has_index_signature_candidates(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates
+            .iter()
+            .any(|candidate| candidate.from_index_signature)
     }
 
     /// Check if all inference candidates for a variable have `ReturnType` priority.

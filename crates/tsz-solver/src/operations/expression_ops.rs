@@ -320,7 +320,7 @@ pub fn compute_best_common_type<R: TypeResolver>(
     if widened.len() > 1
         && widened
             .iter()
-            .all(|&ty| has_construct_signatures(interner, ty))
+            .all(|&ty| is_constructor_like(interner, ty, resolver))
     {
         return interner.union(widened.to_vec());
     }
@@ -405,25 +405,60 @@ pub fn compute_best_common_type<R: TypeResolver>(
     interner.union(widened.to_vec())
 }
 
-fn has_construct_signatures(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match interner.lookup(type_id) {
-        Some(TypeData::Callable(shape_id)) => !interner
-            .callable_shape(shape_id)
-            .construct_signatures
-            .is_empty(),
-        Some(TypeData::Intersection(list_id)) => interner
-            .type_list(list_id)
-            .iter()
-            .any(|&member| has_construct_signatures(interner, member)),
-        Some(TypeData::Union(list_id)) => {
-            let members = interner.type_list(list_id);
-            !members.is_empty()
-                && members
-                    .iter()
-                    .all(|&member| has_construct_signatures(interner, member))
+fn is_constructor_like<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    resolver: Option<&R>,
+) -> bool {
+    fn inner<R: TypeResolver>(
+        interner: &dyn TypeDatabase,
+        type_id: TypeId,
+        resolver: Option<&R>,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
+        use crate::TypeData;
+
+        if !visited.insert(type_id) {
+            return false;
         }
-        _ => false,
+
+        match interner.lookup(type_id) {
+            Some(TypeData::Function(fn_id)) => interner.function_shape(fn_id).is_constructor,
+            Some(TypeData::Callable(callable_id)) => !interner
+                .callable_shape(callable_id)
+                .construct_signatures
+                .is_empty(),
+            Some(TypeData::Application(app_id)) => {
+                let app = interner.type_application(app_id);
+                inner(interner, app.base, resolver, visited)
+            }
+            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info
+                .constraint
+                .is_some_and(|constraint| inner(interner, constraint, resolver, visited)),
+            Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => interner
+                .type_list(list_id)
+                .iter()
+                .all(|&member| inner(interner, member, resolver, visited)),
+            Some(TypeData::Lazy(def_id)) => resolver
+                .and_then(|resolver| resolver.resolve_lazy(def_id, interner))
+                .is_some_and(|resolved| {
+                    resolved != type_id && inner(interner, resolved, resolver, visited)
+                }),
+            Some(TypeData::TypeQuery(sym_ref)) => resolver
+                .and_then(|resolver| resolver.resolve_symbol_ref(sym_ref, interner))
+                .is_some_and(|resolved| {
+                    resolved != type_id && inner(interner, resolved, resolver, visited)
+                }),
+            _ => false,
+        }
     }
+
+    inner(
+        interner,
+        type_id,
+        resolver,
+        &mut rustc_hash::FxHashSet::default(),
+    )
 }
 
 /// Widen literal types to their primitive base types when appropriate.

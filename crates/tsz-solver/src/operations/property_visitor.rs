@@ -121,14 +121,22 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
+        let obj_type = self.interner().object_with_flags_and_symbol(
+            shape.properties.clone(),
+            shape.flags,
+            shape.symbol,
+        );
 
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
-                type_id: self.optional_property_type(prop),
+                type_id: read_type,
                 write_type: write,
                 from_index_signature: false,
             });
@@ -142,22 +150,14 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
         let resolver = IndexSignatureResolver::new(self.interner());
 
-        // Reconstruct obj_type from shape_id for index signature checking
-        let obj_type = self.interner().object_with_flags_and_symbol(
-            self.interner()
-                .object_shape(ObjectShapeId(shape_id))
-                .properties
-                .clone(),
-            self.interner().object_shape(ObjectShapeId(shape_id)).flags,
-            self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
-        );
-
         // Try string index signature first (most common)
         if resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -166,7 +166,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             && let Some(value_type) = resolver.resolve_number_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -189,14 +191,18 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
+        let obj_type = self.interner().object_with_index((*shape).clone());
 
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
-                type_id: self.optional_property_type(prop),
+                type_id: read_type,
                 write_type: write,
                 from_index_signature: false,
             });
@@ -215,7 +221,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             && let Some(ref idx) = shape.number_index
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(idx.value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, idx.value_type),
+                ),
             ));
         }
 
@@ -338,14 +346,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
+        let obj_type = self.interner().object_with_flags_and_symbol(
+            shape.properties.clone(),
+            shape.flags,
+            shape.symbol,
+        );
 
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
-                type_id: self.optional_property_type(prop),
+                type_id: read_type,
                 write_type: write,
                 from_index_signature: false,
             });
@@ -359,22 +375,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
         let resolver = IndexSignatureResolver::new(self.interner());
 
-        // Reconstruct obj_type from shape_id for index signature checking
-        let obj_type = self.interner().object_with_flags_and_symbol(
-            self.interner()
-                .object_shape(ObjectShapeId(shape_id))
-                .properties
-                .clone(),
-            self.interner().object_shape(ObjectShapeId(shape_id)).flags,
-            self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
-        );
-
         // Try string index signature first (most common)
         if resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -383,7 +391,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             && let Some(value_type) = resolver.resolve_number_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, value_type),
+                ),
             ));
         }
 
@@ -407,14 +417,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
+        let obj_type = self.interner().object_with_index((*shape).clone());
 
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
+            let read_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
+            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
-                type_id: self.optional_property_type(prop),
+                type_id: read_type,
                 write_type: write,
                 from_index_signature: false,
             });
@@ -433,19 +447,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
             && let Some(ref idx) = shape.number_index
         {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(idx.value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, idx.value_type),
+                ),
             ));
         }
 
         // Check string index signature
         if let Some(ref idx) = shape.string_index {
             return Some(PropertyAccessResult::from_index(
-                self.add_undefined_if_unchecked(idx.value_type),
+                self.add_undefined_if_unchecked(
+                    self.bind_object_receiver_this(obj_type, idx.value_type),
+                ),
             ));
         }
-
-        // Reconstruct obj_type for PropertyNotFound result
-        let obj_type = self.interner().object_with_index((*shape).clone());
 
         Some(PropertyAccessResult::PropertyNotFound {
             type_id: obj_type,

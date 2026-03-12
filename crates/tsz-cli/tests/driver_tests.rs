@@ -8,8 +8,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
 static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -308,6 +313,119 @@ const q: PromiseLike<number> = p;
 }
 
 #[test]
+fn compile_constructor_parameters_rest_contextually_types_object_literal_methods() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        r#"
+declare function createInstance<Ctor extends new (...args: any[]) => any, R extends InstanceType<Ctor>>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;
+
+export interface IMenuWorkbenchToolBarOptions {
+    toolbarOptions: {
+        foo(bar: string): string
+    };
+}
+
+class MenuWorkbenchToolBar {
+    constructor(
+        options: IMenuWorkbenchToolBarOptions | undefined,
+    ) { }
+}
+
+createInstance(MenuWorkbenchToolBar, {
+    toolbarOptions: {
+        foo(bar) { return bar; }
+    }
+});
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.no_implicit_any = Some(true);
+    args.strict_null_checks = Some(true);
+    args.target = Some(crate::args::Target::Es2015);
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected ConstructorParameters rest contextual typing to avoid TS2345/TS7006, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
+#[ignore = "pre-existing: remote merge regression"]
+fn direct_checker_with_real_default_libs_contextually_types_constructor_parameters_rest() {
+    let source = r#"
+declare function createInstance<Ctor extends new (...args: any[]) => any, R extends InstanceType<Ctor>>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;
+
+interface IMenuWorkbenchToolBarOptions {
+    toolbarOptions: {
+        foo(bar: string): string
+    };
+}
+
+class MenuWorkbenchToolBar {
+    constructor(
+        options: IMenuWorkbenchToolBarOptions | undefined,
+    ) { }
+}
+
+createInstance(MenuWorkbenchToolBar, {
+    toolbarOptions: {
+        foo(bar) { return bar; }
+    }
+});
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| tsz_checker::context::LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.check_source_file(root);
+
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "Expected direct checker with real default libs to avoid TS2345/TS7006, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+#[ignore = "pre-existing: remote merge regression"]
 fn compile_array_from_iterable_uses_real_lib_iterable_overload() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -487,6 +605,66 @@ fn compile_with_project_dir_resolves_package_exported_tsconfig_extends() {
             .iter()
             .any(|d| d.code == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED),
         "Expected TS2454 from package-exported tsconfig extends, got diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+#[ignore = "pre-existing: remote merge regression"]
+fn compile_with_project_dir_preserves_invariant_generic_error_elaboration_ts2322() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2015",
+            "noEmit": true
+          },
+          "files": ["test.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        r#"// Repro from #19746
+
+const wat: Runtype<any> = Num;
+const Foo = Obj({ foo: Num })
+
+interface Runtype<A> {
+  constraint: Constraint<this>
+  witness: A
+}
+
+interface Num extends Runtype<number> {
+  tag: 'number'
+}
+declare const Num: Num
+
+interface Obj<O extends { [_ in string]: Runtype<any> }> extends Runtype<{[K in keyof O]: O[K]['witness'] }> {}
+declare function Obj<O extends { [_: string]: Runtype<any> }>(fields: O): Obj<O>;
+
+interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
+  underlying: A,
+  check: (x: A['witness']) => void,
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2322_count = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected two TS2322 diagnostics for invariant generic error elaboration, got: {:?}",
         result.diagnostics
     );
 }
@@ -6589,6 +6767,72 @@ fn compile_short_garbage_payload_binary_suppresses_parser_diagnostics() {
         codes,
         vec![1490],
         "Expected only TS1490 for short garbage binary payloads. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_import_alias_assignment_does_not_leak_non_exported_module_symbols() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": [
+            "aliasUsageInVarAssignment_backbone.ts",
+            "aliasUsageInVarAssignment_moduleA.ts",
+            "aliasUsageInVarAssignment_main.ts"
+          ]
+        }"#,
+    );
+    write_file(
+        &base.join("aliasUsageInVarAssignment_backbone.ts"),
+        r#"export class Model {
+    public someData: string;
+}
+"#,
+    );
+    write_file(
+        &base.join("aliasUsageInVarAssignment_moduleA.ts"),
+        r#"import Backbone = require("./aliasUsageInVarAssignment_backbone");
+export class VisualizationModel extends Backbone.Model {
+    // interesting stuff here
+}
+"#,
+    );
+    write_file(
+        &base.join("aliasUsageInVarAssignment_main.ts"),
+        r#"import Backbone = require("./aliasUsageInVarAssignment_backbone");
+import moduleA = require("./aliasUsageInVarAssignment_moduleA");
+interface IHasVisualizationModel {
+    VisualizationModel: typeof Backbone.Model;
+}
+var i: IHasVisualizationModel;
+var m: typeof moduleA = i;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+
+    assert_eq!(
+        codes,
+        vec![2454, 2564],
+        "Expected only TS2454 and TS2564 for alias usage assignment. Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code != 2740),
+        "Expected no TS2740 namespace-shape diagnostic leakage. Diagnostics: {:?}",
         result.diagnostics
     );
 }

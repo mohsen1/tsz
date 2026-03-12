@@ -85,6 +85,57 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn prune_callback_body_diagnostics_since(
+        &mut self,
+        args: &[NodeIndex],
+        diagnostics_checkpoint: usize,
+    ) {
+        let kept_new_diags: Vec<_> = self.ctx.diagnostics[diagnostics_checkpoint..]
+            .iter()
+            .filter(|diag| {
+                !args.iter().any(|&arg_idx| {
+                    let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                        return false;
+                    };
+                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    is_callback_arg
+                        && self
+                            .callback_body_span(arg_idx)
+                            .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
+                })
+            })
+            .cloned()
+            .collect();
+        self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+        self.ctx.diagnostics.extend(kept_new_diags);
+    }
+
+    fn collect_non_callback_diagnostics_between(
+        &self,
+        args: &[NodeIndex],
+        start: usize,
+        end: usize,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        self.ctx.diagnostics[start..end]
+            .iter()
+            .filter(|diag| {
+                !args.iter().any(|&arg_idx| {
+                    let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                        return false;
+                    };
+                    let is_callback_arg = arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
+                    is_callback_arg
+                        && self
+                            .callback_body_span(arg_idx)
+                            .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Nested calls/new expressions should infer from their own callee shapes during
     /// Round 1 generic inference. Applying the outer call's contextual parameter type
     /// at this stage can erase useful inference from the inner call.
@@ -109,6 +160,15 @@ impl<'a> CheckerState<'a> {
                 _ => return false,
             }
         }
+    }
+
+    pub(crate) fn callback_body_span(&self, arg_idx: NodeIndex) -> Option<(u32, u32)> {
+        self.ctx
+            .arena
+            .get(arg_idx)
+            .and_then(|node| self.ctx.arena.get_function(node))
+            .and_then(|func| self.ctx.arena.get(func.body))
+            .map(|body_node| (body_node.pos, body_node.end))
     }
 
     pub(crate) fn suppress_generic_return_context_for_arg(&self, idx: NodeIndex) -> bool {
@@ -868,8 +928,13 @@ impl<'a> CheckerState<'a> {
             let expected_type = expected_for_index(effective_index, expanded_count);
             let apply_contextual = self.argument_needs_contextual_type(arg_idx);
             let expected_context_type = if self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::CALL_EXPRESSION
-                    || node.kind == syntax_kind_ext::NEW_EXPRESSION
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::CALL_EXPRESSION
+                        | syntax_kind_ext::NEW_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::FUNCTION_EXPRESSION
+                )
             }) {
                 expected_type
             } else {
@@ -898,25 +963,27 @@ impl<'a> CheckerState<'a> {
                 self.ctx.skip_flow_narrowing = prev_skip_flow;
             }
 
-            if apply_contextual
+            let is_direct_function_arg = self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            });
+            let arg_node = self.ctx.arena.get(arg_idx);
+            let is_sensitive_contextual_arg = apply_contextual
                 && expected_type.is_some()
-                && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                && (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        && self.ctx.generic_excess_skip.is_some()))
-            {
-                let callback_body_start = (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then(|| {
-                        self.ctx
-                            .arena
-                            .get_function(arg_node)
-                            .and_then(|func| self.ctx.arena.get(func.body))
-                            .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
-                            .map(|body_node| body_node.pos)
-                    })
-                    .flatten();
+                && arg_node.is_some_and(|arg_node| {
+                    is_contextually_sensitive(self, arg_idx)
+                        || (arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            && self.ctx.generic_excess_skip.is_some())
+                });
+            if is_sensitive_contextual_arg {
+                let arg_node = arg_node.expect("sensitive contextual arg should exist");
+                let callback_body_start = self
+                    .ctx
+                    .arena
+                    .get_function(arg_node)
+                    .and_then(|func| self.ctx.arena.get(func.body))
+                    .filter(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
+                    .map(|body_node| body_node.pos);
                 let new_diags = self.ctx.diagnostics.split_off(diag_len);
                 let kept_new_diags: Vec<_> = new_diags
                     .into_iter()
@@ -939,10 +1006,19 @@ impl<'a> CheckerState<'a> {
                                 && is_provisional_implicit_any
                                 && diag.start >= arg_node.pos
                                 && diag.start < arg_node.end;
-                        (!is_provisional_assignability && !is_provisional_implicit_any)
-                            || !(is_callback_body_diag
-                                || is_object_literal_diag
-                                || is_function_arg_implicit_any_diag)
+                        let is_direct_callback_body_assignability =
+                            callback_body_start.is_some_and(|start| diag.start == start)
+                                && is_provisional_assignability;
+                        if !is_provisional_assignability && !is_provisional_implicit_any {
+                            true
+                        } else if is_direct_function_arg {
+                            is_direct_callback_body_assignability
+                                || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
+                        } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                            !is_object_literal_diag
+                        } else {
+                            false
+                        }
                     })
                     .collect();
                 let existing_diag_keys: Vec<_> = self
@@ -1244,13 +1320,21 @@ impl<'a> CheckerState<'a> {
             .copied()
             .filter(|&arg_idx| self.argument_needs_contextual_type(arg_idx))
             .collect();
+        let refresh_all_args = |this: &mut Self| {
+            for &arg_idx in args {
+                this.clear_type_cache_recursive(arg_idx);
+                this.ctx.daa_error_nodes.remove(&arg_idx.0);
+                this.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
+            }
+        };
 
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
+        let saved_emitted_diagnostics = self.ctx.emitted_diagnostics.clone();
 
         // Save TS2454 dedup state before speculative overload argument collection.
         // If overload resolution fails and diagnostics are truncated, we must also
         // restore this set so TS2454 errors can be re-emitted in the fallback path.
-        let saved_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
+        let initial_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
 
         // Collect argument types ONCE with union contextual type.
         // Diagnostics produced during this pass are speculative: if no overload
@@ -1318,6 +1402,10 @@ impl<'a> CheckerState<'a> {
                         args,
                         first_pass_diagnostics_checkpoint,
                     ) {
+                        self.prune_callback_body_diagnostics_since(
+                            args,
+                            first_pass_diagnostics_checkpoint,
+                        );
                         continue;
                     }
                     // Merge the node types inferred during argument collection
@@ -1384,11 +1472,11 @@ impl<'a> CheckerState<'a> {
             );
 
             let diagnostics_checkpoint = self.ctx.diagnostics.len();
+            let emitted_before = self.ctx.emitted_diagnostics.clone();
+            self.ctx.emitted_ts2454_errors = initial_ts2454_errors.clone();
+            let candidate_ts2454_errors = self.ctx.emitted_ts2454_errors.clone();
             self.ctx.node_types = Default::default();
-            for &arg_idx in &contextual_refresh_args {
-                self.clear_contextual_resolution_cache();
-                self.clear_type_cache_recursive(arg_idx);
-            }
+            refresh_all_args(self);
 
             let prev_callable_type = self.ctx.current_callable_type;
             self.ctx.current_callable_type = Some(func_type);
@@ -1425,11 +1513,11 @@ impl<'a> CheckerState<'a> {
                 && !contextual_refresh_args.is_empty()
                 && let Some(instantiated_params) = instantiated_params.as_ref()
             {
+                self.ctx.diagnostics.truncate(diagnostics_checkpoint);
+                self.ctx.emitted_diagnostics = emitted_before.clone();
+                self.ctx.emitted_ts2454_errors = candidate_ts2454_errors.clone();
                 self.ctx.node_types = Default::default();
-                for &arg_idx in &contextual_refresh_args {
-                    self.clear_contextual_resolution_cache();
-                    self.clear_type_cache_recursive(arg_idx);
-                }
+                refresh_all_args(self);
 
                 let prev_callable_type = self.ctx.current_callable_type;
                 self.ctx.current_callable_type = Some(func_type);
@@ -1484,8 +1572,63 @@ impl<'a> CheckerState<'a> {
                         args,
                         diagnostics_checkpoint,
                     ) {
-                        self.ctx.diagnostics.truncate(diagnostics_checkpoint);
-                        continue;
+                        let preserved_first_pass_diags = self
+                            .collect_non_callback_diagnostics_between(
+                                args,
+                                first_pass_diagnostics_checkpoint,
+                                diagnostics_checkpoint,
+                            );
+                        let kept_candidate_diags =
+                            self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                        self.ctx
+                            .diagnostics
+                            .truncate(first_pass_diagnostics_checkpoint);
+                        self.ctx.diagnostics.extend(preserved_first_pass_diags);
+                        self.ctx.diagnostics.extend(kept_candidate_diags);
+                        self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
+                        for diag in self
+                            .ctx
+                            .diagnostics
+                            .iter()
+                            .skip(first_pass_diagnostics_checkpoint)
+                        {
+                            self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
+                        }
+                        let sig_node_types = std::mem::take(&mut self.ctx.node_types);
+                        self.ctx.node_types = std::mem::take(&mut original_node_types);
+                        self.ctx.node_types.extend(sig_node_types);
+                        self.validate_non_tuple_spreads_for_signature(args, func_type);
+                        self.check_call_argument_excess_properties(
+                            args,
+                            &sig_arg_types,
+                            |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
+                        );
+
+                        return Some(OverloadResolution {
+                            arg_types: sig_arg_types,
+                            result: CallResult::Success(return_type),
+                        });
+                    }
+                    let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
+                        args,
+                        first_pass_diagnostics_checkpoint,
+                        diagnostics_checkpoint,
+                    );
+                    let kept_candidate_diags =
+                        self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                    self.ctx
+                        .diagnostics
+                        .truncate(first_pass_diagnostics_checkpoint);
+                    self.ctx.diagnostics.extend(preserved_first_pass_diags);
+                    self.ctx.diagnostics.extend(kept_candidate_diags);
+                    self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
+                    for diag in self
+                        .ctx
+                        .diagnostics
+                        .iter()
+                        .skip(first_pass_diagnostics_checkpoint)
+                    {
+                        self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
                     }
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
@@ -1545,6 +1688,27 @@ impl<'a> CheckerState<'a> {
                     ));
                 }
                 CallResult::TypeParameterConstraintViolation { return_type, .. } => {
+                    let preserved_first_pass_diags = self.collect_non_callback_diagnostics_between(
+                        args,
+                        first_pass_diagnostics_checkpoint,
+                        diagnostics_checkpoint,
+                    );
+                    let kept_candidate_diags =
+                        self.ctx.diagnostics.split_off(diagnostics_checkpoint);
+                    self.ctx
+                        .diagnostics
+                        .truncate(first_pass_diagnostics_checkpoint);
+                    self.ctx.diagnostics.extend(preserved_first_pass_diags);
+                    self.ctx.diagnostics.extend(kept_candidate_diags);
+                    self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
+                    for diag in self
+                        .ctx
+                        .diagnostics
+                        .iter()
+                        .skip(first_pass_diagnostics_checkpoint)
+                    {
+                        self.ctx.emitted_diagnostics.insert((diag.code, diag.start));
+                    }
                     let sig_node_types = std::mem::take(&mut self.ctx.node_types);
                     self.ctx.node_types = std::mem::take(&mut original_node_types);
                     self.ctx.node_types.extend(sig_node_types);
@@ -1570,7 +1734,7 @@ impl<'a> CheckerState<'a> {
         // Restore TS2454 dedup state so definite-assignment errors can be
         // re-emitted when the fallback (non-overloaded) call resolution path
         // re-evaluates the same argument identifiers.
-        self.ctx.emitted_ts2454_errors = saved_ts2454_errors;
+        self.ctx.emitted_ts2454_errors = initial_ts2454_errors;
 
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;

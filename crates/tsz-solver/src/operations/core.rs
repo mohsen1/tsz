@@ -1,3 +1,4 @@
+use crate::contextual::extractors::extract_param_type_at_for_call;
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
@@ -679,6 +680,117 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         type_id: TypeId,
         arg_count: Option<usize>,
     ) -> Option<FunctionShape> {
+        fn from_call_signature(sig: &CallSignature) -> FunctionShape {
+            FunctionShape {
+                type_params: sig.type_params.clone(),
+                params: sig.params.clone(),
+                this_type: sig.this_type,
+                return_type: sig.return_type,
+                type_predicate: sig.type_predicate.clone(),
+                is_constructor: false,
+                is_method: sig.is_method,
+            }
+        }
+
+        fn combine_contextual_signatures(
+            db: &dyn TypeDatabase,
+            signatures: Vec<&CallSignature>,
+            arg_count: Option<usize>,
+        ) -> Option<FunctionShape> {
+            let first = *signatures.first()?;
+            if signatures.len() == 1 {
+                return Some(from_call_signature(first));
+            }
+
+            let effective_arg_count = arg_count.unwrap_or_else(|| {
+                signatures
+                    .iter()
+                    .map(|sig| sig.params.len())
+                    .max()
+                    .unwrap_or(0)
+            });
+
+            let params = (0..effective_arg_count)
+                .filter_map(|index| {
+                    let mut param_types: Vec<TypeId> = signatures
+                        .iter()
+                        .filter_map(|sig| {
+                            extract_param_type_at_for_call(
+                                db,
+                                &sig.params,
+                                index,
+                                effective_arg_count,
+                            )
+                        })
+                        .collect();
+                    if param_types.len() > 1 && param_types.iter().any(|&ty| ty != TypeId::ANY) {
+                        param_types.retain(|&ty| ty != TypeId::ANY);
+                    }
+                    match param_types.len() {
+                        0 => None,
+                        1 => Some(ParamInfo::unnamed(param_types[0])),
+                        _ => Some(ParamInfo::unnamed(db.union_literal_reduce(param_types))),
+                    }
+                })
+                .collect();
+
+            let mut return_types: Vec<TypeId> =
+                signatures.iter().map(|sig| sig.return_type).collect();
+            if return_types.len() > 1 && return_types.iter().any(|&ty| ty != TypeId::ANY) {
+                return_types.retain(|&ty| ty != TypeId::ANY);
+            }
+            let return_type = match return_types.len() {
+                0 => first.return_type,
+                1 => return_types[0],
+                _ => db.union_literal_reduce(return_types),
+            };
+
+            let type_params = if signatures
+                .iter()
+                .all(|sig| sig.type_params == first.type_params)
+            {
+                first.type_params.clone()
+            } else {
+                Vec::new()
+            };
+
+            let this_type = if signatures
+                .iter()
+                .all(|sig| sig.this_type == first.this_type)
+            {
+                first.this_type
+            } else {
+                let this_types: Vec<_> =
+                    signatures.iter().filter_map(|sig| sig.this_type).collect();
+                match this_types.len() {
+                    0 => None,
+                    1 => Some(this_types[0]),
+                    _ => Some(db.union_literal_reduce(this_types)),
+                }
+            };
+
+            let type_predicate = if signatures
+                .iter()
+                .all(|sig| sig.type_predicate == first.type_predicate)
+            {
+                first.type_predicate.clone()
+            } else {
+                None
+            };
+
+            let is_method = signatures.iter().all(|sig| sig.is_method);
+
+            Some(FunctionShape {
+                type_params,
+                params,
+                this_type,
+                return_type,
+                type_predicate,
+                is_constructor: false,
+                is_method,
+            })
+        }
+
         struct ContextualSignatureVisitor<'a> {
             db: &'a dyn TypeDatabase,
             arg_count: Option<usize>,
@@ -725,7 +837,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // If arg_count is provided, prefer fixed-arity overloads over
                 // catch-all rest signatures when both match. This keeps broad
                 // implementation signatures from poisoning contextual typing.
-                let sig = if let Some(count) = self.arg_count {
+                let matching = if let Some(count) = self.arg_count {
                     let mut matching: Vec<_> = signatures
                         .iter()
                         .filter(|sig| {
@@ -740,20 +852,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     {
                         matching.retain(|sig| !sig.params.last().is_some_and(|param| param.rest));
                     }
-                    matching.into_iter().next().or_else(|| signatures.first())
+                    if matching.is_empty() {
+                        signatures.iter().take(1).collect()
+                    } else {
+                        matching
+                    }
                 } else {
-                    signatures.first()
+                    signatures.iter().collect()
                 };
 
-                sig.map(|sig| FunctionShape {
-                    type_params: sig.type_params.clone(),
-                    params: sig.params.clone(),
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_predicate: sig.type_predicate.clone(),
-                    is_constructor: false,
-                    is_method: sig.is_method,
-                })
+                combine_contextual_signatures(self.db, matching, self.arg_count)
             }
 
             fn visit_application(&mut self, app_id: u32) -> Self::Output {

@@ -294,6 +294,10 @@ impl<'a> CheckerState<'a> {
         // This avoids the full property-access diagnostic pipeline for common
         // patterns like `opts?.timeout` / `opts?.retries` in hot call sites.
         if access.question_dot_token
+            && !self
+                .ctx
+                .compiler_options
+                .no_property_access_from_index_signature
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && !self.is_super_expression(access.expression)
         {
@@ -357,29 +361,42 @@ impl<'a> CheckerState<'a> {
                     PropertyAccessResult::Success {
                         type_id,
                         write_type,
-                        ..
+                        from_index_signature,
                     } => {
-                        if can_cache_fast {
-                            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-                                (resolved_base, prop_atom.expect("cached atom")),
-                                Some(type_id),
-                            );
-                        }
-                        let mut result_type = if self.ctx.skip_flow_narrowing {
-                            write_type.unwrap_or(type_id)
-                        } else {
-                            type_id
-                        };
-                        if base_nullish.is_some()
-                            && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                        if from_index_signature
+                            && self
+                                .ctx
+                                .compiler_options
+                                .no_property_access_from_index_signature
+                            && !self
+                                .union_has_explicit_property_member(resolved_base, property_name)
                         {
-                            result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
-                        }
-                        return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
-                            result_type
+                            // Preserve the optional-chain fast path for regular
+                            // property reads, but fall back to the full path when
+                            // TS4111 must be reported.
                         } else {
-                            self.apply_flow_narrowing(idx, result_type)
-                        };
+                            if can_cache_fast {
+                                self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                                    (resolved_base, prop_atom.expect("cached atom")),
+                                    Some(type_id),
+                                );
+                            }
+                            let mut result_type = if self.ctx.skip_flow_narrowing {
+                                write_type.unwrap_or(type_id)
+                            } else {
+                                type_id
+                            };
+                            if base_nullish.is_some()
+                                && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                            {
+                                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                            }
+                            return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
+                                result_type
+                            } else {
+                                self.apply_flow_narrowing(idx, result_type)
+                            };
+                        }
                     }
                     PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                         if can_cache_fast {
@@ -997,6 +1014,30 @@ impl<'a> CheckerState<'a> {
                 } => {
                     // Check for optional chaining (?.)
                     if access.question_dot_token {
+                        if self
+                            .ctx
+                            .compiler_options
+                            .no_property_access_from_index_signature
+                            && let (Some(non_nullish_base), _) =
+                                self.split_nullish_type(object_type_for_access)
+                            && let PropertyAccessResult::Success {
+                                from_index_signature,
+                                ..
+                            } = self
+                                .resolve_property_access_with_env(non_nullish_base, property_name)
+                            && from_index_signature
+                            && !self
+                                .union_has_explicit_property_member(non_nullish_base, property_name)
+                        {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node(
+                                access.name_or_argument,
+                                &format!(
+                                    "Property '{property_name}' comes from an index signature, so it must be accessed with ['{property_name}']."
+                                ),
+                                diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
+                            );
+                        }
                         // Suppress error, return (property_type | undefined)
                         let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
                         return factory.union(vec![base_type, TypeId::UNDEFINED]);

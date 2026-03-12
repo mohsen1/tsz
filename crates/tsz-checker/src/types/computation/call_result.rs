@@ -46,40 +46,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
-        let db = self.ctx.types.as_type_database();
-        if let Some(shape_id) = visitor::function_shape_id(db, callee_type) {
-            Some(self.ctx.types.function_shape(shape_id).return_type)
-        } else if let Some(shape_id) = visitor::callable_shape_id(db, callee_type) {
-            let shape = self.ctx.types.callable_shape(shape_id);
-            let first = shape.call_signatures.first()?.return_type;
-            if shape
-                .call_signatures
-                .iter()
-                .all(|sig| sig.return_type == first)
-            {
-                Some(first)
-            } else {
-                None
-            }
-        } else if let Some(list_id) = visitor::intersection_list_id(db, callee_type) {
-            let members = self.ctx.types.type_list(list_id);
-            let mut candidate = None;
-            for &member in members.iter() {
-                let Some(return_type) = self.stable_call_recovery_return_type(member) else {
-                    continue;
-                };
-                if let Some(existing) = candidate {
-                    if existing != return_type {
-                        return None;
-                    }
-                } else {
-                    candidate = Some(return_type);
-                }
-            }
-            candidate
-        } else {
-            None
-        }
+        crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
+            self.ctx.types,
+            callee_type,
+        )
     }
 
     fn should_attempt_deferred_literal_elaboration(&mut self, expected: TypeId) -> bool {

@@ -522,7 +522,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.get_type_of_node(value_decl))
+        Some(self.type_of_value_declaration_for_symbol(sym_id, value_decl))
     }
 
     /// Compute type of a symbol (internal, not cached).
@@ -772,6 +772,29 @@ impl<'a> CheckerState<'a> {
         // Enum member - determine type from parent enum
         if flags & symbol_flags::ENUM_MEMBER != 0 {
             return self.compute_enum_member_symbol_type(sym_id, value_decl);
+        }
+
+        // Methods merged across lib/interface declarations should preserve overloads from
+        // every declaration arena, not just the first value declaration.
+        if flags & symbol_flags::METHOD != 0 {
+            let mut merged_method_type = None;
+
+            for &decl_idx in &declarations {
+                let decl_type = self.type_of_declaration_node_for_symbol(sym_id, decl_idx);
+                if matches!(decl_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                    continue;
+                }
+
+                merged_method_type = Some(if let Some(current) = merged_method_type {
+                    self.merge_interface_types(decl_type, current)
+                } else {
+                    decl_type
+                });
+            }
+
+            if let Some(method_type) = merged_method_type {
+                return (method_type, Vec::new());
+            }
         }
 
         // Function - build function type or callable overload set.
@@ -1131,10 +1154,13 @@ impl<'a> CheckerState<'a> {
                     return (TypeId::UNKNOWN, Vec::new());
                 };
 
-                let has_cross_arena_metadata = self.ctx.binder.symbol_arenas.contains_key(&sym_id)
-                    || self
-                        .ctx
-                        .binder
+                let decl_binder = self
+                    .ctx
+                    .get_binder_for_arena(decl_arena)
+                    .unwrap_or(self.ctx.binder);
+                let has_cross_arena_metadata = !std::ptr::eq(decl_arena, self.ctx.arena)
+                    || decl_binder.symbol_arenas.contains_key(&sym_id)
+                    || decl_binder
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
@@ -1693,6 +1719,22 @@ impl<'a> CheckerState<'a> {
                 // Return ERROR for other cases to prevent cascading errors
                 return (TypeId::ERROR, Vec::new());
             }
+
+            // Synthetic `export default ...` aliases point directly at the exported
+            // declaration node (often an anonymous class/function). They are real
+            // value symbols, not unresolved imports, so compute the declaration type
+            // instead of falling through to the generic alias-any path.
+            if import_module.is_none()
+                && value_decl.is_some()
+                && let Some(node) = self.ctx.arena.get(value_decl)
+                && node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                return (
+                    self.type_of_value_declaration_for_symbol(sym_id, value_decl),
+                    Vec::new(),
+                );
+            }
+
             // Handle ES6 named imports (import { X } from './module')
             // Use the import_module field to resolve to the actual export
             // Check if this symbol has import tracking metadata

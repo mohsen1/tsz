@@ -347,6 +347,13 @@ impl<'a> CheckerState<'a> {
                 let is_this_param = name == Some(this_atom);
                 let is_js_file = self.is_js_file();
                 let contextual_type = if let Some(ref helper) = ctx_helper {
+                    let expected_contextual_type = helper.expected().and_then(|expected| {
+                        self.contextual_parameter_type_with_env_from_expected(
+                            expected,
+                            contextual_index,
+                            param.dot_dot_dot_token,
+                        )
+                    });
                     let direct = if param.dot_dot_dot_token {
                         // Rest parameter: get the full tuple/array type from context,
                         // not just the element at this position.
@@ -356,30 +363,46 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if let Some(extracted) = direct {
-                        let resolved = self.resolve_type_query_type(extracted);
-                        let evaluated = self.evaluate_type_with_env(resolved);
-                        if evaluated != extracted {
-                            helper
-                                .expected()
-                                .and_then(|expected| {
-                                    self.contextual_parameter_type_with_env_from_expected(
-                                        expected,
-                                        contextual_index,
-                                        param.dot_dot_dot_token,
-                                    )
-                                })
-                                .or(Some(extracted))
+                        if let Some(from_expected) = expected_contextual_type {
+                            let direct_is_placeholderish = extracted == TypeId::ANY
+                                || extracted == TypeId::UNKNOWN
+                                || tsz_solver::type_queries::contains_infer_types_db(
+                                    self.ctx.types,
+                                    extracted,
+                                );
+                            let expected_is_more_informative = from_expected != TypeId::ANY
+                                && from_expected != TypeId::UNKNOWN
+                                && !tsz_solver::type_queries::contains_infer_types_db(
+                                    self.ctx.types,
+                                    from_expected,
+                                );
+                            let direct_is_strict_subtype = extracted != from_expected
+                                && self.is_subtype_of(extracted, from_expected)
+                                && !self.is_subtype_of(from_expected, extracted);
+                            if (direct_is_placeholderish && expected_is_more_informative)
+                                || direct_is_strict_subtype
+                            {
+                                Some(from_expected)
+                            } else {
+                                let resolved = self.resolve_type_query_type(extracted);
+                                let evaluated = self.evaluate_type_with_env(resolved);
+                                if evaluated != extracted {
+                                    expected_contextual_type.or(Some(extracted))
+                                } else {
+                                    Some(extracted)
+                                }
+                            }
                         } else {
-                            Some(extracted)
+                            let resolved = self.resolve_type_query_type(extracted);
+                            let evaluated = self.evaluate_type_with_env(resolved);
+                            if evaluated != extracted {
+                                expected_contextual_type.or(Some(extracted))
+                            } else {
+                                Some(extracted)
+                            }
                         }
                     } else {
-                        helper.expected().and_then(|expected| {
-                            self.contextual_parameter_type_with_env_from_expected(
-                                expected,
-                                contextual_index,
-                                param.dot_dot_dot_token,
-                            )
-                        })
+                        expected_contextual_type
                     }
                 } else {
                     None
@@ -518,7 +541,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let binding_context_type = type_id;
-                let type_id = if let Some(pattern_type) = element_type_from_pattern {
+                let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some() {
                         type_id
                     } else {
@@ -627,6 +650,28 @@ impl<'a> CheckerState<'a> {
                             );
                             Self::jsdoc_param_is_rest(jsdoc, &pname)
                         }));
+                {
+                    let db = self.ctx.types.as_type_database();
+                    if rest
+                        && (tsz_solver::is_generic_application(db, type_id)
+                            || tsz_solver::is_mapped_type(db, type_id)
+                            || tsz_solver::is_conditional_type(db, type_id)
+                            || tsz_solver::is_intersection_type(db, type_id))
+                    {
+                        let evaluated = if tsz_solver::is_generic_application(db, type_id) {
+                            self.evaluate_application_type(type_id)
+                        } else {
+                            self.evaluate_type_with_env(type_id)
+                        };
+                        if tsz_solver::is_array_type(db, evaluated)
+                            || tsz_solver::is_tuple_type(db, evaluated)
+                            || tsz_solver::visitor::readonly_inner_type(db, evaluated).is_some()
+                            || tsz_solver::visitor::no_infer_inner_type(db, evaluated).is_some()
+                        {
+                            type_id = evaluated;
+                        }
+                    }
+                }
                 // Body type includes `| undefined` for optional params;
                 // ParamInfo.type_id uses declared type (no `| undefined`)
                 // to match tsc error messages. Solver handles optionality

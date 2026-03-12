@@ -71,9 +71,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         normalized
     }
 
-    fn get_overloaded_source_signature(
+    fn get_overloaded_source_signature_for_arity(
         db: &dyn crate::TypeDatabase,
         type_id: TypeId,
+        arg_count: usize,
     ) -> Option<FunctionShape> {
         let signatures = crate::type_queries::get_call_signatures(db, type_id)
             .filter(|signatures| !signatures.is_empty())
@@ -81,7 +82,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 crate::type_queries::get_construct_signatures(db, type_id)
                     .filter(|signatures| !signatures.is_empty())
             })?;
-        let sig = signatures.last()?;
+        let signature_accepts_arg_count = |params: &[crate::types::ParamInfo], count: usize| {
+            let required_count = params.iter().filter(|p| !p.optional).count();
+            let has_rest = params.iter().any(|p| p.rest);
+            if has_rest {
+                count >= required_count
+            } else {
+                count >= required_count && count <= params.len()
+            }
+        };
+        let sig = signatures
+            .iter()
+            .rev()
+            .find(|sig| signature_accepts_arg_count(&sig.params, arg_count))
+            .or_else(|| signatures.last())?;
         Some(FunctionShape {
             type_params: sig.type_params.clone(),
             params: sig.params.clone(),
@@ -93,12 +107,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         })
     }
 
-    fn get_source_signature_for_inference(
+    fn get_source_signature_for_target(
         db: &dyn crate::TypeDatabase,
-        type_id: TypeId,
-    ) -> Option<FunctionShape> {
-        Self::get_overloaded_source_signature(db, type_id)
-            .or_else(|| Self::get_contextual_signature(db, type_id))
+        source_type: TypeId,
+        target_type: TypeId,
+    ) -> Option<(FunctionShape, FunctionShape)> {
+        let target_fn = Self::get_contextual_signature(db, target_type)?;
+        let source_fn = Self::get_overloaded_source_signature_for_arity(
+            db,
+            source_type,
+            target_fn.params.len(),
+        )
+        .or_else(|| Self::get_contextual_signature(db, source_type))?;
+        Some((source_fn, target_fn))
     }
 
     fn should_use_contextual_return_substitution(
@@ -383,7 +404,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> CallResult {
         let actual_this_type = self.actual_this_type;
-        let _has_context_sensitive_args = arg_types
+        let has_context_sensitive_args = arg_types
             .iter()
             .copied()
             .any(|arg| self.is_contextually_sensitive(arg));
@@ -686,10 +707,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let structural_return_subst =
             self.compute_return_context_substitution(func, self.contextual_type);
-        for (&name, &ty) in structural_return_subst.map().iter() {
-            substitution.insert(name, ty);
-        }
-        if !structural_return_subst.is_empty() {
+        if has_context_sensitive_args && !structural_return_subst.is_empty() {
+            for (&name, &ty) in structural_return_subst.map().iter() {
+                substitution.insert(name, ty);
+            }
             instantiated_params = func
                 .params
                 .iter()
@@ -1041,6 +1062,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Now that non-contextual arguments have been processed, we can provide
         // proper contextual types to lambdas based on fixed type variables.
         if saw_deferred_arg {
+            let round2_params = if fixed_subst.is_empty() {
+                None
+            } else {
+                Some(
+                    instantiated_params
+                        .iter()
+                        .map(|param| ParamInfo {
+                            name: param.name,
+                            type_id: instantiate_type(self.interner, param.type_id, &fixed_subst),
+                            optional: param.optional,
+                            rest: param.rest,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            };
             for (i, &arg_type) in arg_types.iter().enumerate() {
                 if rest_tuple_start.is_some_and(|start| i >= start) {
                     continue;
@@ -1062,6 +1098,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
                 let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                     && i >= instantiated_params.len().saturating_sub(1);
+                let round2_target_type = round2_params
+                    .as_ref()
+                    .and_then(|params| self.param_type_for_arg_index(params, i, arg_types.len()));
 
                 if original_has_placeholders && !is_rest_param_arg {
                     direct_param_vars.extend(self.collect_placeholder_vars_in_type(
@@ -1092,7 +1131,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Re-instantiate target_type with fixed Round 1 results.
                     // This replaces resolved placeholders with their inferred types while
                     // preserving unresolved placeholders for further Round 2 inference.
-                    let r2_target = if !fixed_subst.is_empty() {
+                    let r2_target = if let Some(candidate) = round2_target_type {
+                        candidate
+                    } else if !fixed_subst.is_empty() {
                         let candidate = instantiate_type(self.interner, target_type, &fixed_subst);
                         placeholder_visited.clear();
                         if self.type_contains_placeholder(
@@ -1103,6 +1144,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Mixed case: some placeholders resolved, some remaining.
                             // Use re-instantiated target so resolved params provide
                             // concrete contextual types to callbacks.
+                            candidate
+                        } else if is_rest_param_arg {
+                            // Rest arguments like `...args: ConstructorParameters<Ctor>`
+                            // need the fully materialized tuple/application target in
+                            // Round 2 once `Ctor` has been fixed by earlier arguments.
+                            // Reverting to the unresolved wrapper here loses both the
+                            // extracted element type for contextual typing and the
+                            // concrete assignability surface for the argument.
                             candidate
                         } else {
                             // All placeholders resolved — keep original for constraint
@@ -1172,6 +1221,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                             // Infer: A = [string, number]
                             if let Some(&var) = var_map.get(&t_last.type_id) {
+                                let target_var_map: FxHashMap<
+                                    TypeId,
+                                    crate::inference::infer::InferenceVar,
+                                > = FxHashMap::from_iter([(t_last.type_id, var)]);
+                                let appears_in_other_params = target_fn.params
+                                    [..target_fn.params.len().saturating_sub(1)]
+                                    .iter()
+                                    .any(|param| {
+                                        placeholder_visited.clear();
+                                        self.type_contains_placeholder(
+                                            param.type_id,
+                                            &target_var_map,
+                                            &mut placeholder_visited,
+                                        )
+                                    });
+                                if appears_in_other_params {
+                                    continue;
+                                }
                                 infer_ctx.add_candidate(
                                     var,
                                     param_tuple,
@@ -1286,6 +1353,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
 
+                let has_index_signature_candidates = infer_ctx.has_index_signature_candidates(var);
                 let ty = if let Some(resolved) = resolved_direct {
                     let root = infer_ctx.table.find(var);
                     let mut info = infer_ctx.table.probe_value(root);
@@ -1308,7 +1376,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             );
                             let ty = if all_return_type {
                                 self.resolve_return_position_inference_type(&lower_bounds, ty)
-                            } else if direct_param_vars.contains(&var) {
+                            } else if direct_param_vars.contains(&var)
+                                && !has_index_signature_candidates
+                            {
                                 self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
                             } else {
                                 ty
@@ -1362,7 +1432,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             } else {
                                 TypeId::ERROR
                             };
-                            let fallback = if direct_param_vars.contains(&var) {
+                            let fallback = if direct_param_vars.contains(&var)
+                                && !has_index_signature_candidates
+                            {
                                 self.resolve_direct_parameter_inference_type(
                                     &lower_bounds,
                                     fallback,
@@ -1437,7 +1509,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 resolved_type_key = ?self.interner.lookup(ty),
                 "Resolved type parameter"
             );
-
             final_subst.insert(tp.name, ty);
         }
 
@@ -1830,23 +1901,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        let raw_functions = match (
-            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
-            Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
-        ) {
-            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
-            _ => None,
-        };
-        let evaluated_functions = match (
-            Self::get_source_signature_for_inference(
-                self.interner.as_type_database(),
-                evaluated_source_ty,
-            ),
-            Self::get_contextual_signature(self.interner.as_type_database(), evaluated_target_ty),
-        ) {
-            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
-            _ => None,
-        };
+        let raw_functions = Self::get_source_signature_for_target(
+            self.interner.as_type_database(),
+            source_ty,
+            target_ty,
+        );
+        let evaluated_functions = Self::get_source_signature_for_target(
+            self.interner.as_type_database(),
+            evaluated_source_ty,
+            evaluated_target_ty,
+        );
         if let Some((mut source_fn, target_fn)) = raw_functions.or(evaluated_functions)
             && source_fn.params.len() == target_fn.params.len()
         {
@@ -2107,25 +2171,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target_ty: TypeId,
         priority: crate::types::InferencePriority,
     ) -> bool {
-        let raw_functions = match (
-            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
-            Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
-        ) {
-            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
-            _ => None,
-        };
+        let raw_functions = Self::get_source_signature_for_target(
+            self.interner.as_type_database(),
+            source_ty,
+            target_ty,
+        );
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
-        let evaluated_functions = match (
-            Self::get_source_signature_for_inference(
-                self.interner.as_type_database(),
-                evaluated_source_ty,
-            ),
-            Self::get_contextual_signature(self.interner.as_type_database(), evaluated_target_ty),
-        ) {
-            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
-            _ => None,
-        };
+        let evaluated_functions = Self::get_source_signature_for_target(
+            self.interner.as_type_database(),
+            evaluated_source_ty,
+            evaluated_target_ty,
+        );
 
         let Some((mut source_fn, target_fn)) = raw_functions.or(evaluated_functions) else {
             return false;
@@ -2202,25 +2259,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> TypeId {
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
-        let function_info = match (
-            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
-            Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
-        ) {
-            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
-            _ => match (
-                Self::get_source_signature_for_inference(
-                    self.interner.as_type_database(),
-                    evaluated_source_ty,
-                ),
-                Self::get_contextual_signature(
-                    self.interner.as_type_database(),
-                    evaluated_target_ty,
-                ),
-            ) {
-                (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
-                _ => None,
-            },
-        };
+        let function_info = Self::get_source_signature_for_target(
+            self.interner.as_type_database(),
+            source_ty,
+            target_ty,
+        )
+        .or_else(|| {
+            Self::get_source_signature_for_target(
+                self.interner.as_type_database(),
+                evaluated_source_ty,
+                evaluated_target_ty,
+            )
+        });
 
         let Some((source_fn, target_fn)) = function_info else {
             return source_ty;
@@ -2228,6 +2278,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
         let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
         if source_fn.type_params.is_empty() {
+            let source_has_calls = crate::type_queries::get_call_signatures(
+                self.interner.as_type_database(),
+                source_ty,
+            )
+            .is_some_and(|sigs| !sigs.is_empty());
+            let source_has_constructs = crate::type_queries::get_construct_signatures(
+                self.interner.as_type_database(),
+                source_ty,
+            )
+            .is_some_and(|sigs| !sigs.is_empty());
+            let target_has_calls = crate::type_queries::get_call_signatures(
+                self.interner.as_type_database(),
+                target_ty,
+            )
+            .is_some_and(|sigs| !sigs.is_empty());
+            let target_has_constructs = crate::type_queries::get_construct_signatures(
+                self.interner.as_type_database(),
+                target_ty,
+            )
+            .is_some_and(|sigs| !sigs.is_empty());
+            if !source_has_calls
+                && source_has_constructs
+                && !target_has_calls
+                && target_has_constructs
+            {
+                return source_ty;
+            }
             return self.interner.function(source_fn);
         }
 

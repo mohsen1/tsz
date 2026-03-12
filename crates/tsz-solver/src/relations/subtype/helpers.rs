@@ -200,7 +200,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.lookup_property(&t_shape.properties, Some(t_shape_id), s_prop.name)
             {
                 // Found potential conflict: check compatibility
-                let result = self.check_property_compatibility(s_prop, t_prop);
+                let result = self.check_property_compatibility(s_prop, t_prop, None, None);
                 if !result.is_true() {
                     return result;
                 }
@@ -277,5 +277,74 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         true
+    }
+
+    pub(crate) fn check_index_access_source_upper_bound_subtype(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some((object_type, key_type)) = index_access_parts(self.interner, source) else {
+            return false;
+        };
+
+        let original = self.interner.index_access(object_type, key_type);
+        let mut candidates = Vec::new();
+        self.collect_index_access_upper_bound_candidates(
+            object_type,
+            key_type,
+            original,
+            &mut candidates,
+        );
+
+        candidates.into_iter().any(|candidate| {
+            candidate != original
+                && candidate != TypeId::ERROR
+                && self.check_subtype(candidate, target).is_true()
+        })
+    }
+
+    fn collect_index_access_upper_bound_candidates(
+        &mut self,
+        object_type: TypeId,
+        key_type: TypeId,
+        original: TypeId,
+        candidates: &mut Vec<TypeId>,
+    ) {
+        let evaluated = self.evaluate_type(self.interner.index_access(object_type, key_type));
+        if evaluated != original && !candidates.contains(&evaluated) {
+            candidates.push(evaluated);
+        }
+
+        if let Some(info) = type_param_info(self.interner, object_type)
+            && let Some(constraint) = info.constraint
+            && !crate::visitor::is_type_parameter(self.interner, constraint)
+            && !crate::visitor::is_this_type(self.interner, constraint)
+        {
+            self.collect_index_access_upper_bound_candidates(
+                constraint, key_type, original, candidates,
+            );
+        }
+
+        if let Some(info) = type_param_info(self.interner, key_type)
+            && let Some(constraint) = info.constraint
+        {
+            let constrained =
+                self.evaluate_type(self.interner.index_access(object_type, constraint));
+            if constrained != original && !candidates.contains(&constrained) {
+                candidates.push(constrained);
+            }
+        }
+
+        if let Some(intersection_id) =
+            crate::visitor::intersection_list_id(self.interner, object_type)
+        {
+            let members = self.interner.type_list(intersection_id);
+            for &member in members.iter() {
+                self.collect_index_access_upper_bound_candidates(
+                    member, key_type, original, candidates,
+                );
+            }
+        }
     }
 }
