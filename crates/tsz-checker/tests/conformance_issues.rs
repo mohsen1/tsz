@@ -8850,7 +8850,6 @@ new x.F();
 }
 
 #[test]
-#[ignore = "TODO: TS7053 now displays 'x' instead of constructor name 'F' after behavior change"]
 fn test_commonjs_exported_js_constructor_index_errors_use_function_name() {
     let a_source = r#"
 const s = Symbol();

@@ -2114,7 +2114,6 @@ impl<'a> CheckerState<'a> {
                     other => (other, false),
                 };
                 if should_epc {
-                    let mut did_epc = false;
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                             && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -2133,7 +2132,6 @@ impl<'a> CheckerState<'a> {
                                     evaluated_param,
                                     arg_idx,
                                 );
-                                did_epc = true;
                             }
                         }
                     }
