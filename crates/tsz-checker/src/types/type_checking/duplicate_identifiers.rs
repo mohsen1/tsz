@@ -1050,11 +1050,6 @@ impl<'a> CheckerState<'a> {
                                     &message,
                                     diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
                                 );
-                                self.error_at_node_msg(
-                                    error_node,
-                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                                    &[name.as_str()],
-                                );
                             }
                         }
                         for &(decl_idx, flags, is_local, _, _) in &declarations {
@@ -1069,17 +1064,12 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
                                     diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
                                 );
-                                self.error_at_node_msg(
-                                    error_node,
-                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                                    &[name.as_str()],
-                                );
                             }
                         }
                     }
 
-                    // Remove class+function from conflicts in both cases
-                    // (ambient = valid merge, non-ambient = already reported TS2813/2814)
+                    // Determine if there are other conflicting declarations
+                    // beyond the class+function pair (e.g. var in a 3-way conflict).
                     let class_function_indices: Vec<NodeIndex> = declarations
                         .iter()
                         .filter(|(decl_idx, flags, _, _, _)| {
@@ -1089,10 +1079,19 @@ impl<'a> CheckerState<'a> {
                         })
                         .map(|(idx, _, _, _, _)| *idx)
                         .collect();
-                    for idx in class_function_indices {
-                        conflicts.remove(&idx);
-                    }
-                    if conflicts.is_empty() {
+                    let has_other_conflicts = conflicts
+                        .iter()
+                        .any(|idx| !class_function_indices.contains(idx));
+
+                    if has_other_conflicts {
+                        // 3-way+ conflict: keep class+function in conflicts so
+                        // the general TS2300 handler below emits on ALL declarations.
+                    } else {
+                        // Pure 2-way class+function: remove from conflicts.
+                        // Ambient case = valid merge, non-ambient = TS2813/2814 only.
+                        for idx in class_function_indices {
+                            conflicts.remove(&idx);
+                        }
                         continue;
                     }
                 }
