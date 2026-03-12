@@ -906,22 +906,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
-                if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
-                    if self.should_directly_constrain_same_base_application(
+                if arg_app.base == target_app.base
+                    && arg_app.args.len() == target_app.args.len()
+                    && self.should_directly_constrain_same_base_application(
                         source_for_inference,
                         contextual_target_type,
-                    ) {
-                        for (arg_inner, target_inner) in
-                            arg_app.args.iter().zip(target_app.args.iter())
-                        {
-                            self.constrain_types(
-                                &mut infer_ctx,
-                                &var_map,
-                                *arg_inner,
-                                *target_inner,
-                                crate::types::InferencePriority::NakedTypeVariable,
-                            );
-                        }
+                    )
+                {
+                    for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
+                    {
+                        self.constrain_types(
+                            &mut infer_ctx,
+                            &var_map,
+                            *arg_inner,
+                            *target_inner,
+                            crate::types::InferencePriority::NakedTypeVariable,
+                        );
                     }
                 }
             }
@@ -1364,12 +1364,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .expect("inference substitution cache just initialized")
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
+                } else if !tp.is_const && !contra_only {
+                    crate::widen_literal_type(self.interner.as_type_database(), ty)
                 } else {
-                    if !tp.is_const && !contra_only {
-                        crate::widen_literal_type(self.interner.as_type_database(), ty)
-                    } else {
-                        ty
-                    }
+                    ty
                 }
             } else if let Some(default) = tp.default {
                 let ty =

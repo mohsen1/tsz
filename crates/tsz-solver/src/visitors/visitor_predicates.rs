@@ -182,6 +182,11 @@ pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
+/// Check if a type is a type query (typeof) type.
+pub fn is_type_query_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(types.lookup(type_id), Some(TypeData::TypeQuery(_)))
+}
+
 /// Check if a type is a template literal type.
 pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
