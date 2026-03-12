@@ -106,6 +106,36 @@ c?.foo;
 }
 
 #[test]
+fn test_unresolved_computed_class_method_contributes_indexed_callable_type() {
+    let source = r#"
+declare var something: string;
+export const dataSomething = `data-${something}` as const;
+
+class WithData {
+    [dataSomething]?() {
+        return "something";
+    }
+}
+
+const s: string = (new WithData())["ahahahaahah"]!();
+const n: number = (new WithData())["ahahahaahah"]!();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected only the number assignment to fail after unresolved computed method indexing is typed, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'string' is not assignable to type 'number'")),
+        "Expected the remaining failure to be the string-to-number assignment, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {
