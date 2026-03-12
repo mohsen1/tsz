@@ -721,6 +721,16 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
+        if self
+            .checker
+            .check_index_access_source_upper_bound_subtype(
+                self.checker.interner.index_access(object_type, key_type),
+                self.target,
+            )
+        {
+            return SubtypeResult::True;
+        }
+
         // If target is not an IndexAccess, we cannot prove subtyping.
         // Note: If S[I] could have been simplified to a concrete type that matches the target,
         // evaluate_type() in the caller (check_subtype) would have already handled it.
@@ -859,6 +869,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
     fn visit_this_type(&mut self) -> Self::Output {
         use crate::visitor::is_this_type;
+
+        if let Some(concrete_this) = self
+            .checker
+            .resolver
+            .resolve_this_type(self.checker.interner)
+            && concrete_this != self.source
+        {
+            return self.checker.check_subtype(concrete_this, self.target);
+        }
 
         // If target is also a 'this' type, they are compatible.
         // This handles cases like comparing two uninstantiated generic methods.
