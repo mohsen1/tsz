@@ -128,6 +128,13 @@ fn check_source_diagnostics_no_implicit_any(source: &str) -> Vec<crate::diagnost
     )
 }
 
+fn check_js_source_diagnostics_with_options(
+    source: &str,
+    options: crate::context::CheckerOptions,
+) -> Vec<crate::diagnostics::Diagnostic> {
+    crate::test_utils::check_source(source, "test.js", options)
+}
+
 #[test]
 fn no_ts7006_for_null_default_parameter() {
     // A parameter with `= null` should NOT trigger TS7006 because
@@ -164,6 +171,141 @@ fn ts7006_still_emitted_for_bare_parameter() {
         has_7006,
         "Expected TS7006 for bare parameter under noImplicitAny, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn js_empty_array_default_parameter_reports_implicit_any_array_under_no_implicit_any() {
+    let diags = check_js_source_diagnostics_with_options(
+        r#"
+/** @type {number | undefined} */
+var n;
+function f(a = null, b = n, l = []) {
+    b = "error";
+    l.push("ok");
+}
+"#,
+        crate::context::CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: false,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+
+    let ts7006_messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        ts7006_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'l' implicitly has an 'any[]' type.")),
+        "Expected JS empty-array default parameter to report TS7006 any[], got: {diags:?}"
+    );
+    assert!(
+        ts7006_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Expected JS null default parameter to report TS7006 any under non-strict null checks, got: {diags:?}"
+    );
+}
+
+#[test]
+fn js_null_default_parameter_still_only_reports_empty_array_implicit_any_in_strict_mode() {
+    let diags = check_js_source_diagnostics_with_options(
+        r#"
+function f(a = null, l = []) {
+            a = 1;
+    l.push("ok");
+}
+"#,
+        crate::context::CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+
+    let ts7006_messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 7006)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        !ts7006_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Did not expect JS null default parameter to report implicit any under strictNullChecks, got: {diags:?}"
+    );
+    assert!(
+        ts7006_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'l' implicitly has an 'any[]' type.")),
+        "Expected JS empty-array default parameter to report TS7006 any[] under strictNullChecks, got: {diags:?}"
+    );
+}
+
+#[test]
+fn js_undefined_default_parameter_reports_implicit_any_only_without_strict_null_checks() {
+    let non_strict = check_js_source_diagnostics_with_options(
+        r#"
+function f(a = undefined, l = []) {
+    a = 1;
+    l.push("ok");
+}
+"#,
+        crate::context::CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: false,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+    let non_strict_messages: Vec<_> = non_strict
+        .iter()
+        .filter(|d| d.code == 7006)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        non_strict_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Expected JS undefined default parameter to report TS7006 any without strictNullChecks, got: {non_strict:?}"
+    );
+
+    let strict = check_js_source_diagnostics_with_options(
+        r#"
+function f(a = undefined, l = []) {
+    a = 1;
+    l.push("ok");
+}
+"#,
+        crate::context::CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+    let strict_messages: Vec<_> = strict
+        .iter()
+        .filter(|d| d.code == 7006)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        !strict_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'a' implicitly has an 'any' type.")),
+        "Did not expect JS undefined default parameter to report implicit any under strictNullChecks, got: {strict:?}"
+    );
+    assert!(
+        strict_messages
+            .iter()
+            .any(|msg| msg.contains("Parameter 'l' implicitly has an 'any[]' type.")),
+        "Expected JS empty-array default parameter to keep reporting TS7006 any[] under strictNullChecks, got: {strict:?}"
     );
 }
 

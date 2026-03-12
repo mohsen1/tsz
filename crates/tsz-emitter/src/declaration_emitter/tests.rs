@@ -3109,6 +3109,34 @@ fn test_optional_computed_method_in_class_emits_optional_property_function_type(
     );
 }
 
+#[test]
+fn test_static_computed_methods_emit_body_inferred_return_types() {
+    let output = emit_dts(
+        r#"
+    export declare const f1: string;
+    export declare const f2: string;
+
+    export class Holder {
+        static [f1]() {
+            return { static: true };
+        }
+        static [f2]() {
+            return { static: "sometimes" };
+        }
+    }
+
+    export const staticLookup = Holder["x"];
+    "#,
+    );
+    assert!(
+        output.contains("static [f1]: () => {")
+            && output.contains("static: boolean;")
+            && output.contains("static [f2]: () => {")
+            && output.contains("static: string;"),
+        "Expected static computed methods to preserve body-inferred return types instead of () => any: {output}"
+    );
+}
+
 // =============================================================================
 // 11. Function Overloads
 // =============================================================================

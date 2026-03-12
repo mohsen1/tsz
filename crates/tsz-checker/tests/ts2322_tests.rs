@@ -1257,6 +1257,201 @@ fn test_ts2322_property_type_mismatch_includes_related_property_detail() {
 }
 
 #[test]
+fn test_ts2345_property_type_mismatch_includes_related_property_detail() {
+    let source = r#"
+        declare function takes(value: { one: number }): void;
+        const arg: { one: string } = { one: "" };
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for argument property type mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE
+                && info
+                    .message_text
+                    .contains("Types of property 'one' are incompatible.")
+        }),
+        "Expected TS2345 to include property incompatibility elaboration, got: {ts2345:?}"
+    );
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && info
+                    .message_text
+                    .contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "Expected TS2345 to include nested type mismatch elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_missing_many_properties_formats_related_detail_once() {
+    let source = r#"
+        declare function takes(value: { a: number; b: number; c: number; d: number; e: number }): void;
+        const arg = {};
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for missing-properties argument mismatch");
+
+    let related = ts2345
+        .related_information
+        .iter()
+        .find(|info| {
+            info.code
+                == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        })
+        .expect("expected TS2740 related detail under TS2345");
+
+    assert!(
+        related.message_text.contains("a, b, c, d, and 1 more."),
+        "Expected TS2345 related detail to format the extra-property suffix once, got: {related:?}"
+    );
+    assert!(
+        !related.message_text.contains("and 1 more., and 1 more."),
+        "Expected TS2345 related detail to avoid duplicating the extra-property suffix, got: {related:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_optional_property_required_includes_related_missing_property_detail() {
+    let source = r#"
+        declare function takes(value: { one: number }): void;
+        const arg: { one?: number } = {};
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for optional-to-required argument mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                && info
+                    .message_text
+                    .contains("Property 'one' is missing in type")
+        }),
+        "Expected TS2345 to include missing-property elaboration for optional-to-required mismatch, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
+    let source = r#"
+        declare function takes(cb: () => number): void;
+        const cb: () => string = () => "";
+        takes(cb);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for function return type mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Return type 'string' is not assignable to 'number'.")
+        }),
+        "Expected TS2345 to include return-type elaboration, got: {ts2345:?}"
+    );
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && info
+                    .message_text
+                    .contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "Expected TS2345 to include nested type mismatch under the return-type detail, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_index_signature_mismatch_includes_related_detail() {
+    let source = r#"
+        declare function takes(value: { [key: string]: number }): void;
+        const arg: { [key: string]: string } = { a: "" };
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for index-signature mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text.contains(
+                "string index signature is incompatible: 'string' is not assignable to 'number'.",
+            )
+        }),
+        "Expected TS2345 to include index-signature elaboration, got: {ts2345:?}"
+    );
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && info
+                    .message_text
+                    .contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "Expected TS2345 to include nested type mismatch under index-signature elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_missing_index_signature_includes_related_detail() {
+    let source = r#"
+        declare function takes(value: { [index: number]: number }): void;
+        interface Arg { one: number; two?: string; }
+        const arg: Arg = { one: 1 };
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for missing-index-signature mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE
+                && info
+                    .message_text
+                    .contains("Index signature for type 'number' is missing in type 'Arg'.")
+        }),
+        "Expected TS2345 to include missing-index-signature elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;

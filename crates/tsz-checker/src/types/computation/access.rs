@@ -48,8 +48,51 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
 const MAX_AWAIT_DEPTH: u32 = 10;
 
 impl<'a> CheckerState<'a> {
+    fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(key_expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(key_expr_idx);
+                self.ctx.preserve_literal_types = prev;
+
+                if let Some(lit) = tsz_solver::visitor::literal_value(self.ctx.types, key_type) {
+                    return Some(match lit {
+                        tsz_solver::types::LiteralValue::String(s) => {
+                            self.ctx.types.resolve_atom(s).to_string()
+                        }
+                        tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
+                        tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
+                        tsz_solver::types::LiteralValue::BigInt(b) => {
+                            self.ctx.types.resolve_atom(b).to_string()
+                        }
+                    });
+                }
+
+                if let Some(sym_ref) =
+                    tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type)
+                {
+                    return Some(format!("__unique_{}", sym_ref.0));
+                }
+
+                self.ctx
+                    .arena
+                    .get_identifier(node)
+                    .map(|ident| ident.escaped_text.clone())
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
     fn is_expando_element_access_read(
-        &self,
+        &mut self,
         object_expr_idx: NodeIndex,
         key_expr_idx: NodeIndex,
     ) -> bool {
@@ -68,26 +111,10 @@ impl<'a> CheckerState<'a> {
             None
         }
 
-        fn expando_element_key(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-            let node = arena.get(idx)?;
-            match node.kind {
-                k if k == SyntaxKind::Identifier as u16 => {
-                    arena.get_identifier(node).map(|id| id.escaped_text.clone())
-                }
-                k if k == SyntaxKind::StringLiteral as u16
-                    || k == SyntaxKind::NumericLiteral as u16
-                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-                {
-                    arena.get_literal(node).map(|lit| lit.text.clone())
-                }
-                _ => None,
-            }
-        }
-
         let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
             return false;
         };
-        let Some(prop_key) = expando_element_key(self.ctx.arena, key_expr_idx) else {
+        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
             return false;
         };
 
@@ -244,8 +271,17 @@ impl<'a> CheckerState<'a> {
         let index_type = self.get_type_of_node(access.name_or_argument);
         self.ctx.preserve_literal_types = prev_preserve;
 
-        // Propagate error from index expression to suppress cascading errors
+        // Preserve the write target when the index expression already errored.
         if index_type == TypeId::ERROR {
+            if self.ctx.skip_flow_narrowing
+                && let Some(recovered_type) = self
+                    .recover_assignment_target_type_for_errored_element_index(
+                        object_type_for_access,
+                        access.name_or_argument,
+                    )
+            {
+                return recovered_type;
+            }
             return TypeId::ERROR;
         }
 
@@ -1084,6 +1120,48 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    fn recover_assignment_target_type_for_errored_element_index(
+        &mut self,
+        object_type: TypeId,
+        index_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        if matches!(
+            object_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return None;
+        }
+
+        if let Some(index) = self
+            .get_number_value_from_element_index(index_expr)
+            .filter(|value| value.is_finite() && value.fract() == 0.0 && *value >= 0.0)
+            .and_then(|value| self.get_numeric_index_from_number(value))
+        {
+            let recovered = self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+            if recovered != TypeId::ERROR {
+                return Some(recovered);
+            }
+        }
+
+        let candidate_indices: &[TypeId] = if self.is_array_like_type(object_type) {
+            &[TypeId::NUMBER, TypeId::STRING]
+        } else {
+            &[TypeId::STRING, TypeId::NUMBER]
+        };
+
+        for &candidate_index in candidate_indices {
+            if self.should_report_no_index_signature(object_type, candidate_index, None) {
+                continue;
+            }
+            let recovered = self.get_element_access_type(object_type, candidate_index, None);
+            if recovered != TypeId::ERROR {
+                return Some(recovered);
+            }
+        }
+
+        None
     }
 
     fn union_has_missing_concrete_element_access(
