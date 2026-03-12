@@ -523,6 +523,53 @@ impl<'a> CheckerState<'a> {
     ///   the search
     /// - Reaching an enum member before a function boundary means `this` is invalid
     ///   in the enum initializer
+    ///
+    /// Returns true if `this` at `idx` is inside an enum member initializer
+    /// and there is an arrow function between `this` and the enum member.
+    /// Used to suppress the TS2683 companion diagnostic in arrow captures.
+    pub(crate) fn has_enclosing_arrow_before_enum(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, ENUM_MEMBER, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR,
+        };
+        let mut current = idx;
+        let mut found_arrow = false;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            match node.kind {
+                k if k == ARROW_FUNCTION => {
+                    found_arrow = true;
+                    continue;
+                }
+                k if k == FUNCTION_DECLARATION
+                    || k == FUNCTION_EXPRESSION
+                    || k == METHOD_DECLARATION
+                    || k == CONSTRUCTOR
+                    || k == GET_ACCESSOR
+                    || k == SET_ACCESSOR =>
+                {
+                    return false;
+                }
+                k if k == ENUM_MEMBER => return found_arrow,
+                _ => continue,
+            }
+        }
+    }
+
     pub(crate) fn is_this_in_enum_member_initializer(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CONSTRUCTOR, ENUM_MEMBER, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,

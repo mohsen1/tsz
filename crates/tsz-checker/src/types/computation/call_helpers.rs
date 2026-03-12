@@ -322,6 +322,21 @@ impl<'a> CheckerState<'a> {
             return self.get_class_constructor_type(decl_idx, class_data);
         }
 
+        // For literal expression nodes (e.g. `export default "./foo"` where
+        // the value_declaration is the string literal itself), evaluate the
+        // expression type. Only handle simple literals to avoid incorrect
+        // cross-file evaluation of complex expressions like property accesses.
+        use tsz_scanner::SyntaxKind;
+        let kind = node.kind;
+        if kind == SyntaxKind::StringLiteral as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::TrueKeyword as u16
+            || kind == SyntaxKind::FalseKeyword as u16
+            || kind == SyntaxKind::NullKeyword as u16
+        {
+            return self.get_type_of_node(decl_idx);
+        }
+
         TypeId::UNKNOWN
     }
 
