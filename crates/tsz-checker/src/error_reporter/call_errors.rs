@@ -1328,10 +1328,10 @@ impl<'a> CheckerState<'a> {
                     // TS2740: Type 'X' is missing the following properties from type 'Y': a, b, c, and N more.
                     let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
                     let more = count - 4;
-                    let props_str = format!("{}, and {} more.", shown.join(", "), more);
+                    let props_str = shown.join(", ");
                     let msg = format_message(
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
-                        &[&src_str, &tgt_str, &props_str],
+                        &[&src_str, &tgt_str, &props_str, &more.to_string()],
                     );
                     Some(vec![DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
