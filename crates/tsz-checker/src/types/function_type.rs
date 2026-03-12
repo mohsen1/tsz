@@ -226,11 +226,33 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let js_constructor_instance_type = if self.is_js_file() && is_function_declaration {
-            self.synthesize_js_constructor_instance_type(idx, TypeId::ANY, &[])
+        let js_constructor_target = if self.is_js_file() && !is_arrow_function {
+            if is_function_declaration {
+                Some(idx)
+            } else if is_closure {
+                self.ctx
+                    .arena
+                    .get_extended(idx)
+                    .map(|ext| ext.parent)
+                    .filter(|parent| {
+                        self.ctx
+                            .arena
+                            .get(*parent)
+                            .is_some_and(|node| {
+                                node.kind
+                                    == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                            })
+                    })
+            } else {
+                None
+            }
         } else {
             None
         };
+        let js_constructor_instance_type = js_constructor_target
+            .and_then(|target_idx| {
+                self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
+            });
 
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.

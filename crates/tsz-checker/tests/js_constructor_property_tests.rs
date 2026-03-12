@@ -426,8 +426,8 @@ b.m(2);
 }
 
 #[test]
-fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types()
- {
+fn test_variable_assigned_function_constructors_with_chained_prototype_object_preserve_method_types(
+) {
     let source = r#"
 var A = function A() {
     this.a = 1;
@@ -572,6 +572,65 @@ a.empty.push("ok");
         relevant.len(),
         0,
         "Expected plain JS function constructors to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_js_function_constructor_with_factory_guard_is_constructable() {
+    let source = r#"
+/** @param {number} x */
+function A(x) {
+    if (!(this instanceof A)) {
+        return new A(x);
+    }
+    this.x = x;
+}
+var j = new A(2);
+j.x;
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected JS constructor with factory guard to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_variable_assigned_js_constructor_with_prototype_object_types_this_members() {
+    let source = r#"
+/** @constructor */
+var Multimap = function() {
+    this._map = {};
+    this._map;
+};
+Multimap.prototype = {
+    /** @param {number} n */
+    set: function(n) {
+        this._map;
+    },
+    get() {
+        this._map;
+    }
+};
+var mm = new Multimap();
+mm._map;
+mm.set(1);
+mm.get();
+"#;
+    let diagnostics = check_js(source);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339 | 7006))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected variable-assigned JS constructor with prototype object to avoid TS2683/TS7009/TS2339/TS7006, got: {diagnostics:?}"
     );
 }
 
