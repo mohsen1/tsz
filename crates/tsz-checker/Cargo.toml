@@ -119,5 +119,9 @@ path = "tests/static_member_access_types.rs"
 name = "contextual_tuple_tests"
 path = "tests/contextual_tuple_tests.rs"
 
+[[test]]
+name = "co_contra_inference_tests"
+path = "tests/co_contra_inference_tests.rs"
+
 [lints]
 workspace = true

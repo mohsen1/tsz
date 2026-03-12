@@ -59,6 +59,36 @@ fn instantiate_call_type(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn get_overloaded_source_signature(
+        db: &dyn crate::TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<FunctionShape> {
+        let signatures = crate::type_queries::get_call_signatures(db, type_id)
+            .filter(|signatures| !signatures.is_empty())
+            .or_else(|| {
+                crate::type_queries::get_construct_signatures(db, type_id)
+                    .filter(|signatures| !signatures.is_empty())
+            })?;
+        let sig = signatures.last()?;
+        Some(FunctionShape {
+            type_params: sig.type_params.clone(),
+            params: sig.params.clone(),
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate.clone(),
+            is_constructor: false,
+            is_method: sig.is_method,
+        })
+    }
+
+    fn get_source_signature_for_inference(
+        db: &dyn crate::TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<FunctionShape> {
+        Self::get_overloaded_source_signature(db, type_id)
+            .or_else(|| Self::get_contextual_signature(db, type_id))
+    }
+
     fn should_use_contextual_return_substitution(
         &self,
         inferred: TypeId,
@@ -877,13 +907,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
                 if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
-                    // Check if evaluation produces function types (variance-sensitive).
-                    // This includes unions that contain functions (e.g., Func2<T> = ((x: T) => void) | undefined).
-                    // Function types have variance-sensitive parameters, and direct arg matching
-                    // would add covariant candidates where contravariant ones are needed.
-                    let evaluated_target = self.checker.evaluate_type(contextual_target_type);
-                    let evaluates_to_function = self.type_evaluates_to_function(evaluated_target);
-                    if !evaluates_to_function {
+                    if self.should_directly_constrain_same_base_application(
+                        source_for_inference,
+                        contextual_target_type,
+                    ) {
                         for (arg_inner, target_inner) in
                             arg_app.args.iter().zip(target_app.args.iter())
                         {
@@ -1199,6 +1226,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let ty = if has_constraints {
                 let mut resolved_direct = None;
+                let contra_only = infer_ctx.has_only_contra_candidates(var);
 
                 if direct_param_vars.contains(&var)
                     && let Some(constraint_ty) = tp.constraint
@@ -1253,11 +1281,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 self.resolve_return_position_inference_type(&lower_bounds, ty)
                             } else if direct_param_vars.contains(&var) {
                                 self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
-                            } else {
-                                ty
-                            };
-                            let ty = if !tp.is_const {
-                                crate::widen_literal_type(self.interner.as_type_database(), ty)
                             } else {
                                 ty
                             };
@@ -1318,14 +1341,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             } else {
                                 fallback
                             };
-                            let fallback = if !tp.is_const {
-                                crate::widen_literal_type(
-                                    self.interner.as_type_database(),
-                                    fallback,
-                                )
-                            } else {
-                                fallback
-                            };
                             trace!(
                                 fallback_type = ?fallback,
                                 use_inferred = use_inferred,
@@ -1350,7 +1365,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
                 } else {
-                    ty
+                    if !tp.is_const && !contra_only {
+                        crate::widen_literal_type(self.interner.as_type_database(), ty)
+                    } else {
+                        ty
+                    }
                 }
             } else if let Some(default) = tp.default {
                 let ty =
@@ -1764,7 +1783,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some((s_app_id, t_app_id)) = raw_apps.or(evaluated_apps) {
             let s_app = self.interner.type_application(s_app_id);
             let t_app = self.interner.type_application(t_app_id);
-            if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+            if s_app.base == t_app.base
+                && s_app.args.len() == t_app.args.len()
+                && self.should_directly_constrain_same_base_application(source_ty, target_ty)
+            {
                 constrained_structurally = true;
                 for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                     self.constrain_types(infer_ctx, var_map, *s_arg, *t_arg, priority);
@@ -1773,14 +1795,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let raw_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty),
+            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
             Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
             _ => None,
         };
         let evaluated_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), evaluated_source_ty),
+            Self::get_source_signature_for_inference(
+                self.interner.as_type_database(),
+                evaluated_source_ty,
+            ),
             Self::get_contextual_signature(self.interner.as_type_database(), evaluated_target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
@@ -1882,11 +1907,94 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    fn partial_round1_object_pair(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        let source_ty = self.checker.evaluate_type(source_ty);
+        let target_ty = self.checker.evaluate_type(target_ty);
+
+        let (Some(source_obj), Some(target_obj)) =
+            (
+                match self.interner.lookup(source_ty) {
+                    Some(TypeData::Object(shape_id))
+                    | Some(TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+                    _ => None,
+                },
+                match self.interner.lookup(target_ty) {
+                    Some(TypeData::Object(shape_id))
+                    | Some(TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+                    _ => None,
+                },
+            )
+        else {
+            return None;
+        };
+
+        let source_shape = self.interner.object_shape(source_obj);
+        let target_shape = self.interner.object_shape(target_obj);
+
+        let mut target_props_by_name: FxHashMap<_, _> = FxHashMap::default();
+        for prop in &target_shape.properties {
+            target_props_by_name.insert(prop.name, prop);
+        }
+
+        let mut source_properties = Vec::new();
+        let mut target_properties = Vec::new();
+        for prop in &source_shape.properties {
+            if self.is_contextually_sensitive(prop.type_id) {
+                continue;
+            }
+
+            if let Some(target_prop) = target_props_by_name.get(&prop.name) {
+                source_properties.push(prop.clone());
+                target_properties.push((**target_prop).clone());
+            }
+        }
+
+        if source_properties.is_empty() {
+            return None;
+        }
+
+        if source_properties.len() == source_shape.properties.len()
+            && target_properties.len() == target_shape.properties.len()
+        {
+            return Some((source_ty, target_ty));
+        }
+
+        let mut source_shape = (*source_shape).clone();
+        source_shape.properties = source_properties;
+
+        let mut target_shape = (*target_shape).clone();
+        target_shape.properties = target_properties;
+
+        Some((
+            self.interner.object_with_index(source_shape),
+            self.interner.object_with_index(target_shape),
+        ))
+    }
+
     fn contextual_round1_arg_types(
-        &self,
+        &mut self,
         arg_type: TypeId,
         target_type: TypeId,
     ) -> Option<(TypeId, TypeId)> {
+        if let (Some(mut source_fn), Some(mut target_fn)) = (
+            Self::get_contextual_signature(self.interner.as_type_database(), arg_type),
+            Self::get_contextual_signature(self.interner.as_type_database(), target_type),
+        ) && source_fn.params.len() == target_fn.params.len()
+            && let Some((source_return, target_return)) =
+                self.partial_round1_object_pair(source_fn.return_type, target_fn.return_type)
+        {
+            source_fn.return_type = source_return;
+            target_fn.return_type = target_return;
+            return Some((
+                self.interner.function(source_fn),
+                self.interner.function(target_fn),
+            ));
+        }
+
         if !self.is_contextually_sensitive(arg_type) {
             return Some((arg_type, target_type));
         }
@@ -1964,7 +2072,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) -> bool {
         let raw_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty),
+            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
             Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
@@ -1973,7 +2081,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
         let evaluated_functions = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), evaluated_source_ty),
+            Self::get_source_signature_for_inference(
+                self.interner.as_type_database(),
+                evaluated_source_ty,
+            ),
             Self::get_contextual_signature(self.interner.as_type_database(), evaluated_target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
@@ -2056,12 +2167,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let evaluated_source_ty = self.interner.evaluate_type(source_ty);
         let evaluated_target_ty = self.interner.evaluate_type(target_ty);
         let function_info = match (
-            Self::get_contextual_signature(self.interner.as_type_database(), source_ty),
+            Self::get_source_signature_for_inference(self.interner.as_type_database(), source_ty),
             Self::get_contextual_signature(self.interner.as_type_database(), target_ty),
         ) {
             (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
             _ => match (
-                Self::get_contextual_signature(
+                Self::get_source_signature_for_inference(
                     self.interner.as_type_database(),
                     evaluated_source_ty,
                 ),
@@ -2630,7 +2741,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) {
                 let arg_app = self.interner.type_application(arg_app_id);
                 let target_app = self.interner.type_application(target_app_id);
-                if arg_app.base == target_app.base && arg_app.args.len() == target_app.args.len() {
+                if arg_app.base == target_app.base
+                    && arg_app.args.len() == target_app.args.len()
+                    && self.should_directly_constrain_same_base_application(
+                        contextual_arg_type,
+                        contextual_target_type,
+                    )
+                {
                     for (arg_inner, target_inner) in arg_app.args.iter().zip(target_app.args.iter())
                     {
                         self.constrain_types(

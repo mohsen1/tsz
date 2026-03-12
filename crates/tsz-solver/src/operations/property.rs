@@ -212,6 +212,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
             },
         )
     }
+
+    pub(crate) fn is_deferred_any_fallback_member(&self, type_id: TypeId) -> bool {
+        matches!(
+            self.interner().lookup(type_id),
+            Some(
+                TypeData::IndexAccess(_, _)
+                    | TypeData::Mapped(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::TypeQuery(_)
+            )
+        )
+    }
 }
 
 impl<'a> PropertyAccessEvaluator<'a> {
@@ -466,6 +478,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 let mut results = Vec::new();
                 let mut any_from_index = false;
+                let mut saw_deferred_any_fallback = false;
                 let mut nullable_causes = Vec::new();
                 let mut saw_unknown = false;
 
@@ -476,6 +489,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             from_index_signature,
                             ..
                         } => {
+                            if type_id == TypeId::ANY
+                                && !from_index_signature
+                                && self.is_deferred_any_fallback_member(member)
+                            {
+                                saw_deferred_any_fallback = true;
+                                continue;
+                            }
                             results.push(type_id);
                             if from_index_signature {
                                 any_from_index = true;
@@ -511,6 +531,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
                     if saw_unknown {
                         return PropertyAccessResult::IsUnknown;
+                    }
+                    if saw_deferred_any_fallback {
+                        return PropertyAccessResult::simple(TypeId::ANY);
                     }
 
                     // Before giving up, check if any member has an index signature

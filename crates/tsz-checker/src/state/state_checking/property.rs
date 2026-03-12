@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeData, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn check_excess_property_initializer_implicit_any(
@@ -1293,6 +1293,7 @@ impl<'a> CheckerState<'a> {
             let prop_atom = self.ctx.types.intern_string(prop_name);
             let mut member_results = Vec::new();
             let mut any_from_index = false;
+            let mut saw_deferred_any_fallback = false;
 
             for member in members {
                 match self.resolve_property_access_with_env(member, prop_name) {
@@ -1301,6 +1302,21 @@ impl<'a> CheckerState<'a> {
                         from_index_signature,
                         ..
                     } => {
+                        if type_id == TypeId::ANY
+                            && !from_index_signature
+                            && matches!(
+                                self.ctx.types.lookup(member),
+                                Some(
+                                    TypeData::IndexAccess(_, _)
+                                        | TypeData::Mapped(_)
+                                        | TypeData::Conditional(_)
+                                        | TypeData::TypeQuery(_)
+                                )
+                            )
+                        {
+                            saw_deferred_any_fallback = true;
+                            continue;
+                        }
                         member_results.push(type_id);
                         any_from_index |= from_index_signature;
                     }
@@ -1321,6 +1337,10 @@ impl<'a> CheckerState<'a> {
                     write_type: None,
                     from_index_signature: any_from_index,
                 };
+            }
+
+            if saw_deferred_any_fallback {
+                return tsz_solver::operations::property::PropertyAccessResult::simple(TypeId::ANY);
             }
 
             result = tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {

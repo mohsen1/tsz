@@ -2,9 +2,11 @@
 
 use crate::query_boundaries::assignability as assign_query;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::visitor;
 use tsz_solver::{CallResult, TypeId};
 
 pub(super) struct CallResultContext<'a> {
@@ -58,6 +60,92 @@ impl<'a> CheckerState<'a> {
                     && tsz_solver::widen_literal_type(self.ctx.types, candidate) == expected
             })
             .unwrap_or(expected)
+    }
+
+    fn is_generic_callable_against_nongeneric_target(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        let Some(source_fn) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            actual,
+        ) else {
+            return false;
+        };
+        let Some(target_fn) = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            expected,
+        ) else {
+            return false;
+        };
+        !source_fn.type_params.is_empty() && target_fn.type_params.is_empty()
+    }
+
+    fn generic_callable_mismatch_display_target(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Option<TypeId> {
+        let source_fn = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            actual,
+        )?;
+        let target_fn = crate::query_boundaries::checkers::call::get_contextual_signature(
+            self.ctx.types,
+            expected,
+        )?;
+        if source_fn.type_params.is_empty() || !target_fn.type_params.is_empty() {
+            return None;
+        }
+
+        let tracked_type_params: FxHashSet<_> =
+            source_fn.type_params.iter().map(|tp| tp.name).collect();
+        let mut substitution = tsz_solver::TypeSubstitution::new();
+
+        for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter()) {
+            let target_type = if target_param.optional {
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![target_param.type_id, TypeId::UNDEFINED])
+            } else {
+                target_param.type_id
+            };
+            if matches!(target_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                continue;
+            }
+
+            for ty in visitor::collect_all_types(self.ctx.types, source_param.type_id) {
+                let Some(tp) = tsz_solver::type_param_info(self.ctx.types, ty) else {
+                    continue;
+                };
+                if tracked_type_params.contains(&tp.name) && substitution.get(tp.name).is_none() {
+                    substitution.insert(tp.name, target_type);
+                }
+            }
+        }
+
+        if substitution.is_empty() {
+            return None;
+        }
+
+        let return_type =
+            tsz_solver::instantiate_type(self.ctx.types, source_fn.return_type, &substitution);
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params: vec![],
+                    params: target_fn.params.clone(),
+                    this_type: target_fn.this_type,
+                    return_type,
+                    type_predicate: target_fn.type_predicate.clone(),
+                    is_constructor: target_fn.is_constructor,
+                    is_method: target_fn.is_method,
+                }),
+        )
     }
 
     /// Handle the result of a call evaluation, emitting diagnostics for errors
@@ -228,8 +316,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let reported_actual = arg_types.get(index).copied().unwrap_or(actual);
-                let reported_expected =
-                    self.preferred_literal_expected_for_mismatch(arg_types, index, expected);
+                let reported_expected = self
+                    .generic_callable_mismatch_display_target(actual, expected)
+                    .unwrap_or(expected);
+                let reported_expected = self.preferred_literal_expected_for_mismatch(
+                    arg_types,
+                    index,
+                    reported_expected,
+                );
                 let mut elaborated = false;
                 let should_try_deferred_elaboration = self
                     .should_attempt_deferred_literal_elaboration(expected)
@@ -315,7 +409,9 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                if fallback_return != TypeId::ERROR {
+                if self.is_generic_callable_against_nongeneric_target(actual, expected) {
+                    TypeId::UNKNOWN
+                } else if fallback_return != TypeId::ERROR {
                     fallback_return
                 } else if let Some(return_type) =
                     crate::query_boundaries::assignability::get_function_return_type(

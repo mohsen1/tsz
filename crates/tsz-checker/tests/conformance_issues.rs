@@ -9998,6 +9998,34 @@ call(...sa, (...x) => 42);
     );
 }
 
+#[test]
+fn test_zero_param_callback_partial_return_participates_in_round1_inference() {
+    let source = r#"
+interface Foo<A> {
+    a: A;
+    b: (x: A) => void;
+}
+
+declare function canYouInferThis<A>(fn: () => Foo<A>): A;
+
+const result = canYouInferThis(() => ({
+    a: { BLAH: 33 },
+    b: x => { }
+}));
+
+result.BLAH;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Round 1 should infer from the non-sensitive callback return member and avoid TS2345. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Round 2 should contextualize the callback parameter after inference. Got: {diagnostics:?}"
+    );
+}
+
 /// Return type inference should use narrowed types from type guard predicates.
 /// When `isFunction(item)` narrows `item` to `Extract<T, Function>` inside an
 /// if-block, the inferred return type should reflect the narrowed type, not the
@@ -13167,6 +13195,70 @@ const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 1
 }
 
 #[test]
+fn test_contextual_signature_instantiation_reports_generic_callback_mismatch() {
+    let source = r#"
+declare function foo<T>(cb: (x: number, y: string) => T): T;
+declare function bar<T, U, V>(x: T, y: U, cb: (x: T, y: U) => V): V;
+declare function g<T>(x: T, y: T): T;
+
+var b = foo(g);
+var c = bar(1, "one", g);
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 2,
+        "Expected TS2345 on both generic callback mismatch sites.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_generic_call_with_overloaded_callback_uses_last_source_signature() {
+    let source = r#"
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+declare function testFunction(n: number): Promise<number>;
+declare function testFunction(s: string): Promise<string>;
+
+declare var numPromise: Promise<number>;
+var newPromise = numPromise.then(testFunction);
+"#;
+
+    let options = CheckerOptions {
+        strict: true,
+        target: ScriptTarget::ES2015,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    let ts2345_count = relevant.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 1,
+        "Expected TS2345 for overloaded callback generic call.\nActual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
 fn test_type_assertion_does_not_contextually_check_plain_coalesce_expression() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
@@ -13380,5 +13472,141 @@ const y: IP = gp;
     assert!(
         has_error(&diagnostics, 2322),
         "Expected TS2322 for incompatible union-of-tuple rest methods. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_spy_comparison_checking_reports_ts2339() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface Spy {
+    (...params: any[]): any;
+    identity: string;
+    and: Function;
+    mostRecentCall: { args: any[]; };
+    argsForCall: any[];
+}
+
+type SpyObj<T> = T & {
+    [k in keyof T]: Spy;
+}
+
+declare function createSpyObj<T>(
+    name: string, names: Array<keyof T>): SpyObj<T>;
+
+function mock<T>(spyName: string, methodNames: Array<keyof T>): SpyObj<T> {
+    const spyObj = createSpyObj<T>(spyName, methodNames);
+    for (const methodName of methodNames) {
+        spyObj[methodName].and.returnValue(1);
+    }
+    return spyObj;
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 for Function.returnValue access in spy comparison checking. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_function_type_missing_property_reports_ts2339() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+declare let f: Function;
+f.returnValue(1);
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 for missing property on Function. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_spy_and_property_preserves_function_type_for_missing_property() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface Spy {
+    (...params: any[]): any;
+    and: Function;
+}
+
+declare let spy: Spy;
+spy.and.returnValue(1);
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 for missing property through Spy.and. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_mapped_index_access_preserves_function_type_for_missing_property() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
+        "test.ts",
+        r#"
+interface Spy {
+    (...params: any[]): any;
+    and: Function;
+}
+
+type SpyMap<T> = {
+    [k in keyof T]: Spy;
+}
+
+function mock<T>(spyObj: SpyMap<T>, methodName: keyof T): SpyMap<T> {
+    spyObj[methodName].and.returnValue(1);
+    return spyObj;
+}
+"#,
+        CheckerOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 for missing property through generic mapped index access. Actual diagnostics: {diagnostics:#?}"
     );
 }

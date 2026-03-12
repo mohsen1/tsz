@@ -341,6 +341,56 @@ fn test_intersection_property_not_on_any_member() {
     assert_property_not_found(&evaluator.resolve_property_access(intersection, "z"));
 }
 
+#[test]
+fn test_intersection_ignores_deferred_any_fallback_when_other_member_has_property() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.intern(TypeData::TypeParameter(t_info));
+    let keyof_t = interner.keyof(t_param);
+    let deferred_member = interner.index_access(t_param, keyof_t);
+
+    let and_name = interner.intern_string("and");
+    let spy = interner.object(vec![PropertyInfo::new(and_name, TypeId::STRING)]);
+    let intersection = interner.intersection(vec![deferred_member, spy]);
+
+    assert_property_success(
+        &evaluator.resolve_property_access(intersection, "and"),
+        TypeId::STRING,
+    );
+}
+
+#[test]
+fn test_union_ignores_deferred_any_fallback_when_other_member_has_property() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_param = interner.intern(TypeData::TypeParameter(t_info));
+    let keyof_t = interner.keyof(t_param);
+    let deferred_member = interner.index_access(t_param, keyof_t);
+
+    let and_name = interner.intern_string("and");
+    let spy = interner.object(vec![PropertyInfo::new(and_name, TypeId::STRING)]);
+    let union = interner.union(vec![deferred_member, spy]);
+
+    assert_property_success(
+        &evaluator.resolve_property_access(union, "and"),
+        TypeId::STRING,
+    );
+}
+
 // =============================================================================
 // Index signature access
 // =============================================================================
