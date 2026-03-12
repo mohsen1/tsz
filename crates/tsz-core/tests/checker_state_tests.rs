@@ -3428,8 +3428,7 @@ const { foo } = require("bar");
         .diagnostics
         .iter()
         .filter(|diag| {
-            diag.code
-                == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
         })
         .collect();
     assert_eq!(
@@ -3488,7 +3487,12 @@ const { foo } = require("bar");
     checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
-    let codes: Vec<_> = checker.ctx.diagnostics.iter().map(|diag| diag.code).collect();
+    let codes: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
     assert!(
         !codes
             .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
