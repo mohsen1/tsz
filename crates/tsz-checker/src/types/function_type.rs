@@ -966,6 +966,12 @@ impl<'a> CheckerState<'a> {
                 return_type = jsdoc_return_context.unwrap_or(inferred);
 
                 if let Some(instance_type) = js_constructor_instance_type
+                    && (return_type == TypeId::UNDEFINED || return_type == TypeId::VOID)
+                {
+                    return_type = instance_type;
+                }
+
+                if let Some(instance_type) = js_constructor_instance_type
                     && let Some(union_members) =
                         tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
                     && union_members.len() == 2
