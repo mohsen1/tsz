@@ -2418,6 +2418,225 @@ fn test_declaration_emit_spread_with_external_unique_symbol_key_emits_ts4023() {
     );
 }
 
+#[test]
+fn debug_declaration_emit_spread_external_unique_symbol_shapes() {
+    let files = [
+        (
+            "lib.d.ts",
+            "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ninterface Symbol {}\ninterface SymbolConstructor { (): symbol; }\ndeclare var Symbol: SymbolConstructor;\n",
+        ),
+        (
+            "type.ts",
+            "export namespace Foo {\n  export const sym = Symbol();\n}\nexport type Type = { x?: { [Foo.sym]: 0 } };\n",
+        ),
+        (
+            "index.ts",
+            "import { type Type } from './type';\nexport const foo = { ...({} as Type) };\n",
+        ),
+    ];
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == "index.ts")
+        .expect("entry file should exist");
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+
+    let foo_sym = checker
+        .ctx
+        .binder
+        .file_locals
+        .get("foo")
+        .expect("foo symbol");
+    let type_import_sym = checker
+        .ctx
+        .binder
+        .file_locals
+        .get("Type")
+        .expect("imported Type symbol");
+    let type_export_sym = checker
+        .ctx
+        .get_binder_for_file(1)
+        .and_then(|binder| binder.file_locals.get("Type"))
+        .expect("exported Type symbol");
+
+    let foo_type = checker.get_type_of_symbol(foo_sym);
+    let import_type = checker.get_type_of_symbol(type_import_sym);
+    let export_type = checker.get_type_of_symbol(type_export_sym);
+
+    eprintln!("foo_type={}", checker.format_type(foo_type));
+    eprintln!("import_type={}", checker.format_type(import_type));
+    eprintln!("export_type={}", checker.format_type(export_type));
+
+    if let Some(import_alias_type) = checker.ctx.import_type_alias_types.get(&type_import_sym) {
+        eprintln!("import_alias_type={}", checker.format_type(*import_alias_type));
+    }
+
+    if let Some(shape) = tsz_solver::type_queries::get_object_shape(checker.ctx.types, foo_type) {
+        for prop in &shape.properties {
+            let name = checker.ctx.types.resolve_atom(prop.name);
+            eprintln!(
+                "foo prop {} optional={} readonly={} type={}",
+                name,
+                prop.optional,
+                prop.readonly,
+                checker.format_type(prop.type_id)
+            );
+            if let Some(inner) =
+                tsz_solver::type_queries::get_object_shape(checker.ctx.types, prop.type_id)
+            {
+                for inner_prop in &inner.properties {
+                    eprintln!(
+                        "  inner prop {} type={}",
+                        checker.ctx.types.resolve_atom(inner_prop.name),
+                        checker.format_type(inner_prop.type_id)
+                    );
+                }
+            }
+        }
+    }
+
+    let mut type_file_checker = CheckerState::new(
+        all_arenas[1].as_ref(),
+        all_binders[1].as_ref(),
+        &types,
+        "type.ts".to_string(),
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+    type_file_checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    type_file_checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    type_file_checker.ctx.set_current_file_idx(1);
+    type_file_checker.ctx.set_lib_contexts(Vec::new());
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    type_file_checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    type_file_checker.ctx.set_resolved_modules(resolved_modules);
+    type_file_checker.check_source_file(roots[1]);
+    let direct_export_type = type_file_checker.get_type_of_symbol(type_export_sym);
+    eprintln!(
+        "direct_export_type={}",
+        type_file_checker.format_type(direct_export_type)
+    );
+    if let Some(shape) =
+        tsz_solver::type_queries::get_object_shape(type_file_checker.ctx.types, direct_export_type)
+    {
+        for prop in &shape.properties {
+            eprintln!(
+                "direct prop {} optional={} readonly={} type={}",
+                type_file_checker.ctx.types.resolve_atom(prop.name),
+                prop.optional,
+                prop.readonly,
+                type_file_checker.format_type(prop.type_id)
+            );
+            if let Some(inner) =
+                tsz_solver::type_queries::get_object_shape(type_file_checker.ctx.types, prop.type_id)
+            {
+                for inner_prop in &inner.properties {
+                    eprintln!(
+                        "  direct inner prop {} type={}",
+                        type_file_checker.ctx.types.resolve_atom(inner_prop.name),
+                        type_file_checker.format_type(inner_prop.type_id)
+                    );
+                }
+            }
+        }
+    }
+
+    let foo_ns = type_file_checker
+        .ctx
+        .binder
+        .file_locals
+        .get("Foo")
+        .expect("Foo namespace");
+    let foo_ns_symbol = type_file_checker
+        .ctx
+        .binder
+        .get_symbol(foo_ns)
+        .expect("Foo namespace symbol");
+    eprintln!(
+        "Foo exports={:?} members={:?}",
+        foo_ns_symbol
+            .exports
+            .as_ref()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>()),
+        foo_ns_symbol
+            .members
+            .as_ref()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+    );
+    let sym_id = foo_ns_symbol
+        .exports
+        .as_ref()
+        .and_then(|exports| exports.get("sym"))
+        .or_else(|| foo_ns_symbol.members.as_ref().and_then(|members| members.get("sym")))
+        .expect("Foo.sym symbol");
+    let sym_symbol = type_file_checker
+        .ctx
+        .binder
+        .get_symbol(sym_id)
+        .expect("Foo.sym symbol data");
+    eprintln!(
+        "Foo.sym flags={:#x} type={}",
+        sym_symbol.flags,
+        type_file_checker.format_type(type_file_checker.get_type_of_symbol(sym_id))
+    );
+    eprintln!(
+        "Foo.sym declarations={:?} value_decl={:?}",
+        sym_symbol.declarations,
+        sym_symbol.value_declaration
+    );
+
+    panic!("debug done");
+}
+
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_paths = [
