@@ -504,6 +504,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [changes, conformance-build]
+    # Individual shards may be killed by CI infrastructure (OOM/shutdown).
+    # The conformance-aggregate job handles pass/fail logic from shard results.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -542,11 +545,13 @@ jobs:
           trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
           # Each shard runs ~1300 tests (1/10 of ~12,600 total).
-          # 4 workers matches ubuntu-latest 4 cores.
+          # 2 workers keeps peak memory low on ubuntu-latest (7GB RAM).
+          # Recycle workers every 50 compilations to return memory to OS.
           # 30s timeout accommodates complex tests on CI hardware.
           .target/dist-fast/tsz-conformance \
             --offset "$OFFSET" --max "$CHUNK" \
-            --workers 4 --timeout 30 \
+            --workers 2 --timeout 30 \
+            --max-compilations-per-worker 50 \
             --cache-file scripts/conformance/tsc-cache-full.json \
             2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
@@ -609,13 +614,23 @@ jobs:
 
           TOTAL_PASSED=0
           TOTAL_TESTS=0
+          SHARD_COUNT=0
+          mkdir -p .ci-metrics
           for f in .ci-metrics/shard-*.json; do
+            [ -f "$f" ] || continue
             P=$(jq -r '.passed' "$f")
             T=$(jq -r '.total' "$f")
             TOTAL_PASSED=$((TOTAL_PASSED + P))
             TOTAL_TESTS=$((TOTAL_TESTS + T))
+            SHARD_COUNT=$((SHARD_COUNT + 1))
             echo "  $(basename "$f"): ${P}/${T}"
           done
+          echo "Received results from ${SHARD_COUNT}/10 shards"
+
+          if [ "$SHARD_COUNT" -lt 8 ]; then
+            echo "::error::Too many shards failed (only ${SHARD_COUNT}/10 reported results)"
+            exit 1
+          fi
 
           if [ "$TOTAL_TESTS" -eq 0 ]; then
             echo "::error::Conformance produced no results (0 tests across all shards)"
