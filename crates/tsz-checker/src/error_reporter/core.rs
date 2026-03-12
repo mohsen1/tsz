@@ -193,27 +193,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn strip_optional_member_undefined_for_display(&self, ty: TypeId) -> TypeId {
-        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
-        let Some(members) = query::union_members(self.ctx.types, ty) else {
-            return ty;
-        };
-
-        let filtered: Vec<_> = members
-            .iter()
-            .copied()
-            .filter(|member| *member != TypeId::UNDEFINED)
-            .collect();
-
-        if filtered.len() == members.len() || filtered.is_empty() {
-            ty
-        } else if filtered.len() == 1 {
-            filtered[0]
-        } else {
-            self.ctx.types.factory().union_preserve_members(filtered)
-        }
-    }
-
     fn normalize_assignability_display_type(&mut self, ty: TypeId) -> TypeId {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
@@ -265,16 +244,8 @@ impl<'a> CheckerState<'a> {
             for prop in &mut shape.properties {
                 let normalized_read = self.normalize_assignability_display_type(prop.type_id);
                 let normalized_write = self.normalize_assignability_display_type(prop.write_type);
-                let stripped_read = if prop.optional {
-                    self.strip_optional_member_undefined_for_display(normalized_read)
-                } else {
-                    normalized_read
-                };
-                let stripped_write = if prop.optional {
-                    self.strip_optional_member_undefined_for_display(normalized_write)
-                } else {
-                    normalized_write
-                };
+                let stripped_read = normalized_read;
+                let stripped_write = normalized_write;
                 changed |= stripped_read != prop.type_id || stripped_write != prop.write_type;
                 prop.type_id = stripped_read;
                 prop.write_type = stripped_write;
@@ -326,58 +297,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         ty
-    }
-
-    fn strip_optional_property_undefined_from_formatted_type(&self, formatted: String) -> String {
-        let chars: Vec<char> = formatted.chars().collect();
-        let mut result = String::with_capacity(formatted.len());
-        let mut i = 0;
-
-        while i < chars.len() {
-            if i + 2 < chars.len() && chars[i] == '?' && chars[i + 1] == ':' && chars[i + 2] == ' '
-            {
-                result.push('?');
-                result.push(':');
-                result.push(' ');
-                i += 3;
-
-                let mut segment = String::new();
-                let mut brace_depth = 0usize;
-                let mut bracket_depth = 0usize;
-                let mut paren_depth = 0usize;
-
-                while i < chars.len() {
-                    let ch = chars[i];
-                    match ch {
-                        '{' => brace_depth += 1,
-                        '}' if brace_depth == 0 => break,
-                        '}' => brace_depth -= 1,
-                        '[' => bracket_depth += 1,
-                        ']' if bracket_depth > 0 => bracket_depth -= 1,
-                        '(' => paren_depth += 1,
-                        ')' if paren_depth > 0 => paren_depth -= 1,
-                        ';' if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 => {
-                            break;
-                        }
-                        _ => {}
-                    }
-                    segment.push(ch);
-                    i += 1;
-                }
-
-                if let Some(stripped) = segment.strip_suffix(" | undefined") {
-                    result.push_str(stripped);
-                } else {
-                    result.push_str(&segment);
-                }
-                continue;
-            }
-
-            result.push(chars[i]);
-            i += 1;
-        }
-
-        result
     }
 
     fn split_wildcard_object_for_excess_display(&mut self, ty: TypeId) -> Option<String> {
@@ -551,7 +470,7 @@ impl<'a> CheckerState<'a> {
         {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
-        self.strip_optional_property_undefined_from_formatted_type(formatted)
+        formatted
     }
 
     fn should_use_evaluated_assignability_display(&self, ty: TypeId, evaluated: TypeId) -> bool {
@@ -1180,36 +1099,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn precise_callable_contextual_display_type(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
-        if type_id == TypeId::UNDEFINED {
-            return None;
-        }
-
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
-        {
-            let callable_members: Vec<_> = members
-                .into_iter()
-                .filter(|&member| member != TypeId::UNDEFINED)
-                .collect();
-            if !callable_members.is_empty()
-                && callable_members.iter().all(|&member| {
-                    tsz_solver::type_queries::is_callable_type(self.ctx.types, member)
-                })
-            {
-                return Some(
-                    self.ctx
-                        .types
-                        .factory()
-                        .union_preserve_members(callable_members),
-                );
-            }
-            return None;
-        }
-
-        tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id).then_some(type_id)
-    }
-
     fn empty_array_literal_source_type_display(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
@@ -1227,11 +1116,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn object_literal_source_type_display(
-        &mut self,
-        expr_idx: NodeIndex,
-        target: Option<TypeId>,
-    ) -> Option<String> {
+    fn object_literal_source_type_display(&mut self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
@@ -1244,46 +1129,27 @@ impl<'a> CheckerState<'a> {
             let child = self.ctx.arena.get(child_idx)?;
             let prop = self.ctx.arena.get_property_assignment(child)?;
             let name_node = self.ctx.arena.get(prop.name)?;
-            let (lookup_name, display_name) = match name_node.kind {
-                k if k == tsz_scanner::SyntaxKind::Identifier as u16 => {
-                    let name = self
-                        .ctx
-                        .arena
-                        .get_identifier(name_node)?
-                        .escaped_text
-                        .clone();
-                    (name.clone(), name)
-                }
+            let display_name = match name_node.kind {
+                k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
+                    .ctx
+                    .arena
+                    .get_identifier(name_node)?
+                    .escaped_text
+                    .clone(),
                 k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
                     || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
                 {
                     let lit = self.ctx.arena.get_literal(name_node)?;
-                    (lit.text.clone(), format!("\"{}\"", lit.text))
+                    format!("\"{}\"", lit.text)
                 }
                 k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
-                    let text = self.ctx.arena.get_literal(name_node)?.text.clone();
-                    (text.clone(), text)
+                    self.ctx.arena.get_literal(name_node)?.text.clone()
                 }
                 _ => return None,
             };
-            let mut value_type = self.get_type_of_node(prop.initializer);
+            let value_type = self.get_type_of_node(prop.initializer);
             if value_type == TypeId::ERROR {
                 return None;
-            }
-
-            if let Some(target) = target
-                && self.ctx.arena.get(prop.initializer).is_some_and(|init| {
-                    matches!(
-                        init.kind,
-                        syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                    )
-                })
-                && let Some(property_type) =
-                    self.contextual_object_literal_property_type(target, &lookup_name)
-                && let Some(callable_type) =
-                    self.precise_callable_contextual_display_type(property_type)
-            {
-                value_type = callable_type;
             }
 
             parts.push(format!(
@@ -1330,7 +1196,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
 
@@ -1385,7 +1251,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
 
@@ -1493,7 +1359,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
 
@@ -1520,7 +1386,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
+            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
                 return display;
             }
 
@@ -1803,7 +1669,7 @@ impl<'a> CheckerState<'a> {
         {
             formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
-        self.strip_optional_property_undefined_from_formatted_type(formatted)
+        formatted
     }
 
     pub(crate) fn format_assignability_type_for_message(

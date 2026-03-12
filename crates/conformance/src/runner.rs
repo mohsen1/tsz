@@ -9,15 +9,15 @@ use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
 };
-use crate::text_decode::{decode_source_text, DecodedSourceText};
+use crate::text_decode::{DecodedSourceText, decode_source_text};
 use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
@@ -696,10 +696,10 @@ impl Runner {
                                     variant,
                                 ),
                                 BatchOutcome::Crashed => {
-                                    return Ok((TestResult::Crashed, file_preview.take()))
+                                    return Ok((TestResult::Crashed, file_preview.take()));
                                 }
                                 BatchOutcome::Timeout => {
-                                    return Ok((TestResult::Timeout, file_preview.take()))
+                                    return Ok((TestResult::Timeout, file_preview.take()));
                                 }
                             }
                         } else {
@@ -727,7 +727,7 @@ impl Runner {
                                 {
                                     Ok(result) => result?,
                                     Err(_) => {
-                                        return Ok((TestResult::Timeout, file_preview.take()))
+                                        return Ok((TestResult::Timeout, file_preview.take()));
                                     }
                                 }
                             } else {
@@ -977,10 +977,10 @@ impl Runner {
                                 options,
                             ),
                             BatchOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()))
+                                return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()))
+                                return Ok((TestResult::Timeout, file_preview.take()));
                             }
                         }
                     } else {
@@ -1140,10 +1140,10 @@ impl Runner {
                                 options,
                             ),
                             BatchOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()))
+                                return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()))
+                                return Ok((TestResult::Timeout, file_preview.take()));
                             }
                         }
                     } else {
