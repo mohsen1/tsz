@@ -1172,6 +1172,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                             // Infer: A = [string, number]
                             if let Some(&var) = var_map.get(&t_last.type_id) {
+                                let target_var_map: FxHashMap<
+                                    TypeId,
+                                    crate::inference::infer::InferenceVar,
+                                > = FxHashMap::from_iter([(t_last.type_id, var)]);
+                                let appears_in_other_params = target_fn.params
+                                    [..target_fn.params.len().saturating_sub(1)]
+                                    .iter()
+                                    .any(|param| {
+                                        placeholder_visited.clear();
+                                        self.type_contains_placeholder(
+                                            param.type_id,
+                                            &target_var_map,
+                                            &mut placeholder_visited,
+                                        )
+                                    });
+                                if appears_in_other_params {
+                                    continue;
+                                }
                                 infer_ctx.add_candidate(
                                     var,
                                     param_tuple,
@@ -2228,7 +2246,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
         let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
         if source_fn.type_params.is_empty() {
-            return self.interner.function(source_fn);
+            return source_ty;
         }
 
         let mut target_param_types = Vec::with_capacity(source_fn.params.len());

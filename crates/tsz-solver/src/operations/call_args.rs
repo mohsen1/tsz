@@ -962,7 +962,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // participate in Round 1 generic inference.
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
-                self.function_signature_is_contextually_sensitive(&shape.params)
+                !shape.type_params.is_empty()
+                    || self.function_signature_is_contextually_sensitive(&shape.params)
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
@@ -970,7 +971,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .call_signatures
                     .iter()
                     .chain(shape.construct_signatures.iter())
-                    .any(|sig| self.function_signature_is_contextually_sensitive(&sig.params))
+                    .any(|sig| {
+                        !sig.type_params.is_empty()
+                            || self.function_signature_is_contextually_sensitive(&sig.params)
+                    })
             }
 
             // Union/Intersection: contextually sensitive if any member is
