@@ -1317,6 +1317,9 @@ impl<'a> TypeFormatter<'a> {
         {
             return self.format_def_name(&def);
         }
+        if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
+            return name;
+        }
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
@@ -1345,7 +1348,18 @@ impl<'a> TypeFormatter<'a> {
                 .collect();
             return format!("{}<{}>", name, params.join(", "));
         }
+        if let Some(name) = self.format_raw_def_id_symbol_fallback(def_id) {
+            return name;
+        }
         format!("{}({})", fallback_prefix, def_id.0)
+    }
+
+    /// Some checker paths still materialize fallback `Lazy(DefId(symbol_id))` nodes
+    /// without registering the `DefId` in the definition store. When that happens,
+    /// use the raw id as a `SymbolId` if it resolves in the active symbol arena.
+    fn format_raw_def_id_symbol_fallback(&mut self, def_id: crate::def::DefId) -> Option<String> {
+        let sym_id = SymbolId(def_id.0);
+        self.format_symbol_name(sym_id)
     }
 
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
@@ -3163,6 +3177,17 @@ mod tests {
             result, "MyClass<string, number>",
             "Application should show formatted type args"
         );
+    }
+
+    #[test]
+    fn lazy_raw_def_id_falls_back_to_symbol_name() {
+        let db = TypeInterner::new();
+        let mut symbols = tsz_binder::SymbolArena::new();
+        let sym_id = symbols.alloc(tsz_binder::symbol_flags::INTERFACE, "Num".to_string());
+        let lazy = db.lazy(crate::def::DefId(sym_id.0));
+
+        let mut fmt = TypeFormatter::with_symbols(&db, &symbols);
+        assert_eq!(fmt.format(lazy), "Num");
     }
 
     // =================================================================
