@@ -39,6 +39,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let reserved_word_param = self.ctx.arena.get(param.name).and_then(|name_node| {
+            self.ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.as_str())
+        });
+        let preserve_on_strict_mode_parse_error = reserved_word_param.is_some_and(|name| {
+            crate::state_checking::is_strict_mode_reserved_name(name)
+                || crate::state_checking::is_eval_or_arguments(name)
+        });
+
         // Enhanced destructuring parameter detection
         // Check if the parameter name is a destructuring pattern (object/array binding)
         if let Some(name_node) = self.ctx.arena.get(param.name) {
@@ -64,8 +75,9 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node_flags;
         if let Some(name_node) = self.ctx.arena.get(param.name) {
             let flags = name_node.flags as u32;
-            if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+            if ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
+                && !preserve_on_strict_mode_parse_error
             {
                 return;
             }
@@ -76,7 +88,9 @@ impl<'a> CheckerState<'a> {
             let param_decl = ext.parent;
             if let Some(param_node) = self.ctx.arena.get(param_decl) {
                 let flags = param_node.flags as u32;
-                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0 {
+                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                    && !preserve_on_strict_mode_parse_error
+                {
                     return;
                 }
             }
@@ -84,7 +98,9 @@ impl<'a> CheckerState<'a> {
                 && let Some(func_node) = self.ctx.arena.get(param_ext.parent)
             {
                 let flags = func_node.flags as u32;
-                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0 {
+                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                    && !preserve_on_strict_mode_parse_error
+                {
                     return;
                 }
             }
@@ -93,7 +109,10 @@ impl<'a> CheckerState<'a> {
         // Suppress TS7006 when a scanner-level parse error (e.g. TS1127 invalid character)
         // exists near the parameter. This handles cases like `function f(a,¬) {}`
         // where the sibling token is invalid but the param node itself has no error flag.
-        if self.has_syntax_parse_errors() && self.node_has_nearby_parse_error(param.name) {
+        if self.has_syntax_parse_errors()
+            && self.node_has_nearby_parse_error(param.name)
+            && !preserve_on_strict_mode_parse_error
+        {
             return;
         }
 
