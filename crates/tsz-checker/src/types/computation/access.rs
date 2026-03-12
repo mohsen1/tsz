@@ -59,12 +59,12 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(lit) = tsz_solver::visitor::literal_value(self.ctx.types, key_type) {
                     return Some(match lit {
-                        tsz_solver::types::LiteralValue::String(s) => {
+                        tsz_solver::LiteralValue::String(s) => {
                             self.ctx.types.resolve_atom(s).to_string()
                         }
-                        tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
-                        tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
-                        tsz_solver::types::LiteralValue::BigInt(b) => {
+                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
+                        tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
+                        tsz_solver::LiteralValue::BigInt(b) => {
                             self.ctx.types.resolve_atom(b).to_string()
                         }
                     });
