@@ -14229,7 +14229,6 @@ const f: (x: Expression) => boolean = sink;
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_union_restricted_indexed_access_prefers_ts2339_over_constraint_failure() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -14271,7 +14270,6 @@ type _5 = (Foo | (Foo & Bar))['foo'];
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
 fn test_conditional_true_branch_type_argument_satisfies_constraint_for_indexed_access() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -14301,7 +14299,34 @@ type Broken<V extends { x: Foo | Bar }, P extends keyof V> =
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
+fn test_conditional_true_branch_type_argument_satisfies_direct_constraint() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Foo {
+  protected foo = 0;
+}
+
+class Bar {
+  protected foo = 0;
+}
+
+type Nothing<V extends Foo> = void;
+type Guarded<V extends Foo | Bar> = V extends Foo ? Nothing<V> : never;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Conditional true-branch narrowing should satisfy direct type argument constraints.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_recursive_conditional_alias_constraint_accepts_string_literal_key() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

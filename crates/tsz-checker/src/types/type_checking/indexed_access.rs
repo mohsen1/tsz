@@ -75,6 +75,54 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn union_restricted_literal_property_is_missing(
+        &mut self,
+        property_name: &str,
+        object_type: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::state::checking;
+
+        if self.ctx.enclosing_class.is_some() {
+            return false;
+        }
+
+        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
+            return false;
+        };
+        if members.len() < 2 {
+            return false;
+        }
+
+        let is_static = self.is_constructor_type(object_type);
+        let mut has_restricted = false;
+        let mut has_other = false;
+        let mut first_declaring_class: Option<NodeIndex> = None;
+
+        for member in members {
+            let member = self.resolve_type_for_property_access(member);
+            let Some(class_idx) = self.get_class_decl_from_type(member) else {
+                has_other = true;
+                continue;
+            };
+
+            match self.find_member_access_info(class_idx, property_name, is_static) {
+                Some(access_info) => {
+                    has_restricted = true;
+                    if let Some(first_decl) = first_declaring_class {
+                        if first_decl != access_info.declaring_class_idx {
+                            has_other = true;
+                        }
+                    } else {
+                        first_declaring_class = Some(access_info.declaring_class_idx);
+                    }
+                }
+                None => has_other = true,
+            }
+        }
+
+        has_restricted && has_other
+    }
+
     fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
@@ -1017,6 +1065,22 @@ impl<'a> CheckerState<'a> {
                 index_type_for_check,
             ) {
                 let property_name = self.ctx.types.resolve_atom(prop_atom);
+                if self.union_restricted_literal_property_is_missing(
+                    &property_name,
+                    object_type_for_check,
+                ) {
+                    let object_type_str = self.format_type(object_type);
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        &[property_name.as_str(), &object_type_str],
+                    );
+                    self.error_at_node(
+                        concrete_error_anchor,
+                        &message,
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                    return;
+                }
                 if matches!(
                     self.resolve_property_access_with_env(object_type_for_check, &property_name),
                     tsz_solver::operations::property::PropertyAccessResult::Success { .. }
@@ -1204,6 +1268,21 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
         {
             let property_name = self.ctx.types.resolve_atom(prop_atom);
+            if self
+                .union_restricted_literal_property_is_missing(&property_name, concrete_object_type)
+            {
+                let object_type_str = self.format_type(object_type);
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[property_name.as_str(), &object_type_str],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+                return true;
+            }
             if self.get_numeric_index_from_string(&property_name).is_some()
                 && self.is_element_indexable(concrete_object_type, false, true)
             {
