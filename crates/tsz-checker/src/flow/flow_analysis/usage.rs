@@ -557,6 +557,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // `var` declarations without initializers are always `undefined` due to hoisting.
+        // tsc does not emit TS2454 for uninitialized `var` — only `let`/`const` need
+        // definite assignment checking. This matches tsc's behavior where `var x: T;`
+        // at module or function scope is valid even without assignment.
+        {
+            let is_function_scoped =
+                symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+            if is_function_scoped && !has_initializer {
+                return false;
+            }
+        }
+
         // If there's an initializer, skip definite assignment check — unless the variable
         // is `var` (function-scoped) and the usage is before the declaration in source
         // order.  `var` hoists the binding but NOT the initializer, so at the usage
