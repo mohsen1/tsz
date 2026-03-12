@@ -838,6 +838,9 @@ pub(crate) fn resolve_module_specifier(
     }
     let specifier = specifier.replace('\\', "/");
     if specifier.starts_with('#') {
+        if is_invalid_package_import_specifier(&specifier) {
+            return None;
+        }
         if options.resolve_package_json_imports {
             return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
         }
@@ -1515,6 +1518,10 @@ fn resolve_package_imports_specifier(
     }
 
     None
+}
+
+fn is_invalid_package_import_specifier(specifier: &str) -> bool {
+    specifier == "#" || specifier.starts_with("#/")
 }
 
 fn resolve_package_specifier(
