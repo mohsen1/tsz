@@ -452,16 +452,12 @@ jobs:
           path: pkg/
           retention-days: 1
 
-  # ─── Conformance ───────────────────────────────────────────────────────────
-  conformance:
-    name: Conformance Tests
+  # ─── Conformance: Build binaries once ──────────────────────────────────────
+  conformance-build:
+    name: "Conformance: Build"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     needs: [changes]
-    outputs:
-      pass_rate: ${{ steps.conformance-metrics.outputs.pass_rate }}
-      passed: ${{ steps.conformance-metrics.outputs.passed }}
-      total: ${{ steps.conformance-metrics.outputs.total }}
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
@@ -473,7 +469,6 @@ jobs:
       needs.changes.outputs.emitter == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -488,55 +483,160 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             .target
-            crates/conformance/target
-          key: ${{ runner.os }}-conformance-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-conformance-
+          key: ${{ runner.os }}-conformance-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-conformance-build-
 
-      - name: Run conformance tests
-        id: conformance-metrics
+      - name: Build conformance binaries (dist-fast profile)
+        run: cargo build --profile dist-fast -p tsz-cli -p tsz-conformance
+
+      - name: Upload conformance binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-binaries
+          path: |
+            .target/dist-fast/tsz
+            .target/dist-fast/tsz-conformance
+          retention-days: 1
+
+  # ─── Conformance: 10 parallel shards ───────────────────────────────────────
+  conformance:
+    name: "Conformance (${{ matrix.shard }}/10)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [changes, conformance-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    if: >-
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.emitter == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Download conformance binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: conformance-binaries
+          path: .target/dist-fast/
+
+      - name: Make binaries executable
+        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-conformance
+
+      - name: Run conformance shard
+        id: shard-results
         run: |
           set -euo pipefail
+          CHUNK=1300
+          OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
 
-          # Extract baseline percentage from README
-          BASELINE=$(sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
-          echo "README baseline: ${BASELINE}%"
-
-          # Build and run conformance (cache is checked into the repo)
           TMPOUT=$(mktemp)
           CLEANOUT=$(mktemp)
           trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
-          # CI runners are slower and noisier than local machines; use an
-          # explicit timeout/workers config to avoid timeout-induced flake.
-          # ubuntu-latest has 4 cores; 4 workers avoids oversubscription.
-          # 30s timeout accommodates complex tests (JSX intrinsics, deep
-          # generic inference) that legitimately take 15-25s on CI hardware.
-          ./scripts/conformance/conformance.sh run --timeout 30 --workers 4 2>&1 | tee "$TMPOUT" || true
+          # Each shard runs ~1300 tests (1/10 of ~12,600 total).
+          # 4 workers matches ubuntu-latest 4 cores.
+          # 30s timeout accommodates complex tests on CI hardware.
+          .target/dist-fast/tsz-conformance \
+            --offset "$OFFSET" --max "$CHUNK" \
+            --workers 4 --timeout 30 \
+            --cache-file scripts/conformance/tsc-cache-full.json \
+            2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
-          # Extract pass counters and percentage from final result line:
-          # FINAL RESULTS: <passed>/<total> passed (<rate>%)
           FINAL_LINE=$(grep -a "FINAL RESULTS:" "$CLEANOUT" | tail -1 || true)
-          ACTUAL=$(echo "$FINAL_LINE" | grep -oE '\([0-9]+\.[0-9]+%\)' | tr -d '()%' || true)
           PASSED=$(echo "$FINAL_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+) passed.*/\1/' || true)
           TOTAL=$(echo "$FINAL_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+) passed.*/\2/' || true)
 
-          echo "pass_rate=${ACTUAL}" >> "$GITHUB_OUTPUT"
-          echo "passed=${PASSED}" >> "$GITHUB_OUTPUT"
-          echo "total=${TOTAL}" >> "$GITHUB_OUTPUT"
+          echo "passed=${PASSED:-0}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL:-0}" >> "$GITHUB_OUTPUT"
+          echo "Shard ${{ matrix.shard }}: ${PASSED:-0}/${TOTAL:-0} passed"
 
-          if [ -z "$ACTUAL" ] || [ "$ACTUAL" = "0.0" ]; then
-            echo "::error::Conformance runner produced no results (0.0% or no output)"
+      - name: Save shard results
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --argjson shard "${{ matrix.shard }}" \
+            --arg passed "${{ steps.shard-results.outputs.passed }}" \
+            --arg total "${{ steps.shard-results.outputs.total }}" \
+            '{shard:$shard, passed:$passed, total:$total}' \
+            > .ci-metrics/shard-${{ matrix.shard }}.json
+
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-shard-${{ matrix.shard }}
+          path: .ci-metrics/shard-${{ matrix.shard }}.json
+          retention-days: 1
+
+  # ─── Conformance: Aggregate results ────────────────────────────────────────
+  conformance-aggregate:
+    name: Conformance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [conformance]
+    if: always() && needs.conformance.result != 'skipped'
+    outputs:
+      pass_rate: ${{ steps.aggregate.outputs.pass_rate }}
+      passed: ${{ steps.aggregate.outputs.passed }}
+      total: ${{ steps.aggregate.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: README.md
+          sparse-checkout-cone-mode: false
+
+      - name: Download all shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conformance-shard-*
+          path: .ci-metrics/
+          merge-multiple: true
+
+      - name: Aggregate shard results
+        id: aggregate
+        run: |
+          set -euo pipefail
+
+          TOTAL_PASSED=0
+          TOTAL_TESTS=0
+          for f in .ci-metrics/shard-*.json; do
+            P=$(jq -r '.passed' "$f")
+            T=$(jq -r '.total' "$f")
+            TOTAL_PASSED=$((TOTAL_PASSED + P))
+            TOTAL_TESTS=$((TOTAL_TESTS + T))
+            echo "  $(basename "$f"): ${P}/${T}"
+          done
+
+          if [ "$TOTAL_TESTS" -eq 0 ]; then
+            echo "::error::Conformance produced no results (0 tests across all shards)"
             exit 1
           fi
 
+          RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_PASSED / $TOTAL_TESTS) * 100}")
+          echo "pass_rate=${RATE}" >> "$GITHUB_OUTPUT"
+          echo "passed=${TOTAL_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL_TESTS}" >> "$GITHUB_OUTPUT"
+          echo "Aggregate: ${TOTAL_PASSED}/${TOTAL_TESTS} passed (${RATE}%)"
+
+          # Check against README baseline
+          BASELINE=$(sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
           if [ -n "$BASELINE" ]; then
-            echo "Actual: ${ACTUAL}% | Baseline: ${BASELINE}%"
-            if echo "$ACTUAL $BASELINE" | awk '{exit !($1 < $2)}'; then
-              echo "::error::Conformance regression: ${ACTUAL}% < ${BASELINE}% (README baseline)"
+            echo "Actual: ${RATE}% | Baseline: ${BASELINE}%"
+            if echo "$RATE $BASELINE" | awk '{exit !($1 < $2)}'; then
+              echo "::error::Conformance regression: ${RATE}% < ${BASELINE}% (README baseline)"
               exit 1
             else
-              echo "::notice::Conformance OK: ${ACTUAL}% >= ${BASELINE}% baseline"
+              echo "::notice::Conformance OK: ${RATE}% >= ${BASELINE}% baseline"
             fi
           else
             echo "::warning::Could not extract baseline from README, skipping regression check"
@@ -545,9 +645,9 @@ jobs:
       - name: Report conformance pass rate
         if: always()
         run: |
-          RATE="${{ steps.conformance-metrics.outputs.pass_rate }}"
-          PASSED="${{ steps.conformance-metrics.outputs.passed }}"
-          TOTAL="${{ steps.conformance-metrics.outputs.total }}"
+          RATE="${{ steps.aggregate.outputs.pass_rate }}"
+          PASSED="${{ steps.aggregate.outputs.passed }}"
+          TOTAL="${{ steps.aggregate.outputs.total }}"
 
           if [ -z "$RATE" ]; then RATE="n/a"; fi
           if [ -z "$PASSED" ]; then PASSED="n/a"; fi
@@ -571,9 +671,9 @@ jobs:
           mkdir -p .ci-metrics
           jq -n \
             --arg suite "conformance" \
-            --arg pass_rate "${{ steps.conformance-metrics.outputs.pass_rate }}" \
-            --arg passed "${{ steps.conformance-metrics.outputs.passed }}" \
-            --arg total "${{ steps.conformance-metrics.outputs.total }}" \
+            --arg pass_rate "${{ steps.aggregate.outputs.pass_rate }}" \
+            --arg passed "${{ steps.aggregate.outputs.passed }}" \
+            --arg total "${{ steps.aggregate.outputs.total }}" \
             --arg run_id "${{ github.run_id }}" \
             --arg sha "${{ github.sha }}" \
             '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, run_id:$run_id, sha:$sha}' \
@@ -909,15 +1009,15 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance, emit, fourslash]
+    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance-aggregate, emit, fourslash]
     if: always()
     steps:
       - name: Publish pass-rate summary
         if: always()
         run: |
-          conf_rate="${{ needs.conformance.outputs.pass_rate }}"
-          conf_passed="${{ needs.conformance.outputs.passed }}"
-          conf_total="${{ needs.conformance.outputs.total }}"
+          conf_rate="${{ needs.conformance-aggregate.outputs.pass_rate }}"
+          conf_passed="${{ needs.conformance-aggregate.outputs.passed }}"
+          conf_total="${{ needs.conformance-aggregate.outputs.total }}"
 
           emit_js_rate="${{ needs.emit.outputs.js_pass_rate }}"
           emit_js_passed="${{ needs.emit.outputs.js_passed }}"
@@ -976,7 +1076,7 @@ jobs:
           check_job "Leaf Tests" "${{ needs.test-leaf.result }}"
           check_job "Root Tests" "${{ needs.test-root.result }}"
           check_job "WASM Build" "${{ needs.wasm-build.result }}"
-          check_job "Conformance" "${{ needs.conformance.result }}"
+          check_job "Conformance" "${{ needs.conformance-aggregate.result }}"
           check_job "Emit" "${{ needs.emit.result }}"
           check_job "Fourslash" "${{ needs.fourslash.result }}"
 
