@@ -126,11 +126,6 @@ impl<'a> CheckerState<'a> {
             type_alias.type_node,
             &resolve_type_name,
         );
-        eprintln!(
-            "computed_alias decl_idx={} computed_names={}",
-            decl_idx.0,
-            computed_names.len()
-        );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
         let lowering = TypeLowering::with_hybrid_resolver(
             decl_arena,
