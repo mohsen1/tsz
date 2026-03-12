@@ -721,13 +721,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
-        if self
-            .checker
-            .check_index_access_source_upper_bound_subtype(
-                self.checker.interner.index_access(object_type, key_type),
-                self.target,
-            )
-        {
+        if self.checker.check_index_access_source_upper_bound_subtype(
+            self.checker.interner.index_access(object_type, key_type),
+            self.target,
+        ) {
             return SubtypeResult::True;
         }
 

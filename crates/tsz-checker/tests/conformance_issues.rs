@@ -2510,7 +2510,10 @@ fn debug_declaration_emit_spread_external_unique_symbol_shapes() {
     eprintln!("export_type={}", checker.format_type(export_type));
 
     if let Some(import_alias_type) = checker.ctx.import_type_alias_types.get(&type_import_sym) {
-        eprintln!("import_alias_type={}", checker.format_type(*import_alias_type));
+        eprintln!(
+            "import_alias_type={}",
+            checker.format_type(*import_alias_type)
+        );
     }
 
     if let Some(shape) = tsz_solver::type_queries::get_object_shape(checker.ctx.types, foo_type) {
@@ -2550,8 +2553,12 @@ fn debug_declaration_emit_spread_external_unique_symbol_shapes() {
             ..CheckerOptions::default()
         },
     );
-    type_file_checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-    type_file_checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    type_file_checker
+        .ctx
+        .set_all_arenas(Arc::clone(&all_arenas));
+    type_file_checker
+        .ctx
+        .set_all_binders(Arc::clone(&all_binders));
     type_file_checker.ctx.set_current_file_idx(1);
     type_file_checker.ctx.set_lib_contexts(Vec::new());
     let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
@@ -2576,9 +2583,10 @@ fn debug_declaration_emit_spread_external_unique_symbol_shapes() {
                 prop.readonly,
                 type_file_checker.format_type(prop.type_id)
             );
-            if let Some(inner) =
-                tsz_solver::type_queries::get_object_shape(type_file_checker.ctx.types, prop.type_id)
-            {
+            if let Some(inner) = tsz_solver::type_queries::get_object_shape(
+                type_file_checker.ctx.types,
+                prop.type_id,
+            ) {
                 for inner_prop in &inner.properties {
                     eprintln!(
                         "  direct inner prop {} type={}",
@@ -2616,7 +2624,12 @@ fn debug_declaration_emit_spread_external_unique_symbol_shapes() {
         .exports
         .as_ref()
         .and_then(|exports| exports.get("sym"))
-        .or_else(|| foo_ns_symbol.members.as_ref().and_then(|members| members.get("sym")))
+        .or_else(|| {
+            foo_ns_symbol
+                .members
+                .as_ref()
+                .and_then(|members| members.get("sym"))
+        })
         .expect("Foo.sym symbol");
     let sym_symbol = type_file_checker
         .ctx
@@ -2630,8 +2643,7 @@ fn debug_declaration_emit_spread_external_unique_symbol_shapes() {
     );
     eprintln!(
         "Foo.sym declarations={:?} value_decl={:?}",
-        sym_symbol.declarations,
-        sym_symbol.value_declaration
+        sym_symbol.declarations, sym_symbol.value_declaration
     );
 
     panic!("debug done");
