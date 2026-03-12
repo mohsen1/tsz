@@ -1226,21 +1226,21 @@ impl<'a> CheckerState<'a> {
             && let Some(related) =
                 self.build_related_from_failure_reason(reason, arg_type, param_type, idx)
         {
-            diag.related_information.push(related);
+            diag.related_information.extend(related);
         }
 
         self.ctx.push_diagnostic(diag);
     }
 
-    /// Build a `DiagnosticRelatedInformation` from a solver failure reason.
-    /// Returns `None` if the reason doesn't map to a related diagnostic.
+    /// Build related diagnostics from a solver failure reason.
+    /// Returns `None` if the reason doesn't map to related diagnostics.
     fn build_related_from_failure_reason(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
         _source: TypeId,
         _target: TypeId,
         idx: NodeIndex,
-    ) -> Option<DiagnosticRelatedInformation> {
+    ) -> Option<Vec<DiagnosticRelatedInformation>> {
         use tsz_solver::SubtypeFailureReason;
 
         let (start, length) = self.get_node_span(idx)?;
@@ -1273,14 +1273,14 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[&prop_name, &src_str, &tgt_str],
                 );
-                Some(DiagnosticRelatedInformation {
+                Some(vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
                     code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     file: self.ctx.file_name.clone(),
                     start,
                     length: length.saturating_sub(start),
                     message_text: msg,
-                })
+                }])
             }
             SubtypeFailureReason::MissingProperties {
                 property_names,
@@ -1316,14 +1316,14 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                         &[&src_str, &tgt_str, &props_str],
                     );
-                    Some(DiagnosticRelatedInformation {
+                    Some(vec![DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
                         code: diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                         file: self.ctx.file_name.clone(),
                         start,
                         length: length.saturating_sub(start),
                         message_text: msg,
-                    })
+                    }])
                 } else {
                     // TS2740: Type 'X' is missing the following properties from type 'Y': a, b, c, and N more.
                     let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
@@ -1333,30 +1333,59 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                         &[&src_str, &tgt_str, &props_str],
                     );
-                    Some(DiagnosticRelatedInformation {
+                    Some(vec![DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
                         code: diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                         file: self.ctx.file_name.clone(),
                         start,
                         length: length.saturating_sub(start),
                         message_text: msg,
-                    })
+                    }])
                 }
             }
-            SubtypeFailureReason::PropertyTypeMismatch { property_name, .. } => {
+            SubtypeFailureReason::PropertyTypeMismatch {
+                property_name,
+                source_property_type,
+                target_property_type,
+                nested_reason,
+            } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let msg = format_message(
                     diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     &[&prop_name],
                 );
-                Some(DiagnosticRelatedInformation {
+                let mut related = vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
                     code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     file: self.ctx.file_name.clone(),
                     start,
                     length: length.saturating_sub(start),
                     message_text: msg,
-                })
+                }];
+                if let Some(nested) = nested_reason {
+                    match nested.as_ref() {
+                        SubtypeFailureReason::TypeMismatch { .. }
+                        | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                        | SubtypeFailureReason::LiteralTypeMismatch { .. } => {
+                            let source_str = self.format_type_diagnostic(*source_property_type);
+                            let target_str = self.format_type_diagnostic(*target_property_type);
+                            let message = format_message(
+                                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                &[&source_str, &target_str],
+                            );
+                            related.push(DiagnosticRelatedInformation {
+                                category: DiagnosticCategory::Message,
+                                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                file: self.ctx.file_name.clone(),
+                                start,
+                                length: length.saturating_sub(start),
+                                message_text: message,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Some(related)
             }
             _ => None,
         }

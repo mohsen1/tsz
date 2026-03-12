@@ -1280,6 +1280,15 @@ fn test_ts2345_property_type_mismatch_includes_related_property_detail() {
         }),
         "Expected TS2345 to include property incompatibility elaboration, got: {ts2345:?}"
     );
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && info
+                    .message_text
+                    .contains("Type 'string' is not assignable to type 'number'.")
+        }),
+        "Expected TS2345 to include nested type mismatch elaboration, got: {ts2345:?}"
+    );
 }
 
 #[test]
