@@ -87,18 +87,17 @@ fn test_private_members_are_nominal() {
 
 /// Test that private members prevent structural assignment to object literals.
 /// Even if the object literal has the same shape, the private brand is missing.
-/// tsc emits TS2322 ("Property 'x' is private in type 'A'..."), but tsz currently
-/// emits TS2741 ("Property '__`private_brand_0`' is missing...") which is still an error.
 #[test]
 fn test_private_member_prevents_structural_assignment() {
-    // Accept both TS2322 and TS2741 - both indicate the assignment is rejected
-    test_private_brands_with_codes(
-        r"
+    let source = r"
         class A { private x: number = 1; }
         let a: A = { x: 1 };
-        ",
-        1,
-        &[2322, 2741],
+        ";
+
+    test_private_brands(source, 1);
+    assert!(
+        !has_error_code(source, 2741),
+        "Private-brand structural assignment should report TS2322, not TS2741"
     );
 }
 
