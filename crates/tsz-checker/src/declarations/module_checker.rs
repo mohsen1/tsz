@@ -1156,6 +1156,7 @@ impl<'a> CheckerState<'a> {
             for (_, &sym_id) in scope.table.iter() {
                 if let Some(s) = self.ctx.binder.symbols.get(sym_id)
                     && s.flags & symbol_flags::ALIAS != 0
+                    && !s.is_umd_export
                 {
                     local_alias_ids.push(sym_id);
                 }

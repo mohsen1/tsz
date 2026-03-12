@@ -37,6 +37,28 @@ fn get_diagnostics(source: &str, file_name: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn export_as_namespace_is_not_circular_alias() {
+    // `export as namespace X` creates an ALIAS-flagged symbol in the binder with
+    // is_umd_export = true. This is an outbound UMD export, NOT an import alias.
+    // The circular alias checker must skip these symbols.
+    let source = r#"
+export = React;
+export as namespace React;
+
+declare namespace React {
+  type ReactNode = string | number | boolean | null | undefined;
+  function createElement(): void;
+}
+"#;
+
+    let diagnostics = get_diagnostics(source, "react-index.d.ts");
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2303),
+        "Should not emit TS2303 for `export as namespace`. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ambient_require_alias_reexport_is_not_a_circular_alias() {
     let source = r#"
 declare module "events" {
