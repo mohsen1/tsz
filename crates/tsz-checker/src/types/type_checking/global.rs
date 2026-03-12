@@ -37,8 +37,10 @@ impl<'a> CheckerState<'a> {
         const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
+            "CallableFunction",
             "Function",
             "IArguments",
+            "NewableFunction",
             "Number",
             "Object",
             "RegExp",

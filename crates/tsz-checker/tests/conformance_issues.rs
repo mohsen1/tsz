@@ -11116,7 +11116,10 @@ type Outer<WithC extends { name: string }> = Inner<WithC>;
 }
 
 #[test]
-fn test_ts2344_unconstrained_type_param_fails_object_constraint() {
+fn test_ts2344_unconstrained_type_param_defers_object_constraint() {
+    // TSC defers constraint checking for unconstrained type parameters.
+    // When `T` has no constraint and is used where `T extends Object` is
+    // required, the check is deferred to instantiation time (no TS2344).
     let diagnostics = compile_and_get_diagnostics(
         r"
 interface Array<T> {}
@@ -11142,8 +11145,8 @@ declare function Record<T>(defaultValues: T, name?: string): Record.Class<T>;
     );
 
     assert!(
-        has_error(&diagnostics, 2344),
-        "Should emit TS2344 when an unconstrained type parameter is used where `T extends Object` is required.\nActual: {diagnostics:?}"
+        !has_error(&diagnostics, 2344),
+        "Unconstrained type parameters should defer constraint checks to instantiation time.\nActual: {diagnostics:?}"
     );
 }
 
