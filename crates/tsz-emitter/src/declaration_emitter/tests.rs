@@ -2994,6 +2994,24 @@ fn test_optional_method_in_interface() {
     );
 }
 
+#[test]
+fn test_optional_computed_method_in_class_emits_optional_property_function_type() {
+    let output = emit_dts(
+        r#"
+    export const dataSomething: `data-${string}` = "data-x" as `data-${string}`;
+    export class WithData {
+        [dataSomething]?(): string {
+            return "something";
+        }
+    }
+    "#,
+    );
+    assert!(
+        output.contains("[dataSomething]?: (() => string) | undefined;"),
+        "Expected optional computed class method to emit as an optional property of function type: {output}"
+    );
+}
+
 // =============================================================================
 // 11. Function Overloads
 // =============================================================================
