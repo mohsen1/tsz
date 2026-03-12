@@ -7,6 +7,7 @@
 
 use indexmap::IndexMap;
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeList;
@@ -460,9 +461,13 @@ impl<'a> TypeLowering<'a> {
                 .get(current)
                 .and_then(|node| arena.get_source_file(node))
                 .is_some_and(|source| {
+                    let file_name = Path::new(&source.file_name)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(source.file_name.as_str());
                     source.is_declaration_file
-                        && source.file_name.starts_with("lib.")
-                        && source.file_name.ends_with(".d.ts")
+                        && file_name.starts_with("lib.")
+                        && file_name.ends_with(".d.ts")
                 })
         };
 
@@ -477,15 +482,15 @@ impl<'a> TypeLowering<'a> {
             let forward_decl_index = num_declarations - 1 - rev_i;
             parts.set_declaration_pass(forward_decl_index);
 
-            // Only prefer name-based DefId resolution when we are lowering across
-            // arenas. Same-arena declarations should keep the normal NodeIndex-based
-            // path because it preserves namespace-local bindings precisely.
-            let lowerer =
-                if is_lib_decl(decl_arena, *decl_idx) && !std::ptr::eq(self.arena, *decl_arena) {
-                    self.with_arena(decl_arena).prefer_name_def_id_resolution()
-                } else {
-                    self.with_arena(decl_arena)
-                };
+            // Merged lib declarations share NodeIndex values across arenas. Even when the
+            // current declaration uses the fallback arena, raw NodeIndex-based lookup can
+            // still pick an identifier text from a sibling lib declaration first and corrupt
+            // references like Iterable<T> during merged static interface lowering.
+            let lowerer = if is_lib_decl(decl_arena, *decl_idx) {
+                self.with_arena(decl_arena).prefer_name_def_id_resolution()
+            } else {
+                self.with_arena(decl_arena)
+            };
 
             let Some(node) = decl_arena.get(*decl_idx) else {
                 continue;
