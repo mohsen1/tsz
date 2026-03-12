@@ -26,22 +26,6 @@ use super::super::{SubtypeChecker, SubtypeFailureReason, SubtypeResult, TypeReso
 const MAX_DISCRIMINANT_COMBINATIONS: usize = 25;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
-    /// Check if two types are equivalent (mutually subtypes).
-    ///
-    /// Type equivalence means bidirectional subtyping:
-    /// `A ≡ B` iff `A <: B` AND `B <: A`
-    ///
-    /// ## Examples:
-    /// - `string` ≡ `string` ✅ (reflexive)
-    /// - `A | B` ≡ `B | A` ✅ (union commutes)
-    /// - `T & U` ≡ `U & T` ✅ (intersection commutes)
-    ///
-    /// Note: For most type checking, unidirectional subtyping (`<:`) is used.
-    /// Equivalence (`≡`) is primarily for type parameter constraints and exact matching.
-    pub(crate) fn types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.check_subtype(left, right).is_true() && self.check_subtype(right, left).is_true()
-    }
-
     /// Check if a type parameter is a subtype of a target type.
     ///
     /// Handles both type parameter vs type parameter and type parameter vs concrete type.

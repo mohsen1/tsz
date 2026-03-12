@@ -1619,3 +1619,29 @@ fn test_ts2322_no_false_positive_mapped_type_key_narrowed_by_conditional() {
         "Expected no TS2322 for narrowed T in mapped type key (T extends string). Got: {errors:?}"
     );
 }
+
+#[test]
+fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined() {
+    let source = r#"
+        export let a: <T>() => T extends {a?: string} ? 0 : 1 = null!;
+        export let b: <T>() => T extends {a?: string | undefined} ? 0 : 1 = a;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for conditional extends optional-property identity. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0]
+            .1
+            .contains("Type '<T>() => T extends { a?: string; } ? 0 : 1' is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"),
+        "Expected TS2322 to preserve the differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
+    );
+}
