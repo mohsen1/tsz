@@ -101,9 +101,7 @@ inst[x.S];
         .collect::<Vec<_>>();
 
     assert!(
-        ts7053
-            .iter()
-            .any(|message| message.contains("index type 'F'")),
-        "Expected TS7053 to use constructor name 'F', got: {ts7053:#?}"
+        ts7053.is_empty(),
+        "Expected no false TS7053 for cross-file CommonJS constructor symbol-keyed access, got: {ts7053:#?}"
     );
 }
