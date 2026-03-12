@@ -327,6 +327,22 @@ const x: number = 42;
 }
 
 #[test]
+fn test_compile_defaults_to_non_strict_when_strict_directive_is_absent() {
+    let content = r#"
+function f(x: string): number { return null; }
+var g: (s1: string) => number;
+g = f;
+"#;
+    let tsz = find_tsz_binary();
+    let result = compile_test(content, &[], &HashMap::new(), &tsz).unwrap();
+
+    assert!(
+        result.error_codes.is_empty(),
+        "conformance wrapper should default to non-strict semantics when @strict is absent: {result:?}"
+    );
+}
+
+#[test]
 fn test_rewrite_bare_specifiers() {
     let filenames = vec![
         ("server.ts".to_string(), "export class c {}".to_string()),

@@ -694,6 +694,7 @@ fn convert_options_to_tsconfig(
     _key_order: &[String],
 ) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
+    let mut strict_explicit = false;
 
     for (key, value) in options {
         // Skip test harness-specific directives
@@ -703,6 +704,10 @@ fn convert_options_to_tsconfig(
             .any(|&d| d.to_lowercase() == key_lower)
         {
             continue;
+        }
+
+        if key_lower == "strict" {
+            strict_explicit = true;
         }
 
         // Use canonical_option_name to match the casing the TSC cache generator used.
@@ -754,29 +759,39 @@ fn convert_options_to_tsconfig(
         opts.insert(tsconfig_key.to_string(), json_value);
     }
 
+    // The TypeScript conformance harness defaults to non-strict checking when a
+    // test file does not opt into `@strict`. Our CLI/config stack defaults the
+    // strict family on, so encode the harness default explicitly here without
+    // expanding it into the individual strict-family flags.
+    if !strict_explicit {
+        opts.insert("strict".to_string(), serde_json::Value::Bool(false));
+    }
+
     // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
     // tsz's config parser handles `strict: true` → sub-options expansion, but the
     // conformance test runner strips source pragmas before writing test files, so
     // tsz can only read options from the tsconfig. We must expand strict here to
     // ensure tsz gets the correct sub-options.
     //
-    // Expand for both `strict: true` and `strict: false` to match the cache generator.
-    // When `strict: false`, the sub-options default to false, and tsc 6.0 emits TS5107
-    // for deprecated values like `alwaysStrict: false`.
-    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-        let strict = *strict;
-        for key in [
-            "noImplicitAny",
-            "noImplicitThis",
-            "strictNullChecks",
-            "strictFunctionTypes",
-            "strictBindCallApply",
-            "strictPropertyInitialization",
-            "useUnknownInCatchVariables",
-            "alwaysStrict",
-        ] {
-            opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(strict));
+    // Only expand when the test explicitly set `@strict`; injected default
+    // `strict: false` should behave like an omitted option and must not
+    // materialize `alwaysStrict: false` into the generated tsconfig.
+    if strict_explicit {
+        if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+            let strict = *strict;
+            for key in [
+                "noImplicitAny",
+                "noImplicitThis",
+                "strictNullChecks",
+                "strictFunctionTypes",
+                "strictBindCallApply",
+                "strictPropertyInitialization",
+                "useUnknownInCatchVariables",
+                "alwaysStrict",
+            ] {
+                opts.entry(key.to_string())
+                    .or_insert(serde_json::Value::Bool(strict));
+            }
         }
     }
 

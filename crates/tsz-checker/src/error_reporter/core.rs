@@ -193,6 +193,126 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn strip_optional_member_undefined_for_display(&self, ty: TypeId) -> TypeId {
+        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
+        let Some(members) = query::union_members(self.ctx.types, ty) else {
+            return ty;
+        };
+
+        let filtered: Vec<_> = members
+            .iter()
+            .copied()
+            .filter(|member| *member != TypeId::UNDEFINED)
+            .collect();
+
+        if filtered.len() == members.len() || filtered.is_empty() {
+            ty
+        } else if filtered.len() == 1 {
+            filtered[0]
+        } else {
+            self.ctx.types.factory().union_preserve_members(filtered)
+        }
+    }
+
+    fn normalize_assignability_display_type(&mut self, ty: TypeId) -> TypeId {
+        let ty = self
+            .materialize_finite_mapped_type_for_display(ty)
+            .unwrap_or(ty);
+        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
+
+        if let Some(app) = query::type_application(self.ctx.types, ty) {
+            let args: Vec<_> = app
+                .args
+                .iter()
+                .map(|&arg| self.normalize_assignability_display_type(arg))
+                .collect();
+            if args == app.args {
+                ty
+            } else {
+                self.ctx.types.factory().application(app.base, args)
+            }
+        } else if let Some(shape) = query::function_shape(self.ctx.types, ty) {
+            let params: Vec<_> = shape
+                .params
+                .iter()
+                .map(|param| tsz_solver::ParamInfo {
+                    type_id: self.normalize_assignability_display_type(param.type_id),
+                    ..param.clone()
+                })
+                .collect();
+            let return_type = self.normalize_assignability_display_type(shape.return_type);
+            if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b)
+                && return_type == shape.return_type
+            {
+                ty
+            } else {
+                self.ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape {
+                        type_params: shape.type_params.clone(),
+                        params,
+                        this_type: shape.this_type,
+                        return_type,
+                        type_predicate: shape.type_predicate.clone(),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    })
+            }
+        } else if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty) {
+            let mut shape = shape.as_ref().clone();
+            let mut changed = false;
+            for prop in &mut shape.properties {
+                let normalized_read = self.normalize_assignability_display_type(prop.type_id);
+                let normalized_write = self.normalize_assignability_display_type(prop.write_type);
+                let stripped_read = if prop.optional {
+                    self.strip_optional_member_undefined_for_display(normalized_read)
+                } else {
+                    normalized_read
+                };
+                let stripped_write = if prop.optional {
+                    self.strip_optional_member_undefined_for_display(normalized_write)
+                } else {
+                    normalized_write
+                };
+                changed |= stripped_read != prop.type_id || stripped_write != prop.write_type;
+                prop.type_id = stripped_read;
+                prop.write_type = stripped_write;
+            }
+            if let Some(index) = shape.string_index.as_mut() {
+                let normalized = self.normalize_assignability_display_type(index.value_type);
+                changed |= normalized != index.value_type;
+                index.value_type = normalized;
+            }
+            if let Some(index) = shape.number_index.as_mut() {
+                let normalized = self.normalize_assignability_display_type(index.value_type);
+                changed |= normalized != index.value_type;
+                index.value_type = normalized;
+            }
+            if changed {
+                self.ctx.types.factory().object_with_index(shape)
+            } else {
+                ty
+            }
+        } else if let Some(members) = query::union_members(self.ctx.types, ty) {
+            self.ctx.types.factory().union_preserve_members(
+                members
+                    .iter()
+                    .map(|&member| self.normalize_assignability_display_type(member))
+                    .collect(),
+            )
+        } else if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            self.ctx.types.factory().intersection(
+                members
+                    .iter()
+                    .map(|&member| self.normalize_assignability_display_type(member))
+                    .collect(),
+            )
+        } else {
+            ty
+        }
+    }
+
     fn split_optional_object_for_excess_display(&self, ty: TypeId) -> TypeId {
         let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
         if let Some(members) = query::union_members(self.ctx.types, ty) {
@@ -206,6 +326,58 @@ impl<'a> CheckerState<'a> {
             }
         }
         ty
+    }
+
+    fn strip_optional_property_undefined_from_formatted_type(&self, formatted: String) -> String {
+        let chars: Vec<char> = formatted.chars().collect();
+        let mut result = String::with_capacity(formatted.len());
+        let mut i = 0;
+
+        while i < chars.len() {
+            if i + 2 < chars.len() && chars[i] == '?' && chars[i + 1] == ':' && chars[i + 2] == ' '
+            {
+                result.push('?');
+                result.push(':');
+                result.push(' ');
+                i += 3;
+
+                let mut segment = String::new();
+                let mut brace_depth = 0usize;
+                let mut bracket_depth = 0usize;
+                let mut paren_depth = 0usize;
+
+                while i < chars.len() {
+                    let ch = chars[i];
+                    match ch {
+                        '{' => brace_depth += 1,
+                        '}' if brace_depth == 0 => break,
+                        '}' => brace_depth -= 1,
+                        '[' => bracket_depth += 1,
+                        ']' if bracket_depth > 0 => bracket_depth -= 1,
+                        '(' => paren_depth += 1,
+                        ')' if paren_depth > 0 => paren_depth -= 1,
+                        ';' if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 => {
+                            break;
+                        }
+                        _ => {}
+                    }
+                    segment.push(ch);
+                    i += 1;
+                }
+
+                if let Some(stripped) = segment.strip_suffix(" | undefined") {
+                    result.push_str(stripped);
+                } else {
+                    result.push_str(&segment);
+                }
+                continue;
+            }
+
+            result.push(chars[i]);
+            i += 1;
+        }
+
+        result
     }
 
     fn split_wildcard_object_for_excess_display(&mut self, ty: TypeId) -> Option<String> {
@@ -371,15 +543,15 @@ impl<'a> CheckerState<'a> {
     }
 
     fn format_annotation_like_type(&mut self, text: &str) -> String {
-        let formatted = text.trim().to_string();
+        let mut formatted = text.trim().to_string();
         if formatted.starts_with("{ ")
             && formatted.ends_with(" }")
             && formatted.contains(':')
             && !formatted.ends_with("; }")
         {
-            return format!("{}; }}", &formatted[..formatted.len() - 2]);
+            formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
-        formatted
+        self.strip_optional_property_undefined_from_formatted_type(formatted)
     }
 
     fn should_use_evaluated_assignability_display(&self, ty: TypeId, evaluated: TypeId) -> bool {
@@ -1008,7 +1180,58 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn object_literal_source_type_display(&mut self, expr_idx: NodeIndex) -> Option<String> {
+    fn precise_callable_contextual_display_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
+        if type_id == TypeId::UNDEFINED {
+            return None;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            let callable_members: Vec<_> = members
+                .into_iter()
+                .filter(|&member| member != TypeId::UNDEFINED)
+                .collect();
+            if !callable_members.is_empty()
+                && callable_members.iter().all(|&member| {
+                    tsz_solver::type_queries::is_callable_type(self.ctx.types, member)
+                })
+            {
+                return Some(
+                    self.ctx
+                        .types
+                        .factory()
+                        .union_preserve_members(callable_members),
+                );
+            }
+            return None;
+        }
+
+        tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id).then_some(type_id)
+    }
+
+    fn empty_array_literal_source_type_display(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        if !literal.elements.nodes.is_empty() {
+            return None;
+        }
+        Some(if self.ctx.strict_null_checks() {
+            "never[]".to_string()
+        } else {
+            "undefined[]".to_string()
+        })
+    }
+
+    fn object_literal_source_type_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: Option<TypeId>,
+    ) -> Option<String> {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
@@ -1021,30 +1244,50 @@ impl<'a> CheckerState<'a> {
             let child = self.ctx.arena.get(child_idx)?;
             let prop = self.ctx.arena.get_property_assignment(child)?;
             let name_node = self.ctx.arena.get(prop.name)?;
-            let name = match name_node.kind {
-                k if k == tsz_scanner::SyntaxKind::Identifier as u16 => self
-                    .ctx
-                    .arena
-                    .get_identifier(name_node)?
-                    .escaped_text
-                    .clone(),
+            let (lookup_name, display_name) = match name_node.kind {
+                k if k == tsz_scanner::SyntaxKind::Identifier as u16 => {
+                    let name = self
+                        .ctx
+                        .arena
+                        .get_identifier(name_node)?
+                        .escaped_text
+                        .clone();
+                    (name.clone(), name)
+                }
                 k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
                     || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
                 {
                     let lit = self.ctx.arena.get_literal(name_node)?;
-                    format!("\"{}\"", lit.text)
+                    (lit.text.clone(), format!("\"{}\"", lit.text))
                 }
                 k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
-                    self.ctx.arena.get_literal(name_node)?.text.clone()
+                    let text = self.ctx.arena.get_literal(name_node)?.text.clone();
+                    (text.clone(), text)
                 }
                 _ => return None,
             };
-            let value_type = self.get_type_of_node(prop.initializer);
+            let mut value_type = self.get_type_of_node(prop.initializer);
             if value_type == TypeId::ERROR {
                 return None;
             }
+
+            if let Some(target) = target
+                && self.ctx.arena.get(prop.initializer).is_some_and(|init| {
+                    matches!(
+                        init.kind,
+                        syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                    )
+                })
+                && let Some(property_type) =
+                    self.contextual_object_literal_property_type(target, &lookup_name)
+                && let Some(callable_type) =
+                    self.precise_callable_contextual_display_type(property_type)
+            {
+                value_type = callable_type;
+            }
+
             parts.push(format!(
-                "{name}: {}",
+                "{display_name}: {}",
                 self.format_type_for_assignability_message(self.widen_type_for_display(value_type))
             ));
         }
@@ -1083,7 +1326,11 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.empty_array_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1134,7 +1381,11 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.empty_array_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1238,7 +1489,11 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.empty_array_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1261,7 +1516,11 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
 
-            if let Some(display) = self.object_literal_source_type_display(expr_idx) {
+            if let Some(display) = self.empty_array_literal_source_type_display(expr_idx) {
+                return display;
+            }
+
+            if let Some(display) = self.object_literal_source_type_display(expr_idx, Some(target)) {
                 return display;
             }
 
@@ -1465,11 +1724,13 @@ impl<'a> CheckerState<'a> {
             return extract_display;
         }
 
-        let mut formatted = self.format_type_diagnostic(ty);
+        let display_ty = self.normalize_assignability_display_type(ty);
+        let mut formatted = self.format_type_diagnostic(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')
-            && let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)
+            && let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty)
             && let Some(sym_id) = shape.symbol
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
@@ -1540,9 +1801,9 @@ impl<'a> CheckerState<'a> {
             && formatted.contains(':')
             && !formatted.ends_with("; }")
         {
-            return format!("{}; }}", &formatted[..formatted.len() - 2]);
+            formatted = format!("{}; }}", &formatted[..formatted.len() - 2]);
         }
-        formatted
+        self.strip_optional_property_undefined_from_formatted_type(formatted)
     }
 
     pub(crate) fn format_assignability_type_for_message(
