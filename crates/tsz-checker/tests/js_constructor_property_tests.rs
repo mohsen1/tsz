@@ -765,3 +765,29 @@ bz.y = undefined;
         "Expected no TS2322 for assigning undefined to prototype-method property, got: {diagnostics:?}"
     );
 }
+
+/// Arrow functions inside JS prototype methods should inherit the instance `this` type.
+#[test]
+fn test_js_prototype_method_arrow_inherits_instance_this_type() {
+    let source = r#"
+function Installer() {
+    this.args = 0;
+}
+Installer.prototype.loadArgMetadata = function(next) {
+    (args) => {
+        this.args = "hi";
+        this.newProperty = 1;
+    };
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2322 && msg.contains("string") && msg.contains("number"))
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected prototype-method arrow to inherit instance this and report TS2322, got: {diagnostics:?}"
+    );
+}
