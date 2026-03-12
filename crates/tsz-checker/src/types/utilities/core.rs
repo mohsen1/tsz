@@ -85,14 +85,17 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
         prop: &PropertyDeclData,
     ) -> Option<TypeId> {
-        if !self.is_js_file() {
-            return prop
-                .type_annotation
-                .is_some()
-                .then(|| self.get_type_from_type_node(prop.type_annotation));
+        if prop.type_annotation.is_some() {
+            // In JS/checkJs, tsc still uses explicit class property type syntax for
+            // downstream semantic checks even though it separately reports TS8009/TS8010.
+            return Some(self.get_type_from_type_node(prop.type_annotation));
         }
 
-        self.jsdoc_type_annotation_for_node(member_idx)
+        if self.is_js_file() {
+            self.jsdoc_type_annotation_for_node(member_idx)
+        } else {
+            None
+        }
     }
 
     /// Cache parameter types for function parameters.

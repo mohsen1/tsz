@@ -11658,6 +11658,38 @@ var arguments = 1;
 }
 
 #[test]
+fn test_js_declare_property_keeps_declared_type_for_semantic_checks() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.js",
+        r#"
+class Foo {
+    constructor() {
+        this.prop = {};
+    }
+
+    declare prop: string;
+
+    method() {
+        this.prop.foo;
+    }
+}
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    for code in [2322, 2339, 8009, 8010] {
+        assert!(
+            has_error(&diagnostics, code),
+            "Expected TS{code} for declare property syntax in JS while preserving semantic checks.\nGot: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
 fn test_for_in_key_assignment_preserves_extract_keyof_string_type() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
