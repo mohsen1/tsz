@@ -291,6 +291,7 @@ impl ParserState {
         let mut depth = 1;
         let mut brace_depth: u32 = 0;
         let mut bracket_depth: u32 = 0;
+        let mut angle_bracket_depth: u32 = 0;
         let mut saw_parameter_syntax = false;
         let mut at_param_start = true; // true at the first position in a parameter slot
         let mut previous_top_level_can_end_parameter_name = false;
@@ -298,7 +299,8 @@ impl ParserState {
         let mut saw_top_level_conditional_operator = false;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             let token = self.token();
-            let at_top_level = depth == 1 && brace_depth == 0 && bracket_depth == 0;
+            let at_top_level =
+                depth == 1 && brace_depth == 0 && bracket_depth == 0 && angle_bracket_depth == 0;
             if at_top_level
                 && at_param_start
                 && !matches!(
@@ -359,6 +361,12 @@ impl ParserState {
             } else if token == SyntaxKind::CloseBracketToken {
                 bracket_depth = bracket_depth.saturating_sub(1);
                 at_param_start = false;
+            } else if token == SyntaxKind::LessThanToken {
+                angle_bracket_depth += 1;
+                at_param_start = false;
+            } else if token == SyntaxKind::GreaterThanToken && angle_bracket_depth > 0 {
+                angle_bracket_depth -= 1;
+                at_param_start = false;
             } else if token == SyntaxKind::CloseParenToken {
                 depth -= 1;
                 at_param_start = false;
@@ -366,6 +374,7 @@ impl ParserState {
                 && depth == 1
                 && brace_depth == 0
                 && bracket_depth == 0
+                && angle_bracket_depth == 0
             {
                 // A comma at the top level separates parameters; the next token
                 // starts a new parameter slot.
