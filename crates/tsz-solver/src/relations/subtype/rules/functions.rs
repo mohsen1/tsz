@@ -769,7 +769,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let _ = infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
         }
 
-        let inferred = infer_ctx.resolve_all_with_constraints()?;
+        // Try full inference first. If it fails (e.g., BoundsViolation when a
+        // covariant return-type candidate conflicts with a contravariant parameter
+        // upper bound), fall back to using parameter-based upper bounds directly.
+        // This matches tsc's behavior where contextual signature instantiation
+        // for subtype checking uses parameter inference over return-type inference.
+        //
+        // However, this recovery only applies to unconstrained type params (e.g.,
+        // `<T>(x: T) => T` vs `(x: string) => Object`). When a type param has a
+        // declared constraint (e.g., `<V extends T1>`), a BoundsViolation means
+        // the inferred type doesn't satisfy that constraint, and the caller should
+        // fall back to constraint erasure (`getErasedSignature` in tsc).
+        let inferred = infer_ctx.resolve_all_with_constraints();
+        if let Err(e) = &inferred
+            && source.type_params.iter().any(|tp| tp.constraint.is_some())
+        {
+            return Err(e.clone());
+        }
         let mut substitution = TypeSubstitution::new();
         for (original_tp, renamed_tp) in source
             .type_params
@@ -785,18 +801,52 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
-            let inferred_ty = inferred
-                .iter()
-                .find_map(|(name, ty)| (*name == renamed_tp.name).then_some(*ty));
+            let inferred_ty = inferred.as_ref().ok().and_then(|results| {
+                results
+                    .iter()
+                    .find_map(|(name, ty)| (*name == renamed_tp.name).then_some(*ty))
+            });
+            let fallback_ty = if inferred_ty.is_none() {
+                // No inference result — try using parameter-based upper bounds.
+                // When parameters provide a concrete type (e.g., T <: string from
+                // a parameter position), use the tightest upper bound as the
+                // inferred type. This handles cases like:
+                //   <T>(x: T) => T  assigned to  (x: string) => Object
+                // where T should resolve to string (from parameter) not Object
+                // (from return type which caused BoundsViolation).
+                let param_upper_bounds: Vec<TypeId> = infer_ctx
+                    .find_type_param(renamed_tp.name)
+                    .and_then(|var| infer_ctx.get_constraints(var))
+                    .map(|cs| cs.upper_bounds)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|&ub| {
+                        // Filter out declared constraints (already present on the
+                        // type param) — we only want inferred upper bounds from
+                        // parameter positions.
+                        original_tp.constraint != Some(ub)
+                    })
+                    .collect();
+                if param_upper_bounds.len() == 1 {
+                    Some(param_upper_bounds[0])
+                } else if param_upper_bounds.len() > 1 {
+                    Some(self.interner.intersection(param_upper_bounds))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
                 TypeId::ANY
             };
-            let inferred_ty = inferred_ty
+            let resolved_ty = inferred_ty
                 .map(|ty| resolve_contextual_source_inference_candidate(&lower_bounds, ty))
+                .or(fallback_ty)
                 .unwrap_or(fallback);
-            substitution.insert(original_tp.name, inferred_ty);
+            substitution.insert(original_tp.name, resolved_ty);
         }
         Ok(substitution)
     }
