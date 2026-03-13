@@ -739,13 +739,18 @@ impl<'a> CheckerState<'a> {
                     && !property_name.starts_with('#')
                     && !accessibility_error_emitted
                 {
-                    // Report at the property name node, not the full expression (matches tsc behavior)
-                    // Use display_object_type to preserve literal types in error messages
-                    self.error_property_not_exist_at(
-                        property_name,
-                        display_object_type,
-                        access.name_or_argument,
-                    );
+                    // Check if the base expression is an uninstantiated namespace.
+                    // tsc emits TS2708 "Cannot use namespace 'X' as a value" on the
+                    // namespace identifier, not TS2339 on the property.
+                    if let Some(ns_name) = self.uninstantiated_namespace_name(access.expression) {
+                        self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                    } else {
+                        self.error_property_not_exist_at(
+                            property_name,
+                            display_object_type,
+                            access.name_or_argument,
+                        );
+                    }
                 }
                 return TypeId::ERROR;
             }
