@@ -448,6 +448,11 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node_flags;
         use tsz_scanner::SyntaxKind;
 
+        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+
         let Some(node) = self.ctx.arena.get(module_idx) else {
             return;
         };
