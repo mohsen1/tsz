@@ -1656,6 +1656,13 @@ impl ParserState {
             let variable_declaration = if self.is_token(SyntaxKind::OpenParenToken) {
                 self.next_token();
                 let decl = if self.is_token(SyntaxKind::CloseParenToken) {
+                    // TS1003: `catch ()` — parens present but no binding identifier.
+                    // `catch { }` (no parens) is valid optional catch binding,
+                    // but `catch () { }` requires an identifier between the parens.
+                    self.parse_error_at_current_token(
+                        "Identifier expected.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED,
+                    );
                     NodeIndex::NONE
                 } else {
                     // Pass flag 0x8 (CATCH_CLAUSE_BINDING) to suppress TS1182
@@ -1698,7 +1705,7 @@ impl ParserState {
             && self.token_pos() != self.last_error_pos
         {
             self.parse_error_at_current_token(
-                "catch or finally expected.",
+                "'catch' or 'finally' expected.",
                 diagnostic_codes::CATCH_OR_FINALLY_EXPECTED,
             );
         }
