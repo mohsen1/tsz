@@ -46,9 +46,35 @@ impl<'a> CheckerState<'a> {
         // Only applies to class declarations, not class expressions (which are allowed to be anonymous).
         // Also skip when `default` is present as a modifier on the class itself (e.g. `default class {}`
         // without `export` — that's a TS1029 error, not TS1211).
+        //
+        // Also skip when the parser already emitted TS1005 for a reserved word in the name
+        // position (e.g. `class void {}`). In that case `name` is None but tsc only emits
+        // TS1005, not TS1211. We detect this by checking if there's a non-whitespace token
+        // between the `class` keyword and `{` — that means a keyword was parsed and rejected.
+        let parser_already_reported_name_error = class.name.is_none() && {
+            if let Some(sf) = self.ctx.arena.source_files.first() {
+                let src = sf.text.as_ref();
+                let start = node.pos as usize;
+                // Find "class" in the source at node start, then check what follows
+                let after_class = src.get(start..).and_then(|s| {
+                    let class_kw = s.find("class")?;
+                    Some(&s[class_kw + 5..])
+                });
+                if let Some(rest) = after_class {
+                    // Check if there's a non-whitespace char before `{`
+                    let before_brace = rest.split('{').next().unwrap_or("");
+                    before_brace.trim().len() > 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
         if class.name.is_none()
             && node.kind == syntax_kind_ext::CLASS_DECLARATION
             && !self.has_modifier_kind(&class.modifiers, tsz_scanner::SyntaxKind::DefaultKeyword)
+            && !parser_already_reported_name_error
         {
             // The parser consumes `default` before parsing the class, so it won't
             // appear in the class's own modifiers — check the parent export node.
