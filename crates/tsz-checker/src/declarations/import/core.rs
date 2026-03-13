@@ -1329,6 +1329,7 @@ impl<'a> CheckerState<'a> {
             && !is_declaration_file
             && !self.is_js_file()
             && !is_cjs_extension
+            && !self.ctx.has_syntax_parse_errors
         {
             for &export_idx in &export_assignment_indices {
                 if !self.is_ambient_declaration(export_idx) {
