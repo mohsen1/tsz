@@ -151,6 +151,27 @@ impl<'a> CheckerState<'a> {
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
 
+        // For INTERFACE symbols that have local (user) interface declarations in the
+        // current arena, do NOT delegate to the lib arena. The user's interface body
+        // must be merged with the lib type, and delegating would lose the user's
+        // members (e.g., `interface Node { forEachChild(...) }` augments lib Node).
+        // The INTERFACE block in compute_type_of_symbol handles multi-arena merging.
+        if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
+            && let Some(symbol) = self.get_symbol_globally(sym_id)
+            && (symbol.flags & symbol_flags::INTERFACE) != 0
+        {
+            let has_local_interface = symbol.declarations.iter().any(|&d| {
+                self.ctx
+                    .arena
+                    .get(d)
+                    .and_then(|n| self.ctx.arena.get_interface(n))
+                    .is_some()
+            });
+            if has_local_interface {
+                delegate_arena = None; // Handle locally with merge
+            }
+        }
+
         if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_symbol_globally(sym_id)
         {

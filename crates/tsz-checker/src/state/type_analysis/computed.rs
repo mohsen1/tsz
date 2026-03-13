@@ -929,7 +929,20 @@ impl<'a> CheckerState<'a> {
                 });
                 !has_real_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
             };
+            // When all declarations are from lib arenas (no local interface
+            // declarations), resolve via the lib type directly. But when the
+            // user has local interface declarations that augment/extend the lib
+            // type (e.g., `interface Node { forEachChild(...) }`), we must fall
+            // through to the full merge path so user-declared members are included.
+            let has_local_interface_decl = declarations.iter().any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .is_some()
+            });
             if (has_out_of_arena_decl || is_lib_symbol)
+                && !has_local_interface_decl
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
             {
@@ -1694,6 +1707,24 @@ impl<'a> CheckerState<'a> {
                 // Not a require() call — try qualified symbol resolution
                 // for `import x = ns.member` patterns.
                 if let Some(target_sym) = self.resolve_qualified_symbol(import.module_specifier) {
+                    // When the target has both TYPE_ALIAS and VALUE flags
+                    // (e.g., `import X = NS.Foo` where NS has both `type Foo = ...` and
+                    // `const Foo = ...`), cache the type alias body for type contexts and
+                    // return the value type. This mirrors the TYPE_ALIAS + ALIAS merge
+                    // logic used for ES6 imports.
+                    let target_info = self
+                        .get_symbol_globally(target_sym)
+                        .map(|s| (s.flags, s.value_declaration));
+                    if let Some((tflags, vd)) = target_info
+                        && tflags & symbol_flags::TYPE_ALIAS != 0
+                            && tflags & symbol_flags::VALUE != 0
+                        {
+                            let ta_type = self.get_type_of_symbol(target_sym);
+                            self.ctx.import_type_alias_types.insert(sym_id, ta_type);
+                            let val_type =
+                                self.type_of_value_declaration_for_symbol(target_sym, vd);
+                            return (val_type, Vec::new());
+                        }
                     return (self.get_type_of_symbol(target_sym), Vec::new());
                 }
                 // Namespace import failed to resolve
