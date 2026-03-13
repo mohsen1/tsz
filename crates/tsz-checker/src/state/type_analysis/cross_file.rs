@@ -429,6 +429,14 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .collect();
 
+            // Propagate lib type resolution cache from child to parent.
+            // Without this, child contexts that resolve lib types (Array, Promise, etc.)
+            // lose those cached results, forcing the parent to re-resolve them.
+            let child_lib_type_cache: Vec<(String, Option<TypeId>)> =
+                std::mem::take(&mut checker.ctx.lib_type_resolution_cache)
+                    .into_iter()
+                    .collect();
+
             // Collect circular type alias markers so the parent can detect
             // cross-file cycles.  When the child resolves `type B = A` and
             // finds A in the resolution set (from the parent), it marks A as
@@ -465,6 +473,12 @@ impl<'a> CheckerState<'a> {
                 .extend(child_namespace_names);
             for (name, type_id) in child_lib_delegation_cache {
                 self.ctx.lib_delegation_cache.entry(name).or_insert(type_id);
+            }
+            for (name, type_id) in child_lib_type_cache {
+                self.ctx
+                    .lib_type_resolution_cache
+                    .entry(name)
+                    .or_insert(type_id);
             }
             for sym in child_circular_aliases {
                 self.ctx.circular_type_aliases.insert(sym);
