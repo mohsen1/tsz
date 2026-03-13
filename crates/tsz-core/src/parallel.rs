@@ -554,7 +554,11 @@ pub fn load_lib_files_for_binding_strict(
     }
 
     // Phase 2: Parse and bind all files in parallel (CPU bound — the expensive part).
-    // This parallelizes the ~0.8s parse+bind work across available cores.
+    // Sort largest files first so rayon's work-stealing starts them early.
+    // dom.d.ts (40K lines, 2MB) dominates parse time — without this sort it's
+    // file #81 of 87 and becomes the critical-path bottleneck.
+    file_contents.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
     #[cfg(not(target_arch = "wasm32"))]
     ensure_rayon_global_pool();
 
@@ -598,10 +602,8 @@ fn collect_lib_files_recursive(
     if !loaded.insert(lib_path.clone()) {
         return Ok(());
     }
-    if !lib_path.exists() {
-        bail!("lib file not found on disk: {}", lib_path.display());
-    }
 
+    // Skip separate exists() stat syscall — let read_to_string handle missing files.
     let source_text = std::fs::read_to_string(&lib_path)
         .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
 
@@ -621,6 +623,17 @@ fn parse_lib_references(content: &str) -> Vec<String> {
     let mut refs = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
+        // References are always at the top of lib files. Once we see a line
+        // that isn't a comment, empty, or copyright header, stop scanning.
+        // This avoids iterating through 40K+ lines for dom.d.ts.
+        if !trimmed.is_empty()
+            && !trimmed.starts_with("///")
+            && !trimmed.starts_with("//")
+            && !trimmed.starts_with("/*")
+            && !trimmed.starts_with('*')
+        {
+            break;
+        }
         if !trimmed.starts_with("///") {
             continue;
         }
