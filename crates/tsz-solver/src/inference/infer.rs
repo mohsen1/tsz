@@ -1207,6 +1207,15 @@ impl<'a> InferenceContext<'a> {
             .map(|c| c.type_id)
             .collect()
     }
+
+    /// Check if all covariant candidates for a variable are fresh literals.
+    /// When false, the resolved type should NOT be widened by `widen_literal_type`
+    /// (matches tsc's `getWidenedLiteralType` which only widens fresh literals).
+    pub fn all_candidates_are_fresh_literals(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        !info.candidates.is_empty() && info.candidates.iter().all(|c| c.is_fresh_literal)
+    }
 }
 
 // DISABLED: Tests use deprecated add_candidate / resolve_with_constraints API
