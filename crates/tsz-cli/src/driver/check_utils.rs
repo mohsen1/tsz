@@ -949,10 +949,50 @@ pub(super) fn filtered_parse_diagnostics(
         .iter()
         .any(|diagnostic| is_real_syntax_error(diagnostic.code));
 
+    // tsc emits these codes via grammarErrorOnNode in the checker, which checks
+    // hasParseDiagnostics(sourceFile) and suppresses when any parse error exists.
+    // In tsz, these are emitted by the parser. We post-filter them here to match
+    // tsc's suppression behavior. We only suppress grammar codes when there's a
+    // non-grammar parse error present (e.g., TS1005, TS1109) to avoid suppressing
+    // grammar codes that are the file's only diagnostic.
+    let has_non_grammar_parse_error = parse_diagnostics.iter().any(|d| {
+        !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359) && !is_parser_grammar_code(d.code)
+    });
+
     parse_diagnostics
         .iter()
-        .filter(|diagnostic| !(has_real_syntax_error && diagnostic.code == 1184))
+        .filter(|diagnostic| {
+            // Existing: suppress TS1184 when real syntax errors exist
+            if has_real_syntax_error && diagnostic.code == 1184 {
+                return false;
+            }
+            // Suppress parser-emitted grammar codes that tsc would emit via
+            // grammarErrorOnNode (checker-side, suppressed by hasParseDiagnostics).
+            if has_non_grammar_parse_error && is_parser_grammar_code(diagnostic.code) {
+                return false;
+            }
+            true
+        })
         .collect()
+}
+
+/// Parser-emitted codes that tsc emits via grammarErrorOnNode in the checker.
+/// These should be suppressed when the file has parse errors, matching tsc behavior.
+/// Only includes codes confirmed to be checker-side grammar checks in tsc that
+/// our parser emits instead.
+fn is_parser_grammar_code(code: u32) -> bool {
+    matches!(
+        code,
+        1021 // An index signature must have a type annotation
+        | 1042 // 'async' modifier cannot be used here
+        | 1068 // Unexpected token (class member)
+        | 1071 // An accessor must have a body (interface/ambient)
+        | 1096 // An index signature must have exactly one parameter
+        | 1162 // An object member cannot be declared optional
+        | 1163 // A 'yield' expression is only allowed in a generator body
+        | 1210 // Code contained in a class is evaluated in strict mode
+        | 1359 // Identifier expected. 'await' is a reserved word
+    )
 }
 
 pub(super) fn create_binder_from_bound_file(
