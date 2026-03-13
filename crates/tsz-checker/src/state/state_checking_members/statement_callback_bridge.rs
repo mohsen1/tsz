@@ -1087,6 +1087,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 {
                     self.check_import_alias_duplicates(&statements.nodes);
                 }
+
+                // TS2300: Check for "prototype" exports in namespace-class merges.
+                // Classes have an implicit static `prototype` property, so a namespace
+                // merged with a class must not export a member named "prototype".
+                self.check_namespace_prototype_conflict(module_idx);
             }
         }
     }
@@ -1905,5 +1910,62 @@ impl<'a> CheckerState<'a> {
         // e.g., `const BAR = 2..toFixed(0)` → call expression → fails.
         // e.g., `const LOCAL = 'LOCAL'` → string literal → succeeds.
         self.would_enum_eval_succeed(init)
+    }
+}
+
+// =========================================================================
+// Namespace-Class Merge Helpers
+// =========================================================================
+
+impl<'a> CheckerState<'a> {
+    /// TS2300: Detect `prototype` exports in a namespace that merges with a class.
+    ///
+    /// When `declare class Foo {}` and `declare namespace Foo { namespace prototype { ... } }`
+    /// exist, tsc reports "Duplicate identifier 'prototype'" on the namespace export.
+    fn check_namespace_prototype_conflict(&mut self, module_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+
+        // Get the symbol for this namespace declaration
+        let Some(&sym_id) = self.ctx.binder.node_symbols.get(&module_idx.0) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        // Check if this symbol also has a class declaration (class-namespace merge)
+        let has_class = symbol.flags & tsz_binder::symbol_flags::CLASS != 0;
+        if !has_class {
+            return;
+        }
+
+        // Check if the namespace exports a member named "prototype"
+        let Some(exports) = symbol.exports.as_ref() else {
+            return;
+        };
+        let prototype_member_id =
+            exports.iter().find_map(
+                |(name, &id)| {
+                    if name == "prototype" { Some(id) } else { None }
+                },
+            );
+        let Some(prototype_member_id) = prototype_member_id else {
+            return;
+        };
+
+        // Report TS2300 on the prototype member's declaration name node
+        if let Some(proto_sym) = self.ctx.binder.get_symbol(prototype_member_id) {
+            let decl_node = proto_sym.value_declaration;
+            if decl_node != NodeIndex::NONE {
+                let error_node = self
+                    .get_declaration_name_node(decl_node)
+                    .unwrap_or(decl_node);
+                self.error_at_node_msg(
+                    error_node,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &["prototype"],
+                );
+            }
+        }
     }
 }
