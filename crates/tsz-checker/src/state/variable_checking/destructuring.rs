@@ -727,12 +727,26 @@ impl<'a> CheckerState<'a> {
         // Handles: { x }, { x: a }, { 'b': a }, { ['b']: a }, { [ident]: a }.
         let property_name = self.extract_binding_property_name(element_data);
 
+        // Unique symbol keys (e.g. `const s = Symbol(); { [s]: v }`) resolve to
+        // `__unique_N` via `get_property_name_resolved`, but they should be treated
+        // as dynamic keys for index type checking — tsc emits TS2538 ("Type 'unique
+        // symbol' cannot be used as an index type") rather than TS2339.
+        let is_unique_symbol_key = property_name
+            .as_ref()
+            .is_some_and(|n| n.starts_with("__unique_"));
+        let property_name = if is_unique_symbol_key {
+            None
+        } else {
+            property_name
+        };
+
         // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
         // check index signatures when the key resolves to a dynamic type
         // (string or number, not a literal matching a known property).
         if element_data.property_name.is_some() {
             // Only check index signatures for truly dynamic keys (not identifiers
             // or string/numeric literals that resolve to known properties).
+            // Unique symbol keys are also treated as dynamic.
             if computed_expr.is_some() && property_name.is_none() {
                 let key_type = computed_expr.map_or(TypeId::ANY, |expr_idx| {
                     self.get_binding_element_computed_key_type(pattern_idx, expr_idx)
