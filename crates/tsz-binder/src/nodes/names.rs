@@ -33,6 +33,15 @@ impl BinderState {
                 }
                 return Some(Cow::Borrowed(&lit.text));
             }
+            // Handle computed property names with literal expressions, e.g. ["bar"]
+            // Only resolve when the expression is a string/numeric literal, NOT an
+            // identifier (which would be a late-bound computed property like [f1]).
+            if let Some(computed) = arena.get_computed_property(node)
+                && let Some(expr_node) = arena.get(computed.expression)
+                    && arena.get_literal(expr_node).is_some()
+                {
+                    return Self::get_property_name(arena, computed.expression);
+                }
         }
         None
     }
