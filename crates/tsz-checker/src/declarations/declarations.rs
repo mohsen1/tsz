@@ -168,6 +168,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // - Type annotation vs initializer type compatibility
         // - Adding variable to scope
         if self.ctx.is_js_file()
+            && !self.ctx.has_syntax_parse_errors
             && self.is_strict_mode_for_node(decl_data.name)
             && let Some(name_node) = self.ctx.arena.get(decl_data.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
@@ -253,6 +254,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // In class bodies, `arguments` is reported as TS1210 instead.
         // Skip for ambient declarations (functions inside `declare global`, `.d.ts` files, etc.)
         if !has_declare
+            && !self.ctx.has_syntax_parse_errors
             && !self.is_ambient_declaration(func_idx)
             && func.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(func.name)
