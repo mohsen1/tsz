@@ -631,6 +631,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Recurse into the constraint to find the property
                     self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom))
                 } else {
+                    // Unconstrained type parameters implicitly extend Object in tsc,
+                    // so properties like toString/valueOf/hasOwnProperty are accessible.
+                    // Fall back to the Object boxed interface type.
+                    if let Some(object_type) = crate::def::resolver::TypeResolver::get_boxed_type(
+                        self.db,
+                        IntrinsicKind::Object,
+                    ) {
+                        let result = self.resolve_property_access_inner(
+                            object_type,
+                            prop_name,
+                            Some(prop_atom),
+                        );
+                        if !result.is_not_found() {
+                            return result;
+                        }
+                    }
                     PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,
