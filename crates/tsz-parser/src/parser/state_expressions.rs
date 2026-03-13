@@ -303,6 +303,7 @@ impl ParserState {
                 depth == 1 && brace_depth == 0 && bracket_depth == 0 && angle_bracket_depth == 0;
             if at_top_level
                 && at_param_start
+                && !saw_parameter_syntax
                 && !matches!(
                     token,
                     SyntaxKind::CloseParenToken
