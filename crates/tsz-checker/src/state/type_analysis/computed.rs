@@ -1717,14 +1717,13 @@ impl<'a> CheckerState<'a> {
                         .map(|s| (s.flags, s.value_declaration));
                     if let Some((tflags, vd)) = target_info
                         && tflags & symbol_flags::TYPE_ALIAS != 0
-                            && tflags & symbol_flags::VALUE != 0
-                        {
-                            let ta_type = self.get_type_of_symbol(target_sym);
-                            self.ctx.import_type_alias_types.insert(sym_id, ta_type);
-                            let val_type =
-                                self.type_of_value_declaration_for_symbol(target_sym, vd);
-                            return (val_type, Vec::new());
-                        }
+                        && tflags & symbol_flags::VALUE != 0
+                    {
+                        let ta_type = self.get_type_of_symbol(target_sym);
+                        self.ctx.import_type_alias_types.insert(sym_id, ta_type);
+                        let val_type = self.type_of_value_declaration_for_symbol(target_sym, vd);
+                        return (val_type, Vec::new());
+                    }
                     return (self.get_type_of_symbol(target_sym), Vec::new());
                 }
                 // Namespace import failed to resolve
