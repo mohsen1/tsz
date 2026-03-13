@@ -1090,9 +1090,10 @@ impl<'a> CheckerState<'a> {
             != 0
         {
             let value_type = self.get_type_of_symbol(sym_id);
-            if let Some(instance_type) = self.instance_type_from_constructor_type(value_type) {
-                return instance_type;
-            }
+            // Return the value type directly, matching TSC's getTypeFromJSDocValueReference
+            // which calls getTypeOfSymbol without instance type extraction.
+            // Instance type extraction for JS constructor functions is handled by the
+            // FUNCTION branch above via synthesize_js_constructor_instance_type.
             if value_type != TypeId::ERROR && value_type != TypeId::UNKNOWN {
                 return value_type;
             }
