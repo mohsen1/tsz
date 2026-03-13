@@ -360,6 +360,19 @@ impl ParserState {
                     }
                 }
             }
+            // var/let/const after `export default` is invalid — emit TS1109
+            // and parse the variable statement as recovery (consuming the
+            // entire `var a = 10;` so no cascading TS1005).
+            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::ConstKeyword => {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+                // Parse as variable statement for recovery
+                let _ = self.parse_variable_statement();
+                NodeIndex::NONE
+            }
             _ => {
                 let expr = self.parse_assignment_expression();
                 self.parse_semicolon();
