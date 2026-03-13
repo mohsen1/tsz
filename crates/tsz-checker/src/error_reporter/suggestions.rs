@@ -263,9 +263,10 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> Option<&'static str> {
         if let Some(type_name) = self.get_type_symbol_name(type_id)
-            && let Some(lib) = get_lib_for_type_property(&type_name, prop_name) {
-                return Some(lib);
-            }
+            && let Some(lib) = get_lib_for_type_property(&type_name, prop_name)
+        {
+            return Some(lib);
+        }
         None
     }
 
