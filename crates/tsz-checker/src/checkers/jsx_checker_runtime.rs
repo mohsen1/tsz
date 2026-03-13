@@ -92,9 +92,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !self.ctx.compiler_options.jsx_factory_from_config
-            || self.ctx.compiler_options.jsx_fragment_factory_from_config
-        {
+        if !self.ctx.compiler_options.jsx_factory_from_config {
+            return;
+        }
+
+        // When jsxFragmentFactory is configured, mark it as referenced
+        // so unused-import checking (TS6192) doesn't flag it.
+        if self.ctx.compiler_options.jsx_fragment_factory_from_config {
+            self.mark_jsx_name_as_referenced(
+                &self.ctx.compiler_options.jsx_fragment_factory.clone(),
+                node_idx,
+            );
             return;
         }
 
