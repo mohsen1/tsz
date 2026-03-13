@@ -608,6 +608,42 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns the name of an uninstantiated namespace if `expr_idx` resolves to one.
+    ///
+    /// Used to emit TS2708 instead of TS2339 when a property access targets an
+    /// empty / type-only namespace (e.g., `namespace Basil { }` → `Basil.Pepper`).
+    pub(crate) fn uninstantiated_namespace_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        let ident = self.ctx.arena.get_identifier(node)?;
+        let name = &ident.escaped_text;
+
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+
+        if !is_namespace || has_other_value {
+            return None;
+        }
+
+        // Check whether any declaration is instantiated (has runtime code).
+        let is_instantiated = symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx));
+
+        if is_instantiated {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }
+
     /// Check if a property access is on an enum instance value (not the enum object).
     ///
     /// Returns `true` when the object type is an enum type AND the expression
