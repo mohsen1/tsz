@@ -1468,7 +1468,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if let Some((escaped_name, flags, declarations, value_declaration)) = symbol_meta {
+        if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
             // For classes, return Lazy(DefId) to preserve class names in error messages
             // (e.g., "type MyClass" instead of expanded object shape)
             //
@@ -1665,6 +1665,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        // For ALIAS symbols (e.g., `import b = a.c`), resolve to the target
+        // symbol and re-enter type_reference_symbol_type if the target is a class
+        // or interface. This ensures we get the instance type, not the constructor
+        // type, when the alias is used in a type position like `x: b`.
+        if let Some((_, flags, _, _)) = symbol_meta.as_ref()
+            && flags & symbol_flags::ALIAS != 0 {
+                let mut visited = Vec::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                    && target_sym_id != sym_id {
+                        let target_flags = self
+                            .get_cross_file_symbol(target_sym_id)
+                            .map(|s| s.flags)
+                            .unwrap_or(0);
+                        if target_flags & symbol_flags::CLASS != 0
+                            || target_flags & symbol_flags::INTERFACE != 0
+                        {
+                            self.ctx.leave_recursion();
+                            return self.type_reference_symbol_type(target_sym_id);
+                        }
+                    }
+            }
+
         let result = self.get_type_of_symbol(sym_id);
         // TYPE_ALIAS + ALIAS merge: prefer the type alias body in type reference position
         let result = self

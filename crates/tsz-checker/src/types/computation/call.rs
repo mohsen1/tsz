@@ -22,6 +22,13 @@ use super::complex::is_contextually_sensitive;
 
 impl<'a> CheckerState<'a> {
     fn is_unshadowed_commonjs_require_identifier(&mut self, idx: NodeIndex) -> bool {
+        // Only treat `require()` as a CommonJS module import when in a CommonJS-
+        // compatible module mode. In ES module or script mode, `require` is just
+        // a regular identifier (may resolve via @types/node, triggering TS2591).
+        if !self.ctx.compiler_options.module.is_commonjs() {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
