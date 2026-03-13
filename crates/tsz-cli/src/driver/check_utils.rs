@@ -985,7 +985,6 @@ fn is_parser_grammar_code(code: u32) -> bool {
         code,
         1021 // An index signature must have a type annotation
         | 1042 // 'async' modifier cannot be used here
-        | 1068 // Unexpected token (class member)
         | 1071 // An accessor must have a body (interface/ambient)
         | 1096 // An index signature must have exactly one parameter
         | 1162 // An object member cannot be declared optional
