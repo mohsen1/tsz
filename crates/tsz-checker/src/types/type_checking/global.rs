@@ -199,6 +199,24 @@ impl<'a> CheckerState<'a> {
                 .register_array_base_type(ty, array_type_params.clone());
         }
 
+        // If the user has augmented the Array interface (e.g.,
+        // `interface Array<T> extends IFoo<T> {}`), re-resolve using
+        // resolve_lib_type_by_name which processes global augmentation heritage
+        // and type argument substitution. resolve_lib_type_with_params only reads
+        // from lib binders and misses user augmentations.
+        if self
+            .ctx
+            .binder
+            .global_augmentations
+            .get("Array")
+            .is_some_and(|v| !v.is_empty())
+            && let Some(augmented_type) = self.resolve_lib_type_by_name("Array")
+        {
+            self.ctx
+                .types
+                .register_array_base_type(augmented_type, array_type_params.clone());
+        }
+
         // Register boxed types through the query database so PropertyAccessEvaluator
         // can resolve primitive methods (e.g., "hello".match()) through the actual
         // interface types from lib.d.ts instead of falling back to hardcoded lists.
