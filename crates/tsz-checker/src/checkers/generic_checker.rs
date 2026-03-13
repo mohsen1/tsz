@@ -608,27 +608,9 @@ impl<'a> CheckerState<'a> {
                             && base != TypeId::UNKNOWN
                             && base != type_arg
                         {
-                            let base_still_unresolved =
-                                query::contains_type_parameters(self.ctx.types, base);
-                            let defer_composite_check = if base_still_unresolved {
-                                if let Some((base_object, _)) = query::index_access_components(
-                                    self.ctx.types.as_type_database(),
-                                    base,
-                                ) {
-                                    let resolved_object =
-                                        self.evaluate_type_for_assignability(base_object);
-                                    common_query::is_mapped_type(self.ctx.types, resolved_object)
-                                        || query::is_bare_type_parameter(
-                                            self.ctx.types.as_type_database(),
-                                            base_object,
-                                        )
-                                } else {
-                                    true
-                                }
-                            } else {
-                                false
-                            };
-                            if defer_composite_check {
+                            // Base constraint still contains type parameters — defer
+                            // to instantiation time (matches tsc behavior).
+                            if query::contains_type_parameters(self.ctx.types, base) {
                                 continue;
                             }
                             let constraint_resolved = self.resolve_lazy_type(constraint);
