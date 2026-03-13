@@ -34,6 +34,14 @@ impl<'a> CheckerState<'a> {
         }
         let prev_type_str = self.format_type_diagnostic(prev_type);
         let current_type_str = self.format_type_diagnostic(current_type);
+        // Suppress when both types format to the same name. This handles cross-binder
+        // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
+        // to a separate DefId from the main checker's version. Interface declaration
+        // merging means both annotations semantically refer to the same type, but
+        // different internal TypeIds prevent the structural check from recognizing this.
+        if prev_type_str == current_type_str {
+            return;
+        }
         let message = format!(
             "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );

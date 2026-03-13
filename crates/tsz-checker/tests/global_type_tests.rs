@@ -128,7 +128,7 @@ fn test_missing_date_emits_ts2304_without_lib() {
 
 #[test]
 fn test_nolib_emits_ts2318_for_callable_and_newable_function() {
-    let diagnostics = check_without_lib(
+    let diagnostics = check_without_lib_with_options(
         r#"
 interface Array<T> {}
 interface Boolean {}
@@ -141,6 +141,10 @@ interface String {}
 
 declare function foo(): void;
 "#,
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
     );
 
     // Should not crash — diagnostics may or may not include TS2318

@@ -1458,13 +1458,22 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_def_name(&mut self, def: &crate::def::DefinitionInfo) -> String {
+        let def_name = self.atom(def.name).to_string();
         if let Some(sym_id) = def.symbol_id
             && let Some(qualified_name) = self.format_symbol_name(SymbolId(sym_id))
         {
-            return qualified_name;
+            // Guard against cross-binder SymbolId collisions: the definition's
+            // symbol_id comes from the binder that created it (e.g. a lib binder),
+            // but the formatter's symbol_arena is the current file's binder where
+            // the same raw SymbolId may map to a completely different symbol.
+            // Only use the qualified name when its base matches the definition name.
+            let base_name = qualified_name.rsplit('.').next().unwrap_or(&qualified_name);
+            if base_name == def_name {
+                return qualified_name;
+            }
         }
 
-        self.atom(def.name).to_string()
+        def_name
     }
 }
 
