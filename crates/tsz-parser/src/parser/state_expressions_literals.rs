@@ -2207,6 +2207,22 @@ impl ParserState {
                 self.arena
                     .add_token(SyntaxKind::NewKeyword as u16, start_pos, start_pos + 3);
             let name = self.parse_identifier_name();
+            // TS17012: Check that the meta-property is 'target', not a misspelling
+            if let Some(name_node) = self.arena.get(name)
+                && let Some(ident) = self.arena.get_identifier(name_node)
+                && ident.escaped_text != "target"
+            {
+                let msg = format_message(
+                    diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
+                    &[&ident.escaped_text.to_string(), "new", "target"],
+                );
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end.saturating_sub(name_node.pos),
+                    &msg,
+                    diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
+                );
+            }
             let end_pos = self
                 .arena
                 .get(name)
