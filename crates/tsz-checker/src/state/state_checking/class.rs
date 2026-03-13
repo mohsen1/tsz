@@ -63,7 +63,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(rest) = after_class {
                     // Check if there's a non-whitespace char before `{`
                     let before_brace = rest.split('{').next().unwrap_or("");
-                    before_brace.trim().len() > 0
+                    !before_brace.trim().is_empty()
                 } else {
                     false
                 }
