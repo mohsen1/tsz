@@ -1257,6 +1257,35 @@ pub fn instantiate_type_with_infer(
 
 /// Convenience function for instantiating a generic type with type arguments.
 ///
+/// Fill in type parameter defaults for an application's args when fewer args
+/// are provided than parameters exist. Returns `None` if any missing arg has
+/// no default. Defaults that reference earlier type parameters are properly
+/// instantiated via `TypeSubstitution::from_args`.
+///
+/// Example: `Generator<T>` with params `[T, TReturn=any, TNext=unknown]`
+/// returns `Some([T, any, unknown])`.
+pub fn fill_application_defaults(
+    interner: &dyn TypeDatabase,
+    args: &[TypeId],
+    type_params: &[TypeParamInfo],
+) -> Option<Vec<TypeId>> {
+    if args.len() >= type_params.len() {
+        return Some(args[..type_params.len()].to_vec());
+    }
+    let subst = TypeSubstitution::from_args(interner, type_params, args);
+    let mut result = Vec::with_capacity(type_params.len());
+    for (i, param) in type_params.iter().enumerate() {
+        if i < args.len() {
+            result.push(args[i]);
+        } else if let Some(resolved) = subst.get(param.name) {
+            result.push(resolved);
+        } else {
+            return None;
+        }
+    }
+    Some(result)
+}
+
 /// Uses `is_identity_for` instead of the name-only `is_identity` check to
 /// correctly handle same-name type parameters from different scopes (e.g.,
 /// alias `T` vs function `T extends object`).
