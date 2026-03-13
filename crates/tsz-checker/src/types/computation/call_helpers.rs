@@ -322,22 +322,23 @@ impl<'a> CheckerState<'a> {
             return self.get_class_constructor_type(decl_idx, class_data);
         }
 
-        // For literal expression nodes (e.g. `export default "./foo"` where
-        // the value_declaration is the string literal itself), evaluate the
-        // expression type. Only handle simple literals to avoid incorrect
-        // cross-file evaluation of complex expressions like property accesses.
-        use tsz_scanner::SyntaxKind;
+        // For expression nodes (e.g. `export default expr`), evaluate
+        // the expression type. This handles identifiers, property accesses,
+        // literals, and other expression kinds. Since `type_of_value_declaration`
+        // is only called for same-arena declarations, `get_type_of_node` has the
+        // correct context to evaluate the expression.
+        // However, type-only declarations (interfaces, type aliases, etc.) must
+        // return UNKNOWN so callers produce the correct TS2693 diagnostic.
+        use tsz_parser::parser::syntax_kind_ext;
         let kind = node.kind;
-        if kind == SyntaxKind::StringLiteral as u16
-            || kind == SyntaxKind::NumericLiteral as u16
-            || kind == SyntaxKind::TrueKeyword as u16
-            || kind == SyntaxKind::FalseKeyword as u16
-            || kind == SyntaxKind::NullKeyword as u16
+        if kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            || kind == syntax_kind_ext::MODULE_DECLARATION
         {
-            return self.get_type_of_node(decl_idx);
+            return TypeId::UNKNOWN;
         }
 
-        TypeId::UNKNOWN
+        self.get_type_of_node(decl_idx)
     }
 
     /// Resolve a value declaration type, delegating to the declaration's arena

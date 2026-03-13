@@ -1510,10 +1510,25 @@ impl ParserState {
 
             self.context_flags = init_saved_flags;
 
+            // When a property with an initializer is followed by a line break and
+            // a continuation token (`[`, `(`, `.`), report a missing semicolon.
+            // Exception: if the property has a computed name, no type annotation,
+            // and the next line starts with `[`, treat `[` as a new computed
+            // property (ASI), not element access on the initializer.
+            // tsc only treats `[` as a continuation when there IS a type
+            // annotation (e.g., `[e]: number = 0\n[e2]` → TS1005), but not
+            // when there's only an initializer (e.g., `[e] = "A"\n[e2] = "B"`).
+            let is_computed_name = self
+                .arena
+                .get(name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
             if initializer != NodeIndex::NONE
                 && !self.is_token(SyntaxKind::SemicolonToken)
                 && self.scanner.has_preceding_line_break()
                 && self.class_member_initializer_continues_on_next_line()
+                && !(is_computed_name
+                    && type_annotation == NodeIndex::NONE
+                    && self.is_token(SyntaxKind::OpenBracketToken))
             {
                 self.report_missing_semicolon_after_class_field_initializer();
                 self.recover_invalid_class_member_initializer_continuation();
