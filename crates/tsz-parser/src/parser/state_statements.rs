@@ -1,7 +1,7 @@
 //! Parser state - statement and declaration parsing methods
 use super::state::{
-    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_BLOCK,
-    CONTEXT_FLAG_PARAMETER_DEFAULT, IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER, CONTEXT_FLAG_GENERATOR,
+    CONTEXT_FLAG_IN_BLOCK, CONTEXT_FLAG_PARAMETER_DEFAULT, IncrementalParseResult, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -2027,8 +2027,10 @@ impl ParserState {
         // Parameter-default context is for the containing parameter initializer only.
         // Nested function expressions create a new parsing context where this flag
         // must not leak into function body parsing.
-        self.context_flags &=
-            !(CONTEXT_FLAG_PARAMETER_DEFAULT | CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+        self.context_flags &= !(CONTEXT_FLAG_PARAMETER_DEFAULT
+            | CONTEXT_FLAG_ASYNC
+            | CONTEXT_FLAG_GENERATOR
+            | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
