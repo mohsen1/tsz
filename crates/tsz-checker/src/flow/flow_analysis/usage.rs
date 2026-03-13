@@ -1617,15 +1617,22 @@ impl<'a> CheckerState<'a> {
         }
 
         // Only flag if usage is before declaration in source order
-        // EXCEPT for block-scoped variables, which are also in TDZ during their own initializer.
-        // For classes and enums, usage >= pos is always safe (handled by other specific TDZ checks
-        // for computed properties, heritage clauses, etc.).
+        // EXCEPT for block-scoped variables, which are also in TDZ during their own initializer,
+        // and class decorator arguments, which execute before the class binding is created.
         let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
+        let is_class = symbol.flags & symbol_flags::CLASS != 0;
         let mut could_be_in_initializer = false;
         if !is_cross_file && usage_node.pos >= decl_node.pos {
             if is_var && usage_node.pos <= decl_node.end {
                 // It might be in the initializer. We will confirm via AST walk.
                 could_be_in_initializer = true;
+            } else if is_class
+                && usage_node.pos <= decl_node.end
+                && self.is_in_decorator_of_declaration(usage_idx, decl_idx)
+            {
+                // Decorator arguments on the class itself execute before the class
+                // binding is created, so they ARE in TDZ even though pos >= decl.pos.
+                // Fall through to emit the TDZ error.
             } else {
                 return false;
             }
@@ -1638,6 +1645,14 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(self.find_enclosing_function_or_source_file(decl_idx))
         };
+
+        // Check if the usage is inside a decorator of the class — decorator arguments
+        // execute at class definition time (not deferred like property initializers),
+        // so the function-like/property-initializer bail-outs below should not apply.
+        let in_class_decorator = is_class
+            && usage_node.pos >= decl_node.pos
+            && usage_node.pos <= decl_node.end
+            && self.is_in_decorator_of_declaration(usage_idx, decl_idx);
 
         // Walk up from usage: if we hit a function-like boundary BEFORE reaching
         // the declaration's container, the usage is in deferred code (a nested
@@ -1661,15 +1676,23 @@ impl<'a> CheckerState<'a> {
             // the usage is deferred and not a TDZ violation.
             // Exception: IIFEs (immediately invoked function expressions) execute
             // immediately, so they ARE TDZ violations.
-            if node.is_function_like() && !self.ctx.arena.is_immediately_invoked(current) {
+            // Exception: Decorator arguments execute at class definition time,
+            // so function-like boundaries within decorators don't defer execution.
+            if node.is_function_like()
+                && !self.ctx.arena.is_immediately_invoked(current)
+                && !in_class_decorator
+            {
                 return false;
             }
             // IIFE - continue walking up, this function executes immediately
             // Non-static class property initializers run during constructor execution,
             // which is deferred — not a TDZ violation for class declarations.
+            // Exception: decorator arguments on non-static properties still execute
+            // at class definition time.
             if node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 && let Some(prop) = self.ctx.arena.get_property_decl(node)
                 && !self.has_static_modifier(&prop.modifiers)
+                && !in_class_decorator
             {
                 return false;
             }
@@ -1701,6 +1724,58 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Check if the usage node is inside a decorator expression that belongs to
+    /// the given class declaration. Walks up from `usage_idx` looking for a
+    /// DECORATOR ancestor whose owning class/member is `decl_idx`.
+    ///
+    /// Decorator arguments execute before the class binding is created, so
+    /// references to the class in decorator arguments are TDZ violations.
+    /// This applies to class-level decorators, member decorators, and IIFEs
+    /// within decorator arguments.
+    fn is_in_decorator_of_declaration(&self, usage_idx: NodeIndex, decl_idx: NodeIndex) -> bool {
+        let mut current = usage_idx;
+        while current.is_some() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            // Reached the class declaration itself — not inside a decorator.
+            if current == decl_idx {
+                return false;
+            }
+            if node.kind == syntax_kind_ext::DECORATOR {
+                // Found a decorator. Check if it belongs to the class declaration
+                // or one of its members by walking up to see if we reach decl_idx.
+                let mut ancestor = current;
+                while let Some(ext) = self.ctx.arena.get_extended(ancestor) {
+                    if !ext.parent.is_some() {
+                        break;
+                    }
+                    if ext.parent == decl_idx {
+                        return true;
+                    }
+                    // Stop at source file to avoid infinite loops
+                    if let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                        && parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                    {
+                        break;
+                    }
+                    ancestor = ext.parent;
+                }
+                return false;
+            }
+            // Non-IIFE function-like boundary means the reference is deferred,
+            // so it's NOT a TDZ violation. E.g., `@dec(() => C)` is OK.
+            if node.is_function_like() && !self.ctx.arena.is_immediately_invoked(current) {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+        false
     }
 
     /// Check if a node is in a type-only context (type annotation, type query, heritage clause).
