@@ -100,6 +100,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
             .unwrap_or(self.ctx.arena);
 
+        let user_arena: &NodeArena = self.ctx.arena;
         let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
             .declarations
             .iter()
@@ -109,6 +110,11 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .map(|arc| (decl_idx, arc.as_ref()))
                         .collect::<Vec<_>>()
+                } else if user_arena.get(decl_idx).is_some() {
+                    // User augmentations (e.g., `interface Array<T> extends IFoo<T>`)
+                    // are not in declaration_arenas (which only tracks lib-merged
+                    // declarations). Check the user arena before falling back.
+                    vec![(decl_idx, user_arena)]
                 } else {
                     vec![(decl_idx, fallback_arena)]
                 }
