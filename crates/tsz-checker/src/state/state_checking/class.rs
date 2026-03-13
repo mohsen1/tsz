@@ -43,7 +43,13 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1211: A class declaration without the 'default' modifier must have a name.
-        if class.name.is_none() {
+        // Only applies to class declarations, not class expressions (which are allowed to be anonymous).
+        // Also skip when `default` is present as a modifier on the class itself (e.g. `default class {}`
+        // without `export` — that's a TS1029 error, not TS1211).
+        if class.name.is_none()
+            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && !self.has_modifier_kind(&class.modifiers, tsz_scanner::SyntaxKind::DefaultKeyword)
+        {
             // The parser consumes `default` before parsing the class, so it won't
             // appear in the class's own modifiers — check the parent export node.
             let parent_export = self.ctx.arena.get_extended(stmt_idx).and_then(|ext| {
