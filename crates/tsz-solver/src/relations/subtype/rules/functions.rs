@@ -1268,22 +1268,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let s_param = &source_params_unpacked[i];
                 let t_param = &target_params_unpacked[i];
 
-                // Optional parameters have effective type `T | undefined`.
-                // TypeScript widens optional params to include undefined for
-                // assignability checks.
-                let s_effective = if s_param.optional {
-                    self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
-                } else {
-                    s_param.type_id
-                };
-                let t_effective = if t_param.optional {
-                    self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
-                } else {
-                    t_param.type_id
-                };
-
-                // Check parameter compatibility
-                if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
+                // Use declared parameter types directly for comparison.
+                // ParamInfo.type_id stores the declared type (e.g., `number`
+                // for `x?: number`), matching tsc's `getTypeAtPosition` which
+                // does NOT include `| undefined` for optional params.
+                // Optionality only affects arity counting, not type comparison.
+                if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method)
+                {
                     // Trace: Parameter type mismatch
                     if let Some(tracer) = &mut self.tracer
                         && !tracer.on_mismatch_dyn(
@@ -1793,18 +1784,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_param = &source_params[i];
             let t_param = &target_params[i];
 
-            let s_effective = if s_param.optional {
-                self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
-            } else {
-                s_param.type_id
-            };
-            let t_effective = if t_param.optional {
-                self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
-            } else {
-                t_param.type_id
-            };
-
-            if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
+            // Use declared types directly — see comment in check_function_params_subtype.
+            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
                 return SubtypeResult::False;
             }
         }

@@ -4404,7 +4404,9 @@ fn test_function_required_count_rejects_required_source_extra() {
         is_method: false,
     });
 
-    assert!(!checker.is_subtype_of(source, target));
+    // In tsc, (x: string, y: number) => void IS assignable to (x: string, y?: number) => void.
+    // Optional parameters are compared by declared type (number), not number | undefined.
+    assert!(checker.is_subtype_of(source, target));
 }
 
 #[test]
@@ -9829,8 +9831,9 @@ fn test_fn_optional_param_required_to_optional() {
         is_method: false,
     });
 
-    // Required param is NOT subtype of optional (undefined not assignable to string)
-    assert!(!checker.is_subtype_of(fn_required, fn_optional));
+    // Required param IS subtype of optional — tsc compares declared types,
+    // not the | undefined widened type, so (x: string) => void <: (x?: string) => void.
+    assert!(checker.is_subtype_of(fn_required, fn_optional));
 }
 
 #[test]
@@ -9919,8 +9922,9 @@ fn test_fn_optional_param_multiple_optional() {
         is_method: false,
     });
 
-    // Required is NOT subtype of optional (undefined not assignable to base type)
-    assert!(!checker.is_subtype_of(fn_one_required, fn_two_optional));
+    // Required IS subtype of optional — tsc compares declared types without
+    // | undefined widening, so (x: string) => void <: (x?: string, y?: number) => void.
+    assert!(checker.is_subtype_of(fn_one_required, fn_two_optional));
 }
 
 #[test]
@@ -9976,8 +9980,9 @@ fn test_fn_optional_param_mixed_required_optional() {
         is_method: false,
     });
 
-    // Required is NOT subtype of optional (undefined not assignable to number)
-    assert!(!checker.is_subtype_of(fn_both_required, fn_one_optional));
+    // Required IS subtype of optional — tsc compares b's declared type (number),
+    // not number | undefined, so (a: string, b: number) <: (a: string, b?: number).
+    assert!(checker.is_subtype_of(fn_both_required, fn_one_optional));
 }
 
 #[test]

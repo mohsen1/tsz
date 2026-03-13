@@ -1101,24 +1101,24 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
 
-                        let (base_member_name, base_type) = if base_member_node.kind
-                            == METHOD_SIGNATURE
-                            || base_member_node.kind == PROPERTY_SIGNATURE
-                        {
-                            if let Some(sig) = self.ctx.arena.get_signature(base_member_node) {
-                                if let Some(name) = self.get_property_name(sig.name) {
-                                    let type_id =
-                                        self.get_type_of_interface_member(base_member_idx);
-                                    (name, type_id)
+                        let (base_member_name, base_type, base_is_optional) =
+                            if base_member_node.kind == METHOD_SIGNATURE
+                                || base_member_node.kind == PROPERTY_SIGNATURE
+                            {
+                                if let Some(sig) = self.ctx.arena.get_signature(base_member_node) {
+                                    if let Some(name) = self.get_property_name(sig.name) {
+                                        let type_id =
+                                            self.get_type_of_interface_member(base_member_idx);
+                                        (name, type_id, sig.question_token)
+                                    } else {
+                                        continue;
+                                    }
                                 } else {
                                     continue;
                                 }
                             } else {
                                 continue;
-                            }
-                        } else {
-                            continue;
-                        };
+                            };
 
                         if *member_name != base_member_name {
                             continue;
@@ -1131,8 +1131,12 @@ impl<'a> CheckerState<'a> {
                         // count: derived methods must not require more parameters
                         // than the base method provides. This catches the
                         // "target signature provides too few arguments" case.
+                        // Skip this check when the base method is optional (`?`):
+                        // a derived interface may override an optional method with
+                        // a required one that has any number of required parameters.
                         let param_count_incompatible = if *derived_kind == METHOD_SIGNATURE
                             && base_member_node.kind == METHOD_SIGNATURE
+                            && !base_is_optional
                         {
                             let derived_required =
                                 self.count_required_params_from_signature_node(*derived_member_idx);
