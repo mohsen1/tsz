@@ -790,7 +790,15 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let t = self.infer_getter_return_type(deferred.accessor.body);
                         self.ctx.node_types.insert(deferred.member_idx.0, t);
-                        t
+                        // When a getter without an explicit return type annotation
+                        // infers its return type from the body and the result is the
+                        // partial class instance type (i.e. the body does `return this;`),
+                        // replace with polymorphic `ThisType` — same as for methods.
+                        if deferred.accessor.type_annotation.is_none() && t == partial_type {
+                            self.ctx.types.this_type()
+                        } else {
+                            t
+                        }
                     };
                     let entry = accessors
                         .entry(deferred.name_atom)
