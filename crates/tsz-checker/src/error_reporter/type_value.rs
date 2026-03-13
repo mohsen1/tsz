@@ -20,16 +20,8 @@ impl<'a> CheckerState<'a> {
         current_type: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress for ERROR and prior UNKNOWN types.
-        // ERROR: avoids cascading diagnostics from unresolved types.
-        // UNKNOWN on the *previous* declaration typically comes from incomplete
-        // lib coverage (console/Math/etc.) and should not establish a TS2403
-        // constraint. Keep current-declaration `unknown` visible so real
-        // redeclaration errors after failed inference still surface.
-        if prev_type == TypeId::ERROR
-            || current_type == TypeId::ERROR
-            || prev_type == TypeId::UNKNOWN
-        {
+        // Suppress for ERROR types to avoid cascading diagnostics from unresolved types.
+        if prev_type == TypeId::ERROR || current_type == TypeId::ERROR {
             return;
         }
         let prev_type_str = self.format_type_diagnostic(prev_type);
