@@ -14,7 +14,10 @@ use tsz_solver::TypeInterner;
 
 #[test]
 fn test_ts2306_emitted_for_non_module_import() {
-    let mut parser_a = ParserState::new("a.ts".to_string(), "import './tsx';".to_string());
+    // Use a binding import (not side-effect) — side-effect imports (`import "x"`)
+    // never require the target to be a module, so they don't trigger TS2306.
+    let mut parser_a =
+        ParserState::new("a.ts".to_string(), "import { x } from './tsx';".to_string());
     let root_a = parser_a.parse_source_file();
     let mut binder_a = BinderState::new();
     merge_shared_lib_symbols(&mut binder_a);
@@ -40,11 +43,7 @@ fn test_ts2306_emitted_for_non_module_import() {
         binder_a.as_ref(),
         &types,
         "a.ts".to_string(),
-        CheckerOptions {
-            // Enable side-effect import checking so the import is actually verified
-            no_unchecked_side_effect_imports: true,
-            ..CheckerOptions::default()
-        },
+        CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
 

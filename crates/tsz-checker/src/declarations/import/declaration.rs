@@ -741,7 +741,11 @@ impl<'a> CheckerState<'a> {
                 // "./foo" resolves to "foo.d.ts" — even under verbatimModuleSyntax.
                 if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
                     let normalized_module_name = module_name.trim_matches('"').trim_matches('\'');
-                    if !binder.is_external_module
+                    // Side-effect imports (`import "x"`) never require the target
+                    // to be a module — they just execute the file.  Skip TS2306
+                    // regardless of the noUncheckedSideEffectImports setting.
+                    if !is_side_effect_import
+                        && !binder.is_external_module
                         && !self.is_ambient_module_match(module_name)
                         && !binder.declared_modules.contains(normalized_module_name)
                     {
