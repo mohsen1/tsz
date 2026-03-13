@@ -42,6 +42,36 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1211: A class declaration without the 'default' modifier must have a name.
+        if class.name.is_none() {
+            // The parser consumes `default` before parsing the class, so it won't
+            // appear in the class's own modifiers — check the parent export node.
+            let parent_export = self.ctx.arena.get_extended(stmt_idx).and_then(|ext| {
+                let parent = self.ctx.arena.get(ext.parent)?;
+                let export_data = self.ctx.arena.get_export_decl(parent)?;
+                Some((ext.parent, export_data.is_default_export))
+            });
+            match parent_export {
+                Some((_, true)) => {} // `export default class {}` — allowed
+                Some((export_idx, false)) => {
+                    // `export class {}` — report on export node (tsc points at `export`)
+                    self.error_at_node(
+                        export_idx,
+                        "A class declaration without the 'default' modifier must have a name.",
+                        diagnostic_codes::A_CLASS_DECLARATION_WITHOUT_THE_DEFAULT_MODIFIER_MUST_HAVE_A_NAME,
+                    );
+                }
+                None => {
+                    // bare `class {}` — report on class node
+                    self.error_at_node(
+                        stmt_idx,
+                        "A class declaration without the 'default' modifier must have a name.",
+                        diagnostic_codes::A_CLASS_DECLARATION_WITHOUT_THE_DEFAULT_MODIFIER_MUST_HAVE_A_NAME,
+                    );
+                }
+            }
+        }
+
         // TS1042: async modifier cannot be used on class declarations
         self.check_async_modifier_on_declaration(&class.modifiers);
 
