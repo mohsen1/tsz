@@ -474,8 +474,9 @@ impl<'a> CheckerState<'a> {
                 return;
             }
             // Skip `declare global` augmentations (name text is "global")
+            // and anonymous modules (empty name, already reported as TS1437)
             if let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                && ident.escaped_text == "global"
+                && (ident.escaped_text == "global" || ident.escaped_text.is_empty())
             {
                 return;
             }
