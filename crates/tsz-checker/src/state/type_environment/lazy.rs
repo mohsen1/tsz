@@ -521,7 +521,19 @@ impl<'a> CheckerState<'a> {
             // This handles type aliases that are resolved through compute_type_of_symbol
             let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
             if let Some(sym_id) = sym_id_opt {
+                // Trigger type computation for this symbol first.
+                // For CLASS symbols, this populates symbol_instance_types as a side effect.
                 let resolved = self.get_type_of_symbol(sym_id);
+
+                // For CLASS symbols in type position, prefer the instance type over the
+                // constructor type. get_type_of_symbol returns the constructor (value-side)
+                // type, but Lazy(DefId) in type position means the instance type.
+                if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+                    if instance_type != type_id {
+                        return self.resolve_lazy_type_inner(instance_type, visited);
+                    }
+                }
+
                 // Only recurse if the resolved type is different from the original
                 if resolved != type_id {
                     return self.resolve_lazy_type_inner(resolved, visited);
@@ -824,7 +836,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<(bool, TypeId)> {
-        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+        if let Some(original_sym_id) = self.ctx.def_to_symbol_id(def_id) {
             // For CLASS symbols, prefer the instance type over the constructor
             // type returned by get_type_of_symbol.  During class construction
             // (Phase 2 of get_class_instance_type_inner), symbol_instance_types
@@ -833,8 +845,37 @@ impl<'a> CheckerState<'a> {
             // returns the constructor type (Callable), causing false TS2339 on
             // property access for self-referential parameters (e.g. `p.x` where
             // `p: Point` inside class Point).
-            let resolved = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
+            // If the symbol is an import ALIAS whose target is a CLASS, follow
+            // it to the actual target. This handles cross-file class references
+            // in module augmentations where the DefId was created for the alias.
+            // Only CLASS targets are followed to avoid interfering with type-only
+            // exports and other alias semantics.
+            let (sym_id, symbol, was_alias_resolved) = {
+                let alias_target = self.ctx.resolve_import_alias_and_register(original_sym_id);
+                if let Some(target) = alias_target {
+                    let target_sym = self.get_symbol_globally(target);
+                    let is_class_target = target_sym
+                        .is_some_and(|s| (s.flags & tsz_binder::symbol_flags::CLASS) != 0);
+                    if is_class_target {
+                        (target, target_sym, true)
+                    } else {
+                        (
+                            original_sym_id,
+                            self.get_symbol_globally(original_sym_id),
+                            false,
+                        )
+                    }
+                } else {
+                    (
+                        original_sym_id,
+                        self.get_symbol_globally(original_sym_id),
+                        false,
+                    )
+                }
+            };
+            let is_class = symbol.is_some_and(|s| (s.flags & tsz_binder::symbol_flags::CLASS) != 0);
+            let resolved = if let Some(symbol) = symbol
+                && is_class
             {
                 self.ctx
                     .symbol_instance_types
@@ -848,11 +889,45 @@ impl<'a> CheckerState<'a> {
                         };
                         decl.and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
                     })
-                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+                    .unwrap_or_else(|| {
+                        // Try building the instance type directly from the class symbol.
+                        // With cross_file_symbol_targets registered by resolve_import_alias,
+                        // this can delegate to a child checker with the correct arena.
+                        if let Some(inst) = self.class_instance_type_from_symbol(sym_id) {
+                            return inst;
+                        }
+                        let constructor = self.get_type_of_symbol(sym_id);
+                        // Re-check: get_type_of_symbol may have populated
+                        // symbol_instance_types as a side effect of class
+                        // type computation. Prefer instance type over
+                        // constructor for type-position references.
+                        self.ctx
+                            .symbol_instance_types
+                            .get(&sym_id)
+                            .copied()
+                            .or_else(|| self.instance_type_from_constructor_type(constructor))
+                            .unwrap_or(constructor)
+                    })
             } else {
                 self.get_type_of_symbol(sym_id)
             };
+
             let inserted = self.insert_type_env_symbol(sym_id, resolved);
+
+            // When import alias resolution remapped the symbol (e.g., ALIAS
+            // SymbolId → CLASS SymbolId from another file), insert_type_env_symbol
+            // registers under the CLASS symbol's DefId, not the original DefId from
+            // the Lazy type. Register under the original def_id so Lazy(DefId)
+            // resolves correctly during property access.
+            if was_alias_resolved {
+                if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                    if is_class {
+                        env.insert_class_instance_type(def_id, resolved);
+                    }
+                    env.insert_def(def_id, resolved);
+                }
+            }
+
             Some((inserted, resolved))
         } else {
             None

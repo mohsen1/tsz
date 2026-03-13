@@ -331,6 +331,70 @@ impl<'a> CheckerContext<'a> {
             })
     }
 
+    /// Follow an import alias to its actual target symbol across file boundaries.
+    ///
+    /// For ALIAS symbols (created by `import {A} from "./file"`), resolves
+    /// the module specifier from the alias's source file, then looks up the
+    /// exported name in the target file's binder. Returns None if the symbol
+    /// is not an alias or resolution fails.
+    ///
+    /// This is a pure lookup — it does NOT register the result in
+    /// `cross_file_symbol_targets`. Callers that need cross-arena delegation
+    /// (e.g., lazy type resolution) should call [`resolve_import_alias_and_register`]
+    /// instead.
+    pub fn resolve_import_alias(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let symbol = self.binder.symbols.get(sym_id).or_else(|| {
+            self.all_binders
+                .as_ref()
+                .and_then(|bs| bs.iter().find_map(|b| b.symbols.get(sym_id)))
+        })?;
+
+        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+            return None;
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+
+        let source_file_idx = symbol.decl_file_idx as usize;
+        let target_idx = self.resolve_import_target_from_file(source_file_idx, module_specifier)?;
+        let target_binder = self.get_binder_for_file(target_idx)?;
+
+        target_binder.file_locals.get(import_name)
+    }
+
+    /// Like [`resolve_import_alias`], but also registers the resolved symbol in
+    /// `cross_file_symbol_targets` so that `delegate_cross_arena_symbol_resolution`
+    /// can create a child checker with the correct arena when computing its type.
+    pub fn resolve_import_alias_and_register(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let symbol = self.binder.symbols.get(sym_id).or_else(|| {
+            self.all_binders
+                .as_ref()
+                .and_then(|bs| bs.iter().find_map(|b| b.symbols.get(sym_id)))
+        })?;
+
+        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+            return None;
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+
+        let source_file_idx = symbol.decl_file_idx as usize;
+        let target_idx = self.resolve_import_target_from_file(source_file_idx, module_specifier)?;
+        let target_binder = self.get_binder_for_file(target_idx)?;
+
+        let result = target_binder.file_locals.get(import_name)?;
+        self.cross_file_symbol_targets
+            .borrow_mut()
+            .insert(result, target_idx);
+        Some(result)
+    }
+
     /// Extract the persistent cache from this context.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {
