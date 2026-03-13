@@ -125,6 +125,17 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // A plain `namespace X { export ... }` (no `export` or `declare` modifier on the
+        // namespace itself) still makes its exported members visible at runtime as `X.member`.
+        // When the namespace is merged with a class or function, those exports contribute to
+        // the constructor type's surface and can conflict with static members.
+        // Identifier-named namespaces (not string-literal modules) always export publicly.
+        if let Some(name_node) = self.ctx.arena.get(module.name)
+            && self.ctx.arena.get_identifier(name_node).is_some()
+        {
+            return true;
+        }
+
         false
     }
 
