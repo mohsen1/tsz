@@ -357,10 +357,28 @@ impl<'a> CheckerState<'a> {
             // Static members must be accessed via `ClassName.member`, not as
             // bare identifiers.  The binder puts them in the class scope so
             // they resolve, but the checker must reject unqualified access.
+            //
+            // However, in tsc static members are NOT in the scope chain for
+            // bare identifiers, so `static X = X` resolves the RHS `X` to the
+            // outer scope.  We replicate this by re-resolving while skipping
+            // the static member symbol; if an outer binding exists, use it.
             if (flags & tsz_binder::symbol_flags::STATIC) != 0
                 && let Some(ref class_info) = self.ctx.enclosing_class.clone()
                 && self.is_static_member(&class_info.member_nodes, name)
             {
+                let lib_binders = self.get_lib_binders();
+                let static_sym_id = sym_id;
+                let outer_sym = self.ctx.binder.resolve_identifier_with_filter(
+                    self.ctx.arena,
+                    idx,
+                    &lib_binders,
+                    |candidate| candidate != static_sym_id,
+                );
+                if let Some(outer_sym_id) = outer_sym {
+                    // Found an outer-scope binding — use it instead of
+                    // emitting TS2662.
+                    return self.get_type_of_symbol(outer_sym_id);
+                }
                 self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
                 return TypeId::ERROR;
             }
