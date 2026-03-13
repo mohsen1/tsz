@@ -56,23 +56,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if `idx` is lexically enclosed by any class member, ignoring all
-    /// Checks whether `super` at `idx` is directly inside a class member
-    /// without crossing a regular-function boundary.  Arrow functions are
-    /// transparent (they capture `super` from their enclosing scope), but
-    /// regular functions (`function` declarations / expressions) create a new
-    /// execution context and do NOT inherit `super`.  tsc emits TS2660 for
-    /// `super` property access inside a regular function nested in a class
-    /// method.
-    fn is_lexically_in_class_member(&self, idx: NodeIndex) -> bool {
-        let class_member_kinds: &[u16] = &[
-            syntax_kind_ext::CONSTRUCTOR,
-            syntax_kind_ext::METHOD_DECLARATION,
-            syntax_kind_ext::GET_ACCESSOR,
-            syntax_kind_ext::SET_ACCESSOR,
-            syntax_kind_ext::PROPERTY_DECLARATION,
-            syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION,
-        ];
+    /// Check if `idx` is inside any class declaration or expression (at any
+    /// nesting depth). Used for TS2660 which should only fire when `super`
+    /// is completely outside any class.
+    fn is_inside_any_class(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
@@ -82,21 +69,11 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };
-            if class_member_kinds.contains(&parent_node.kind) {
-                return true;
-            }
-            // Regular functions break the super binding chain.
-            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            {
-                return false;
-            }
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
-                break;
+                return true;
             }
-            // Arrow functions are transparent — continue through them.
             current = parent_idx;
         }
         false
@@ -991,11 +968,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2660: super property access outside any class member context.
-        // Regular functions create a new execution context that does NOT
-        // inherit `super`, so `super.prop` inside a nested regular function
-        // within a class method also triggers TS2660.
-        if is_super_property_access && !self.is_lexically_in_class_member(idx) {
+        // TS2660: super property access completely outside any class context.
+        // tsc only emits TS2660 when `super.prop` appears outside any class
+        // (e.g., in a top-level function). When `super.prop` is in a regular
+        // function nested inside a class member, tsc does NOT emit TS2660 —
+        // the binding just doesn't resolve to the class's super.
+        if is_super_property_access && !self.is_inside_any_class(idx) {
             self.error_at_node(
                 idx,
                 diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
