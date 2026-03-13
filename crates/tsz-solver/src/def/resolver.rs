@@ -71,11 +71,11 @@ pub trait TypeResolver {
         None
     }
 
-    /// Check whether two DefIds refer to the same declaration (same DefId or same SymbolId).
+    /// Check whether two `DefIds` refer to the same declaration (same `DefId` or same `SymbolId`).
     ///
-    /// Cross-context DefId aliasing can give the same interface different DefIds
+    /// Cross-context `DefId` aliasing can give the same interface different `DefIds`
     /// (e.g., lib file vs heritage clause lowering). This method handles that by
-    /// falling back to SymbolId comparison when DefIds differ.
+    /// falling back to `SymbolId` comparison when `DefIds` differ.
     fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
         a == b
             || self
