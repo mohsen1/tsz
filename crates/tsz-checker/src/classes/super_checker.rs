@@ -56,14 +56,21 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Walk up the parent chain from `idx`, looking for a class member matching `target_kinds`.
-    ///
-    /// Arrow functions are transparent (skipped — they capture class context).
-    /// Regular functions/declarations are scope boundaries (return `false`).
-    /// Returns `false` if we leave the class without finding a match.
-    fn is_in_class_member_of_kind(&self, idx: NodeIndex, target_kinds: &[u16]) -> bool {
+    /// Check if `idx` is lexically enclosed by any class member, ignoring all
+    /// function boundaries (regular functions AND arrows).  Used for the TS2660
+    /// decision: tsc only emits TS2660 when `super` appears completely outside
+    /// any class member context, even if a regular-function boundary sits between
+    /// the `super` reference and the enclosing class member.
+    fn is_lexically_in_class_member(&self, idx: NodeIndex) -> bool {
+        let class_member_kinds: &[u16] = &[
+            syntax_kind_ext::CONSTRUCTOR,
+            syntax_kind_ext::METHOD_DECLARATION,
+            syntax_kind_ext::GET_ACCESSOR,
+            syntax_kind_ext::SET_ACCESSOR,
+            syntax_kind_ext::PROPERTY_DECLARATION,
+            syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION,
+        ];
         let mut current = idx;
-
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
             if parent_idx.is_none() {
@@ -72,95 +79,16 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };
-
-            // Arrow functions capture the class context, so skip them
-            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                current = parent_idx;
-                continue;
-            }
-
-            // Regular functions create a new scope — super is not valid inside them
-            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            {
-                return false;
-            }
-
-            if target_kinds.contains(&parent_node.kind) {
+            if class_member_kinds.contains(&parent_node.kind) {
                 return true;
             }
-
-            // Check if we've left the class
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
                 break;
             }
-
             current = parent_idx;
         }
-
-        false
-    }
-
-    /// Check if a node is inside a class method body.
-    ///
-    /// Returns true if inside a method body (both static and non-static).
-    /// `super` property access is valid in both static and instance methods
-    /// of a derived class.
-    pub(crate) fn is_in_class_method_body(&self, idx: NodeIndex) -> bool {
-        self.is_in_class_member_of_kind(idx, &[syntax_kind_ext::METHOD_DECLARATION])
-    }
-
-    /// Check if a node is inside a class accessor body (getter/setter).
-    ///
-    /// Returns true if inside an accessor body.
-    /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
-    pub(crate) fn is_in_class_accessor_body(&self, idx: NodeIndex) -> bool {
-        self.is_in_class_member_of_kind(
-            idx,
-            &[syntax_kind_ext::GET_ACCESSOR, syntax_kind_ext::SET_ACCESSOR],
-        )
-    }
-
-    /// Check if a node is inside a class property initializer.
-    ///
-    /// Returns true if inside a property declaration (class field).
-    /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
-    pub(crate) fn is_in_class_property_initializer(&self, idx: NodeIndex) -> bool {
-        self.is_in_class_member_of_kind(idx, &[syntax_kind_ext::PROPERTY_DECLARATION])
-    }
-
-    /// Check if a node is inside a class static block.
-    ///
-    /// Returns true if inside a `static { ... }` block.
-    /// Super property access is valid in static blocks of derived classes.
-    pub(crate) fn is_in_class_static_block(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-
-            if parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                return true;
-            }
-
-            // Check if we've left the class
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                break;
-            }
-
-            current = parent_idx;
-        }
-
         false
     }
 
@@ -1037,26 +965,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2336/TS2660: super property access must be in constructor, method, accessor, or property initializer
-        // Note: Arrow functions capture the class context, so super inside arrow functions is valid
-        // if the arrow itself is in a valid context (checked by the helper functions)
-        if is_super_property_access {
-            let in_valid_context = self.is_in_constructor(idx)
-                || self.is_in_class_method_body(idx)
-                || self.is_in_class_accessor_body(idx)
-                || self.is_in_class_property_initializer(idx)
-                || self.is_in_class_static_block(idx);
-
-            if !in_valid_context {
-                // TS2660: Super can only be referenced in members of derived classes or object literal expressions
-                // This is emitted when super is used in contexts that break the "member" requirement,
-                // such as inside nested regular functions (not arrow functions)
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
-                    diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
-                );
-            }
+        // TS2660: super property access outside any class member context.
+        // tsc only emits TS2660 when `super` appears completely outside a
+        // class member — it does NOT emit TS2660 for `super` inside nested
+        // regular functions within a class method/constructor/accessor.
+        if is_super_property_access && !self.is_lexically_in_class_member(idx) {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
+                diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
+            );
         }
     }
 }

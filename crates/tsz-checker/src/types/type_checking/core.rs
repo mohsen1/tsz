@@ -1326,6 +1326,13 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20,
                     );
                 }
+            } else if self.find_enclosing_static_block(stmt_idx).is_some() {
+                // TS18038: 'for await' loops cannot be used inside a class static block
+                self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                );
             } else {
                 // TS1103: 'for await' loops are only allowed within async functions
                 self.error_at_node(
