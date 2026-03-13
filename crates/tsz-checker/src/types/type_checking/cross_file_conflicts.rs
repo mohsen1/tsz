@@ -377,9 +377,12 @@ impl<'a> CheckerState<'a> {
                 let Some(node) = self.ctx.arena.get(decl_idx) else {
                     continue;
                 };
-                // Skip type declarations (interfaces, type aliases)
+                // Skip type and namespace declarations (interfaces, type aliases,
+                // modules/namespaces).  TSC only emits TS2397 for value
+                // declarations (var/let/const/function) of `undefined`.
                 if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                     || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || node.kind == syntax_kind_ext::MODULE_DECLARATION
                 {
                     continue;
                 }

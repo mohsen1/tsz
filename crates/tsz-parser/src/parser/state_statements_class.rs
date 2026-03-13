@@ -148,6 +148,29 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.error_comma_expected();
+                    // Recovery: skip tokens until we find `)` or `{` so that the
+                    // caller's parse_expected(CloseParenToken) succeeds and the
+                    // class body parses normally.  Without this, stray tokens
+                    // from malformed parameters (e.g., `...public rest: string[]`)
+                    // leave the parser stranded, causing a cascading TS1128 at EOF.
+                    let mut paren_depth = 0i32;
+                    while !self.is_token(SyntaxKind::EndOfFileToken) {
+                        if self.is_token(SyntaxKind::OpenParenToken) {
+                            paren_depth += 1;
+                            self.next_token();
+                        } else if self.is_token(SyntaxKind::CloseParenToken) {
+                            if paren_depth == 0 {
+                                break;
+                            }
+                            paren_depth -= 1;
+                            self.next_token();
+                        } else if self.is_token(SyntaxKind::OpenBraceToken) && paren_depth == 0 {
+                            // Hit function body — stop before `{` so it parses normally
+                            break;
+                        } else {
+                            self.next_token();
+                        }
+                    }
                 }
                 break;
             }
