@@ -9,6 +9,7 @@
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use crate::def::DefId;
+use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
@@ -273,6 +274,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
+
+        // ===================================================================
+        // ARITY NORMALIZATION: Fill in type parameter defaults when same base
+        // ===================================================================
+        // When both applications share the same base type but have different
+        // arg counts (e.g., Generator<T, void, unknown> vs Generator<T>),
+        // normalize the shorter one by filling in type parameter defaults.
+        // This lets the variance fast path handle cases like Generator<T>
+        // which should be treated as Generator<T, any, unknown>.
+        // ===================================================================
+        if s_app.base == t_app.base && s_app.args.len() != t_app.args.len()
+            && let Some(def_id) = self.application_base_def_id(s_app.base)
+                && let Some(type_params) = self.resolver.get_lazy_type_params(def_id) {
+                    let s_norm =
+                        fill_application_defaults(self.interner, &s_app.args, &type_params);
+                    let t_norm =
+                        fill_application_defaults(self.interner, &t_app.args, &type_params);
+                    if let (Some(s_new_args), Some(t_new_args)) = (&s_norm, &t_norm)
+                        && s_new_args.len() == t_new_args.len() {
+                            let s_new = if s_new_args.len() != s_app.args.len() {
+                                self.interner.application(s_app.base, s_new_args.clone())
+                            } else {
+                                self.interner.application(s_app.base, s_app.args.clone())
+                            };
+                            let t_new = if t_new_args.len() != t_app.args.len() {
+                                self.interner.application(t_app.base, t_new_args.clone())
+                            } else {
+                                self.interner.application(t_app.base, t_app.args.clone())
+                            };
+                            return self.check_subtype(s_new, t_new);
+                        }
+                }
+
         let same_arity = s_app.args.len() == t_app.args.len();
         let shared_base_def = self.shared_application_base_def_id(s_app.base, t_app.base);
         let same_application_family =
