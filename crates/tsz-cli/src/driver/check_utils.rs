@@ -983,15 +983,37 @@ pub(super) fn filtered_parse_diagnostics(
 fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
-        1017 // An index signature cannot have a rest parameter
+        1014 // A rest parameter must be last in a parameter list
+        | 1017 // An index signature cannot have a rest parameter
         | 1019 // An index signature parameter cannot have a question mark
         | 1021 // An index signature must have a type annotation
+        | 1031 // '{0}' modifier cannot appear on class elements of this kind
         | 1042 // 'async' modifier cannot be used here
+        | 1044 // '{0}' modifier cannot appear on a module or namespace element
+        | 1054 // A 'get' accessor cannot have parameters
+        | 1070 // '{0}' modifier cannot appear on a type member
         | 1071 // An accessor must have a body (interface/ambient)
+        | 1089 // '{0}' modifier cannot appear on a constructor declaration
+        | 1090 // '{0}' modifier cannot appear on a parameter
+        | 1093 // Type annotation cannot appear on a constructor declaration
+        | 1095 // A 'set' accessor cannot have a return type annotation
         | 1096 // An index signature must have exactly one parameter
+        | 1097 // '{0}' list cannot be empty
+        | 1110 // Type expected
+        | 1113 // A 'default' clause cannot appear more than once in a 'switch' statement
+        | 1114 // Duplicate label
+        | 1123 // Variable declaration list cannot be empty
         | 1162 // An object member cannot be declared optional
         | 1163 // A 'yield' expression is only allowed in a generator body
+        | 1171 // A comma expression is not allowed in a computed property name
+        | 1172 // extends clause already seen
+        | 1174 // Classes can only extend a single class
+        | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
+        | 1191 // An import declaration cannot have modifiers
+        | 1197 // Catch clause variable cannot have an initializer
+        | 1200 // Line terminator not permitted before arrow
+        | 1206 // Decorators are not valid here
         | 1210 // Code contained in a class is evaluated in strict mode
     )
 }
