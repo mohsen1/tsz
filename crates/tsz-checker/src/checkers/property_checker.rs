@@ -87,17 +87,11 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-            // TS2340 when useDefineForClassFields is effectively false (target < ES2022):
-            //   "Only public and protected methods of the base class are accessible via the 'super' keyword."
-            // TS2855 when useDefineForClassFields is effectively true (target >= ES2022):
-            //   "Class field '{}' defined by the parent class is not accessible in the child class via super."
-            if !self.ctx.compiler_options.target.supports_es2022() {
-                self.error_at_node(
-                    error_node,
-                    diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
-                    diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
-                );
-            } else {
+            // When target < ES2022, useDefineForClassFields defaults to false and
+            // super.prop for non-method members just works — tsc emits no error.
+            // TS2855 only applies when useDefineForClassFields is effectively true
+            // (target >= ES2022 or explicit useDefineForClassFields: true).
+            if self.ctx.compiler_options.target.supports_es2022() {
                 use crate::diagnostics::format_message;
                 let message = format_message(
                     diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
