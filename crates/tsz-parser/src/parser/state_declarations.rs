@@ -1400,6 +1400,7 @@ impl ParserState {
     ) -> NodeIndex {
         // Skip module/namespace/global keyword
         let is_global = self.is_token(SyntaxKind::GlobalKeyword);
+        let is_namespace_keyword = self.is_token(SyntaxKind::NamespaceKeyword);
         let name = if is_global {
             let name_start = self.token_pos();
             let name_end = self.token_end();
@@ -1486,7 +1487,11 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::DotToken) {
             // Nested module: module A.B.C { }
             self.next_token();
-            self.parse_nested_module_declaration(modifiers.clone(), is_declare)
+            self.parse_nested_module_declaration(
+                modifiers.clone(),
+                is_declare,
+                is_namespace_keyword,
+            )
         } else {
             NodeIndex::NONE
         };
@@ -1505,8 +1510,14 @@ impl ParserState {
         );
 
         let global_augmentation_flag = self.u16_from_node_flags(node_flags::GLOBAL_AUGMENTATION);
-        if is_global && let Some(node) = self.arena.get_mut(module_idx) {
-            node.flags |= global_augmentation_flag;
+        let namespace_flag = self.u16_from_node_flags(node_flags::NAMESPACE);
+        if let Some(node) = self.arena.get_mut(module_idx) {
+            if is_global {
+                node.flags |= global_augmentation_flag;
+            }
+            if is_namespace_keyword {
+                node.flags |= namespace_flag;
+            }
         }
 
         module_idx
@@ -1519,6 +1530,7 @@ impl ParserState {
     ) -> NodeIndex {
         // Skip module/namespace/global keyword
         let is_global = self.is_token(SyntaxKind::GlobalKeyword);
+        let is_namespace_keyword = self.is_token(SyntaxKind::NamespaceKeyword);
         let modifiers = Some(self.make_node_list(modifiers_vec));
         let name = if is_global {
             let name_start = self.token_pos();
@@ -1598,7 +1610,7 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::DotToken) {
             // Nested module: module A.B.C { }
             self.next_token();
-            self.parse_nested_module_declaration(modifiers.clone(), true)
+            self.parse_nested_module_declaration(modifiers.clone(), true, is_namespace_keyword)
         } else {
             NodeIndex::NONE
         };
@@ -1617,8 +1629,14 @@ impl ParserState {
         );
 
         let global_augmentation_flag = self.u16_from_node_flags(node_flags::GLOBAL_AUGMENTATION);
-        if is_global && let Some(node) = self.arena.get_mut(module_idx) {
-            node.flags |= global_augmentation_flag;
+        let namespace_flag = self.u16_from_node_flags(node_flags::NAMESPACE);
+        if let Some(node) = self.arena.get_mut(module_idx) {
+            if is_global {
+                node.flags |= global_augmentation_flag;
+            }
+            if is_namespace_keyword {
+                node.flags |= namespace_flag;
+            }
         }
 
         module_idx
@@ -1628,6 +1646,7 @@ impl ParserState {
         &mut self,
         modifiers: Option<NodeList>,
         is_ambient: bool,
+        is_namespace: bool,
     ) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -1642,14 +1661,14 @@ impl ParserState {
             self.parse_module_block(is_ambient)
         } else if self.is_token(SyntaxKind::DotToken) {
             self.next_token();
-            self.parse_nested_module_declaration(modifiers.clone(), is_ambient)
+            self.parse_nested_module_declaration(modifiers.clone(), is_ambient, is_namespace)
         } else {
             NodeIndex::NONE
         };
 
         let end_pos = self.token_end();
 
-        self.arena.add_module(
+        let module_idx = self.arena.add_module(
             syntax_kind_ext::MODULE_DECLARATION,
             start_pos,
             end_pos,
@@ -1658,7 +1677,16 @@ impl ParserState {
                 name,
                 body,
             },
-        )
+        );
+
+        if is_namespace {
+            let namespace_flag = self.u16_from_node_flags(node_flags::NAMESPACE);
+            if let Some(node) = self.arena.get_mut(module_idx) {
+                node.flags |= namespace_flag;
+            }
+        }
+
+        module_idx
     }
 
     /// Parse module block: { statements }
