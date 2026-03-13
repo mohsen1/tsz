@@ -125,13 +125,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.cycle_result();
         }
 
+        // The parent check_subtype (cache.rs) may have already entered this pair
+        // into the def_guard. When bypass_evaluation is true (used by the evaluator's
+        // simplify_union_members), the Lazy types are not evaluated before reaching
+        // check_subtype_inner, which dispatches here. The double-entry causes a false
+        // cycle detection that incorrectly returns True, collapsing distinct union
+        // members (e.g., Lazy({type:'a'}) | Lazy({type:'b'}) → just one member).
+        //
+        // When bypass_evaluation is false, the coinductive assumption on a double-entry
+        // is correct: the pair is genuinely being compared recursively through type
+        // evaluation, and assuming True on cycle prevents infinite expansion.
+        let already_visiting = self.bypass_evaluation && self.def_guard.is_visiting(&def_pair);
+
         use crate::recursion::RecursionResult;
-        match self.def_guard.enter(def_pair) {
-            RecursionResult::Cycle => return self.cycle_result(),
-            RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
-                return self.depth_result();
+        if !already_visiting {
+            match self.def_guard.enter(def_pair) {
+                RecursionResult::Cycle => return self.cycle_result(),
+                RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                    return self.depth_result();
+                }
+                RecursionResult::Entered => {}
             }
-            RecursionResult::Entered => {}
         }
 
         // =======================================================================
@@ -156,7 +170,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Both are classes - use nominal inheritance check
                 if graph.is_derived_from(s_sym, t_sym) {
                     // O(1) bitset check: source is a subclass of target
-                    self.def_guard.leave(def_pair);
+                    if !already_visiting {
+                        self.def_guard.leave(def_pair);
+                    }
                     return SubtypeResult::True;
                 }
                 // Not a subclass - fall through to structural check below
@@ -168,8 +184,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
 
-        // Leave def_guard after checking
-        self.def_guard.leave(def_pair);
+        // Leave def_guard only if we entered it ourselves
+        if !already_visiting {
+            self.def_guard.leave(def_pair);
+        }
 
         result
     }
