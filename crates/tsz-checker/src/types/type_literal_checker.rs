@@ -766,7 +766,7 @@ impl<'a> CheckerState<'a> {
                         self.pop_type_parameters(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
-                        let Some(name) = self.get_property_name(sig.name) else {
+                        let Some(name) = self.get_property_name_resolved(sig.name) else {
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
