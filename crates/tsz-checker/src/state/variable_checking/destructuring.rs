@@ -76,6 +76,19 @@ impl<'a> CheckerState<'a> {
                 }
                 param.initializer
             }
+            // Nested destructuring: `{ event: { params = {} } = {} }` — the inner
+            // ObjectBindingPattern's parent is the outer BindingElement.  When that
+            // BindingElement has an object-literal default, suppress TS2339 for the
+            // inner pattern's properties (same as tsc).
+            syntax_kind_ext::BINDING_ELEMENT => {
+                let Some(be) = self.ctx.arena.get_binding_element(parent_node) else {
+                    return false;
+                };
+                if be.name != pattern_idx {
+                    return false;
+                }
+                be.initializer
+            }
             _ => return false,
         };
 
