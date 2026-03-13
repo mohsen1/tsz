@@ -178,9 +178,14 @@ impl<'a> CheckerState<'a> {
             // TS2550: Check if property exists in a newer lib version before
             // trying spelling suggestions. This matches tsc's priority order.
             if !self.has_syntax_parse_errors()
-                && let Some(lib_name) = self.get_lib_suggestion_for_property(prop_name, type_id)
+                && let Some((lib_name, override_type_name)) =
+                    self.get_lib_suggestion_for_property_with_node(prop_name, type_id, idx)
             {
-                let type_str = self.property_receiver_display_for_node(type_id, idx);
+                let type_str = if let Some(name) = override_type_name {
+                    name.to_string()
+                } else {
+                    self.property_receiver_display_for_node(type_id, idx)
+                };
                 let message = format!(
                     "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
                 );

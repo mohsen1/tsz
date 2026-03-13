@@ -1,7 +1,7 @@
 //! Spelling suggestion helpers (Levenshtein distance, property/identifier suggestions).
 
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -262,8 +262,49 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
         type_id: TypeId,
     ) -> Option<&'static str> {
-        let type_name = self.get_type_symbol_name(type_id)?;
-        get_lib_for_type_property(&type_name, prop_name)
+        if let Some(type_name) = self.get_type_symbol_name(type_id)
+            && let Some(lib) = get_lib_for_type_property(&type_name, prop_name) {
+                return Some(lib);
+            }
+        None
+    }
+
+    /// Check if a missing property is available in a newer lib version,
+    /// using the property name AST node to identify the parent object
+    /// expression for well-known global constructor types.
+    /// Returns `(lib_name, type_display_name)` so the caller can use the
+    /// correct type name in the TS2550 message.
+    pub(super) fn get_lib_suggestion_for_property_with_node(
+        &mut self,
+        prop_name: &str,
+        type_id: TypeId,
+        prop_node: NodeIndex,
+    ) -> Option<(&'static str, Option<&'static str>)> {
+        // First try type-based lookup
+        if let Some(lib) = self.get_lib_suggestion_for_property(prop_name, type_id) {
+            return Some((lib, None));
+        }
+
+        // Fallback: check if the parent expression is a well-known global identifier.
+        // This handles cases like `Object.values` where the ObjectConstructor type
+        // can't be resolved to its name through the type system alone.
+        let parent_idx = self.ctx.arena.get_extended(prop_node)?.parent;
+        let parent = self.ctx.arena.get(parent_idx)?;
+        if parent.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(parent)?;
+        let obj_node = self.ctx.arena.get(access.expression)?;
+        let ident = self.ctx.arena.get_identifier(obj_node)?;
+        let constructor_name = match ident.escaped_text.as_str() {
+            "Object" => "ObjectConstructor",
+            "Symbol" => "Symbol",
+            "Map" => "MapConstructor",
+            "Atomics" => "Atomics",
+            _ => return None,
+        };
+        let lib = get_lib_for_type_property(constructor_name, prop_name)?;
+        Some((lib, Some(constructor_name)))
     }
 
     /// Try to resolve the symbol name for a type.
@@ -288,7 +329,8 @@ impl<'a> CheckerState<'a> {
             .resolve_type_to_symbol_id(type_id)
             .or_else(|| type_queries::get_type_shape_symbol(self.ctx.types, type_id));
         if let Some(sym_id) = sym_id {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            let lib_binders = self.get_lib_binders();
+            if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && !symbol.escaped_name.is_empty()
             {
                 return Some(symbol.escaped_name.clone());
