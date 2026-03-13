@@ -37,7 +37,9 @@ use crate::def::DefId;
 use crate::def::DefKind;
 use crate::recursion::{RecursionGuard, RecursionProfile, RecursionResult};
 use crate::relations::subtype::TypeResolver;
-use crate::types::{IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeData, TypeId};
+use crate::types::{
+    ConditionalType, IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeData, TypeId,
+};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -337,6 +339,41 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 TypeData::StringIntrinsic { kind, type_arg } => {
                     let c_arg = self.canonicalize(type_arg);
                     self.interner.string_intrinsic(kind, c_arg)
+                }
+
+                // Index access type (T[K]) - canonicalize both object and key
+                TypeData::IndexAccess(object_type, key_type) => {
+                    let c_obj = self.canonicalize(object_type);
+                    let c_key = self.canonicalize(key_type);
+                    self.interner.index_access(c_obj, c_key)
+                }
+
+                // KeyOf type (keyof T) - canonicalize the inner type
+                TypeData::KeyOf(inner) => {
+                    let c_inner = self.canonicalize(inner);
+                    self.interner.keyof(c_inner)
+                }
+
+                // Readonly type (readonly T[]) - canonicalize the inner type
+                TypeData::ReadonlyType(inner) => {
+                    let c_inner = self.canonicalize(inner);
+                    self.interner.readonly_type(c_inner)
+                }
+
+                // Conditional type (T extends U ? X : Y)
+                TypeData::Conditional(cond_id) => {
+                    let cond = self.interner.conditional_type(cond_id);
+                    let c_check = self.canonicalize(cond.check_type);
+                    let c_extends = self.canonicalize(cond.extends_type);
+                    let c_true = self.canonicalize(cond.true_type);
+                    let c_false = self.canonicalize(cond.false_type);
+                    self.interner.conditional(ConditionalType {
+                        check_type: c_check,
+                        extends_type: c_extends,
+                        true_type: c_true,
+                        false_type: c_false,
+                        is_distributive: cond.is_distributive,
+                    })
                 }
 
                 // Other types: preserve as-is (will be handled as needed)

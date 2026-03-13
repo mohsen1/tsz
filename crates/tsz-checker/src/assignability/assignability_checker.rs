@@ -814,6 +814,30 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Pre-evaluation IndexAccess identity check: when both source and target are
+        // IndexAccess types whose object types are type parameters with the same name,
+        // accept the relationship before evaluation can destroy type parameter identity.
+        // Example: `T_229[K] <: T_420[K]` where T_229 (unconstrained, from type alias)
+        // and T_420 (constrained `extends object`, from function) share name "T".
+        // Without this, evaluation resolves T_420 to `object`, losing the name match.
+        if let Some((s_obj, s_idx)) =
+            crate::query_boundaries::checkers::generic::index_access_components(
+                self.ctx.types,
+                source,
+            )
+            && let Some((t_obj, t_idx)) =
+                crate::query_boundaries::checkers::generic::index_access_components(
+                    self.ctx.types,
+                    target,
+                )
+            && let Some(s_param) = tsz_solver::visitor::type_param_info(self.ctx.types, s_obj)
+            && let Some(t_param) = tsz_solver::visitor::type_param_info(self.ctx.types, t_obj)
+            && s_param.name == t_param.name
+            && self.is_assignable_to(s_idx, t_idx)
+        {
+            return true;
+        }
+
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
