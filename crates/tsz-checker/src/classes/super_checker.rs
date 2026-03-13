@@ -103,6 +103,11 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            // Static block — super is valid.
+            if parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                return true;
+            }
+
             // Reached a class boundary without finding a member — super is outside.
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
