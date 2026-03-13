@@ -528,6 +528,22 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 if let Some(op) = self.ctx.arena.get_type_operator(node) {
+                    // TS1354: 'readonly' type modifier is only permitted on array and tuple literal types.
+                    if op.operator == tsz_scanner::SyntaxKind::ReadonlyKeyword as u16 {
+                        if let Some(operand_node) = self.ctx.arena.get(op.type_node) {
+                            if operand_node.kind != syntax_kind_ext::ARRAY_TYPE
+                                && operand_node.kind != syntax_kind_ext::TUPLE_TYPE
+                            {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end.saturating_sub(node.pos),
+                                    diagnostic_messages::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES.to_string(),
+                                    diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
+                                );
+                            }
+                        }
+                    }
                     self.check_type_for_missing_names(op.type_node);
                 }
             }
