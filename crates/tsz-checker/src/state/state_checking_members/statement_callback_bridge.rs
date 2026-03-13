@@ -100,7 +100,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // TS1221 / TS1222
         // TSC anchors these errors at the `*` asterisk token, not the whole function node.
-        if func.asterisk_token {
+        // Suppressed when file has parse errors (tsc's grammarErrorOnNode).
+        if func.asterisk_token && !self.has_syntax_parse_errors() {
             use crate::diagnostics::diagnostic_codes;
             let is_ambient = self.has_declare_modifier(&func.modifiers)
                 || self.ctx.is_declaration_file()
