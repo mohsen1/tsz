@@ -955,9 +955,9 @@ pub(super) fn filtered_parse_diagnostics(
     // tsc's suppression behavior. We only suppress grammar codes when there's a
     // non-grammar parse error present (e.g., TS1005, TS1109) to avoid suppressing
     // grammar codes that are the file's only diagnostic.
-    let has_non_grammar_parse_error = parse_diagnostics.iter().any(|d| {
-        !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359) && !is_parser_grammar_code(d.code)
-    });
+    let has_non_grammar_parse_error = parse_diagnostics
+        .iter()
+        .any(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262) && !is_parser_grammar_code(d.code));
 
     parse_diagnostics
         .iter()
@@ -991,7 +991,6 @@ fn is_parser_grammar_code(code: u32) -> bool {
         | 1162 // An object member cannot be declared optional
         | 1163 // A 'yield' expression is only allowed in a generator body
         | 1210 // Code contained in a class is evaluated in strict mode
-        | 1359 // Identifier expected. 'await' is a reserved word
     )
 }
 
