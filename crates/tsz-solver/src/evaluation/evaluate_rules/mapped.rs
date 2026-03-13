@@ -460,8 +460,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let key_type = TypeId::STRING;
                     let mut subst = TypeSubstitution::new();
                     subst.insert(mapped.type_param.name, key_type);
-                    let mut value_type =
-                        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+                    let instantiated_template =
+                        instantiate_type(self.interner(), mapped.template, &subst);
+                    let mut value_type = self.evaluate(instantiated_template);
 
                     // Get modifiers for string index
                     let empty_atom = self.interner().intern_string("");
