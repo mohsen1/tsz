@@ -827,7 +827,7 @@ impl<'a> CheckerState<'a> {
             return Some(tsz_solver::TypeId::ERROR);
         }
 
-        let mut base_type = self.jsdoc_type_from_expression(&effective_type_expr)?;
+        let mut base_type = self.resolve_jsdoc_type_str(&effective_type_expr)?;
 
         // Handle JSDoc destructured parameter type literals.
         // When the base type is Object/object (possibly with []), nested @param tags

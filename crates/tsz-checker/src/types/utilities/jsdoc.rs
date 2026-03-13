@@ -1495,8 +1495,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
-                let name = prop_str[..colon_idx].trim();
+                let raw_name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
+                let (name, optional) = if let Some(stripped) = raw_name.strip_suffix('?') {
+                    (stripped, true)
+                } else {
+                    (raw_name, false)
+                };
                 if !name.is_empty() {
                     let prop_type = self.resolve_jsdoc_type_str(type_str)?;
                     let name_atom = self.ctx.types.intern_string(name);
@@ -1504,7 +1509,7 @@ impl<'a> CheckerState<'a> {
                         name: name_atom,
                         type_id: prop_type,
                         write_type: prop_type,
-                        optional: false,
+                        optional,
                         readonly: false,
                         is_method: false,
                         is_class_prototype: false,
