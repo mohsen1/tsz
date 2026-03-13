@@ -887,11 +887,21 @@ impl<'a> CheckerState<'a> {
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
         {
-            self.check_binding_pattern(
-                element_data.name,
-                element_type,
-                check_default_assignability,
-            );
+            // When the binding element has a default value (e.g., `= {}`),
+            // strip `undefined` from the element type before recursing.
+            // The default guarantees the value won't be undefined at runtime,
+            // so nested property lookups should not see `| undefined`.
+            let nested_type = if element_data.initializer.is_some()
+                && self.ctx.strict_null_checks()
+                && element_type != TypeId::ANY
+                && element_type != TypeId::UNKNOWN
+                && element_type != TypeId::ERROR
+            {
+                tsz_solver::remove_undefined(self.ctx.types, element_type)
+            } else {
+                element_type
+            };
+            self.check_binding_pattern(element_data.name, nested_type, check_default_assignability);
         }
     }
 
