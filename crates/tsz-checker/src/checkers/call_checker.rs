@@ -1074,13 +1074,11 @@ impl<'a> CheckerState<'a> {
                 // `parrot<T extends Named>({name, sayHello() {}})`, the instantiated
                 // contextual type is the constraint `Named`, but tsc does not fire
                 // excess property checks because `T` captures the full object type.
+                // Note: we only check skip[i], not whether `expected` still contains
+                // type parameters — after inference, expected is fully instantiated
+                // but tsc still skips EPC based on the original parameter type.
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                    effective_index < skip.len()
-                        && skip[effective_index]
-                        && tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            expected,
-                        )
+                    effective_index < skip.len() && skip[effective_index]
                 })
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
@@ -1116,12 +1114,7 @@ impl<'a> CheckerState<'a> {
                 // Also skip when the original parameter type contains a type parameter
                 // (set via generic_excess_skip for generic call paths).
                 && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                    i < skip.len()
-                        && skip[i]
-                        && tsz_solver::type_queries::contains_type_parameters_db(
-                            self.ctx.types,
-                            expected,
-                        )
+                    i < skip.len() && skip[i]
                 })
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);

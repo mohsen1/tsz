@@ -1484,17 +1484,22 @@ fn resolve_effective_lib_paths(
     disable_default_libs: bool,
 ) -> Result<Vec<PathBuf>> {
     let include_config_libs =
-        !((resolved.checker.no_lib && resolved.lib_is_default) || disable_default_libs);
+        !(resolved.checker.no_lib || (resolved.lib_is_default && disable_default_libs));
     let mut lib_names = if include_config_libs {
         lib_names_from_paths(&resolved.lib_files)
     } else {
         Vec::new()
     };
 
-    let source_reference_libs = collect_source_reference_libs(sources);
-    if !source_reference_libs.is_empty() {
-        let expanded_source_paths = resolve_lib_files_with_options(&source_reference_libs, true)?;
-        append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
+    // When --noLib is set, ignore /// <reference lib="..." /> directives.
+    // tsc skips lib reference resolution entirely when noLib is enabled.
+    if !resolved.checker.no_lib {
+        let source_reference_libs = collect_source_reference_libs(sources);
+        if !source_reference_libs.is_empty() {
+            let expanded_source_paths =
+                resolve_lib_files_with_options(&source_reference_libs, true)?;
+            append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
+        }
     }
 
     let mut lib_paths = Vec::with_capacity(lib_names.len());

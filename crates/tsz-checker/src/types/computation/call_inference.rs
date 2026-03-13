@@ -1153,14 +1153,11 @@ impl<'a> CheckerState<'a> {
             && let Some(arg_node) = self.ctx.arena.get(arg_idx)
             && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             && !is_type_parameter_type(self.ctx.types, expected)
-            && !self.ctx.generic_excess_skip.as_ref().is_some_and(|skip| {
-                effective_index < skip.len()
-                    && skip[effective_index]
-                    && tsz_solver::type_queries::contains_type_parameters_db(
-                        self.ctx.types,
-                        expected,
-                    )
-            })
+            && !self
+                .ctx
+                .generic_excess_skip
+                .as_ref()
+                .is_some_and(|skip| effective_index < skip.len() && skip[effective_index])
         {
             self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
         }
