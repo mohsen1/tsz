@@ -983,7 +983,9 @@ pub(super) fn filtered_parse_diagnostics(
 fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
-        1021 // An index signature must have a type annotation
+        1017 // An index signature cannot have a rest parameter
+        | 1019 // An index signature parameter cannot have a question mark
+        | 1021 // An index signature must have a type annotation
         | 1042 // 'async' modifier cannot be used here
         | 1071 // An accessor must have a body (interface/ambient)
         | 1096 // An index signature must have exactly one parameter
