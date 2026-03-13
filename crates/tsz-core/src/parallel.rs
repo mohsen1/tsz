@@ -541,18 +541,58 @@ pub fn load_lib_files_for_binding_strict(
         return Ok(Vec::new());
     }
 
+    // Phase 1: Read all files and resolve references (sequential — handles dependency tree).
+    // This is I/O bound and fast (<10ms for 88 files / 3.9MB).
     let mut loaded = FxHashSet::default();
-    let mut result = Vec::new();
+    let mut file_contents: Vec<(String, String)> = Vec::new();
     for path in lib_files {
-        load_lib_file_recursive(path, &mut loaded, &mut result)?;
+        collect_lib_files_recursive(path, &mut loaded, &mut file_contents)?;
     }
-    Ok(result)
+
+    if file_contents.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Phase 2: Parse and bind all files in parallel (CPU bound — the expensive part).
+    // This parallelizes the ~0.8s parse+bind work across available cores.
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_rayon_global_pool();
+
+    let results: Vec<Result<Arc<lib_loader::LibFile>>> = maybe_parallel_into!(file_contents)
+        .map(|(file_name, source_text)| {
+            let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+            let source_file_idx = lib_parser.parse_source_file();
+            let diagnostics = lib_parser.get_diagnostics();
+            if !diagnostics.is_empty() {
+                let first = &diagnostics[0];
+                bail!(
+                    "failed to parse lib file {} ({}:{}): {}",
+                    file_name,
+                    first.start,
+                    first.length,
+                    first.message
+                );
+            }
+
+            let mut lib_binder = BinderState::new();
+            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+
+            let arena = Arc::new(lib_parser.into_arena());
+            let binder = Arc::new(lib_binder);
+            Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
+        })
+        .collect();
+
+    // Collect results, propagating any parse errors
+    results.into_iter().collect()
 }
 
-fn load_lib_file_recursive(
+/// Phase 1 helper: Read lib file content and recursively collect referenced libs.
+/// Only performs I/O — parsing/binding is deferred to the parallel phase.
+fn collect_lib_files_recursive(
     path: &Path,
     loaded: &mut FxHashSet<PathBuf>,
-    result: &mut Vec<Arc<lib_loader::LibFile>>,
+    file_contents: &mut Vec<(String, String)>,
 ) -> Result<()> {
     let lib_path = path.to_path_buf();
     if !loaded.insert(lib_path.clone()) {
@@ -565,35 +605,15 @@ fn load_lib_file_recursive(
     let source_text = std::fs::read_to_string(&lib_path)
         .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
 
+    // Resolve references before adding this file (dependencies come first)
     for ref_lib in parse_lib_references(&source_text) {
         if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
-            load_lib_file_recursive(&ref_path, loaded, result)?;
+            collect_lib_files_recursive(&ref_path, loaded, file_contents)?;
         }
-        // Skip unresolvable references silently — not all referenced libs
-        // (e.g., dom, webworker) are needed for every compilation target.
     }
 
     let file_name = lib_path.to_string_lossy().to_string();
-    let mut lib_parser = ParserState::new(file_name.clone(), source_text);
-    let source_file_idx = lib_parser.parse_source_file();
-    let diagnostics = lib_parser.get_diagnostics();
-    if !diagnostics.is_empty() {
-        let first = &diagnostics[0];
-        bail!(
-            "failed to parse lib file {} ({}:{}): {}",
-            lib_path.display(),
-            first.start,
-            first.length,
-            first.message
-        );
-    }
-
-    let mut lib_binder = BinderState::new();
-    lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-    let arena = Arc::new(lib_parser.into_arena());
-    let binder = Arc::new(lib_binder);
-    result.push(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)));
+    file_contents.push((file_name, source_text));
     Ok(())
 }
 
