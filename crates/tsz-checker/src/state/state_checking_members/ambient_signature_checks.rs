@@ -126,6 +126,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|c| c.is_declared);
             let is_static = self.has_static_modifier(&prop.modifiers);
             let is_abstract = self.has_abstract_modifier(&prop.modifiers);
+            let has_declare = self.has_declare_modifier(&prop.modifiers);
 
             // tsc points TS1255/TS1263/TS1264 at the `!` token itself.
             // For class property names parsed via parse_property_name(), the name
@@ -137,8 +138,8 @@ impl<'a> CheckerState<'a> {
                 .get(prop.name)
                 .map(|n| n.end.saturating_sub(1));
 
-            // TS1255: ! is not permitted on static, abstract, or ambient properties
-            if in_ambient || is_static || is_abstract {
+            // TS1255: ! is not permitted on static, abstract, ambient, or declared properties
+            if in_ambient || is_static || is_abstract || has_declare {
                 if let Some(pos) = excl_pos {
                     self.emit_error_at(
                         pos,
