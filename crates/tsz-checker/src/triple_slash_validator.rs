@@ -151,6 +151,59 @@ pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
     amd_modules
 }
 
+/// Find triple-slash lines that look like reference directives but have invalid syntax.
+///
+/// Returns `(line_number, line_byte_offset)` for each malformed directive.
+/// A directive is malformed if it starts with `/// <reference` but doesn't have
+/// properly quoted attributes (path, types, lib, or no-default-lib).
+pub fn find_malformed_reference_directives(source: &str) -> Vec<(usize, usize)> {
+    let mut malformed = Vec::new();
+    let mut in_block_comment = false;
+    let mut byte_offset = 0usize;
+
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Track block comment state
+        if in_block_comment {
+            if trimmed.contains("*/") {
+                in_block_comment = false;
+            }
+            byte_offset += line.len() + 1;
+            continue;
+        }
+        if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
+                in_block_comment = true;
+            }
+            byte_offset += line.len() + 1;
+            continue;
+        }
+
+        // Must start with /// and contain <reference
+        if trimmed.starts_with("///") && trimmed.contains("<reference") {
+            // Check if it's a well-formed directive:
+            // Valid forms: path="...", types="...", lib="...", no-default-lib="true"
+            let has_valid_path = extract_quoted_attr(trimmed, "path").is_some();
+            let has_valid_types = extract_quoted_attr(trimmed, "types").is_some();
+            let has_valid_lib = extract_quoted_attr(trimmed, "lib").is_some();
+            let has_valid_no_default = trimmed.contains("no-default-lib=")
+                && extract_quoted_attr(trimmed, "no-default-lib").is_some();
+
+            if !has_valid_path && !has_valid_types && !has_valid_lib && !has_valid_no_default {
+                // It looks like a reference directive but has invalid syntax
+                // Calculate the offset of the `///` within the line
+                let triple_slash_offset = line.find("///").unwrap_or(0);
+                malformed.push((line_num, byte_offset + triple_slash_offset));
+            }
+        }
+
+        byte_offset += line.len() + 1;
+    }
+
+    malformed
+}
+
 /// Extract the value of a named attribute from a reference directive line.
 fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
     let idx = line.find(attr)?;
