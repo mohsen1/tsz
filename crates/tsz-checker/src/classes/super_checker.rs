@@ -56,10 +56,16 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if `idx` is inside any class declaration or expression (at any
-    /// nesting depth). Used for TS2660 which should only fire when `super`
-    /// is completely outside any class.
-    fn is_inside_any_class(&self, idx: NodeIndex) -> bool {
+    /// Check if `super` property access is in a valid class member context.
+    ///
+    /// Returns `true` if `super` has a direct path to a class member
+    /// (method, constructor, accessor, static initializer) without crossing
+    /// a regular function boundary. Arrow functions are transparent (they
+    /// preserve the enclosing `super` binding), but regular functions and
+    /// function expressions break it.
+    ///
+    /// When this returns `false`, TS2660 should be emitted.
+    fn is_super_in_valid_member_context(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
@@ -69,11 +75,41 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+
+            // Arrow functions preserve the super binding — skip them.
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
+            // Regular function/function expression breaks super binding.
+            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return false;
+            }
+
+            // Reached a class member — super is valid here.
+            if parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+                || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
                 return true;
             }
+
+            // Static field/property initializer — super is valid.
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                return true;
+            }
+
+            // Reached a class boundary without finding a member — super is outside.
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return false;
+            }
+
             current = parent_idx;
         }
         false
@@ -968,12 +1004,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2660: super property access completely outside any class context.
-        // tsc only emits TS2660 when `super.prop` appears outside any class
-        // (e.g., in a top-level function). When `super.prop` is in a regular
-        // function nested inside a class member, tsc does NOT emit TS2660 —
-        // the binding just doesn't resolve to the class's super.
-        if is_super_property_access && !self.is_inside_any_class(idx) {
+        // TS2660: super property access outside a valid class member context.
+        // Emitted when `super.prop` appears outside any class, OR when a
+        // regular function boundary intervenes between `super` and the
+        // enclosing class member. Arrow functions preserve the binding,
+        // but regular functions/function expressions break it.
+        if is_super_property_access && !self.is_super_in_valid_member_context(idx) {
             self.error_at_node(
                 idx,
                 diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
