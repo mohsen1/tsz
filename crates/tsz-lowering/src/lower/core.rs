@@ -1449,7 +1449,7 @@ impl<'a> TypeLowering<'a> {
                                 type_id: getter_type,
                                 write_type: getter_type,
                                 optional: false,
-                                readonly: false,
+                                readonly: true,
                                 is_method: false,
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
@@ -1806,6 +1806,9 @@ impl<'a> TypeLowering<'a> {
                             // Update existing property with getter type as read type
                             if let PropertyMerge::Property(prop) = entry.get_mut() {
                                 prop.type_id = getter_type;
+                                // Getter-only means readonly; if a setter was already
+                                // merged, its branch will have set readonly=false already
+                                // and we preserve that (both accessor present = not readonly).
                             }
                         }
                         indexmap::map::Entry::Vacant(entry) => {
@@ -1814,7 +1817,7 @@ impl<'a> TypeLowering<'a> {
                                 type_id: getter_type,
                                 write_type: getter_type,
                                 optional: false,
-                                readonly: false,
+                                readonly: true,
                                 is_method: false,
                                 is_class_prototype: false,
                                 visibility: Visibility::Public,
