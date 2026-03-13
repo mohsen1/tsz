@@ -1,5 +1,4 @@
 //! Function call error reporting (TS2345, TS2554, TS2769).
-
 use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
@@ -1474,6 +1473,37 @@ impl<'a> CheckerState<'a> {
                         start,
                         length: length.saturating_sub(start),
                         message_text: nested,
+                    },
+                ])
+            }
+            SubtypeFailureReason::ArrayElementMismatch {
+                source_element,
+                target_element,
+            } => {
+                let s = self.format_type_diagnostic(*source_element);
+                let t = self.format_type_diagnostic(*target_element);
+                let len = length.saturating_sub(start);
+                Some(vec![
+                    DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Error,
+                        code: reason.diagnostic_code(),
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: len,
+                        message_text: format!(
+                            "Array element type '{s}' is not assignable to '{t}'."
+                        ),
+                    },
+                    DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: len,
+                        message_text: format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            &[&s, &t],
+                        ),
                     },
                 ])
             }
