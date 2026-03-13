@@ -2,7 +2,7 @@
 
 use super::state::{
     CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION, ParserState,
+    CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION, CONTEXT_FLAG_STATIC_BLOCK, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -112,6 +112,21 @@ impl ParserState {
                             first_name_end.saturating_sub(first_name_start),
                             "':' expected.",
                             tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                    }
+                    // Check for contextually reserved identifiers in shorthand binding.
+                    // e.g., `let { await } = x` in a static block or async function.
+                    // The property name was already parsed, so check at its position.
+                    if (first_token == SyntaxKind::AwaitKeyword
+                        && (self.in_async_context() || self.in_static_block_context()))
+                        || (first_token == SyntaxKind::YieldKeyword && self.in_generator_context())
+                    {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at(
+                            first_name_start,
+                            first_name_end.saturating_sub(first_name_start),
+                            "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                         );
                     }
                     (NodeIndex::NONE, first_name)
@@ -1905,7 +1920,8 @@ impl ParserState {
             };
 
             let saved_flags = self.context_flags;
-            self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+            self.context_flags &=
+                !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
             if is_async {
                 self.context_flags |= CONTEXT_FLAG_ASYNC;
             }
@@ -1969,7 +1985,8 @@ impl ParserState {
             .then(|| self.parse_type_parameters());
 
         let saved_flags = self.context_flags;
-        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+        self.context_flags &=
+            !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }

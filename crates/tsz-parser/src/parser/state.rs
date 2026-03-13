@@ -625,12 +625,8 @@ impl ParserState {
         }
 
         if is_await {
-            // In static blocks, tsc allows 'await' as a binding identifier
-            // (e.g., `let await = 1;`) without emitting TS1359. The error for
-            // using `await` as an expression/label is emitted elsewhere as TS1109.
-
-            // In async contexts, 'await' cannot be used as a binding identifier
-            if self.in_async_context() {
+            // In async contexts or static blocks, 'await' cannot be used as a binding identifier
+            if self.in_async_context() || self.in_static_block_context() {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,

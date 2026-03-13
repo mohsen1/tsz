@@ -1,7 +1,8 @@
 //! Parser state - statement and declaration parsing methods
 use super::state::{
     CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_BLOCK, CONTEXT_FLAG_PARAMETER_DEFAULT, IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_IN_BLOCK, CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK,
+    IncrementalParseResult, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -1774,6 +1775,9 @@ impl ParserState {
         // For async function * (await) {}, the parameter name 'await' should error
         let is_async_generator_declaration = is_async && asterisk_token;
         let saved_flags = self.context_flags;
+        // Clear async/generator for name parsing (names aren't subject to these restrictions),
+        // but keep STATIC_BLOCK set — function names are declarations in the outer scope,
+        // so `function await()` inside a static block is still illegal.
         self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
@@ -1860,7 +1864,9 @@ impl ParserState {
         };
 
         // Parse body - may be missing for overload signatures (just a semicolon)
-        // Context flags remain set for await/yield expressions in body
+        // Clear STATIC_BLOCK for body — function bodies create a new function boundary
+        // where 'await' is a valid identifier (unless the function is async).
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
         // Push a new label scope for the function body
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -1946,7 +1952,8 @@ impl ParserState {
         };
 
         let saved_flags = self.context_flags;
-        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+        self.context_flags &=
+            !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -2024,13 +2031,18 @@ impl ParserState {
         // For async function * await() {}, the function name 'await' should error
         // For async function * (await) {}, the parameter name 'await' should error
         let saved_flags = self.context_flags;
+        // Save whether we're in a static block before clearing the flag.
+        // Function expression names bind in the outer scope, so 'await' as a name
+        // is still illegal inside static blocks.
+        let was_in_static_block = self.in_static_block_context();
         // Parameter-default context is for the containing parameter initializer only.
         // Nested function expressions create a new parsing context where this flag
         // must not leak into function body parsing.
         self.context_flags &= !(CONTEXT_FLAG_PARAMETER_DEFAULT
             | CONTEXT_FLAG_ASYNC
             | CONTEXT_FLAG_GENERATOR
-            | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER);
+            | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER
+            | CONTEXT_FLAG_STATIC_BLOCK);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -2047,7 +2059,7 @@ impl ParserState {
         {
             use tsz_common::diagnostics::diagnostic_codes;
             if self.is_token(SyntaxKind::AwaitKeyword)
-                && (self.in_static_block_context() || is_async || self.in_async_context())
+                && (was_in_static_block || is_async || self.in_async_context())
             {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
