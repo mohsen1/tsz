@@ -1890,6 +1890,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Mark a JSX factory or fragment factory name as referenced for
+    /// unused-import checking (TS6192). The name may be dotted (e.g.,
+    /// `React.createElement`); we resolve only the root identifier.
+    pub(crate) fn mark_jsx_name_as_referenced(&mut self, name: &str, node_idx: NodeIndex) {
+        let root_ident = name.split('.').next().unwrap_or(name);
+        if root_ident.is_empty() {
+            return;
+        }
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self.ctx.binder.resolve_name_with_filter(
+            root_ident,
+            self.ctx.arena,
+            node_idx,
+            &lib_binders,
+            |_| true,
+        ) {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+    }
+
     /// Check that the JSX factory is in scope (TS2874).
     ///
     /// tsc 6.0 behavior:
@@ -1906,8 +1926,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc 6.0 skips scope checking when jsxFactory is explicitly set
+        // tsc 6.0 skips scope checking when jsxFactory is explicitly set.
+        // However, we still need to mark the factory symbol as referenced
+        // so that unused-import checking (TS6192) doesn't flag it.
         if self.ctx.compiler_options.jsx_factory_from_config {
+            self.mark_jsx_name_as_referenced(
+                &self.ctx.compiler_options.jsx_factory.clone(),
+                node_idx,
+            );
             return;
         }
 
