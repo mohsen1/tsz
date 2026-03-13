@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+const WEBSITE = path.resolve(import.meta.dirname, "..", "..");
+const ROOT = path.resolve(WEBSITE, "..", "..");
 
 function readJsonIfExists(p) {
   try {
@@ -12,8 +13,27 @@ function readJsonIfExists(p) {
 }
 
 function loadBenchmarks() {
-  const data = readJsonIfExists(path.join(ROOT, "website", "data", "benchmarks.json"));
-  if (data?.results?.length) return data.results;
+  const locations = [
+    path.join(WEBSITE, "data", "benchmarks.json"),
+    ...(() => {
+      const artifactsDir = path.join(ROOT, "artifacts");
+      try {
+        return fs.readdirSync(artifactsDir)
+          .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
+          .sort()
+          .reverse()
+          .map((file) => path.join(artifactsDir, file));
+      } catch {
+        return [];
+      }
+    })(),
+  ];
+
+  for (const location of locations) {
+    const data = readJsonIfExists(location);
+    if (data?.results?.length) return data.results;
+  }
+
   return [];
 }
 
