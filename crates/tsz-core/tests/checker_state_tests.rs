@@ -12859,11 +12859,11 @@ var x: Alias;
     let diags = &checker.ctx.diagnostics;
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
 
-    // Should produce error 2694: Namespace 'NS' has no exported member 'NotExported'
-    // This error occurs when the alias is used (var x: Alias), which triggers type resolution
+    // Should produce error 2694 or 2724 (spelling suggestion variant):
+    // Namespace 'NS' has no exported member 'NotExported' (Did you mean 'Exported'?)
     assert!(
-        codes.contains(&2694),
-        "Expected error 2694 for import alias of non-exported member, got: {codes:?}"
+        codes.contains(&2694) || codes.contains(&2724),
+        "Expected error 2694 or 2724 for import alias of non-exported member, got: {codes:?}"
     );
 }
 

@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
     // Identifier Suggestion Helpers
     // =========================================================================
 
-    fn consider_identifier_suggestion(
+    pub(crate) fn consider_identifier_suggestion(
         name: &str,
         candidate: &str,
         name_len: usize,

@@ -439,7 +439,17 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_qualified_name(left_sym_id)
                 .or_else(|| self.entity_name_text(qn.left))
                 .unwrap_or_else(|| symbol.escaped_name.clone());
-            self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
+            let export_names: Vec<String> = symbol
+                .exports
+                .as_ref()
+                .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
+                .unwrap_or_default();
+            self.error_namespace_no_export_with_exports(
+                &namespace_name,
+                &right_name,
+                qn.right,
+                &export_names,
+            );
             return TypeId::ERROR;
         }
 
@@ -490,12 +500,22 @@ impl<'a> CheckerState<'a> {
                 return member_type;
             }
 
-            // Not found - report TS2694
+            // Not found - report TS2694 or TS2724 (with spelling suggestion)
             let namespace_name = self
                 .get_symbol_qualified_name(fallback_sym)
                 .or_else(|| self.entity_name_text(qn.left))
                 .unwrap_or_else(|| symbol.escaped_name.clone());
-            self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
+            let export_names: Vec<String> = symbol
+                .exports
+                .as_ref()
+                .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
+                .unwrap_or_default();
+            self.error_namespace_no_export_with_exports(
+                &namespace_name,
+                &right_name,
+                qn.right,
+                &export_names,
+            );
             return TypeId::ERROR;
         }
 
