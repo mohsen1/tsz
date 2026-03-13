@@ -1784,7 +1784,7 @@ fn compile_resolves_package_imports_wildcard() {
 }
 
 #[test]
-fn compile_rejects_root_slash_package_import_specifier_under_node16() {
+fn compile_allows_root_slash_package_import_specifier_under_node16() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1820,12 +1820,11 @@ fn compile_rejects_root_slash_package_import_specifier_under_node16() {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().any(|diag| diag.code
+        !result.diagnostics.iter().any(|diag| diag.code
             == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
-        "Expected TS2307 for invalid #/ package import, got diagnostics: {:?}",
+        "Expected no TS2307 for #/ package import (now resolved), got diagnostics: {:?}",
         result.diagnostics
     );
-    assert!(!base.join("dist/index.js").is_file());
 }
 
 #[test]

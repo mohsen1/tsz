@@ -304,6 +304,11 @@ impl<'a> CheckerState<'a> {
                     if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                         self.resolve_qualified_name(qn.left)
                     } else if left_node.kind == SyntaxKind::Identifier as u16 {
+                        // globalThis is a synthetic namespace in TSC (flags = ValueModule | NamespaceModule)
+                        // with exports pointing to the global scope. Suppress TS2503 for it.
+                        if left_name == "globalThis" {
+                            return TypeId::ERROR;
+                        }
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
                             self.error_cannot_find_namespace_with_suggestion(
                                 left_name.as_str(),
