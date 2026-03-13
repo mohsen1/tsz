@@ -614,6 +614,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS7015: indexed with a non-numeric type when the object has a number index signature.
+        // tsc emits the more specific TS7015 ("index expression is not of type 'number'")
+        // for arrays, tuples, enums, or any type with a numeric indexer when the index
+        // type is not assignable to number.
+        // For union types, ALL members must have a number index (resolve_number_index uses
+        // find_map which is too permissive — it returns Some if any member matches).
+        let resolver =
+            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+        let has_number_index = if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)
+        {
+            members
+                .iter()
+                .all(|&m| resolver.resolve_number_index(m).is_some())
+        } else {
+            resolver.resolve_number_index(object_type).is_some()
+        };
+        if has_number_index && !self.ctx.types.is_assignable_to(index_type, TypeId::NUMBER) {
+            // tsc reports TS7015 at the index expression (arg_idx), not the full element access.
+            self.error_at_node(
+                arg_idx,
+                "Element implicitly has an 'any' type because index expression is not of type 'number'.",
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
+            );
+            return;
+        }
+
         let mut formatter = self.ctx.create_type_formatter();
         let index_str = formatter.format(index_type);
         let object_str = self.property_receiver_display_for_node(object_type, expr_idx);
