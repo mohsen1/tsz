@@ -198,7 +198,7 @@ FAIL TypeScript/tests/cases/compiler/es6ImportNamedImportWithExport.ts | expecte
 FAIL TypeScript/tests/cases/compiler/es6ImportWithoutFromClauseWithExport.ts | expected:[TS1191,TS2882] actual:[TS1191]
 FAIL TypeScript/tests/cases/compiler/esModuleInteropDefaultImports.ts | expected:[TS2349] actual:[TS2349,TS2497,TS2614]
 FAIL TypeScript/tests/cases/compiler/esModuleInteropPrettyErrorRelatedInformation.ts | expected:[TS2345] actual:[]
-FAIL TypeScript/tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts | expected:[] actual:[TS2322,TS2488]
+FAIL TypeScript/tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts | expected:[] actual:[TS2488]
 FAIL TypeScript/tests/cases/compiler/esmNoSynthesizedDefault.ts | expected:[TS1192,TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/eventEmitterPatternWithRecordOfFunction.ts | expected:[] actual:[TS2430]
 FAIL TypeScript/tests/cases/compiler/evolvingArrayResolvedAssert.ts | expected:[TS7005,TS7034] actual:[]
@@ -660,7 +660,6 @@ FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash2.ts | expected
 FAIL TypeScript/tests/cases/compiler/parametersSyntaxErrorNoCrash3.ts | expected:[TS1005] actual:[TS1005]
 FAIL TypeScript/tests/cases/compiler/paramsOnlyHaveLiteralTypesWhenAppropriatelyContextualized.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/parenthesisDoesNotBlockAliasSymbolCreation.ts | expected:[TS2352] actual:[TS2352]
-FAIL TypeScript/tests/cases/compiler/parenthesizedJSDocCastAtReturnStatement.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/parseBigInt.ts | expected:[TS1005,TS1121,TS1125,TS1177,TS1178,TS1352,TS1353,TS6188,TS6189] actual:[TS1005,TS1121,TS1352,TS1353,TS6188,TS6189]
 FAIL TypeScript/tests/cases/compiler/parseCommaSeparatedNewlineNew.ts | expected:[TS1109] actual:[TS2304,TS2695]
 FAIL TypeScript/tests/cases/compiler/parseErrorIncorrectReturnToken.ts | expected:[TS1005,TS1128,TS1434] actual:[TS1005,TS1128,TS1131]
@@ -955,10 +954,9 @@ FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classHeritageS
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/classHeritageSpecification/classExtendsEveryObjectType2.ts | expected:[TS1005] actual:[TS1068,TS1109]
 FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/declaredClassMergedwithSelf.ts | expected:[TS2300] actual:[TS2300]
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock19.ts | expected:[TS1206] actual:[TS1206]
-FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock22.ts | expected:[TS1359] actual:[TS1359]
+FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock22.ts | expected:[TS1359] actual:[TS1109,TS1359]
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock23.ts | expected:[TS18038] actual:[TS18038]
-FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock26.ts | expected:[TS1003,TS1005,TS1109] actual:[TS5107]
-FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock6.ts | expected:[TS1109] actual:[TS1109,TS1359]
+FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock26.ts | expected:[TS1003,TS1005,TS1109] actual:[TS1109,TS1213]
 FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/classConstructorOverloadsAccessibility.ts | expected:[TS2385] actual:[TS2385]
 FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/constructorParameters/constructorParameterProperties2.ts | expected:[TS2300,TS2564,TS2687] actual:[TS2300,TS2564,TS2687]
 FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/constructorParameters/readonlyReadonly.ts | expected:[TS1030,TS2564] actual:[TS1030,TS2564]
@@ -1055,6 +1053,7 @@ FAIL TypeScript/tests/cases/conformance/es2018/invalidTaggedTemplateEscapeSequen
 FAIL TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts | expected:[TS2339] actual:[TS2536]
 FAIL TypeScript/tests/cases/conformance/es2019/globalThisPropertyAssignment.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/es2019/globalThisUnknownNoImplicitAny.ts | expected:[TS2339,TS7015,TS7017,TS7053] actual:[TS2339,TS7053]
+FAIL TypeScript/tests/cases/conformance/es2019/importMeta/importMeta.ts | expected:[TS2339,TS2364,TS17012] actual:[TS17012]
 FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace_exportAssignment.ts | expected:[TS2498] actual:[]
 FAIL TypeScript/tests/cases/conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts | expected:[TS2307,TS6046] actual:[TS2307,TS6046]
 FAIL TypeScript/tests/cases/conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_syntax.ts | expected:[TS1003] actual:[TS2305,TS2661]
@@ -1188,7 +1187,6 @@ FAIL TypeScript/tests/cases/conformance/esDecorators/classDeclaration/esDecorato
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-arguments.ts | expected:[TS1238] actual:[]
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.1.ts | expected:[TS1497,TS5024] actual:[TS5024]
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-emitDecoratorMetadata.ts | expected:[TS5052] actual:[TS2564]
-FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts | expected:[] actual:[TS2335]
 FAIL TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiteralInference.ts | expected:[] actual:[TS2769]
 FAIL TypeScript/tests/cases/conformance/expressions/arrayLiterals/arrayLiterals3.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/expressions/asOperator/asOperatorContextualType.ts | expected:[TS2352] actual:[TS2322,TS2352]
@@ -1320,7 +1318,7 @@ FAIL TypeScript/tests/cases/conformance/internalModules/moduleDeclarations/insta
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts | expected:[TS7027] actual:[TS7006,TS7027]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNamespace.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNestedParameter.ts | expected:[] actual:[TS2554]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339,TS2345,TS7006]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts | expected:[TS2322,TS2540,TS2882] actual:[TS2339,TS2882]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag15.ts | expected:[TS1360,TS2322,TS7006] actual:[TS1360,TS2304,TS7006]
@@ -1375,7 +1373,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment.ts 
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment2.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeFromChainedAssignment3.ts | expected:[TS7005] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToMergedClass.ts | expected:[TS2454] actual:[]
-FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToValue.ts | expected:[] actual:[TS2351]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTag.ts | expected:[] actual:[TS2403,TS2693,TS6200]
 FAIL TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagCast.ts | expected:[TS1228,TS2322,TS2352,TS2454] actual:[TS2322,TS2352]
 FAIL TypeScript/tests/cases/conformance/jsdoc/overloadTag2.ts | expected:[TS2394,TS2554,TS7006] actual:[TS7006]
@@ -1611,6 +1608,7 @@ FAIL TypeScript/tests/cases/conformance/salsa/inferringClassStaticMembersFromAss
 FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration2.ts | expected:[TS2322] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/jsContainerMergeTsDeclaration3.ts | expected:[TS2739] actual:[TS2451]
+FAIL TypeScript/tests/cases/conformance/salsa/jsdocConstructorFunctionTypeReference.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport1.ts | expected:[TS7053] actual:[TS7053]
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport2.ts | expected:[TS7053] actual:[TS7053]
 FAIL TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport3.ts | expected:[TS7053] actual:[]
@@ -6121,6 +6119,7 @@ PASS TypeScript/tests/cases/compiler/paramterDestrcuturingDeclaration.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedArrowExpressionASI.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedAsyncArrowFunction.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedExpressionInternalComments.ts
+PASS TypeScript/tests/cases/compiler/parenthesizedJSDocCastAtReturnStatement.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedJSDocCastDoesNotNarrow.ts
 PASS TypeScript/tests/cases/compiler/parenthesizedSatisfiesExpressionWithComments.ts
 PASS TypeScript/tests/cases/compiler/parse1.ts
@@ -7783,6 +7782,7 @@ PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBloc
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock3.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock4.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock5.ts
+PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock6.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock7.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock8.ts
 PASS TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock9.ts
@@ -9454,6 +9454,7 @@ PASS TypeScript/tests/cases/conformance/esDecorators/esDecorators-contextualType
 PASS TypeScript/tests/cases/conformance/esDecorators/esDecorators-contextualTypes.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.2.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/esDecorators-decoratorExpression.3.ts
+PASS TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/esDecorators-privateFieldAccess.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/metadata/esDecoratorsMetadata1.ts
 PASS TypeScript/tests/cases/conformance/esDecorators/metadata/esDecoratorsMetadata2.ts
@@ -10363,6 +10364,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceExports.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToImport.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToImportOfClassExpression.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToImportOfFunctionExpression.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceToValue.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeReferenceUseBeforeDef.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagOnParameter1.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/jsdocTypeTagParameterType.ts
@@ -11437,7 +11439,6 @@ PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignmen
 PASS TypeScript/tests/cases/conformance/salsa/inferringClassMembersFromAssignments8.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsContainerMergeJsContainer.ts
 PASS TypeScript/tests/cases/conformance/salsa/jsObjectsMarkedAsOpenEnded.ts
-PASS TypeScript/tests/cases/conformance/salsa/jsdocConstructorFunctionTypeReference.ts
 PASS TypeScript/tests/cases/conformance/salsa/lateBoundAssignmentDeclarationSupport7.ts
 PASS TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS.ts
 PASS TypeScript/tests/cases/conformance/salsa/lateBoundClassMemberAssignmentJS2.ts
