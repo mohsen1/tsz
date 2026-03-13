@@ -449,6 +449,13 @@ impl<'a> CheckerState<'a> {
                             && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
                             && access.expression == idx
                         {
+                            // If the local uninstantiated namespace shadows a global VALUE
+                            // (e.g., `namespace Symbol {}` shadowing global `Symbol`),
+                            // fall through to the global value so property access works.
+                            let value_type = self.type_of_value_symbol_by_name(name);
+                            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                                return value_type;
+                            }
                             // Defer diagnostics for `Ns.Member` to member-access handling so
                             // type-only member access can report TS2693 at the member site.
                             return self.get_type_of_symbol(sym_id);

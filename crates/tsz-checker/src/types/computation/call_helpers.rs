@@ -545,6 +545,33 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(value_sym_id) = self.find_value_symbol_in_libs(name) {
+            // For merged TYPE+VALUE symbols (e.g., `interface Symbol` + `declare var Symbol`),
+            // get_type_of_symbol returns the interface type. In value context we need the
+            // variable's declared type (e.g., SymbolConstructor). Search the symbol's
+            // declarations for a variable declaration with a type annotation first.
+            let lib_binders = self.get_lib_binders();
+            if let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(value_sym_id, &lib_binders)
+            {
+                let has_type_side = (symbol.flags & tsz_binder::symbol_flags::TYPE) != 0;
+                let has_value_side = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                if has_type_side && has_value_side {
+                    // Merged symbol: scan declarations for a variable declaration
+                    for &decl_idx in &symbol.declarations {
+                        if decl_idx.is_none() {
+                            continue;
+                        }
+                        let value_type =
+                            self.type_of_value_declaration_for_symbol(value_sym_id, decl_idx);
+                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                            return value_type;
+                        }
+                    }
+                }
+            }
+
             let value_type = self.get_type_of_symbol(value_sym_id);
             if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                 return value_type;
