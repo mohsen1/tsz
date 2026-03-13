@@ -2635,6 +2635,50 @@ impl ParserState {
                         },
                     );
                 }
+                // Optional chaining: `new A?.b()` — parse `?.prop` or `?.[idx]`
+                // as part of the member expression so the NewExpression wraps
+                // the whole chain.  The checker later emits TS1209 for this.
+                SyntaxKind::QuestionDotToken => {
+                    self.next_token();
+                    if self.is_token(SyntaxKind::OpenBracketToken) {
+                        // `new A?.[idx]()`
+                        self.next_token();
+                        let argument = self.parse_expression();
+                        let end_pos = self.token_end();
+                        self.parse_expected(SyntaxKind::CloseBracketToken);
+
+                        expr = self.arena.add_access_expr(
+                            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
+                            start_pos,
+                            end_pos,
+                            AccessExprData {
+                                expression: expr,
+                                name_or_argument: argument,
+                                question_dot_token: true,
+                            },
+                        );
+                    } else {
+                        // `new A?.b()` — property access
+                        let name = if self.is_identifier_or_keyword() {
+                            self.parse_identifier_name()
+                        } else {
+                            self.error_identifier_expected();
+                            NodeIndex::NONE
+                        };
+                        let end_pos = self.token_end();
+
+                        expr = self.arena.add_access_expr(
+                            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
+                            start_pos,
+                            end_pos,
+                            AccessExprData {
+                                expression: expr,
+                                name_or_argument: name,
+                                question_dot_token: true,
+                            },
+                        );
+                    }
+                }
                 // Tagged template literals: tag`template` — needed so that
                 // `new f\`abc\`.member(...)` parses the tagged template as
                 // part of the member expression, not as `(new f)\`abc\`...`.

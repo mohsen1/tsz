@@ -793,29 +793,30 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 return;
             }
 
-            // TS1194: `export { ... }` / `export ... from` forms are not valid inside
-            // non-ambient namespaces. Ambient namespaces (`declare namespace`) allow
-            // these re-export forms.
-            let is_reexport_syntax = export_decl.module_specifier.is_some()
-                || self
+            // TS1194: Export declarations are not permitted in a namespace.
+            // `export { } from "mod"` is NEVER allowed in any namespace (even declare);
+            // `export { }` (no from) is only disallowed in non-ambient namespaces.
+            if self.is_inside_namespace_declaration(export_idx) {
+                let has_from = export_decl.module_specifier.is_some();
+                let is_named = self
                     .ctx
                     .arena
                     .get(export_decl.export_clause)
                     .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
-            let is_ambient =
-                self.ctx.is_declaration_file() || self.ctx.arena.is_in_ambient_context(export_idx);
-            if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) && !is_ambient
-            {
-                let report_idx = if export_decl.module_specifier.is_some() {
-                    export_decl.module_specifier
-                } else {
-                    export_idx
-                };
-                self.error_at_node(
-                    report_idx,
-                    crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
-                    crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
-                );
+                let is_ambient = self.ctx.is_declaration_file()
+                    || self.ctx.arena.is_in_ambient_context(export_idx);
+                if has_from || (is_named && !is_ambient) {
+                    let report_idx = if has_from {
+                        export_decl.module_specifier
+                    } else {
+                        export_idx
+                    };
+                    self.error_at_node(
+                        report_idx,
+                        crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                        crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                    );
+                }
             }
 
             // TS2880: Warn about deprecated `assert` keyword
