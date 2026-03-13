@@ -945,6 +945,8 @@ impl<'a> CheckerState<'a> {
                     || node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
+                    || node.kind == syntax_kind_ext::GET_ACCESSOR
+                    || node.kind == syntax_kind_ext::SET_ACCESSOR
                 {
                     return None;
                 }
