@@ -1219,16 +1219,25 @@ impl ParserState {
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
 
                     if !has_following_expression && !is_computed_property_context {
-                        // In static blocks, 'await' used as a bare identifier should emit TS1359
-                        // (reserved word cannot be used here) to match TSC behavior
                         if self.in_static_block_context() {
-                            self.parse_error_at_current_token(
-                                "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
-                            );
-                        } else {
+                            // In static blocks, tsc treats `await` as a keyword and
+                            // emits TS1109 at the token AFTER `await` (the missing
+                            // operand position), matching await-expression parsing.
+                            let start_pos = self.token_pos();
+                            self.next_token(); // consume `await`
                             self.error_expression_expected();
+                            let end_pos = self.token_end();
+                            return self.arena.add_unary_expr_ex(
+                                syntax_kind_ext::AWAIT_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                UnaryExprDataEx {
+                                    expression: NodeIndex::NONE,
+                                    asterisk_token: false,
+                                },
+                            );
                         }
+                        self.error_expression_expected();
                     }
 
                     // Fall through to parse as identifier/postfix expression

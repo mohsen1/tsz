@@ -631,6 +631,10 @@ impl<'a> CheckerState<'a> {
         // super in a computed property key `[super.foo()]() {}` of an inner class
         // refers to the OUTER class, so we skip the inner class.
         let mut in_computed_property = false;
+        // Track if we entered through a decorator expression.
+        // super in a decorator `@(super.foo)` on an inner class's member
+        // is evaluated in the enclosing scope, so it refers to the OUTER class.
+        let mut in_decorator = false;
 
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
@@ -643,6 +647,10 @@ impl<'a> CheckerState<'a> {
 
             if parent_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                 in_computed_property = true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::DECORATOR {
+                in_decorator = true;
             }
 
             // Reset computed property tracking when passing through an object literal.
@@ -667,6 +675,14 @@ impl<'a> CheckerState<'a> {
                     // super in computed property name of this class's member
                     // refers to the outer class, not this one — keep walking
                     in_computed_property = false;
+                    current = parent_idx;
+                    continue;
+                }
+                if in_decorator {
+                    // super in a decorator expression on this class's member
+                    // is evaluated in the scope where the class is defined,
+                    // so it refers to the outer class — keep walking
+                    in_decorator = false;
                     current = parent_idx;
                     continue;
                 }
