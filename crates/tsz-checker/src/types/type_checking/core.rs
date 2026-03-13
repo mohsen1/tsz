@@ -1771,6 +1771,11 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 self.check_mapped_type_constraint(node_idx);
             }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                // Force tuple element validation (TS1257, TS1265, TS1266)
+                // which lives inside get_type_from_tuple_type.
+                let _ = self.get_type_from_type_node(node_idx);
+            }
             _ => {}
         }
     }
