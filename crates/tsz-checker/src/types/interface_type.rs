@@ -967,6 +967,15 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let mut merged_prop = prop.clone();
+                    // When the merge produces a new callable type (from concatenating
+                    // derived + base call signatures), update BOTH type_id and write_type.
+                    // Leaving write_type pointing to the derived-only callable creates a
+                    // false "split accessor" (type_id != write_type) that triggers the
+                    // contravariant write-type check in check_property_compatibility,
+                    // causing false TS2322 errors for interface-extends assignments.
+                    if merged_type != prop.type_id && merged_prop.write_type == prop.type_id {
+                        merged_prop.write_type = merged_type;
+                    }
                     merged_prop.type_id = merged_type;
                     merged_prop.declaration_order = base_prop.declaration_order;
                     merged[pos] = merged_prop;
@@ -1008,6 +1017,9 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let mut prop = (*derived_prop).clone();
+                if merged_type != derived_prop.type_id && prop.write_type == derived_prop.type_id {
+                    prop.write_type = merged_type;
+                }
                 prop.type_id = merged_type;
                 prop.declaration_order = base_prop.declaration_order;
                 merged.push(prop);

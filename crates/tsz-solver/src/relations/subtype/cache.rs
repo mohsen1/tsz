@@ -451,7 +451,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             let source_eval = self.evaluate_type(source);
             let target_eval = self.evaluate_type(target);
-
             if source_eval != source || target_eval != target {
                 // Leave def_guard before recursing ONLY when a Lazy type resolved to an
                 // Enum with the same DefId. When Lazy(DefId(X)) evaluates to Enum(DefId(X), ...),
