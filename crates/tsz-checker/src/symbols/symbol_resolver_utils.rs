@@ -657,7 +657,17 @@ impl<'a> CheckerState<'a> {
                 let namespace_name = self
                     .entity_name_text(qn.left)
                     .unwrap_or_else(|| left_symbol.escaped_name.clone());
-                self.error_namespace_no_export(&namespace_name, right_name, qn.right);
+                let export_names: Vec<String> = left_symbol
+                    .exports
+                    .as_ref()
+                    .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
+                    .unwrap_or_default();
+                self.error_namespace_no_export_with_exports(
+                    &namespace_name,
+                    right_name,
+                    qn.right,
+                    &export_names,
+                );
                 return true;
             }
             let mut visited_aliases = Vec::new();
@@ -676,7 +686,17 @@ impl<'a> CheckerState<'a> {
         let namespace_name = self
             .entity_name_text(qn.left)
             .unwrap_or_else(|| left_symbol.escaped_name.clone());
-        self.error_namespace_no_export(&namespace_name, right_name, qn.right);
+        let export_names: Vec<String> = left_symbol
+            .exports
+            .as_ref()
+            .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
+            .unwrap_or_default();
+        self.error_namespace_no_export_with_exports(
+            &namespace_name,
+            right_name,
+            qn.right,
+            &export_names,
+        );
         true
     }
 

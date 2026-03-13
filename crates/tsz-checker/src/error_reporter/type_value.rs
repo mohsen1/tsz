@@ -82,16 +82,76 @@ impl<'a> CheckerState<'a> {
     // Module/Namespace Errors
     // =========================================================================
 
-    /// Report TS2694: Namespace has no exported member.
+    /// Report TS2694 or TS2724: Namespace has no exported member.
+    ///
+    /// If `export_names` is provided and a spelling suggestion is found,
+    /// emits TS2724 ("Did you mean?") instead of TS2694.
     pub fn error_namespace_no_export(
         &mut self,
         namespace_name: &str,
         member_name: &str,
         idx: NodeIndex,
     ) {
-        let message =
-            format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
-        self.error_at_node(idx, &message, 2694);
+        self.error_namespace_no_export_with_exports(namespace_name, member_name, idx, &[]);
+    }
+
+    /// Report TS2694 or TS2724 with candidate export names for spelling suggestions.
+    pub fn error_namespace_no_export_with_exports(
+        &mut self,
+        namespace_name: &str,
+        member_name: &str,
+        idx: NodeIndex,
+        export_names: &[String],
+    ) {
+        // Try to find a spelling suggestion among the namespace's exports
+        if let Some(suggestion) = Self::find_export_spelling_suggestion(member_name, export_names) {
+            let message = format!(
+                "'{namespace_name}' has no exported member named '{member_name}'. Did you mean '{suggestion}'?"
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+            );
+        } else {
+            let message =
+                format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
+            self.error_at_node(idx, &message, 2694);
+        }
+    }
+
+    /// Search export names for a spelling suggestion matching `member_name`.
+    fn find_export_spelling_suggestion(
+        member_name: &str,
+        export_names: &[String],
+    ) -> Option<String> {
+        if export_names.is_empty() {
+            return None;
+        }
+
+        let name_len = member_name.len();
+        // tsc: bestDistance = (name.length + 2) * 0.34 rounded down, min 2
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        // tsc: initial bestDistance = floor(name.length * 0.4) + 1
+        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
+        let mut best_candidate: Option<String> = None;
+
+        for candidate in export_names {
+            Self::consider_identifier_suggestion(
+                member_name,
+                candidate,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
+
+        best_candidate
     }
 
     // =========================================================================
