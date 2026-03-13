@@ -666,8 +666,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
-                } else if self.ctx.strict_null_checks() {
-                    // TS2366: Only emit with strictNullChecks
+                } else {
+                    // TS2366: always emit when return type doesn't include undefined
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         error_node,

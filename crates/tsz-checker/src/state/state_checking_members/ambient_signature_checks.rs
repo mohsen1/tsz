@@ -735,9 +735,9 @@ impl<'a> CheckerState<'a> {
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
-                } else if self.ctx.strict_null_checks() {
-                    // TS2366: Only emit when strictNullChecks is enabled, because
-                    // without it, undefined is implicitly assignable to any type.
+                } else {
+                    // TS2366: always emit when return type doesn't include undefined.
+                    // tsc emits this regardless of strictNullChecks.
                     use crate::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         method.type_annotation,
@@ -1384,12 +1384,8 @@ impl<'a> CheckerState<'a> {
                         "A 'get' accessor must return a value.",
                         diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     );
-                } else if has_type_annotation
-                    && requires_return
-                    && falls_through
-                    && self.ctx.strict_null_checks()
-                {
-                    // TS2366: Only emit with strictNullChecks
+                } else if has_type_annotation && requires_return && falls_through {
+                    // TS2366: always emit when return type doesn't include undefined
                     use crate::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         accessor.type_annotation,
