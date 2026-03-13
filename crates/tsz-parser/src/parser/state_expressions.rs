@@ -1506,9 +1506,9 @@ impl ParserState {
                             self.parse_identifier_name()
                         }
                     } else {
-                        self.parse_error_at(
-                            missing_name_pos,
-                            0,
+                        // Emit at the current token position (e.g. `}`) where the
+                        // identifier was expected, matching tsc's parseRightSideOfDot.
+                        self.parse_error_at_current_token(
                             "Identifier expected.",
                             tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
                         );
