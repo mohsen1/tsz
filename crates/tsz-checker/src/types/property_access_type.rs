@@ -114,11 +114,14 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
         };
+        // Use Atom (Copy, u32) instead of String clone to avoid heap allocation.
+        // Resolved to &str via the type interner when needed.
         let property_name_for_probe = self
             .ctx
             .arena
             .get_identifier(name_node)
-            .map(|ident| ident.escaped_text.clone());
+            .filter(|ident| ident.atom != tsz_common::interner::Atom::none())
+            .map(|ident| ident.atom);
         if let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text.is_empty()
         {
@@ -237,7 +240,9 @@ impl<'a> CheckerState<'a> {
             let object_type_no_flow = self.get_type_of_node(access.expression);
             self.ctx.skip_flow_narrowing = prev_skip;
 
-            let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
+            let can_use_no_flow = if let Some(probe_atom) = property_name_for_probe {
+                let property_name_arc = self.ctx.types.resolve_atom_ref(probe_atom);
+                let property_name: &str = &property_name_arc;
                 let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
                 !matches!(
