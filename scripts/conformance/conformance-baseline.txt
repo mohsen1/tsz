@@ -22,6 +22,7 @@ FAIL TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts | expecte
 FAIL TypeScript/tests/cases/compiler/classFieldsBrokenConstructorEmitNoCrash1.ts | expected:[TS1005] actual:[TS1005]
 FAIL TypeScript/tests/cases/compiler/classImplementsClass4.ts | expected:[TS2720,TS2741] actual:[TS2322,TS2720]
 FAIL TypeScript/tests/cases/compiler/classImplementsClass6.ts | expected:[TS2339,TS2576] actual:[TS2576]
+FAIL TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/classStaticInitializersUsePropertiesBeforeDeclaration.ts | expected:[TS2448,TS2450,TS2729] actual:[TS2448,TS2450,TS2729]
 FAIL TypeScript/tests/cases/compiler/clodulesDerivedClasses.ts | expected:[TS2322,TS2417,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
@@ -605,6 +606,7 @@ FAIL TypeScript/tests/cases/compiler/objectLiteralThisWidenedOnUse.ts | expected
 FAIL TypeScript/tests/cases/compiler/objectLiteralWithNumericPropertyName.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/octalLiteralAndEscapeSequence.ts | expected:[TS1121,TS1487,TS1488] actual:[TS1121]
 FAIL TypeScript/tests/cases/compiler/omitTypeHelperModifiers01.ts | expected:[TS2540] actual:[TS2322,TS2540]
+FAIL TypeScript/tests/cases/compiler/omitTypeTestErrors01.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/omittedExpressionForOfLoop.ts | expected:[TS2304,TS2488,TS18050] actual:[TS2304,TS2488,TS18050]
 FAIL TypeScript/tests/cases/compiler/optionalChainWithInstantiationExpression1.ts | expected:[TS1477] actual:[TS1477]
 FAIL TypeScript/tests/cases/compiler/optionalFunctionArgAssignability.ts | expected:[TS2322] actual:[TS2322]
@@ -1258,7 +1260,7 @@ FAIL TypeScript/tests/cases/conformance/internalModules/moduleDeclarations/insta
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts | expected:[TS7027] actual:[TS7006,TS7027]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNamespace.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNestedParameter.ts | expected:[] actual:[TS2554]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339,TS2345,TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts | expected:[TS2322,TS2540,TS2882] actual:[TS2339,TS2882]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag15.ts | expected:[TS1360,TS2322,TS7006] actual:[TS1360,TS2304,TS7006]
@@ -2589,7 +2591,6 @@ PASS TypeScript/tests/cases/compiler/classOverloadForFunction.ts
 PASS TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
-PASS TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance3.ts
@@ -5968,7 +5969,6 @@ PASS TypeScript/tests/cases/compiler/objectRestSpread.ts
 PASS TypeScript/tests/cases/compiler/objectSpreadWithinMethodWithinObjectWithSpread.ts
 PASS TypeScript/tests/cases/compiler/objectTypeWithOptionalProperty1.ts
 PASS TypeScript/tests/cases/compiler/observableInferenceCanBeMade.ts
-PASS TypeScript/tests/cases/compiler/omitTypeTestErrors01.ts
 PASS TypeScript/tests/cases/compiler/omitTypeTests01.ts
 PASS TypeScript/tests/cases/compiler/operationsAvailableOnPromisedType.ts
 PASS TypeScript/tests/cases/compiler/operatorAddNullUndefined.ts
