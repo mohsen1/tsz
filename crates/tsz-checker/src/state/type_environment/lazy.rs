@@ -554,11 +554,10 @@ impl<'a> CheckerState<'a> {
                 // For CLASS symbols in type position, prefer the instance type over the
                 // constructor type. get_type_of_symbol returns the constructor (value-side)
                 // type, but Lazy(DefId) in type position means the instance type.
-                if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
-                    if instance_type != type_id {
+                if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id)
+                    && instance_type != type_id {
                         return self.resolve_lazy_type_inner(instance_type, visited);
                     }
-                }
 
                 // Only recurse if the resolved type is different from the original
                 if resolved != type_id {
@@ -945,14 +944,13 @@ impl<'a> CheckerState<'a> {
             // registers under the CLASS symbol's DefId, not the original DefId from
             // the Lazy type. Register under the original def_id so Lazy(DefId)
             // resolves correctly during property access.
-            if was_alias_resolved {
-                if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if was_alias_resolved
+                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
                     if is_class {
                         env.insert_class_instance_type(def_id, resolved);
                     }
                     env.insert_def(def_id, resolved);
                 }
-            }
 
             Some((inserted, resolved))
         } else {
