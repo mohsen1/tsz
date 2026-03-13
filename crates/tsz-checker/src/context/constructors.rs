@@ -141,7 +141,7 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
-            depth_exceeded: RefCell::new(false),
+            depth_exceeded: Cell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
@@ -198,7 +198,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
-            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
 
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
@@ -324,7 +324,7 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
-            depth_exceeded: RefCell::new(false),
+            depth_exceeded: Cell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
@@ -381,7 +381,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
-            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
 
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
@@ -498,7 +498,7 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
-            depth_exceeded: RefCell::new(false),
+            depth_exceeded: Cell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
@@ -555,7 +555,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
-            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
 
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
@@ -682,7 +682,7 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
-            depth_exceeded: RefCell::new(false),
+            depth_exceeded: Cell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
@@ -739,7 +739,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
-            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
 
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
@@ -859,7 +859,7 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
-            depth_exceeded: RefCell::new(false),
+            depth_exceeded: Cell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
@@ -916,7 +916,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
-            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
 
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
@@ -1059,7 +1059,7 @@ impl<'a> CheckerContext<'a> {
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: Cell::new(0),
-            depth_exceeded: RefCell::new(false),
+            depth_exceeded: Cell::new(false),
             // Propagate depth from parent to prevent infinite recursion across arena boundaries
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_initial_depth(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion.max_depth(),
@@ -1122,7 +1122,7 @@ impl<'a> CheckerContext<'a> {
             suppress_definite_assignment_errors: false,
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
-            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
 
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }

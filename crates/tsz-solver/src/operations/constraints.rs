@@ -30,11 +30,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) {
         {
-            let mut steps = self.constraint_step_count.borrow_mut();
-            if *steps >= MAX_CONSTRAINT_STEPS {
+            let steps = self.constraint_step_count.get();
+            if steps >= MAX_CONSTRAINT_STEPS {
                 return;
             }
-            *steps += 1;
+            self.constraint_step_count.set(steps + 1);
         }
 
         if !self.constraint_pairs.borrow_mut().insert((source, target)) {
@@ -43,19 +43,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Check and increment recursion depth to prevent infinite loops
         {
-            let mut depth = self.constraint_recursion_depth.borrow_mut();
-            if *depth >= MAX_CONSTRAINT_RECURSION_DEPTH {
+            let depth = self.constraint_recursion_depth.get();
+            if depth >= MAX_CONSTRAINT_RECURSION_DEPTH {
                 // Safety limit reached - return to prevent infinite loop
                 return;
             }
-            *depth += 1;
+            self.constraint_recursion_depth.set(depth + 1);
         }
 
         // Perform the actual constraint collection
         self.constrain_types_impl(ctx, var_map, source, target, priority);
 
         // Decrement depth on return
-        *self.constraint_recursion_depth.borrow_mut() -= 1;
+        self.constraint_recursion_depth
+            .set(self.constraint_recursion_depth.get() - 1);
     }
 
     /// Inner implementation of `constrain_types`

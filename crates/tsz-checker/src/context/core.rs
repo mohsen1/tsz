@@ -557,11 +557,11 @@ impl<'a> CheckerContext<'a> {
     /// Returns true if fuel is still available, false if exhausted.
     /// When exhausted, type resolution should return ERROR to prevent timeout.
     pub fn consume_fuel(&self) -> bool {
-        let mut fuel = self.type_resolution_fuel.borrow_mut();
-        if *fuel == 0 {
+        let fuel = self.type_resolution_fuel.get();
+        if fuel == 0 {
             return false;
         }
-        *fuel -= 1;
+        self.type_resolution_fuel.set(fuel - 1);
         true
     }
 

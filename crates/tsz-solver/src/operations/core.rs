@@ -8,7 +8,7 @@ use crate::types::{
 use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use tracing::debug;
 
 /// Result of `resolve_call_with_checker`: the call result, an optional
@@ -150,9 +150,9 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// The `this` type provided by the caller (e.g. `obj` in `obj.method()`)
     pub(crate) actual_this_type: Option<TypeId>,
     /// Current recursion depth for `constrain_types` to prevent infinite loops
-    pub(crate) constraint_recursion_depth: RefCell<usize>,
+    pub(crate) constraint_recursion_depth: Cell<usize>,
     /// Total constrain-types steps for the current inference pass.
-    pub(crate) constraint_step_count: RefCell<usize>,
+    pub(crate) constraint_step_count: Cell<usize>,
     /// Visited (source, target) pairs during constraint collection.
     pub(crate) constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
     /// Memoized fixed members for target union types during one inference pass.
@@ -208,8 +208,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             force_bivariant_callbacks: false,
             contextual_type: None,
             actual_this_type: None,
-            constraint_recursion_depth: RefCell::new(0),
-            constraint_step_count: RefCell::new(0),
+            constraint_recursion_depth: Cell::new(0),
+            constraint_step_count: Cell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
             constraint_fixed_union_members: RefCell::new(FxHashMap::default()),
             last_instantiated_predicate: None,

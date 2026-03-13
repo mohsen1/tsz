@@ -88,7 +88,7 @@ impl<'a> CheckerState<'a> {
 
         if use_cache && let Some(&cached) = self.ctx.env_eval_cache.borrow().get(&type_id) {
             if cached.depth_exceeded {
-                *self.ctx.depth_exceeded.borrow_mut() = true;
+                self.ctx.depth_exceeded.set(true);
             }
             return cached.result;
         }
@@ -104,7 +104,7 @@ impl<'a> CheckerState<'a> {
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
-                *self.ctx.depth_exceeded.borrow_mut() = true;
+                self.ctx.depth_exceeded.set(true);
             }
             result
         };
@@ -114,7 +114,7 @@ impl<'a> CheckerState<'a> {
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
-                *self.ctx.depth_exceeded.borrow_mut() = true;
+                self.ctx.depth_exceeded.set(true);
             }
             result
         } else {

@@ -576,7 +576,7 @@ pub struct CheckerContext<'a> {
     pub instantiation_depth: Cell<u32>,
 
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
-    pub depth_exceeded: RefCell<bool>,
+    pub depth_exceeded: Cell<bool>,
 
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.
@@ -829,7 +829,7 @@ pub struct CheckerContext<'a> {
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
-    pub type_resolution_fuel: RefCell<u32>,
+    pub type_resolution_fuel: Cell<u32>,
     // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
     // This fixes the "Zombie Freshness" bug by interning fresh vs non-fresh
     // object shapes distinctly.
