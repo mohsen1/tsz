@@ -797,17 +797,31 @@ impl<'a> CheckerState<'a> {
         // Only apply to INTERFACE + VARIABLE merges, NOT CLASS+INTERFACE or
         // FUNCTION+INTERFACE merges, since get_type_of_symbol already handles
         // those correctly (CLASS/FUNCTION branches precede INTERFACE).
-        let member_symbol = self
-            .get_cross_file_symbol(resolved_member_id)
-            .or_else(|| self.ctx.binder.get_symbol(resolved_member_id));
-        if let Some(sym) = member_symbol {
-            let flags = sym.flags;
+        let (flags, value_decl) = {
+            let member_symbol = self
+                .get_cross_file_symbol(resolved_member_id)
+                .or_else(|| self.ctx.binder.get_symbol(resolved_member_id));
+            match member_symbol {
+                Some(sym) => (sym.flags, sym.value_declaration),
+                None => (0, NodeIndex::default()),
+            }
+        };
+
+        // Enum symbols accessed as namespace members (e.g., M3.Color) should
+        // return the enum object type (with members as properties), not the
+        // enum union type. This mirrors the pattern in identifier.rs for
+        // direct enum references.
+        if (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
+            && let Some(enum_obj) = self.enum_object_type(resolved_member_id) {
+                return Some(enum_obj);
+            }
+
+        if flags != 0 {
             let is_merged_interface_variable = (flags & symbol_flags::INTERFACE) != 0
                 && (flags & symbol_flags::VARIABLE) != 0
                 && (flags & symbol_flags::CLASS) == 0
                 && (flags & symbol_flags::FUNCTION) == 0;
             if is_merged_interface_variable {
-                let value_decl = sym.value_declaration;
                 let value_type =
                     self.type_of_value_declaration_for_symbol(resolved_member_id, value_decl);
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {

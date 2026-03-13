@@ -682,7 +682,17 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
                         && (parent_symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
                     {
-                        let member_type = self.get_type_of_symbol(member_sym_id);
+                        // If the member is an enum (not an enum member), return
+                        // the enum object type so property access on enum members
+                        // (e.g., M3.Color.Blue) resolves correctly.
+                        let member_type = if (member_symbol.flags & symbol_flags::ENUM) != 0
+                            && (member_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+                        {
+                            self.enum_object_type(member_sym_id)
+                                .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
+                        } else {
+                            self.get_type_of_symbol(member_sym_id)
+                        };
                         if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
                             return self.apply_flow_narrowing(idx, member_type);
                         }
