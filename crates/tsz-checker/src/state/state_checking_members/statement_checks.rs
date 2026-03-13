@@ -446,7 +446,6 @@ impl<'a> CheckerState<'a> {
     /// NAMESPACE node flag) and has an identifier name (not a string literal).
     pub(crate) fn check_module_keyword_deprecated(&mut self, module_idx: NodeIndex) {
         use tsz_parser::parser::node_flags;
-        use tsz_scanner::SyntaxKind;
 
         // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
         if self.has_syntax_parse_errors() {
@@ -467,17 +466,14 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Only emit for identifier names, not string literal module names like `declare module "foo"`
-        // Also skip `declare global {}` which uses GlobalKeyword but name is "global"
-        if let Some(name_node) = self.ctx.arena.get(module.name) {
-            if name_node.kind == SyntaxKind::StringLiteral as u16 {
-                return;
-            }
+        // Only emit for identifier names — not string literals (`declare module "foo"`),
+        // template literals, anonymous modules (`module { }`), or `declare global`.
+        if let Some(name_node) = self.ctx.arena.get(module.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
             // Skip `declare global` augmentations (name text is "global")
             // and anonymous modules (empty name, already reported as TS1437)
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                && (ident.escaped_text == "global" || ident.escaped_text.is_empty())
-            {
+            if ident.escaped_text == "global" || ident.escaped_text.is_empty() {
                 return;
             }
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
