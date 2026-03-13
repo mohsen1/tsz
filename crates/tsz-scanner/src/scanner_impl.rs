@@ -2159,6 +2159,12 @@ impl ScannerState {
     /// Matches tsc: `pos = tokenStart = fullStartPos;`
     #[wasm_bindgen(js_name = reScanJsxToken)]
     pub fn re_scan_jsx_token(&mut self, allow_multiline_jsx_text: bool) -> SyntaxKind {
+        // Remove any scanner diagnostics emitted at positions >= full_start_pos.
+        // The previous scan (in normal JS mode) may have produced false diagnostics
+        // (e.g., TS1351 for `7x` in JSX text content). Since we're rescanning this
+        // range in JSX mode, those diagnostics are invalid.
+        let rescan_start = self.full_start_pos;
+        self.scanner_diagnostics.retain(|d| d.pos < rescan_start);
         self.pos = self.full_start_pos;
         self.scan_jsx_token(allow_multiline_jsx_text)
     }
