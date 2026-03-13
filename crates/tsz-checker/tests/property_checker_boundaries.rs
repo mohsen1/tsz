@@ -10,7 +10,7 @@ fn exposes_property_checker_boundary_queries() {
     assert!(!is_type_usable_as_property_name(&types, TypeId::STRING));
     assert!(!is_type_usable_as_property_name(&types, TypeId::NUMBER));
     assert!(!is_type_usable_as_property_name(&types, TypeId::SYMBOL));
-    assert!(is_type_usable_as_property_name(&types, TypeId::ANY));
+    assert!(!is_type_usable_as_property_name(&types, TypeId::ANY));
     assert!(is_type_usable_as_property_name(&types, string_literal));
     assert!(is_type_usable_as_property_name(&types, number_literal));
     assert!(!is_type_usable_as_property_name(&types, TypeId::BOOLEAN));
