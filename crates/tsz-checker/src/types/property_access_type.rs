@@ -1019,9 +1019,10 @@ impl<'a> CheckerState<'a> {
                             && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
                             && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
                         {
-                            self.error_property_not_exist_with_apparent_type(
+                            self.error_property_not_exist_on_enum(
                                 property_name,
-                                &format!("typeof {}", symbol.escaped_name),
+                                &symbol.escaped_name.to_string(),
+                                display_object_type,
                                 access.name_or_argument,
                             );
                             return TypeId::ERROR;
