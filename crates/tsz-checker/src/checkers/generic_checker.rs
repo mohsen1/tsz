@@ -199,6 +199,12 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                 crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
             );
+            // Still resolve type arguments even when the call is untyped.
+            // This ensures identifiers in type arguments are marked as referenced
+            // for noUnusedLocals (TS6133).
+            for &arg_idx in &type_args_list.nodes {
+                self.get_type_of_node(arg_idx);
+            }
             return;
         }
 
@@ -338,6 +344,12 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                     &[name.as_str()],
                 );
+            }
+            // Still resolve type arguments even when the type is not generic.
+            // This ensures identifiers in type arguments are marked as referenced
+            // for noUnusedLocals (TS6133).
+            for &arg_idx in &type_args_list.nodes {
+                self.get_type_of_node(arg_idx);
             }
             return;
         }
