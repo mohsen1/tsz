@@ -882,6 +882,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1212/TS1213/TS1214: Check binding element name for strict-mode reserved words.
+        // This covers destructuring patterns like `var [public] = [1]` in strict mode.
+        if let Some(name_node) = self.ctx.arena.get(element_data.name)
+            && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+        {
+            self.check_strict_mode_reserved_name_at(element_data.name, element_data.name);
+        }
+
         // If the name is a nested binding pattern, recursively check it
         if let Some(name_node) = self.ctx.arena.get(element_data.name)
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
