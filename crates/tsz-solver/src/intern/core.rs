@@ -895,6 +895,12 @@ impl TypeInterner {
         self.union_from_iter(members)
     }
 
+    /// Create a union from a borrowed slice, avoiding allocation when callers
+    /// already have an `Arc<[TypeId]>` or `&[TypeId]`.
+    pub fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
+        self.union_from_iter(members.iter().copied())
+    }
+
     /// Intern a union type with literal-only reduction (no subtype reduction).
     ///
     /// This matches tsc's `UnionReduction.Literal` behavior, which is the default
@@ -975,7 +981,7 @@ impl TypeInterner {
         self.union_from_iter([first, second, third])
     }
 
-    pub(super) fn union_from_iter<I>(&self, members: I) -> TypeId
+    pub(crate) fn union_from_iter<I>(&self, members: I) -> TypeId
     where
         I: IntoIterator<Item = TypeId>,
     {

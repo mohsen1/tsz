@@ -1781,15 +1781,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return inferred;
         }
 
-        let inferred_union_members = match self.interner.lookup(inferred) {
-            Some(TypeData::Union(member_list_id)) => {
-                self.interner.type_list(member_list_id).to_vec()
-            }
+        let member_list_id = match self.interner.lookup(inferred) {
+            Some(TypeData::Union(id)) => id,
             _ => return inferred,
         };
 
         // If this is already a single-member union, keep it as-is.
-        if inferred_union_members.len() <= 1 {
+        if self.interner.type_list(member_list_id).len() <= 1 {
             return inferred;
         }
 

@@ -533,7 +533,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut obj_type_for_error = || {
             *obj_type_cache.get_or_insert_with(|| {
                 self.interner()
-                    .union(self.interner().type_list(TypeListId(list_id)).to_vec())
+                    .union_from_slice(&self.interner().type_list(TypeListId(list_id)))
             })
         };
 
