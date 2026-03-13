@@ -905,6 +905,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Contextual signature instantiation for generic source -> non-generic target.
         // This is key for non-strict assignability cases where a generic function expression
         // is contextually typed by a concrete callback/function type.
+        //
+        // Two strategies exist and we try inference first (needed for contextual callback
+        // typing where return types must be precisely inferred), then fall back to tsc's
+        // `getErasedSignature` (constraint erasure) if the inference-based comparison fails.
+        // This fallback is essential for interface-extends checks (TS2430) where inference
+        // over-constrains by intersecting inferred types with constraints.
+        let mut used_inference_for_generic_source = false;
+        let source_before_generic_instantiation = if !source_instantiated.type_params.is_empty()
+            && target_instantiated.type_params.is_empty()
+        {
+            Some(source_instantiated.clone())
+        } else {
+            None
+        };
         if !source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty()
         {
             if self.has_conflicting_contextual_param_candidates(
@@ -916,7 +930,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let substitution = match self
                 .infer_source_type_param_substitution(&source_instantiated, &target_instantiated)
             {
-                Ok(sub) => sub,
+                Ok(sub) => {
+                    used_inference_for_generic_source = true;
+                    sub
+                }
                 Err(_) => {
                     // Inference failed (e.g., bounds violation). Fall back to tsc's
                     // `getErasedSignature` behavior: replace type params with their
@@ -1194,7 +1211,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check parameter types
-        (|| -> SubtypeResult {
+        let result = (|| -> SubtypeResult {
             // Compare fixed parameters (using unpacked params)
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
             for i in 0..fixed_compare_count {
@@ -1305,7 +1322,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             SubtypeResult::True
-        })()
+        })();
+
+        // If the inference-based comparison failed and we used inference for the
+        // generic source → non-generic target case, retry with constraint erasure.
+        // This matches tsc's `getErasedSignature` behavior for interface extension
+        // checks (TS2430) where inference over-constrains type parameters by
+        // intersecting inferred types with their constraints.
+        if !result.is_true()
+            && used_inference_for_generic_source
+            && let Some(source_before) = source_before_generic_instantiation
+        {
+            let erasure_sub = erase_type_params_to_constraints(&source_before.type_params);
+            let erased_source = self.instantiate_function_shape(&source_before, &erasure_sub);
+            return self.check_function_subtype(&erased_source, &target_instantiated);
+        }
+
+        result
     }
 
     fn is_tuple_list_rest_type(&mut self, type_id: TypeId) -> bool {
