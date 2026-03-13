@@ -75,6 +75,19 @@ pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
 
+/// Check if a type is a *generic* mapped type — one whose key constraint still
+/// contains type parameters (e.g., `{ [K in keyof T]: ... }` where T is unresolved).
+/// Mapped types with concrete key types (like `Partial<ConcreteType>`) return false
+/// because they resolve to object types with statically known members.
+/// This matches tsc's `isGenericMappedType`.
+pub(crate) fn is_generic_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
+        tsz_solver::type_queries::contains_type_parameters_db(db, mapped.constraint)
+    } else {
+        false
+    }
+}
+
 pub(crate) fn construct_signatures_for_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
