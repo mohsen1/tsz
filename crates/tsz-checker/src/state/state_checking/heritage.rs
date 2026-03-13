@@ -479,10 +479,15 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
 
-                            if class_query::is_mapped_type(
-                                self.ctx.types,
-                                self.ctx.types.evaluate_type(instantiated_type),
-                            ) {
+                            // TS2312: Only reject *generic* mapped types — those whose
+                            // key constraint still contains type parameters (e.g.,
+                            // `{ [K in keyof T]: ... }` where T is unresolved). Mapped
+                            // types with concrete key types (like `Partial<ConcreteType>`)
+                            // resolve to object types with statically known members and
+                            // are valid base types. This matches tsc's `isValidBaseType`
+                            // which checks `isGenericMappedType`.
+                            let evaluated = self.ctx.types.evaluate_type(instantiated_type);
+                            if class_query::is_generic_mapped_type(self.ctx.types, evaluated) {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                                 self.error_at_node(
                                     expr_idx,

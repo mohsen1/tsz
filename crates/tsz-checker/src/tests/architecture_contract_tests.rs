@@ -753,7 +753,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_heritage_checking constructor signature checks should route through query_boundaries::class_type"
     );
     assert!(
-        state_heritage_checking_src.contains("class_query::is_mapped_type("),
+        state_heritage_checking_src.contains("class_query::is_generic_mapped_type("),
         "state_heritage_checking mapped-type checks should route through query_boundaries::class_type"
     );
     assert!(
