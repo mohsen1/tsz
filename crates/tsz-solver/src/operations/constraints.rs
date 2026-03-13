@@ -1127,26 +1127,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                     }
                 } else if evaluated_source != source || evaluated_target != target {
-                    self.constrain_types(
-                        ctx,
-                        var_map,
-                        evaluated_source,
-                        evaluated_target,
-                        priority,
-                    );
-                    // For same-base Applications at ReturnType priority, also constrain
-                    // type arguments directly. Structural decomposition through evaluated
-                    // Objects may fail for interfaces like Promise<T> where methods (then)
-                    // have their own generic signatures that block inference. Restricting
-                    // to ReturnType priority preserves variance for parameter inference.
-                    if allow_direct_arg_constraints
-                        && priority == crate::types::InferencePriority::ReturnType
-                    {
+                    // For same-base Applications, prefer direct type argument matching
+                    // (matches tsc alias inference). Structural decomposition of evaluated
+                    // union types causes cross-branch inference pollution (e.g.,
+                    // SelectOptions<Thing> vs SelectOptions<KeyT> where the union branches
+                    // Array<{key:T}> | Array<T> get cross-matched incorrectly).
+                    if allow_direct_arg_constraints {
                         for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                             self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                         }
-                    } else if let Some((s_inner, t_inner)) = promise_like_arg_pair {
-                        self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
+                    } else {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            evaluated_source,
+                            evaluated_target,
+                            priority,
+                        );
+                        if let Some((s_inner, t_inner)) = promise_like_arg_pair {
+                            self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
+                        }
                     }
                 } else if allow_direct_arg_constraints {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
