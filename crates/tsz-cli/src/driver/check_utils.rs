@@ -991,6 +991,7 @@ fn is_parser_grammar_code(code: u32) -> bool {
         | 1096 // An index signature must have exactly one parameter
         | 1162 // An object member cannot be declared optional
         | 1163 // A 'yield' expression is only allowed in a generator body
+        | 1184 // Modifiers cannot appear here
         | 1210 // Code contained in a class is evaluated in strict mode
     )
 }
