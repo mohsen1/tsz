@@ -402,6 +402,148 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
+
+    /// Mirror the binder's `resolved_const_expando_key` logic so that the checker
+    /// resolves element-access keys using the same approach the binder used when
+    /// it stored the expando property.
+    pub(crate) fn resolved_const_expando_key_from_binder(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        depth: u8,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|decl| !decl.is_none())?
+        };
+        if !self.ctx.arena.is_const_variable_declaration(decl_idx) {
+            return None;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init_idx = var_decl.initializer;
+        if init_idx.is_none() {
+            return None;
+        }
+        let init_node = self.ctx.arena.get(init_idx)?;
+
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx
+                    .arena
+                    .get_literal(init_node)
+                    .map(|lit| lit.text.clone())
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(init_node)?;
+                let operand = self.ctx.arena.get(unary.operand)?;
+                if operand.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let lit = self.ctx.arena.get_literal(operand)?;
+                match unary.operator {
+                    k if k == SyntaxKind::MinusToken as u16 => Some(format!("-{}", lit.text)),
+                    k if k == SyntaxKind::PlusToken as u16 => Some(lit.text.clone()),
+                    _ => None,
+                }
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                let name = self
+                    .ctx
+                    .arena
+                    .get_identifier(init_node)?
+                    .escaped_text
+                    .clone();
+                let next_sym = self.ctx.binder.file_locals.get(&name)?;
+                self.resolved_const_expando_key_from_binder(next_sym, depth + 1)
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION => {
+                Self::is_symbol_call_in_arena(self.ctx.arena, init_idx)
+                    .then(|| format!("__unique_{}", sym_id.0))
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a node is a `Symbol()` or `Symbol("desc")` call expression (pure AST check).
+    pub(crate) fn is_symbol_call_in_arena(
+        arena: &tsz_parser::parser::node::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(expr_node) = arena.get(call.expression) else {
+            return false;
+        };
+        arena
+            .get_identifier(expr_node)
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
+    }
+
+    /// Check if the object expression has any unique-symbol-keyed expando properties
+    /// recorded by the binder (i.e., any `__unique_*` entry in `expando_properties`).
+    pub(crate) fn object_has_unique_symbol_expandos(&self, object_expr_idx: NodeIndex) -> bool {
+        fn property_access_chain(
+            arena: &tsz_parser::parser::node::NodeArena,
+            idx: NodeIndex,
+        ) -> Option<String> {
+            let node = arena.get(idx)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            }
+            if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = arena.get_access_expr(node)?;
+                let left = property_access_chain(arena, access.expression)?;
+                let right_node = arena.get(access.name_or_argument)?;
+                let right = arena.get_identifier(right_node)?.escaped_text.clone();
+                return Some(format!("{left}.{right}"));
+            }
+            None
+        }
+
+        let Some(obj_key) = property_access_chain(self.ctx.arena, object_expr_idx) else {
+            return false;
+        };
+
+        let has_unique =
+            |expandos: &rustc_hash::FxHashMap<String, rustc_hash::FxHashSet<String>>| {
+                expandos
+                    .get(&obj_key)
+                    .is_some_and(|props| props.iter().any(|p| p.starts_with("__unique_")))
+            };
+
+        if has_unique(&self.ctx.binder.expando_properties) {
+            return true;
+        }
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if has_unique(&binder.expando_properties) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]

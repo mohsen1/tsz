@@ -52,6 +52,28 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(key_expr_idx)?;
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
+                let ident = self.ctx.arena.get_identifier(node)?;
+                let name = &ident.escaped_text;
+
+                // Resolve through the binder the same way detect_expando_assignment
+                // does, so the key matches what was stored at bind time.
+                let binder_sym = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(key_expr_idx)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, key_expr_idx)
+                    })
+                    .or_else(|| self.ctx.binder.file_locals.get(name));
+                if let Some(sym_id) = binder_sym
+                    && let Some(key) = self.resolved_const_expando_key_from_binder(sym_id, 0)
+                {
+                    return Some(key);
+                }
+
+                // Fallback: resolve through the type system for non-binder cases.
                 let prev = self.ctx.preserve_literal_types;
                 self.ctx.preserve_literal_types = true;
                 let key_type = self.get_type_of_node(key_expr_idx);
@@ -72,10 +94,7 @@ impl<'a> CheckerState<'a> {
                     return Some(format!("__unique_{}", sym_ref.0));
                 }
 
-                self.ctx
-                    .arena
-                    .get_identifier(node)
-                    .map(|ident| ident.escaped_text.clone())
+                Some(name.clone())
             }
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
@@ -1027,7 +1046,20 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             object_type_for_access,
                         )));
-            if !is_expando_write {
+            // Suppress TS7053 for expando reads with unique symbol keys on function
+            // types. When `func[symKey]` where symKey is a const Symbol() variable
+            // and `func[symKey] = value` was assigned as an expando property, tsc
+            // does not emit TS7053 on the read side either.
+            // We check: (a) read context, (b) function type, (c) unique symbol index,
+            // (d) the object has ANY unique-symbol expando properties recorded by the
+            // binder. This avoids depending on exact SymbolId matching (which can
+            // fail due to lib-merge rewriting the binder's symbol arena).
+            let is_expando_symbol_read = !self.ctx.skip_flow_narrowing
+                && !is_namespace_object
+                && tsz_solver::visitor::is_function_type(self.ctx.types, object_type_for_access)
+                && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+                && self.object_has_unique_symbol_expandos(access.expression);
+            if !is_expando_write && !is_expando_symbol_read {
                 self.error_no_index_signature_at(
                     index_type,
                     object_type_for_access,
