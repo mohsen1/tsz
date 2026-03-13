@@ -626,11 +626,22 @@ impl<'a> CheckerState<'a> {
             // Create DefId first
             let def_id = self.ctx.get_or_create_def_id(sym_id);
 
-            // Find the enum declaration node
-            let decl_idx = if value_decl.is_some() {
-                value_decl
-            } else {
-                declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            // Collect all enum declaration nodes. Merged enums (multiple
+            // `const enum E { ... }` blocks) contribute members from every
+            // declaration, so we must iterate all of them.
+            let enum_decl_indices: Vec<NodeIndex> = {
+                let mut indices = Vec::new();
+                for &decl in &declarations {
+                    if decl.is_some() && self.ctx.arena.get_enum_at(decl).is_some() {
+                        indices.push(decl);
+                    }
+                }
+                // Fallback: if no declaration matched as enum, try value_decl
+                if indices.is_empty() && value_decl.is_some()
+                    && self.ctx.arena.get_enum_at(value_decl).is_some() {
+                        indices.push(value_decl);
+                    }
+                indices
             };
 
             // Compute the union type of all enum member types.
@@ -638,16 +649,22 @@ impl<'a> CheckerState<'a> {
             // can hit `ctx.symbol_types` directly instead of running full symbol
             // resolution for each distinct member.
             let mut member_types = Vec::new();
-            if decl_idx.is_some()
-                && let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx)
-            {
-                let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
+            // Track auto-increment counter for numeric enum members.
+            // TypeScript auto-increments from 0 for the first member, and from
+            // previous_value + 1 for subsequent members without initializers.
+            // When a member has an explicit numeric initializer, the counter
+            // resets to initializer_value + 1. String initializers break auto-increment.
+            // The counter resets at the start of each declaration block.
+            //
+            // We collect (member_type, member_name, member_idx) tuples first,
+            // then do env updates in a separate pass to avoid borrow conflicts
+            // with `self.enum_member_type_from_decl` / `self.evaluate_constant_expression`.
+            let mut member_entries: Vec<(TypeId, Option<String>, NodeIndex)> = Vec::new();
+            for &decl_idx in &enum_decl_indices {
+                let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
+                    continue;
+                };
                 member_types.reserve(enum_decl.members.nodes.len());
-                // Track auto-increment counter for numeric enum members.
-                // TypeScript auto-increments from 0 for the first member, and from
-                // previous_value + 1 for subsequent members without initializers.
-                // When a member has an explicit numeric initializer, the counter
-                // resets to initializer_value + 1. String initializers break auto-increment.
                 let mut auto_value: Option<f64> = Some(0.0);
                 for &member_idx in &enum_decl.members.nodes {
                     if let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) {
@@ -678,32 +695,38 @@ impl<'a> CheckerState<'a> {
                             member_types.push(member_type);
                         }
 
-                        // Pre-cache member symbol types.
-                        // This avoids per-member `get_type_of_symbol` overhead in
-                        // hot paths such as large enum property-access switches.
-                        if let Some(member_name) = self.get_property_name(member.name)
-                            && let Some(member_sym_id) = self
-                                .ctx
-                                .binder
-                                .get_symbol(sym_id)
-                                .and_then(|enum_symbol| enum_symbol.exports.as_ref())
-                                .and_then(|exports| exports.get(&member_name))
-                        {
-                            let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                            let member_enum_type = factory.enum_type(member_def_id, member_type);
-                            self.ctx
-                                .symbol_types
-                                .insert(member_sym_id, member_enum_type);
-                            if let Some(env) = maybe_env.as_mut() {
-                                env.insert(
-                                    tsz_solver::SymbolRef(member_sym_id.0),
-                                    member_enum_type,
-                                );
-                                if member_def_id != tsz_solver::DefId::INVALID {
-                                    env.insert_def(member_def_id, member_enum_type);
-                                    // Register parent-child relationship for enum member widening
-                                    env.register_enum_parent(member_def_id, def_id);
-                                }
+                        // Collect member info for env caching below.
+                        let member_name = self.get_property_name(member.name);
+                        member_entries.push((member_type, member_name, member_idx));
+                    }
+                }
+            }
+
+            // Pre-cache member symbol types (separate pass to avoid borrow conflicts).
+            // This avoids per-member `get_type_of_symbol` overhead in
+            // hot paths such as large enum property-access switches.
+            {
+                let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
+                for &(member_type, ref member_name, _member_idx) in &member_entries {
+                    if let Some(name) = member_name
+                        && let Some(member_sym_id) = self
+                            .ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .and_then(|enum_symbol| enum_symbol.exports.as_ref())
+                            .and_then(|exports| exports.get(name))
+                    {
+                        let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                        let member_enum_type = factory.enum_type(member_def_id, member_type);
+                        self.ctx
+                            .symbol_types
+                            .insert(member_sym_id, member_enum_type);
+                        if let Some(env) = maybe_env.as_mut() {
+                            env.insert(tsz_solver::SymbolRef(member_sym_id.0), member_enum_type);
+                            if member_def_id != tsz_solver::DefId::INVALID {
+                                env.insert_def(member_def_id, member_enum_type);
+                                // Register parent-child relationship for enum member widening
+                                env.register_enum_parent(member_def_id, def_id);
                             }
                         }
                     }
