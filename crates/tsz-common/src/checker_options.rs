@@ -144,6 +144,9 @@ pub struct CheckerOptions {
     /// When true, do not transform or elide any imports or exports not marked as type-only.
     /// Under this mode, importing a `.d.ts` file without `import type` is an error (TS2846).
     pub verbatim_module_syntax: bool,
+    /// When true, suppress deprecation warnings (e.g., TS2880 for `assert` import assertions).
+    /// Set when `ignoreDeprecations` is "5.0" or "6.0".
+    pub ignore_deprecations: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -221,6 +224,7 @@ impl Default for CheckerOptions {
             implied_classic_resolution: false,
             jsx_import_source: String::new(),
             verbatim_module_syntax: false,
+            ignore_deprecations: false,
         }
     }
 }

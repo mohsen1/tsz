@@ -214,6 +214,35 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2880: Check that `assert` keyword is not used (deprecated in favor of `with`).
+    pub(crate) fn check_import_attributes_deprecated_assert(&mut self, attributes_idx: NodeIndex) {
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+
+        // token stores the SyntaxKind of the keyword used (AssertKeyword vs WithKeyword)
+        if attrs_data.token == tsz_scanner::SyntaxKind::AssertKeyword as u16
+            && !self.ctx.compiler_options.ignore_deprecations
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            // Error spans the `assert` keyword (6 characters), positioned at the node start
+            self.error_at_position(
+                attr_node.pos,
+                6, // length of "assert"
+                diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+            );
+        }
+    }
+
     /// TS2823: Check that import attributes are only used with supported module options.
     pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
         use tsz_common::common::ModuleKind;
@@ -383,6 +412,9 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_TYPE_ONLY_IMPORT_CAN_SPECIFY_A_DEFAULT_IMPORT_OR_NAMED_BINDINGS_BUT_NOT_BOTH,
                     );
         }
+
+        // TS2880: Warn about deprecated `assert` keyword
+        self.check_import_attributes_deprecated_assert(import.attributes);
 
         if !has_parse_errors {
             // TS2823: Import attributes require specific module options

@@ -818,6 +818,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 );
             }
 
+            // TS2880: Warn about deprecated `assert` keyword
+            self.check_import_attributes_deprecated_assert(export_decl.attributes);
+
             // TS2823: Import attributes require specific module options
             self.check_import_attributes_module_option(export_decl.attributes);
 
