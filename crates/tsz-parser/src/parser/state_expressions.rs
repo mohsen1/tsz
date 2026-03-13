@@ -1222,29 +1222,31 @@ impl ParserState {
                     // In this context, 'await' is used as an identifier and CloseBracketToken is expected
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
 
-                    if !has_following_expression && !is_computed_property_context
-                        && self.in_static_block_context() {
-                            // In static blocks, tsc treats `await` as a keyword and
-                            // emits TS1109 at the token AFTER `await` (the missing
-                            // operand position), matching await-expression parsing.
-                            let start_pos = self.token_pos();
-                            self.next_token(); // consume `await`
-                            self.error_expression_expected();
-                            let end_pos = self.token_end();
-                            return self.arena.add_unary_expr_ex(
-                                syntax_kind_ext::AWAIT_EXPRESSION,
-                                start_pos,
-                                end_pos,
-                                UnaryExprDataEx {
-                                    expression: NodeIndex::NONE,
-                                    asterisk_token: false,
-                                },
-                            );
-                        }
-                        // Outside static blocks and async contexts, 'await' without a following
-                        // expression is a valid identifier (e.g., inside nested function bodies
-                        // within static blocks, or in non-module script code). Don't emit TS1109;
-                        // fall through to parse as identifier via parse_postfix_expression().
+                    if !has_following_expression
+                        && !is_computed_property_context
+                        && self.in_static_block_context()
+                    {
+                        // In static blocks, tsc treats `await` as a keyword and
+                        // emits TS1109 at the token AFTER `await` (the missing
+                        // operand position), matching await-expression parsing.
+                        let start_pos = self.token_pos();
+                        self.next_token(); // consume `await`
+                        self.error_expression_expected();
+                        let end_pos = self.token_end();
+                        return self.arena.add_unary_expr_ex(
+                            syntax_kind_ext::AWAIT_EXPRESSION,
+                            start_pos,
+                            end_pos,
+                            UnaryExprDataEx {
+                                expression: NodeIndex::NONE,
+                                asterisk_token: false,
+                            },
+                        );
+                    }
+                    // Outside static blocks and async contexts, 'await' without a following
+                    // expression is a valid identifier (e.g., inside nested function bodies
+                    // within static blocks, or in non-module script code). Don't emit TS1109;
+                    // fall through to parse as identifier via parse_postfix_expression().
 
                     // Fall through to parse as identifier/postfix expression
                     return self.parse_postfix_expression();
