@@ -1535,16 +1535,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallableShape,
         target: &CallableShape,
     ) -> SubtypeResult {
-        let source_call_sigs: Vec<_> = if source.call_signatures.len() > 1 {
-            source.call_signatures.last().into_iter().collect()
-        } else {
-            source.call_signatures.iter().collect()
-        };
-
-        // For each target call signature, the effective source signature must match.
+        // For each target call signature, at least one source call signature must match.
+        // Unlike call-site overload resolution (which uses only the implementation/last
+        // signature), structural subtype checking uses ALL source signatures — matching
+        // tsc's signaturesRelatedTo N×M comparison.
         for t_sig in &target.call_signatures {
             let mut found_match = false;
-            for s_sig in &source_call_sigs {
+            for s_sig in &source.call_signatures {
                 if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
                     found_match = true;
                     break;
