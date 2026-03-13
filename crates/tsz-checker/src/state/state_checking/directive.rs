@@ -7,10 +7,29 @@ impl<'a> CheckerState<'a> {
     ///
     /// Validates `/// <reference path="..." />` directives in TypeScript source files.
     /// If a referenced file doesn't exist, emits error 6053.
+    /// Also emits TS1084 for malformed reference directive syntax.
     pub(crate) fn check_triple_slash_references(&mut self, file_name: &str, source_text: &str) {
-        use crate::triple_slash_validator::{extract_reference_paths, validate_reference_path};
+        use crate::triple_slash_validator::{
+            extract_reference_paths, find_malformed_reference_directives, validate_reference_path,
+        };
         use std::collections::HashSet;
         use std::path::Path;
+
+        // Check for malformed reference directive syntax (TS1084)
+        let malformed = find_malformed_reference_directives(source_text);
+        for (line_num, byte_offset) in &malformed {
+            let line_length = source_text
+                .lines()
+                .nth(*line_num)
+                .map_or(0, |l| l.trim().len() as u32);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.emit_error_at(
+                *byte_offset as u32,
+                line_length,
+                diagnostic_messages::INVALID_REFERENCE_DIRECTIVE_SYNTAX,
+                diagnostic_codes::INVALID_REFERENCE_DIRECTIVE_SYNTAX,
+            );
+        }
 
         let references = extract_reference_paths(source_text);
         if references.is_empty() {
