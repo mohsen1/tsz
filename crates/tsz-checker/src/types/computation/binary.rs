@@ -414,6 +414,20 @@ impl<'a> CheckerState<'a> {
             // instanceof always produces boolean
             if op_kind == SyntaxKind::InstanceOfKeyword as u16 {
                 use crate::diagnostics::diagnostic_codes;
+
+                // TS2848: The right-hand side of an instanceof must not be an instantiation expression
+                let unwrapped_right = self.ctx.arena.skip_parenthesized(right_idx);
+                if let Some(right_node) = self.ctx.arena.get(unwrapped_right)
+                    && right_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                {
+                    self.error_at_node(
+                            unwrapped_right,
+                            crate::diagnostics::diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
+                            diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
+                        );
+                }
+
                 let eval_left = self.evaluate_type_for_assignability(left_type);
                 if eval_left != TypeId::ERROR {
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
