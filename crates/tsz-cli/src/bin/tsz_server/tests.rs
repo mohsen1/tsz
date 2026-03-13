@@ -936,7 +936,7 @@ fn test_semantic_diagnostics_unused_label_content_round_trip_is_stable() {
         .expect("semanticDiagnosticsSync body should be an array")
         .clone();
     assert!(
-        diagnostics.len() >= 1,
+        !diagnostics.is_empty(),
         "expected at least one diagnostic after edit, got: {diagnostics:?}"
     );
 
