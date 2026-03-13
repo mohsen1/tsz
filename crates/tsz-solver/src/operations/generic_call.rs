@@ -1465,7 +1465,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .expect("inference substitution cache just initialized")
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
-                } else if !tp.is_const && !contra_only {
+                } else if !tp.is_const
+                    && !contra_only
+                    && infer_ctx.all_candidates_are_fresh_literals(var)
+                {
+                    // Only widen when all covariant candidates are fresh literals
+                    // (from expressions, not type annotations). Matches tsc's
+                    // getWidenedLiteralType which only widens types with
+                    // the FreshLiteral flag.
                     crate::widen_literal_type(self.interner.as_type_database(), ty)
                 } else {
                     ty
