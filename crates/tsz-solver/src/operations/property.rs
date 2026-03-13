@@ -401,9 +401,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Some Object types may have index signatures that aren't in ObjectWithIndex
                 use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
                 let resolver = IndexSignatureResolver::new(self.interner());
+                let is_symbol_key = prop_name.starts_with("__unique_");
 
-                // Try string index signature first (most common)
-                if resolver.has_index_signature(obj_type, IndexKind::String)
+                // Try string index signature first (most common).
+                // Symbol-keyed properties (internal "__unique_N" names) must NOT
+                // fall through to string index signatures — tsc treats symbol keys
+                // as distinct from string keys for index signature purposes.
+                if !is_symbol_key
+                    && resolver.has_index_signature(obj_type, IndexKind::String)
                     && let Some(value_type) = resolver.resolve_string_index(obj_type)
                 {
                     return PropertyAccessResult::from_index(
@@ -440,8 +445,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return result;
                 }
 
-                // Check string index signature
-                if let Some(ref idx) = shape.string_index {
+                // Check string index signature (skip for symbol-keyed properties)
+                let is_symbol_key = prop_name.starts_with("__unique_");
+                if !is_symbol_key && let Some(ref idx) = shape.string_index {
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(idx.value_type),
                     );

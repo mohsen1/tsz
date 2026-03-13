@@ -150,8 +150,11 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
         let resolver = IndexSignatureResolver::new(self.interner());
 
-        // Try string index signature first (most common)
-        if resolver.has_index_signature(obj_type, IndexKind::String)
+        // Try string index signature first (most common).
+        // Symbol-keyed properties (internal "__unique_N" names) must NOT
+        // fall through to string index signatures.
+        if !prop_name.starts_with("__unique_")
+            && resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
@@ -227,8 +230,10 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             ));
         }
 
-        // Check string index signature
-        if let Some(ref idx) = shape.string_index {
+        // Check string index signature (skip for symbol-keyed properties)
+        if !prop_name.starts_with("__unique_")
+            && let Some(ref idx) = shape.string_index
+        {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(idx.value_type),
             ));
@@ -375,8 +380,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
         let resolver = IndexSignatureResolver::new(self.interner());
 
-        // Try string index signature first (most common)
-        if resolver.has_index_signature(obj_type, IndexKind::String)
+        // Try string index signature first (most common).
+        // Symbol-keyed properties (internal "__unique_N" names) must NOT
+        // fall through to string index signatures.
+        if !prop_name.starts_with("__unique_")
+            && resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
@@ -453,8 +461,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             ));
         }
 
-        // Check string index signature
-        if let Some(ref idx) = shape.string_index {
+        // Check string index signature.
+        // Symbol-keyed properties (internal "__unique_N" names) must NOT
+        // fall through to string index signatures — tsc treats symbol keys
+        // as distinct from string keys for index signature purposes.
+        if !prop_name.starts_with("__unique_")
+            && let Some(ref idx) = shape.string_index
+        {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(
                     self.bind_object_receiver_this(obj_type, idx.value_type),
@@ -630,7 +643,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let resolver = IndexSignatureResolver::new(self.interner());
             let obj_type = obj_type_for_error();
 
-            if resolver.has_index_signature(obj_type, IndexKind::String)
+            if !prop_name.starts_with("__unique_")
+                && resolver.has_index_signature(obj_type, IndexKind::String)
                 && let Some(value_type) = resolver.resolve_string_index(obj_type)
             {
                 return Some(PropertyAccessResult::from_index(

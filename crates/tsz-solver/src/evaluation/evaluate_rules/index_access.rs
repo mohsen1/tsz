@@ -1163,6 +1163,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(name) =
             crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
+            let name_str = self.interner().resolve_atom(name);
+            let is_symbol_key = name_str.starts_with("__unique_");
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -1173,7 +1175,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = shape.string_index.as_ref() {
+            // Symbol-keyed properties must NOT fall through to string index
+            // signatures — tsc treats symbol keys as distinct from string keys.
+            if !is_symbol_key && let Some(string_index) = shape.string_index.as_ref() {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
@@ -1244,6 +1248,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(name) =
             crate::type_queries::get_literal_property_name(self.interner(), index_type)
         {
+            let name_str = self.interner().resolve_atom(name);
+            let is_symbol_key = name_str.starts_with("__unique_");
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -1254,7 +1260,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
-            if let Some(string_index) = shape.string_index.as_ref() {
+            // Symbol-keyed properties must NOT fall through to string index signatures
+            if !is_symbol_key && let Some(string_index) = shape.string_index.as_ref() {
                 return self.add_undefined_if_unchecked(string_index.value_type);
             }
             return TypeId::UNDEFINED;
