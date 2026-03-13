@@ -961,6 +961,19 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::TypeKeyword);
 
+        // TS1142: Line break not permitted between `type` and the alias name.
+        // When `declare type\nT1 = ...` has a newline, tsc still parses it as a
+        // type alias but emits TS1142. Without modifiers, the lookahead in
+        // look_ahead_is_type_alias_declaration prevents reaching here, but the
+        // `declare` path bypasses that lookahead.
+        if self.scanner.has_preceding_line_break() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Line break not permitted here.",
+                diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE,
+            );
+        }
+
         // For `type void = ...`, TSC accepts `void` as the identifier name
         // and emits TS1109 "Expression expected" from the parser (the checker
         // separately emits TS2457 "Type alias name cannot be 'void'").
