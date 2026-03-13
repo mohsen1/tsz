@@ -305,9 +305,21 @@ impl<'a> CheckerState<'a> {
                     {
                         declared_type
                     } else if prop.initializer.is_some() {
+                        // If the initializer is exactly `this`, use the polymorphic
+                        // ThisType so that `class C<T> { x = this; }` with `c: C<string>`
+                        // makes `c.x` resolve to `C<string>`, not the raw class type.
+                        let is_this_init = self
+                            .ctx
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
-                        let init_type = self.get_type_of_node(prop.initializer);
+                        let init_type = if is_this_init {
+                            self.ctx.types.this_type()
+                        } else {
+                            self.get_type_of_node(prop.initializer)
+                        };
                         self.ctx.preserve_literal_types = prev;
                         let init_type = if init_type == TypeId::ANY
                             && self.has_accessor_modifier(&prop.modifiers)

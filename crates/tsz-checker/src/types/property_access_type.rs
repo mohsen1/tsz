@@ -776,10 +776,21 @@ impl<'a> CheckerState<'a> {
 
             match result {
                 PropertyAccessResult::Success {
-                    type_id: prop_type,
+                    type_id: mut prop_type,
                     write_type,
                     from_index_signature,
                 } => {
+                    // Substitute polymorphic `this` type with the receiver type.
+                    // E.g., for `class C<T> { x = this; }`, accessing `c.x` where
+                    // `c: C<string>` should yield `C<string>`, not raw `ThisType`.
+                    if tsz_solver::contains_this_type(self.ctx.types, prop_type) {
+                        prop_type = tsz_solver::substitute_this_type(
+                            self.ctx.types,
+                            prop_type,
+                            original_object_type,
+                        );
+                    }
+
                     if self.ctx.skip_flow_narrowing
                         && from_index_signature
                         && crate::query_boundaries::state::checking::is_type_parameter_like(
