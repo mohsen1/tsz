@@ -545,17 +545,37 @@ impl<'a> CheckerState<'a> {
 
         let prev_context = self.ctx.contextual_type;
         let prev_preserve_literals = self.ctx.preserve_literal_types;
+
+        // When the return expression is a function/arrow, do NOT set
+        // preserve_literal_types.  Function types compute their own return types
+        // via infer_return_type_from_body, which checks this flag to decide
+        // whether to widen.  Setting it here leaks into nested function
+        // inference, blocking return-type widening for patterns like
+        // `() => () => 0` (inner `0` should widen to `number`).
+        //
+        // For non-function expressions (literals, identifiers, calls, etc.),
+        // preserve literal types: tsc's checkExpression always returns literal
+        // types for literals (e.g., "1" not string); widening happens later in
+        // getReturnTypeFromBody.  Without this, `return "1"` with contextual
+        // type `string` widens to `string` too early.
+        let is_function_expr = self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+            )
+        });
         if let Some(ctx_type) = return_context {
             self.ctx.contextual_type = Some(ctx_type);
+        }
+        if is_function_expr {
+            // Function expressions compute their own return types via
+            // infer_return_type_from_body.  Clear preserve_literal_types so
+            // nested function inference makes its own widening decision rather
+            // than inheriting a flag from an outer return_expression_type call.
+            self.ctx.preserve_literal_types = false;
+        } else {
             self.ctx.preserve_literal_types = true;
         }
-        // Preserve literal types in return expressions during inference.
-        // tsc's checkExpression always returns literal types for literals
-        // (e.g., "1" not string); widening happens later in getReturnTypeFromBody.
-        // Without this, `return "1"` with contextual type `string` widens to
-        // `string` too early, producing `string | undefined` instead of
-        // `"1" | "2" | ... | undefined` in diagnostics.
-        self.ctx.preserve_literal_types = true;
         let return_type = self.get_type_of_node(expr_idx);
         self.ctx.contextual_type = prev_context;
         self.ctx.preserve_literal_types = prev_preserve_literals;
