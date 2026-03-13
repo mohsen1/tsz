@@ -1176,6 +1176,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_function_subtype(&s_fn, &t_fn);
         }
 
+        // Function intrinsic as source against function/callable target:
+        // In tsc, `Function` is structurally `(...args: any[]) => any`, so
+        // `Function extends (...args: any) => any ? T : F` takes the true branch.
+        // NOTE: This only handles `TypeId::FUNCTION` (the intrinsic). The Object
+        // representation of the Function interface is handled in the conditional
+        // type evaluator's infer pattern matching, not in general subtype checking,
+        // because tsc distinguishes between conditional extends (true branch) and
+        // generic constraint satisfaction (TS2344 for Parameters<Function>).
+        if source == TypeId::FUNCTION {
+            if let Some(t_fn_id) = function_shape_id(self.interner, target) {
+                let t_fn = self.interner.function_shape(t_fn_id);
+                let function_shape = crate::types::FunctionShape {
+                    params: vec![crate::types::ParamInfo {
+                        name: None,
+                        type_id: TypeId::ANY,
+                        optional: false,
+                        rest: true,
+                    }],
+                    this_type: None,
+                    return_type: TypeId::ANY,
+                    type_params: Vec::new(),
+                    type_predicate: None,
+                    is_constructor: false,
+                    is_method: false,
+                };
+                return self.check_function_subtype(&function_shape, &t_fn);
+            }
+            if let Some(t_callable_id) = callable_shape_id(self.interner, target) {
+                let t_shape = self.interner.callable_shape(t_callable_id);
+                if !t_shape.call_signatures.is_empty() {
+                    // Function is callable, check against last call signature
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Compatibility bridge: function-like values are assignable to interfaces
         // that only require Function members like `call`/`apply`.
         // This aligns with tsc behavior for:
