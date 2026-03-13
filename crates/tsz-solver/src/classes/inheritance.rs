@@ -6,7 +6,7 @@
 
 use fixedbitset::FixedBitSet;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use tsz_binder::SymbolId;
 
@@ -29,7 +29,7 @@ pub struct InheritanceGraph {
     /// Map from `SymbolId` to graph node data
     nodes: RefCell<FxHashMap<SymbolId, ClassNode>>,
     /// Maximum `SymbolId` seen so far (for `BitSet` sizing)
-    max_symbol_id: RefCell<usize>,
+    max_symbol_id: Cell<usize>,
 }
 
 impl Default for InheritanceGraph {
@@ -42,7 +42,7 @@ impl InheritanceGraph {
     pub fn new() -> Self {
         Self {
             nodes: RefCell::new(FxHashMap::default()),
-            max_symbol_id: RefCell::new(0),
+            max_symbol_id: Cell::new(0),
         }
     }
 
@@ -53,13 +53,14 @@ impl InheritanceGraph {
     /// * `parents` - List of `SymbolIds` this type extends or implements
     pub fn add_inheritance(&self, child: SymbolId, parents: &[SymbolId]) {
         let mut nodes = self.nodes.borrow_mut();
-        let mut max_id = self.max_symbol_id.borrow_mut();
+        let mut max_id = self.max_symbol_id.get();
 
         // Update max ID for bitset sizing
-        *max_id = (*max_id).max(child.0 as usize);
+        max_id = max_id.max(child.0 as usize);
         for &p in parents {
-            *max_id = (*max_id).max(p.0 as usize);
+            max_id = max_id.max(p.0 as usize);
         }
+        self.max_symbol_id.set(max_id);
 
         // Register child
         let child_node = nodes.entry(child).or_default();
@@ -202,7 +203,7 @@ impl InheritanceGraph {
         }
 
         // Stack for DFS
-        let max_len = *self.max_symbol_id.borrow() + 1;
+        let max_len = self.max_symbol_id.get() + 1;
 
         // Cycle detection set for this traversal
         let mut path = FxHashSet::default();
@@ -310,7 +311,7 @@ impl InheritanceGraph {
     /// Clear all cached data (useful for testing or rebuilding)
     pub fn clear(&self) {
         self.nodes.borrow_mut().clear();
-        *self.max_symbol_id.borrow_mut() = 0;
+        self.max_symbol_id.set(0);
     }
 
     /// Get the number of nodes in the graph

@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
             || global_depth >= MAX_GLOBAL_INSTANTIATION_DEPTH
             || global_fuel >= MAX_GLOBAL_INSTANTIATION_FUEL
         {
-            *self.ctx.depth_exceeded.borrow_mut() = true;
+            self.ctx.depth_exceeded.set(true);
             self.ctx.application_eval_set.remove(&type_id);
             return type_id;
         }
@@ -439,7 +439,7 @@ impl<'a> CheckerState<'a> {
         let (mut instantiated, depth_exceeded) =
             instantiate_type_with_depth_status(self.ctx.types, body_type, &substitution);
         if depth_exceeded {
-            *self.ctx.depth_exceeded.borrow_mut() = true;
+            self.ctx.depth_exceeded.set(true);
         }
         if tsz_solver::contains_this_type(self.ctx.types, instantiated) {
             instantiated = tsz_solver::substitute_this_type(self.ctx.types, instantiated, type_id);
@@ -594,7 +594,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH {
-            *self.ctx.depth_exceeded.borrow_mut() = true;
+            self.ctx.depth_exceeded.set(true);
             self.ctx.mapped_eval_set.remove(&type_id);
             return type_id;
         }

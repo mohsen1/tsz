@@ -445,8 +445,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         self.constraint_pairs.borrow_mut().clear();
         self.constraint_fixed_union_members.borrow_mut().clear();
-        *self.constraint_recursion_depth.borrow_mut() = 0;
-        *self.constraint_step_count.borrow_mut() = 0;
+        self.constraint_recursion_depth.set(0);
+        self.constraint_step_count.set(0);
 
         // Reusable visited set for type_contains_placeholder checks (avoids per-iteration alloc)
         let mut placeholder_visited = FxHashSet::default();
@@ -2739,8 +2739,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         self.constraint_pairs.borrow_mut().clear();
         self.constraint_fixed_union_members.borrow_mut().clear();
-        *self.constraint_recursion_depth.borrow_mut() = 0;
-        *self.constraint_step_count.borrow_mut() = 0;
+        self.constraint_recursion_depth.set(0);
+        self.constraint_step_count.set(0);
 
         let mut placeholder_probe_map: FxHashMap<TypeId, InferenceVar> = FxHashMap::default();
         let mut placeholder_visited = FxHashSet::default();
