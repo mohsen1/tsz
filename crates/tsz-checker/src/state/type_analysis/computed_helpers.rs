@@ -1321,10 +1321,13 @@ impl<'a> CheckerState<'a> {
     }
 
     fn static_private_member_access_compatible(
-        &self,
+        &mut self,
         object_type: TypeId,
         declaring_type: TypeId,
     ) -> bool {
+        if object_type == declaring_type {
+            return true;
+        }
         if self.types_have_same_private_brand(object_type, declaring_type) {
             return true;
         }
@@ -1336,7 +1339,10 @@ impl<'a> CheckerState<'a> {
             (Some((object_class, _)), Some((declaring_class, _))) => {
                 object_class == declaring_class
             }
-            _ => object_type == declaring_type,
+            // When we can't resolve the class declaration for the object type
+            // (e.g. it's the return type of a function like `getClass(): typeof A`),
+            // fall back to assignability instead of strict TypeId equality.
+            _ => self.is_assignable_to(object_type, declaring_type),
         }
     }
 
