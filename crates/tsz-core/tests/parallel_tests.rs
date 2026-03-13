@@ -1311,7 +1311,6 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
 }
 
 #[test]
-#[ignore = "TS2454 for CommonJS class exports not yet emitted"]
 fn test_check_files_parallel_jsdoc_import_type_preserves_ts2454_for_commonjs_class_exports() {
     let files = vec![
         (
@@ -1374,8 +1373,6 @@ c.chunk;
 }
 
 #[test]
-<<<<<<< HEAD
-#[ignore = "TS2454 for CommonJS class exports not yet emitted"]
 fn test_check_files_parallel_jsdoc_require_alias_preserves_ts2454_for_commonjs_class_exports() {
     let files = vec![
         (

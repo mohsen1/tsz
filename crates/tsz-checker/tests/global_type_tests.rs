@@ -127,7 +127,6 @@ fn test_missing_date_emits_ts2304_without_lib() {
 }
 
 #[test]
-#[ignore = "TS2318 for CallableFunction/NewableFunction not yet emitted in noLib mode"]
 fn test_nolib_emits_ts2318_for_callable_and_newable_function() {
     let diagnostics = check_without_lib(
         r#"
