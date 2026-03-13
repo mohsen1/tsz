@@ -134,6 +134,12 @@ impl<'a> CheckerState<'a> {
 
         let mut applicable_shapes = Vec::new();
         for member in members {
+            // Skip null/undefined/void — these don't contribute to array contextual
+            // typing ambiguity. tsc strips these before checking (getNonNullableType).
+            if member.is_nullable() {
+                continue;
+            }
+
             if let Some(applicable) =
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
             {
@@ -532,6 +538,10 @@ impl<'a> CheckerState<'a> {
         let original_contextual_type = self.ctx.contextual_type;
         let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
             let ctx_type = self.evaluate_contextual_type(ctx_type);
+            // Strip null/undefined before evaluation — matches tsc's getNonNullableType
+            // in getApparentTypeOfContextualType. Without this, `Iterable<T> | null`
+            // evaluates to `Object{...} | null` which triggers union ambiguity.
+            let ctx_type = tsz_solver::remove_nullish(self.ctx.types, ctx_type);
             let ctx_type = self.evaluate_type_with_env(ctx_type);
             let ctx_type = self.resolve_lazy_type(ctx_type);
             self.evaluate_application_type(ctx_type)
