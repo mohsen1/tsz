@@ -1329,7 +1329,9 @@ impl ParserState {
 
         // TS1436: Decorator after property name (e.g., `private prop @decorator`).
         // Detect `@` after the member name where `:`, `=`, `;`, `(`, or `<` is expected.
-        if self.is_token(SyntaxKind::AtToken) {
+        // Only when `@` is on the SAME line — if on a new line, ASI applies and the
+        // property ends normally; the `@` starts a new decorated member.
+        if self.is_token(SyntaxKind::AtToken) && !self.scanner.has_preceding_line_break() {
             self.parse_error_at_current_token(
                 "Decorators must precede the name and all keywords of property declarations.",
                 diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
