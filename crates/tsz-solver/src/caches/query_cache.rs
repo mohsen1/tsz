@@ -481,6 +481,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.union(members)
     }
 
+    fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
+        self.interner.union_from_slice(members)
+    }
+
     fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId {
         self.interner.union_literal_reduce(members)
     }

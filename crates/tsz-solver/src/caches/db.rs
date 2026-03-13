@@ -49,6 +49,9 @@ pub trait TypeDatabase {
     fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId;
 
     fn union(&self, members: Vec<TypeId>) -> TypeId;
+    /// Create a union from a borrowed slice, avoiding allocation when callers
+    /// already have an `Arc<[TypeId]>` or `&[TypeId]`.
+    fn union_from_slice(&self, members: &[TypeId]) -> TypeId;
     /// Create a union with literal-only reduction (no subtype reduction).
     /// Matches tsc's `UnionReduction.Literal` behavior for type annotations.
     fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId;
@@ -222,6 +225,10 @@ impl TypeDatabase for TypeInterner {
 
     fn union(&self, members: Vec<TypeId>) -> TypeId {
         Self::union(self, members)
+    }
+
+    fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
+        Self::union_from_slice(self, members)
     }
 
     fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId {

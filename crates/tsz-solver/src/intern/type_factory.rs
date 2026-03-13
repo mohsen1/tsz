@@ -57,6 +57,11 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
+    pub fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
+        self.db.union_from_slice(members)
+    }
+
+    #[inline]
     pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
         self.db.union2(left, right)
     }

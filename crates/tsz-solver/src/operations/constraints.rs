@@ -432,10 +432,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // constrain only against `Foo<V>` (structural match), not `V` (naked
                     // type param). This prevents `Foo<U>` from being added as a candidate
                     // for `V` when a better structural decomposition exists.
-                    let t_members_copy = t_members.to_vec();
                     let placeholder_members: Vec<TypeId> = {
                         let mut result = Vec::new();
-                        for &member in &t_members_copy {
+                        for &member in t_members.iter() {
                             member_visited.clear();
                             if self.type_contains_placeholder(member, var_map, &mut member_visited)
                             {
@@ -473,8 +472,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // so structural decomposition can extract inference candidates.
                     member_visited.clear();
                     if self.type_contains_placeholder(source, var_map, &mut member_visited) {
-                        let t_members_copy = t_members.to_vec();
-                        for member in t_members_copy {
+                        for &member in t_members.iter() {
                             if !is_nullish(member) {
                                 self.constrain_types(ctx, var_map, source, member, priority);
                             }
@@ -1683,12 +1681,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // E.g., Box<number> | Box<string> | Box<boolean> against Box<T[P]>
             // → reverse each member → number | string | boolean
             if let Some(TypeData::Union(members_id)) = self.interner.lookup(source_value) {
-                let members = self.interner.type_list(members_id).to_vec();
+                let members = self.interner.type_list(members_id);
                 let mut reversed_parts = Vec::new();
                 let mut all_reversed = true;
-                for member in &members {
+                for &member in members.iter() {
                     if let Some(rev) =
-                        self.reverse_infer_through_template(*member, template, target_placeholder)
+                        self.reverse_infer_through_template(member, template, target_placeholder)
                     {
                         reversed_parts.push(rev);
                     } else {
@@ -1814,8 +1812,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // source value can match one of the union members. We try each member in
         // order and return the first successful reversal.
         if let Some(TypeData::Union(members_id)) = self.interner.lookup(template) {
-            let members = self.interner.type_list(members_id).to_vec();
-            for &member in &members {
+            let members = self.interner.type_list(members_id);
+            for &member in members.iter() {
                 if let Some(reversed) =
                     self.reverse_infer_through_template(source_value, member, target_placeholder)
                 {

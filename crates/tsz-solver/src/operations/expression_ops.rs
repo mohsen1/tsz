@@ -322,7 +322,7 @@ pub fn compute_best_common_type<R: TypeResolver>(
             .iter()
             .all(|&ty| is_constructor_like(interner, ty, resolver))
     {
-        return interner.union(widened.to_vec());
+        return interner.union(widened);
     }
 
     // Step 1.5: Enum member widening
@@ -347,7 +347,7 @@ pub fn compute_best_common_type<R: TypeResolver>(
             .all(|&ty| interner.is_identity_comparable_type(ty));
         if all_unit {
             // All identity-comparable types -> no common supertype exists, create union
-            return interner.union(widened.to_vec());
+            return interner.union(widened);
         }
     }
 
@@ -402,7 +402,7 @@ pub fn compute_best_common_type<R: TypeResolver>(
     }
 
     // Step 4: Default to union of all types
-    interner.union(widened.to_vec())
+    interner.union(widened)
 }
 
 fn is_constructor_like<R: TypeResolver>(
