@@ -441,6 +441,7 @@ impl<'a> CheckerState<'a> {
         // In class bodies, `arguments` is reported as TS1210 instead, so only
         // emit TS1100 for `eval` there (not `arguments`).
         if !is_ambient
+            && !self.has_syntax_parse_errors()
             && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && name.as_str() == "arguments"

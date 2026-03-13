@@ -80,7 +80,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name_idx: tsz_parser::parser::NodeIndex,
     ) {
-        if name_idx.is_none() {
+        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
+        if name_idx.is_none() || self.has_syntax_parse_errors() {
             return;
         }
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
@@ -115,6 +116,10 @@ impl<'a> CheckerState<'a> {
         escaped_text: &str,
         use_class_message: bool,
     ) {
+        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         if use_class_message && self.ctx.enclosing_class.is_some() {
             let message = format_message(
@@ -177,6 +182,10 @@ impl<'a> CheckerState<'a> {
         name_idx: tsz_parser::parser::NodeIndex,
         name: &str,
     ) {
+        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let in_class = self
             .ctx
