@@ -353,7 +353,6 @@ impl<'a> CheckerState<'a> {
         let max_expected = type_params.len();
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
         if got < min_required || got > max_expected {
-            // TS2314: Generic type 'X<T, U>' requires N type argument(s).
             let lib_binders = self.get_lib_binders();
             let base_name = self
                 .ctx
@@ -365,12 +364,24 @@ impl<'a> CheckerState<'a> {
                 &type_params,
                 self.ctx.types,
             );
-            let count_str = max_expected.to_string();
-            self.error_at_node_msg(
-                type_arg_error_anchor,
-                crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
-                &[&display_name, &count_str],
-            );
+            if min_required < max_expected {
+                // TS2707: Generic type 'X<T, U, V>' requires between N and M type arguments.
+                let min_str = min_required.to_string();
+                let max_str = max_expected.to_string();
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                    &[&display_name, &min_str, &max_str],
+                );
+            } else {
+                // TS2314: Generic type 'X<T, U>' requires N type argument(s).
+                let count_str = max_expected.to_string();
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                    &[&display_name, &count_str],
+                );
+            }
             return;
         }
 
