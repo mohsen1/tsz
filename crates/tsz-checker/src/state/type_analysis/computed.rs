@@ -637,10 +637,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Fallback: if no declaration matched as enum, try value_decl
-                if indices.is_empty() && value_decl.is_some()
-                    && self.ctx.arena.get_enum_at(value_decl).is_some() {
-                        indices.push(value_decl);
-                    }
+                if indices.is_empty()
+                    && value_decl.is_some()
+                    && self.ctx.arena.get_enum_at(value_decl).is_some()
+                {
+                    indices.push(value_decl);
+                }
                 indices
             };
 
