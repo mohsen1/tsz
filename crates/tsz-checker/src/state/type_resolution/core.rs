@@ -1072,11 +1072,22 @@ impl<'a> CheckerState<'a> {
                             &type_params,
                             self.ctx.types,
                         );
-                        self.error_generic_type_requires_type_arguments_at(
-                            &display_name,
-                            required_count,
-                            idx,
-                        );
+                        if required_count < type_params.len() {
+                            // TS2707: Generic type 'X<T, U, V>' requires between N and M type arguments.
+                            let min_str = required_count.to_string();
+                            let max_str = type_params.len().to_string();
+                            self.error_at_node_msg(
+                                idx,
+                                crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                                &[&display_name, &min_str, &max_str],
+                            );
+                        } else {
+                            self.error_generic_type_requires_type_arguments_at(
+                                &display_name,
+                                required_count,
+                                idx,
+                            );
+                        }
                         // tsc returns errorType when a generic type is used without
                         // required type arguments. This prevents cascading errors
                         // like TS2454 on variables with erroneous type annotations.
