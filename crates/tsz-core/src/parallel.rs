@@ -559,36 +559,44 @@ pub fn load_lib_files_for_binding_strict(
     // file #81 of 87 and becomes the critical-path bottleneck.
     file_contents.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
 
+    // Parse and bind all lib files in parallel using the global rayon pool.
+    // The global pool threads are already warm (no thread creation overhead).
     #[cfg(not(target_arch = "wasm32"))]
     ensure_rayon_global_pool();
 
     let results: Vec<Result<Arc<lib_loader::LibFile>>> = maybe_parallel_into!(file_contents)
-        .map(|(file_name, source_text)| {
-            let mut lib_parser = ParserState::new(file_name.clone(), source_text);
-            let source_file_idx = lib_parser.parse_source_file();
-            let diagnostics = lib_parser.get_diagnostics();
-            if !diagnostics.is_empty() {
-                let first = &diagnostics[0];
-                bail!(
-                    "failed to parse lib file {} ({}:{}): {}",
-                    file_name,
-                    first.start,
-                    first.length,
-                    first.message
-                );
-            }
-
-            let mut lib_binder = BinderState::new();
-            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-            let arena = Arc::new(lib_parser.into_arena());
-            let binder = Arc::new(lib_binder);
-            Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
-        })
+        .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
         .collect();
 
     // Collect results, propagating any parse errors
     results.into_iter().collect()
+}
+
+/// Parse and bind a single lib file, returning a LibFile or error.
+fn parse_and_bind_lib_file(
+    file_name: String,
+    source_text: String,
+) -> Result<Arc<lib_loader::LibFile>> {
+    let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+    let source_file_idx = lib_parser.parse_source_file();
+    let diagnostics = lib_parser.get_diagnostics();
+    if !diagnostics.is_empty() {
+        let first = &diagnostics[0];
+        bail!(
+            "failed to parse lib file {} ({}:{}): {}",
+            file_name,
+            first.start,
+            first.length,
+            first.message
+        );
+    }
+
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+
+    let arena = Arc::new(lib_parser.into_arena());
+    let binder = Arc::new(lib_binder);
+    Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
 }
 
 /// Phase 1 helper: Read lib file content and recursively collect referenced libs.
