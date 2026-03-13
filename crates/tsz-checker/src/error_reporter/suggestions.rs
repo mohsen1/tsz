@@ -123,14 +123,49 @@ impl<'a> CheckerState<'a> {
             return exports.iter().map(|(name, _)| name.clone()).collect();
         }
 
+        // For primitive types (string, number, boolean, bigint, symbol), the solver's
+        // traversal classifies them as Terminal and returns no properties. Resolve to
+        // their boxed interface types (String, Number, etc.) so spelling suggestions
+        // can find methods like `fixed` on string (TS2551 "Did you mean 'fixed'?").
+        let resolved_type = self
+            .resolve_primitive_to_boxed_type(type_id)
+            .unwrap_or(type_id);
+
         crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
             self.ctx.types,
-            type_id,
+            resolved_type,
             5,
         )
         .into_iter()
         .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
         .collect()
+    }
+
+    /// Map a primitive type to its boxed interface type for property name collection.
+    /// Returns `None` if the type is not a primitive or no boxed type is registered.
+    fn resolve_primitive_to_boxed_type(&self, type_id: TypeId) -> Option<TypeId> {
+        use tsz_solver::IntrinsicKind;
+        use tsz_solver::def::resolver::TypeResolver;
+
+        let kind = if tsz_solver::type_queries::is_string_type(self.ctx.types, type_id)
+            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
+        {
+            IntrinsicKind::String
+        } else if tsz_solver::type_queries::is_number_type(self.ctx.types, type_id)
+            || tsz_solver::type_queries::is_number_literal(self.ctx.types, type_id)
+        {
+            IntrinsicKind::Number
+        } else if tsz_solver::type_queries::is_boolean_type(self.ctx.types, type_id) {
+            IntrinsicKind::Boolean
+        } else if tsz_solver::type_queries::is_bigint_type(self.ctx.types, type_id) {
+            IntrinsicKind::Bigint
+        } else if tsz_solver::type_queries::is_symbol_type(self.ctx.types, type_id) {
+            IntrinsicKind::Symbol
+        } else {
+            return None;
+        };
+
+        TypeResolver::get_boxed_type(self.ctx.types, kind)
     }
 
     // =========================================================================
@@ -409,6 +444,7 @@ fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'stati
             _ => None,
         },
         "ObjectConstructor" => match prop_name {
+            "values" | "entries" => Some("es2017"),
             "fromEntries" => Some("es2019"),
             "hasOwn" => Some("es2022"),
             "groupBy" => Some("es2024"),
