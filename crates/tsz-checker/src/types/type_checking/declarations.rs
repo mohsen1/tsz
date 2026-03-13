@@ -877,11 +877,35 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if the object type is a class instance with a get accessor for this property
-        if let Some(&obj_type) = self.ctx.node_types.get(&access.expression.0)
-            && let Some(class_idx) = self.ctx.class_instance_type_to_decl.get(&obj_type).copied()
-            && let Some(class) = self.ctx.arena.get_class_at(class_idx)
-        {
+        // Check if the object type is a class instance with a get accessor for this property.
+        // For generic class instances (e.g. C<number, string>), the direct lookup may fail
+        // because class_instance_type_to_decl only stores the base (uninstantiated) class type.
+        // In that case, resolve through the Application base type via brand names.
+        if let Some(&obj_type) = self.ctx.node_types.get(&access.expression.0) {
+            let class_idx = self
+                .ctx
+                .class_instance_type_to_decl
+                .get(&obj_type)
+                .copied()
+                .or_else(|| self.get_class_decl_from_type(obj_type));
+            if let Some(class_idx) = class_idx {
+                return self.class_has_get_accessor(class_idx, prop_name);
+            }
+        }
+
+        false
+    }
+
+    /// Check if a class (or any of its base classes) has a get accessor with the given name.
+    fn class_has_get_accessor(&self, class_idx: NodeIndex, prop_name: &str) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = Some(class_idx);
+        // Walk up the class hierarchy (bounded to prevent infinite loops)
+        for _ in 0..20 {
+            let Some(idx) = current else { break };
+            let Some(class) = self.ctx.arena.get_class_at(idx) else {
+                break;
+            };
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
@@ -889,13 +913,13 @@ impl<'a> CheckerState<'a> {
                 if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                     && let Some(accessor) = self.ctx.arena.get_accessor(member_node)
                     && let Some(acc_ident) = self.ctx.arena.get_identifier_at(accessor.name)
-                    && acc_ident.escaped_text == *prop_name
+                    && acc_ident.escaped_text == prop_name
                 {
                     return true;
                 }
             }
+            current = self.get_base_class_idx(idx);
         }
-
         false
     }
 
