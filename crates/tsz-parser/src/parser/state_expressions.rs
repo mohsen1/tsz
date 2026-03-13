@@ -2,8 +2,8 @@ use tsz_common::diagnostics::diagnostic_codes;
 
 /// Parser state - expression parsing methods
 use super::state::{
-    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
+    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -518,7 +518,8 @@ impl ParserState {
         // Arrow functions cannot be generators (there's no `*=>` syntax)
         // Clear generator context to allow 'yield' as an identifier
         // Example: function * foo(a = yield => yield) {} - both 'yield' are identifiers
-        self.context_flags &= !(CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_ASYNC);
+        self.context_flags &=
+            !(CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER);
 
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
