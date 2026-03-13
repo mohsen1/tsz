@@ -321,6 +321,9 @@ pub struct CompilerOptions {
     /// Control what method is used to detect module-format JS files.
     #[serde(default)]
     pub module_detection: Option<String>,
+    /// Suppress deprecation warnings. Valid values: "5.0", "6.0".
+    #[serde(default)]
+    pub ignore_deprecations: Option<String>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -867,6 +870,12 @@ pub fn resolve_compiler_options(
 
     if let Some(allow_unused_labels) = options.allow_unused_labels {
         resolved.checker.allow_unused_labels = Some(allow_unused_labels);
+    }
+
+    if let Some(ref id) = options.ignore_deprecations
+        && (id == "5.0" || id == "6.0")
+    {
+        resolved.checker.ignore_deprecations = true;
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
@@ -2614,6 +2623,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unchecked_side_effect_imports,
             no_implicit_override,
             module_detection,
+            ignore_deprecations,
         }
     )
 }

@@ -239,6 +239,28 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+            k if k == syntax_kind_ext::INDEX_SIGNATURE => {
+                if let Some(idx_sig) = self.ctx.arena.get_index_signature(node)
+                    && self.has_static_modifier(&idx_sig.modifiers)
+                {
+                    // Check the index signature's value type for class type param refs
+                    self.check_type_node_for_class_type_param_refs(
+                        idx_sig.type_annotation,
+                        &class_type_param_names,
+                    );
+                    // Also check parameter types
+                    for &param_idx in &idx_sig.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.check_type_node_for_class_type_param_refs(
+                                param.type_annotation,
+                                &class_type_param_names,
+                            );
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }

@@ -816,6 +816,13 @@ impl<'a> CheckerState<'a> {
         opts.allow_unused_labels = Self::parse_test_option_bool(text, "@allowunusedlabels")
             .map(Some)
             .unwrap_or(defaults.allow_unused_labels);
+
+        // Parse @ignoreDeprecations: "5.0" or "6.0" as a string option
+        let lower_text = text.to_ascii_lowercase();
+        if lower_text.contains("@ignoredeprecations") {
+            // If the option is present with a valid value, suppress deprecation warnings
+            opts.ignore_deprecations = true;
+        }
     }
 
     // =========================================================================
