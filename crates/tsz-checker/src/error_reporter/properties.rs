@@ -304,6 +304,31 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Report TS2339/TS2551 for an enum object property access failure.
+    /// Checks for spelling suggestions and emits TS2551 if a match is found.
+    pub fn error_property_not_exist_on_enum(
+        &mut self,
+        prop_name: &str,
+        enum_name: &str,
+        object_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        let type_str = format!("typeof {enum_name}");
+        let suggestion = self.find_similar_property(prop_name, object_type);
+        if let Some(ref suggestion) = suggestion {
+            let message = format!(
+                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+            );
+        } else {
+            self.error_property_not_exist_with_apparent_type(prop_name, &type_str, idx);
+        }
+    }
+
     /// Report TS18046: "'x' is of type 'unknown'."
     /// Emitted when an expression of type `unknown` is used in a position that requires
     /// a more specific type (property access, function call, arithmetic, etc.).
