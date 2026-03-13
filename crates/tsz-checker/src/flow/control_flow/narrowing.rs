@@ -518,12 +518,9 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // TypeScript does NOT narrow `any` with instanceof — it stays `any`
-        // regardless of the constructor. The `any` type represents a deliberate
-        // opt-out of the type system, so instanceof should not restrict it.
-        if type_id == TypeId::ANY {
-            return type_id;
-        }
+        // TypeScript narrows `any` via instanceof for specific constructors
+        // (e.g. Error, Date) but NOT for Function or Object. Let the solver
+        // handle the Function/Object check rather than short-circuiting here.
 
         // Extract instance type from constructor expression (AST -> TypeId)
         let instance_type = self

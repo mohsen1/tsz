@@ -133,11 +133,17 @@ impl<'a> NarrowingContext<'a> {
 
         // Now narrow based on the sense (positive or negative)
         if sense {
-            // TypeScript does NOT narrow `any` with instanceof — it stays `any`.
-            // Only `unknown` is narrowed to the instance type.
+            // TypeScript narrows `any` via instanceof UNLESS the instance type is
+            // the global Function or Object interface (which are too broad to narrow).
             if resolved_source == TypeId::ANY {
-                trace!("instanceof: any stays any (not narrowed)");
-                return TypeId::ANY;
+                if self.is_object_interface(instance_type)
+                    || crate::type_queries::is_function_interface_structural(self.db, instance_type)
+                {
+                    trace!("instanceof: any stays any (Function/Object constructor)");
+                    return TypeId::ANY;
+                }
+                trace!("instanceof: narrowing any to instance type");
+                return instance_type;
             }
 
             if resolved_source == TypeId::UNKNOWN {
@@ -214,7 +220,8 @@ impl<'a> NarrowingContext<'a> {
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
 
-            // `any` is not narrowed by instanceof (positive or negative)
+            // `any` stays `any` on the false branch of instanceof — cannot
+            // exclude a specific type from `any`.
             if resolved_source == TypeId::ANY {
                 return TypeId::ANY;
             }
@@ -267,10 +274,16 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // TypeScript does NOT narrow `any` with instanceof — it stays `any`.
-        // Only `unknown` is narrowed to the instance type.
+        // TypeScript narrows `any` via instanceof UNLESS the instance type is
+        // the global Function or Object interface. This helper is called after
+        // instance type extraction, so apply the same rule.
         if resolved_source == TypeId::ANY {
-            return TypeId::ANY;
+            if self.is_object_interface(resolved_target)
+                || crate::type_queries::is_function_interface_structural(self.db, resolved_target)
+            {
+                return TypeId::ANY;
+            }
+            return instance_type;
         }
         if resolved_source == TypeId::UNKNOWN {
             return instance_type;

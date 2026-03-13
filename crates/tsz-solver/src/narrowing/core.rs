@@ -1399,14 +1399,30 @@ impl<'a> NarrowingContext<'a> {
             }
 
             TypeGuard::Instanceof(instance_type) => {
-                // TypeScript does NOT narrow `any` with instanceof — it stays `any`
-                // regardless of the constructor or branch. The `any` type represents a
-                // deliberate opt-out of the type system.
-                if source_type == TypeId::ANY {
+                // TypeScript narrows `any` via instanceof for specific constructors
+                // (e.g. Error, Date) but NOT for Function or Object. Handle this
+                // in the sense-specific branches below.
+                if source_type == TypeId::ANY && !sense {
+                    // False branch: `any` stays `any` (can't exclude from `any`)
                     return source_type;
                 }
 
                 if sense {
+                    // Positive branch: `any` narrows to instance type unless
+                    // the instance type is Function or Object.
+                    if source_type == TypeId::ANY {
+                        // Resolve Lazy types before checking Function/Object
+                        let resolved_instance = self.resolve_type(*instance_type);
+                        if self.is_object_interface(resolved_instance)
+                            || crate::type_queries::is_function_interface_structural(
+                                self.db,
+                                resolved_instance,
+                            )
+                        {
+                            return TypeId::ANY;
+                        }
+                        return *instance_type;
+                    }
                     // Positive: x instanceof Class
                     // Special case: `unknown` instanceof X narrows to X (or object if X unknown)
                     // This must be handled here in the solver, not in the checker.
