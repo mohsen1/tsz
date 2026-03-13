@@ -570,6 +570,9 @@ impl ParserState {
         }
 
         // Push a new label scope for the constructor body
+        // Clear static block flag - constructor creates a new function boundary
+        let body_saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
@@ -577,6 +580,7 @@ impl ParserState {
             NodeIndex::NONE
         };
         self.pop_label_scope();
+        self.context_flags = body_saved_flags;
 
         let end_pos = self.token_end();
         self.arena.add_constructor(
@@ -652,6 +656,9 @@ impl ParserState {
     /// Parse the body of an accessor (get or set).
     /// Returns `NodeIndex::NONE` for ambient or abstract accessors with no body.
     fn parse_accessor_body(&mut self, modifiers: &Option<NodeList>) -> NodeIndex {
+        // Clear static block flag - accessor creates a new function boundary
+        let saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
@@ -675,6 +682,7 @@ impl ParserState {
             NodeIndex::NONE
         };
         self.pop_label_scope();
+        self.context_flags = saved_flags;
         body
     }
 
@@ -1369,7 +1377,8 @@ impl ParserState {
         }
 
         let method_saved_flags = self.context_flags;
-        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+        self.context_flags &=
+            !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -1509,7 +1518,8 @@ impl ParserState {
             // an expression start (not '=', ';', '}', or EOF), emit TS1442 and
             // treat the expression as the initializer for recovery.
             let init_saved_flags = self.context_flags;
-            self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+            self.context_flags &=
+                !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER;
 
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {

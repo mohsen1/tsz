@@ -3,7 +3,8 @@ use tsz_common::diagnostics::diagnostic_codes;
 /// Parser state - expression parsing methods
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, CONTEXT_FLAG_STATIC_BLOCK,
+    ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -518,8 +519,10 @@ impl ParserState {
         // Arrow functions cannot be generators (there's no `*=>` syntax)
         // Clear generator context to allow 'yield' as an identifier
         // Example: function * foo(a = yield => yield) {} - both 'yield' are identifiers
-        self.context_flags &=
-            !(CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER);
+        self.context_flags &= !(CONTEXT_FLAG_GENERATOR
+            | CONTEXT_FLAG_ASYNC
+            | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER
+            | CONTEXT_FLAG_STATIC_BLOCK);
 
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
@@ -1219,8 +1222,8 @@ impl ParserState {
                     // In this context, 'await' is used as an identifier and CloseBracketToken is expected
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
 
-                    if !has_following_expression && !is_computed_property_context {
-                        if self.in_static_block_context() {
+                    if !has_following_expression && !is_computed_property_context
+                        && self.in_static_block_context() {
                             // In static blocks, tsc treats `await` as a keyword and
                             // emits TS1109 at the token AFTER `await` (the missing
                             // operand position), matching await-expression parsing.
@@ -1238,8 +1241,10 @@ impl ParserState {
                                 },
                             );
                         }
-                        self.error_expression_expected();
-                    }
+                        // Outside static blocks and async contexts, 'await' without a following
+                        // expression is a valid identifier (e.g., inside nested function bodies
+                        // within static blocks, or in non-module script code). Don't emit TS1109;
+                        // fall through to parse as identifier via parse_postfix_expression().
 
                     // Fall through to parse as identifier/postfix expression
                     return self.parse_postfix_expression();

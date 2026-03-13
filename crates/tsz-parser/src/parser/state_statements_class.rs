@@ -26,6 +26,9 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::ClassKeyword);
 
+        // Check for illegal binding identifiers (e.g., 'await' in static blocks)
+        self.check_illegal_binding_identifier();
+
         // Parse optional name (class expressions can be anonymous)
         // Like class declarations, keywords can be used as class names
         // EXCEPT extends/implements which start heritage clauses.
@@ -481,6 +484,9 @@ impl ParserState {
     pub(crate) fn parse_class_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ClassKeyword);
+
+        // Check for illegal binding identifiers (e.g., 'await' in static blocks)
+        self.check_illegal_binding_identifier();
 
         // Parse class name - keywords like 'any', 'string' can be used as class names
         // EXCEPT extends/implements which start heritage clauses
