@@ -241,6 +241,55 @@ const value: string = foo[readKey];
 }
 
 #[test]
+fn test_unique_symbol_expando_element_access_no_ts7053() {
+    let source = r#"
+export function foo() {}
+foo.bar = 12;
+const _private = Symbol();
+foo[_private] = "ok";
+const strMem = "strMemName";
+foo[strMem] = "ok";
+const dashStrMem = "dashed-str-mem";
+foo[dashStrMem] = "ok";
+const numMem = 42;
+foo[numMem] = "ok";
+
+const x: string = foo[_private];
+const y: string = foo[strMem];
+const z: string = foo[numMem];
+const a: string = foo[dashStrMem];
+"#;
+
+    // Without lib: works fine
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 without lib. Actual: {diagnostics:#?}"
+    );
+
+    // With lib: this is what the conformance runner does
+    let diagnostics_with_lib = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics_with_lib, 7053),
+        "Did not expect TS7053 with lib. Actual: {diagnostics_with_lib:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {

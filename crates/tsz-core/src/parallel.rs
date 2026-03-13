@@ -1071,6 +1071,36 @@ fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeInd
     existing.extend_from_slice(incoming);
 }
 
+/// Remap `__unique_{SymbolId}` keys in expando_properties to use global SymbolIds.
+///
+/// During binding, expando property tracking stores unique symbol keys as
+/// `__unique_{local_SymbolId}`. After merge_bind_results remaps all SymbolIds
+/// to a global arena, these encoded IDs become stale. This function updates
+/// them so the checker's UniqueSymbol types (which use global IDs) match.
+fn remap_expando_properties(
+    expando: &FxHashMap<String, FxHashSet<String>>,
+    id_remap: &FxHashMap<SymbolId, SymbolId>,
+) -> FxHashMap<String, FxHashSet<String>> {
+    expando
+        .iter()
+        .map(|(obj_name, props)| {
+            let remapped_props = props
+                .iter()
+                .map(|prop| {
+                    if let Some(old_id_str) = prop.strip_prefix("__unique_")
+                        && let Ok(old_id) = old_id_str.parse::<u32>()
+                        && let Some(&new_id) = id_remap.get(&SymbolId(old_id))
+                    {
+                        return format!("__unique_{}", new_id.0);
+                    }
+                    prop.clone()
+                })
+                .collect();
+            (obj_name.clone(), remapped_props)
+        })
+        .collect()
+}
+
 /// Merge bind results into a unified program state
 ///
 /// This is a sequential operation that combines:
@@ -2090,7 +2120,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             node_flow: result.node_flow.clone(),
             switch_clause_to_switch: result.switch_clause_to_switch.clone(),
             is_external_module: result.is_external_module,
-            expando_properties: result.expando_properties.clone(),
+            expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
         });
     }
 
