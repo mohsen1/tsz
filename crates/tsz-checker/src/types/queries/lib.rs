@@ -811,10 +811,12 @@ impl<'a> CheckerState<'a> {
         // return the enum object type (with members as properties), not the
         // enum union type. This mirrors the pattern in identifier.rs for
         // direct enum references.
-        if (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
-            && let Some(enum_obj) = self.enum_object_type(resolved_member_id) {
-                return Some(enum_obj);
-            }
+        if (flags & symbol_flags::ENUM) != 0
+            && (flags & symbol_flags::ENUM_MEMBER) == 0
+            && let Some(enum_obj) = self.enum_object_type(resolved_member_id)
+        {
+            return Some(enum_obj);
+        }
 
         if flags != 0 {
             let is_merged_interface_variable = (flags & symbol_flags::INTERFACE) != 0
