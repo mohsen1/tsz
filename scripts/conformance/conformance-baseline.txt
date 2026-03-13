@@ -606,7 +606,6 @@ FAIL TypeScript/tests/cases/compiler/objectLiteralThisWidenedOnUse.ts | expected
 FAIL TypeScript/tests/cases/compiler/objectLiteralWithNumericPropertyName.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/octalLiteralAndEscapeSequence.ts | expected:[TS1121,TS1487,TS1488] actual:[TS1121]
 FAIL TypeScript/tests/cases/compiler/omitTypeHelperModifiers01.ts | expected:[TS2540] actual:[TS2322,TS2540]
-FAIL TypeScript/tests/cases/compiler/omitTypeTestErrors01.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/omittedExpressionForOfLoop.ts | expected:[TS2304,TS2488,TS18050] actual:[TS2304,TS2488,TS18050]
 FAIL TypeScript/tests/cases/compiler/optionalChainWithInstantiationExpression1.ts | expected:[TS1477] actual:[TS1477]
 FAIL TypeScript/tests/cases/compiler/optionalFunctionArgAssignability.ts | expected:[TS2322] actual:[TS2322]
@@ -1157,7 +1156,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/condition
 FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/conditionalOperatorConditoinIsAnyType.ts | expected:[TS2872,TS2873] actual:[TS2872,TS2873]
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/argumentExpressionContextualTyping.ts | expected:[TS2345,TS7031] actual:[TS2345,TS7031]
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/arrayLiteralExpressionContextualTyping.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/objectLiteralContextualTyping.ts | expected:[TS2403] actual:[]
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping2.ts | expected:[TS2322,TS2345,TS2347,TS2695,TS7006] actual:[TS2322,TS2345,TS2695]
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/taggedTemplateContextualTyping2.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callWithSpread2.ts | expected:[TS2345,TS2556] actual:[TS2345,TS2556]
@@ -1260,7 +1258,7 @@ FAIL TypeScript/tests/cases/conformance/internalModules/moduleDeclarations/insta
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts | expected:[TS7027] actual:[TS7006,TS7027]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNamespace.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNestedParameter.ts | expected:[] actual:[TS2554]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339,TS2345,TS7006]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts | expected:[TS2322,TS2540,TS2882] actual:[TS2339,TS2882]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag15.ts | expected:[TS1360,TS2322,TS7006] actual:[TS1360,TS2304,TS7006]
@@ -1452,7 +1450,6 @@ FAIL TypeScript/tests/cases/conformance/override/overrideDynamicName1.ts | expec
 FAIL TypeScript/tests/cases/conformance/override/overrideLateBindableIndexSignature1.ts | expected:[TS4127,TS5024] actual:[TS5024]
 FAIL TypeScript/tests/cases/conformance/override/overrideLateBindableName1.ts | expected:[TS4113,TS5024] actual:[TS5024]
 FAIL TypeScript/tests/cases/conformance/override/override_js4.ts | expected:[TS4123] actual:[TS4122]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/forAwait/parser.forAwait.es2018.ts | expected:[TS1005] actual:[TS1005,TS1103,TS1431,TS1432]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.binaryNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.decmialNegative.ts | expected:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189] actual:[TS1005,TS1124,TS1128,TS1434,TS6188,TS6189]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.hexNegative.ts | expected:[TS1351,TS6188,TS6189] actual:[TS1351,TS6188,TS6189]
@@ -5969,6 +5966,7 @@ PASS TypeScript/tests/cases/compiler/objectRestSpread.ts
 PASS TypeScript/tests/cases/compiler/objectSpreadWithinMethodWithinObjectWithSpread.ts
 PASS TypeScript/tests/cases/compiler/objectTypeWithOptionalProperty1.ts
 PASS TypeScript/tests/cases/compiler/observableInferenceCanBeMade.ts
+PASS TypeScript/tests/cases/compiler/omitTypeTestErrors01.ts
 PASS TypeScript/tests/cases/compiler/omitTypeTests01.ts
 PASS TypeScript/tests/cases/compiler/operationsAvailableOnPromisedType.ts
 PASS TypeScript/tests/cases/compiler/operatorAddNullUndefined.ts
@@ -9545,6 +9543,7 @@ PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExp
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/generatedContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/getSetAccessorContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
+PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/objectLiteralContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping1.ts
