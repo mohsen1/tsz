@@ -988,6 +988,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !report_no_index
+            && use_index_signature_check
             && self.union_has_missing_concrete_element_access(
                 object_type_for_access,
                 index_type,
