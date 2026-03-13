@@ -536,11 +536,11 @@ impl<'a> CheckerState<'a> {
                     {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.ctx.error(
-                                    node.pos,
-                                    node.end.saturating_sub(node.pos),
-                                    diagnostic_messages::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES.to_string(),
-                                    diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
-                                );
+                            node.pos,
+                            node.end.saturating_sub(node.pos),
+                            diagnostic_messages::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES.to_string(),
+                            diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
+                        );
                     }
                     self.check_type_for_missing_names(op.type_node);
                 }

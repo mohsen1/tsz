@@ -53,9 +53,16 @@ impl<'a> CheckerState<'a> {
         //
         // However, when no lib files were loaded AND --noLib was not explicitly
         // set, we're likely in a bare unit test environment with no lib context.
-        // Skip TS2318 emission to avoid flooding tests with infrastructure noise.
+        // Skip TS2318 emission UNLESS the file declares some core global types
+        // manually (indicating the user intentionally set up a minimal-lib
+        // environment and expects the check to run).
         if !self.ctx.compiler_options.no_lib && self.ctx.actual_lib_file_count == 0 {
-            return;
+            let has_any_core_type = CORE_GLOBAL_TYPES
+                .iter()
+                .any(|name| self.ctx.binder.file_locals.has(name));
+            if !has_any_core_type {
+                return;
+            }
         }
 
         // We check if types exist globally (in libs or current file scope).
