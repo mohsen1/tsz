@@ -225,6 +225,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 keyof_target,
                             )
                         {
+                            // Reverse mapping succeeded for the homomorphic type param
+                            // (e.g., B in `keyof B`). But the template may contain OTHER
+                            // inference type params (e.g., A in `{ fn: (a: A) => void; val: B[K] }`).
+                            // Constrain those by matching source properties against the
+                            // instantiated template for each key.
+                            if has_properties {
+                                let iter_param_name = mapped.type_param.name;
+                                for prop in &source_obj.properties {
+                                    let key_literal = self.interner.literal_string_atom(prop.name);
+                                    let mut subst = TypeSubstitution::new();
+                                    subst.insert(iter_param_name, key_literal);
+                                    let instantiated_template =
+                                        instantiate_type(self.interner, mapped.template, &subst);
+                                    self.constrain_types(
+                                        ctx,
+                                        var_map,
+                                        prop.type_id,
+                                        instantiated_template,
+                                        priority,
+                                    );
+                                }
+                            }
                             return;
                         }
                         // Reverse inference failed (template too complex),
