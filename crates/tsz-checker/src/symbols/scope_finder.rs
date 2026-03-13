@@ -210,6 +210,58 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if the enclosing function expression has a contextual `this` type
+    /// from its parent variable declaration's type annotation.
+    ///
+    /// When a function expression is assigned to a variable with a type annotation
+    /// that includes a `this` parameter (e.g., `const f: (this: Foo) => void = function() {}`),
+    /// the `this` type is contextually provided. TS2683 should be suppressed because
+    /// the contextual typing pass will properly type `this`.
+    pub(crate) fn enclosing_function_has_contextual_this_type(&mut self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_EXPRESSION, VARIABLE_DECLARATION};
+
+        let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
+            Some(f) => f,
+            None => return false,
+        };
+        let fn_node = match self.ctx.arena.get(enclosing_fn) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        // Only applies to function expressions (closures), not declarations
+        if fn_node.kind != FUNCTION_EXPRESSION {
+            return false;
+        }
+
+        // Walk up to find the parent variable declaration
+        let parent_idx = match self.ctx.arena.get_extended(enclosing_fn) {
+            Some(ext) => ext.parent,
+            None => return false,
+        };
+        let parent_node = match self.ctx.arena.get(parent_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        // Check if parent is a variable declaration with a type annotation
+        if parent_node.kind != VARIABLE_DECLARATION {
+            return false;
+        }
+        let var_decl = match self.ctx.arena.get_variable_declaration(parent_node) {
+            Some(d) => d,
+            None => return false,
+        };
+        if var_decl.type_annotation.is_none() {
+            return false;
+        }
+
+        // Resolve the type annotation and check if it provides a `this` type
+        let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
+        let ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, declared_type);
+        ctx.get_this_type().is_some()
+    }
+
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
     /// Check if `this` is inside a top-level arrow function that captures `globalThis`.

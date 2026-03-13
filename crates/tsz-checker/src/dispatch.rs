@@ -885,11 +885,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     } else {
                         // Fall through to TS2683 / TS7041 checks below
                         // Suppress if the nested function has an explicit `this` parameter
+                        // or a contextual `this` type from a parent type annotation
                         if self.checker.ctx.no_implicit_this()
                             && !self.checker.is_js_file()
                             && !self
                                 .checker
                                 .enclosing_function_has_explicit_this_parameter(idx)
+                            && !self
+                                .checker
+                                .enclosing_function_has_contextual_this_type(idx)
                         {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.checker.error_at_node(
@@ -915,9 +919,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // Suppressed in JS files: tsc infers `this` for constructor/prototype
                     // patterns and JSDoc-typed functions.
                     // Suppress if the enclosing function has an explicit `this` parameter
+                    // or a contextual `this` type from a parent type annotation
                     if self
                         .checker
                         .enclosing_function_has_explicit_this_parameter(idx)
+                        || self
+                            .checker
+                            .enclosing_function_has_contextual_this_type(idx)
                     {
                         TypeId::ANY
                     } else {
