@@ -1324,6 +1324,7 @@ impl<'a> CheckerState<'a> {
         let is_node_esm_file =
             self.ctx.compiler_options.module.is_node_module() && self.ctx.file_is_esm == Some(true);
 
+        let mut emitted_ts1203 = false;
         if (is_es_module || is_system_module || is_node_esm_file)
             && !is_preserve
             && !is_declaration_file
@@ -1333,6 +1334,7 @@ impl<'a> CheckerState<'a> {
         {
             for &export_idx in &export_assignment_indices {
                 if !self.is_ambient_declaration(export_idx) {
+                    emitted_ts1203 = true;
                     if is_system_module {
                         self.error_at_node(
                             export_idx,
@@ -1374,9 +1376,12 @@ impl<'a> CheckerState<'a> {
 
         // TS2309: Check for export assignment with other exports
         // Skip if already emitting TS1203 (ES module target) or TS2300 (duplicate)
+        // Also skip in `preserve` mode — it allows mixing CJS (`export =`) and ESM syntax
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
+            && !emitted_ts1203
+            && !is_preserve
         {
             self.error_at_node(
                 export_idx,
