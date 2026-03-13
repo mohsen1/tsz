@@ -106,6 +106,20 @@ impl<'a> CheckerState<'a> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
+            // Persist intermediate evaluation results to the shared cache.
+            // This prevents re-evaluating recursive type expansions (e.g.,
+            // RecursivePaths, DeepPartial) that produce many intermediate TypeIds.
+            if use_cache {
+                let mut cache = self.ctx.env_eval_cache.borrow_mut();
+                for (k, v) in evaluator.drain_cache() {
+                    if k != v && !k.is_intrinsic() {
+                        cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
+                            result: v,
+                            depth_exceeded: false,
+                        });
+                    }
+                }
+            }
             result
         };
 
@@ -115,6 +129,18 @@ impl<'a> CheckerState<'a> {
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
+            }
+            // Persist intermediate results from the second evaluator pass too.
+            if use_cache {
+                let mut cache = self.ctx.env_eval_cache.borrow_mut();
+                for (k, v) in evaluator.drain_cache() {
+                    if k != v && !k.is_intrinsic() {
+                        cache.entry(k).or_insert(crate::context::EnvEvalCacheEntry {
+                            result: v,
+                            depth_exceeded: false,
+                        });
+                    }
+                }
             }
             result
         } else {

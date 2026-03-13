@@ -158,6 +158,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
+    /// Drain the evaluator's internal cache, returning all intermediate results.
+    /// This allows callers to persist intermediate evaluation results
+    /// (e.g., from recursive mapped type expansion) into a longer-lived cache.
+    pub fn drain_cache(&mut self) -> impl Iterator<Item = (TypeId, TypeId)> + '_ {
+        self.cache.drain()
+    }
+
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         if self.no_unchecked_indexed_access != enabled {
             self.cache.clear();
