@@ -794,14 +794,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 );
 
                 if has_forward_ref
-                    && let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
-                        self.ctx.error(
+                    && let Some(init_node) = self.ctx.arena.get(member_data.initializer)
+                {
+                    self.ctx.error(
                             init_node.pos,
                             init_node.end - init_node.pos,
                             diagnostic_messages::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT.to_string(),
                             diagnostic_codes::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT,
                         );
-                    }
+                }
             }
         }
 
