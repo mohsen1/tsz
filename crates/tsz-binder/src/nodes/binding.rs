@@ -1266,13 +1266,17 @@ impl BinderState {
             // In MODULE mode: interfaces and type aliases shadow globals (no augmentation
             // at file scope — `declare global {}` is needed for true augmentation).
             let should_shadow_lib = if self.lib_symbol_ids.contains(&existing_id) {
-                if self.is_external_module {
+                if self.is_external_module && !self.in_global_augmentation {
                     // In modules, interfaces, type aliases, and import aliases shadow lib symbols
                     // (they create module-local types/bindings, not global augmentation).
                     // Functions and classes also shadow as before.
                     // ALIAS (import declarations) must shadow to prevent cross-file contamination:
                     // without this, `import self = require(...)` in two separate modules would
                     // both merge into the global lib `self` symbol, causing false TS2300 duplicates.
+                    //
+                    // EXCEPTION: When inside `declare global { ... }`, interfaces and other
+                    // declarations should MERGE with lib symbols, not shadow. The `declare global`
+                    // block explicitly requests global augmentation even in external modules.
                     (flags
                         & (symbol_flags::FUNCTION
                             | symbol_flags::CLASS

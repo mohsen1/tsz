@@ -2053,6 +2053,12 @@ impl<'a> CheckerState<'a> {
                         .then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
                 });
 
+                // Pre-compute computed property names for declarations in the
+                // current arena. This handles cases like `[FOO_SYMBOL]?: number`
+                // inside `declare global { interface Promise<T> { ... } }`, where
+                // TypeLowering alone can't resolve the computed expression.
+                let computed_names = self.precompute_computed_property_names(&symbol.declarations);
+
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
                 // type param nodes. For lib interfaces the nodes are in a lib arena,
@@ -2130,6 +2136,9 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
+                let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+                    computed_names.get(&expr_idx).copied()
+                };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     fallback_arena,
                     self.ctx.types,
@@ -2139,6 +2148,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings)
                 .with_name_def_id_resolver(&name_resolver)
+                .with_computed_name_resolver(&computed_name_resolver)
                 .with_preferred_self_reference(
                     symbol.escaped_name.clone(),
                     self.ctx.get_or_create_def_id(sym_id),
