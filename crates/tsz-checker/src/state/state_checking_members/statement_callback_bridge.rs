@@ -1412,16 +1412,34 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.ctx.had_outer_loop = saved.2;
     }
 
-    fn enter_labeled_statement(&mut self, label: String, is_iteration: bool) {
+    fn enter_labeled_statement(
+        &mut self,
+        label: String,
+        is_iteration: bool,
+        label_node: NodeIndex,
+    ) {
         self.ctx.label_stack.push(crate::context::LabelInfo {
             name: label,
             is_iteration,
             function_depth: self.ctx.function_depth,
+            referenced: false,
+            label_node,
         });
     }
 
     fn leave_labeled_statement(&mut self) {
-        self.ctx.label_stack.pop();
+        if let Some(label_info) = self.ctx.label_stack.pop() {
+            // TS7028: Unused label
+            if !label_info.referenced
+                && self.ctx.compiler_options.allow_unused_labels == Some(false)
+            {
+                self.error_at_node(
+                    label_info.label_node,
+                    crate::diagnostics::diagnostic_messages::UNUSED_LABEL,
+                    crate::diagnostics::diagnostic_codes::UNUSED_LABEL,
+                );
+            }
+        }
     }
 
     fn get_node_text(&self, idx: NodeIndex) -> Option<String> {

@@ -49,6 +49,11 @@ pub struct CheckerOptions {
     /// - `Some(false)`: tsc emits TS7027 as an error
     /// - `Some(true)`: tsc does not emit TS7027 at all
     pub allow_unreachable_code: Option<bool>,
+    /// Controls reporting of unused labels (TS7028).
+    /// - `None` (default): tsc emits TS7028 as a suggestion, not an error
+    /// - `Some(false)`: tsc emits TS7028 as an error
+    /// - `Some(true)`: tsc does not emit TS7028 at all
+    pub allow_unused_labels: Option<bool>,
     /// When true, require bracket notation for index signature property access (TS4111).
     pub no_property_access_from_index_signature: bool,
     /// When true, enable Sound Mode for stricter type checking beyond TypeScript's defaults.
@@ -185,6 +190,7 @@ impl Default for CheckerOptions {
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,
+            allow_unused_labels: None,
             no_property_access_from_index_signature: false,
             sound_mode: false,
             experimental_decorators: false,

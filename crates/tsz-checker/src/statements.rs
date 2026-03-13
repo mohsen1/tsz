@@ -241,7 +241,12 @@ pub trait StatementCheckCallbacks {
     /// Enter a labeled statement.
     /// Pushes a label onto the label stack for break/continue validation.
     /// `is_iteration` should be true if the labeled statement wraps an iteration statement.
-    fn enter_labeled_statement(&mut self, label: String, is_iteration: bool);
+    fn enter_labeled_statement(
+        &mut self,
+        label: String,
+        is_iteration: bool,
+        label_node: tsz_parser::parser::NodeIndex,
+    );
 
     /// Leave a labeled statement.
     /// Pops the label from the label stack.
@@ -828,7 +833,7 @@ impl StatementChecker {
                     };
 
                     // Push label onto stack
-                    state.enter_labeled_statement(label_name, is_iteration);
+                    state.enter_labeled_statement(label_name, is_iteration, label_idx);
 
                     // Check the contained statement
                     state.check_statement(statement_idx);

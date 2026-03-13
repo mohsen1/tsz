@@ -305,6 +305,9 @@ pub struct CompilerOptions {
     /// Do not report errors on unreachable code
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_unreachable_code: Option<bool>,
+    /// Do not report errors on unused labels
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_unused_labels: Option<bool>,
     /// Check side-effect imports for module resolution errors
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_unchecked_side_effect_imports: Option<bool>,
@@ -860,6 +863,10 @@ pub fn resolve_compiler_options(
 
     if let Some(allow_unreachable_code) = options.allow_unreachable_code {
         resolved.checker.allow_unreachable_code = Some(allow_unreachable_code);
+    }
+
+    if let Some(allow_unused_labels) = options.allow_unused_labels {
+        resolved.checker.allow_unused_labels = Some(allow_unused_labels);
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
@@ -2602,6 +2609,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
+            allow_unused_labels,
             no_resolve,
             no_unchecked_side_effect_imports,
             no_implicit_override,

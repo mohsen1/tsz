@@ -293,7 +293,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
                     );
                 }
-                // Otherwise, labeled break is valid (can target any label, not just iteration)
+                // Mark the label as referenced (for TS7028 unused label detection)
+                self.mark_label_used(&label);
             } else {
                 // Label not found - emit TS1116
                 if self.ctx.function_depth > 0 || self.find_enclosing_function(stmt_idx).is_some() {
@@ -382,7 +383,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
                     );
                 }
-                // Otherwise, labeled continue to iteration label is valid
+                // Mark the label as referenced (for TS7028 unused label detection)
+                self.mark_label_used(&label);
             } else {
                 // Label not found - emit TS1115 (same as when label exists but not on iteration)
                 self.error_at_node(
@@ -420,5 +422,18 @@ impl<'a> CheckerState<'a> {
             .iter()
             .rev()
             .find(|info| info.name == name)
+    }
+
+    /// Mark a label as referenced (targeted by break/continue).
+    fn mark_label_used(&mut self, name: &str) {
+        if let Some(info) = self
+            .ctx
+            .label_stack
+            .iter_mut()
+            .rev()
+            .find(|i| i.name == name)
+        {
+            info.referenced = true;
+        }
     }
 }

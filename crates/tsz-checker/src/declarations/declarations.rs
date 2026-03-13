@@ -756,6 +756,55 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
         }
 
+        // TS2651: check for forward references to later members (applies to ALL enums)
+        {
+            let member_names: Vec<&str> = enum_data
+                .members
+                .nodes
+                .iter()
+                .filter_map(|&m_idx| {
+                    let m_node = self.ctx.arena.get(m_idx)?;
+                    let m_data = self.ctx.arena.get_enum_member(m_node)?;
+                    self.ctx.arena.get_identifier_text(m_data.name)
+                })
+                .collect();
+
+            let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
+
+            for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member_data) = self.ctx.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+
+                if member_data.initializer.is_none() {
+                    continue;
+                }
+
+                // Use .get() to avoid panic when member_names is shorter than
+                // members.nodes (e.g. string-literal enum member names that fail
+                // get_identifier_text are excluded from member_names).
+                let later_members: Vec<&str> = member_names.get(i + 1..).unwrap_or(&[]).to_vec();
+                let has_forward_ref = self.enum_has_forward_reference(
+                    member_data.initializer,
+                    &later_members,
+                    enum_name_text,
+                );
+
+                if has_forward_ref
+                    && let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
+                        self.ctx.error(
+                            init_node.pos,
+                            init_node.end - init_node.pos,
+                            diagnostic_messages::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT.to_string(),
+                            diagnostic_codes::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT,
+                        );
+                    }
+            }
+        }
+
         // Const enum specific checks
         let is_const_enum = self
             .ctx
@@ -783,18 +832,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
-            // Collect member names for forward reference detection
-            let member_names: Vec<&str> = enum_data
-                .members
-                .nodes
-                .iter()
-                .filter_map(|&m_idx| {
-                    let m_node = self.ctx.arena.get(m_idx)?;
-                    let m_data = self.ctx.arena.get_enum_member(m_node)?;
-                    self.ctx.arena.get_identifier_text(m_data.name)
-                })
-                .collect();
-
             let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
 
             for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
@@ -809,29 +846,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     continue;
                 }
 
-                // TS2651: check for forward references to later members
-                // Use .get() to avoid panic when member_names is shorter than
-                // members.nodes (e.g. string-literal enum member names that fail
-                // get_identifier_text are excluded from member_names).
-                let later_members: Vec<&str> = member_names.get(i + 1..).unwrap_or(&[]).to_vec();
-                let has_forward_ref = self.const_enum_has_forward_reference(
-                    member_data.initializer,
-                    &later_members,
-                    enum_name_text,
-                );
-
-                if has_forward_ref {
-                    if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
-                        self.ctx.error(
-                            init_node.pos,
-                            init_node.end - init_node.pos,
-                            diagnostic_messages::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT.to_string(),
-                            diagnostic_codes::A_MEMBER_INITIALIZER_IN_A_ENUM_DECLARATION_CANNOT_REFERENCE_MEMBERS_DECLARED_AFT,
-                        );
-                    }
-                    continue; // Forward ref takes priority over TS2474
-                }
-
                 // String literal initializers are always valid const enum initializers.
                 // Only numeric initializers need evaluation for TS2474/TS2477/TS2478.
                 let is_string_initializer = self
@@ -844,6 +858,27 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     });
                 if is_string_initializer {
                     continue;
+                }
+
+                // Collect member names for forward reference detection (used to skip TS2474 if forward ref)
+                let member_names: Vec<&str> = enum_data
+                    .members
+                    .nodes
+                    .iter()
+                    .filter_map(|&m_idx| {
+                        let m_node = self.ctx.arena.get(m_idx)?;
+                        let m_data = self.ctx.arena.get_enum_member(m_node)?;
+                        self.ctx.arena.get_identifier_text(m_data.name)
+                    })
+                    .collect();
+                let later_members: Vec<&str> = member_names.get(i + 1..).unwrap_or(&[]).to_vec();
+                let has_forward_ref = self.enum_has_forward_reference(
+                    member_data.initializer,
+                    &later_members,
+                    enum_name_text,
+                );
+                if has_forward_ref {
+                    continue; // Forward ref already reported above; skip TS2474
                 }
 
                 // Try to evaluate the initializer as a numeric constant
@@ -1823,8 +1858,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
     }
 
-    /// Check if a const enum initializer contains a forward reference to a later member.
-    fn const_enum_has_forward_reference(
+    /// Check if an enum initializer contains a forward reference to a later member.
+    fn enum_has_forward_reference(
         &self,
         expr_idx: NodeIndex,
         later_members: &[&str],
@@ -1860,7 +1895,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     {
                         return later_members.contains(&right_text);
                     }
-                    self.const_enum_has_forward_reference(prop.expression, later_members, enum_name)
+                    self.enum_has_forward_reference(prop.expression, later_members, enum_name)
                 } else {
                     false
                 }
@@ -1877,8 +1912,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     {
                         return later_members.contains(&lit.text.as_str());
                     }
-                    self.const_enum_has_forward_reference(elem.expression, later_members, enum_name)
-                        || self.const_enum_has_forward_reference(
+                    self.enum_has_forward_reference(elem.expression, later_members, enum_name)
+                        || self.enum_has_forward_reference(
                             elem.name_or_argument,
                             later_members,
                             enum_name,
@@ -1891,30 +1926,22 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
             {
                 if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
-                    self.const_enum_has_forward_reference(unary.operand, later_members, enum_name)
+                    self.enum_has_forward_reference(unary.operand, later_members, enum_name)
                 } else {
                     false
                 }
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
-                    self.const_enum_has_forward_reference(bin.left, later_members, enum_name)
-                        || self.const_enum_has_forward_reference(
-                            bin.right,
-                            later_members,
-                            enum_name,
-                        )
+                    self.enum_has_forward_reference(bin.left, later_members, enum_name)
+                        || self.enum_has_forward_reference(bin.right, later_members, enum_name)
                 } else {
                     false
                 }
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    self.const_enum_has_forward_reference(
-                        paren.expression,
-                        later_members,
-                        enum_name,
-                    )
+                    self.enum_has_forward_reference(paren.expression, later_members, enum_name)
                 } else {
                     false
                 }
