@@ -62,6 +62,20 @@ impl<'a> CheckerState<'a> {
         self.error_at_node(node_idx, &message, code);
     }
 
+    /// Get the source text for a node by extracting from the source file text.
+    pub(crate) fn get_source_text_for_node(&self, node_idx: NodeIndex) -> String {
+        if let Some((start, end)) = self.get_node_span(node_idx)
+            && let Some(sf) = self.ctx.arena.source_files.first() {
+                let text: &str = &sf.text;
+                let s = start as usize;
+                let e = end as usize;
+                if s <= e && e <= text.len() {
+                    return text[s..e].to_string();
+                }
+            }
+        String::new()
+    }
+
     /// Report an error at a specific position.
     pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
         self.ctx.diagnostics.push(Diagnostic::error(

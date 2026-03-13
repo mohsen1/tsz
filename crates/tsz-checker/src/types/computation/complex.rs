@@ -510,6 +510,17 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing new expression data - propagate error
         };
 
+        // TS1209: Invalid optional chain from new expression
+        if super::access::is_optional_chain(self.ctx.arena, new_expr.expression) {
+            let expr_text = self.get_source_text_for_node(new_expr.expression);
+            self.error_at_node_msg(
+                new_expr.expression,
+                diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL,
+                &[&expr_text],
+            );
+            return TypeId::ERROR;
+        }
+
         // Validate the constructor target: reject type-only symbols and abstract classes
         if let Some(early) = self.check_new_expression_target(idx, new_expr.expression) {
             return early;
