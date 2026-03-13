@@ -679,7 +679,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let object_type = self.ctx.types.factory().object(properties);
+        let object_type = self.ctx.types.factory().object_fresh(properties);
         if wrap_in_zero_arg_function {
             Some(
                 self.ctx

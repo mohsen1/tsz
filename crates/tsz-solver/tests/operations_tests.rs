@@ -256,7 +256,7 @@ fn test_generic_call_resets_constraint_step_budget() {
         is_method: false,
     });
 
-    *evaluator.constraint_step_count.borrow_mut() = MAX_CONSTRAINT_STEPS;
+    evaluator.constraint_step_count.set(MAX_CONSTRAINT_STEPS);
 
     let result = evaluator.resolve_call(identity, &[TypeId::STRING]);
     match result {
