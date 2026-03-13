@@ -2038,7 +2038,33 @@ impl<'a> CheckerState<'a> {
                         return (result, Vec::new());
                     }
 
-                    let mut result = self.get_type_of_symbol(export_sym_id);
+                    // When the export symbol has both INTERFACE and VARIABLE
+                    // flags (e.g., `interface MyFunction` + `export const
+                    // MyFunction`), `get_type_of_symbol` returns the interface
+                    // type because INTERFACE is checked first. For import
+                    // aliases (value position), we need the variable type so
+                    // the imported binding is callable/constructable.
+                    let mut result = if let Some(sym) = self.get_symbol_globally(export_sym_id) {
+                        let has_interface = sym.flags & symbol_flags::INTERFACE != 0;
+                        let has_variable = sym.flags
+                            & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                | symbol_flags::BLOCK_SCOPED_VARIABLE)
+                            != 0;
+                        if has_interface && has_variable && !sym.value_declaration.is_none() {
+                            let vd = sym.value_declaration;
+                            let vd_type =
+                                self.type_of_value_declaration_for_symbol(export_sym_id, vd);
+                            if vd_type != TypeId::UNKNOWN && vd_type != TypeId::ERROR {
+                                vd_type
+                            } else {
+                                self.get_type_of_symbol(export_sym_id)
+                            }
+                        } else {
+                            self.get_type_of_symbol(export_sym_id)
+                        }
+                    } else {
+                        self.get_type_of_symbol(export_sym_id)
+                    };
                     result = self.apply_module_augmentations(module_name, export_name, result);
                     self.ctx.symbol_types.insert(export_sym_id, result);
                     return (result, Vec::new());

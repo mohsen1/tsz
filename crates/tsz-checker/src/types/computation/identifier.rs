@@ -542,13 +542,19 @@ impl<'a> CheckerState<'a> {
                 if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
                     && parent_ext.parent.is_some()
                     && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+                    && (parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION)
                 {
-                    use tsz_parser::parser::syntax_kind_ext;
-                    if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                        || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                    {
-                        return TypeId::ERROR;
-                    }
+                    return TypeId::ERROR;
+                }
+
+                // Don't emit TS2693 for type-only symbols referenced inside type
+                // positions.  In multi-file mode, the checker may dispatch type-
+                // position identifiers through get_type_of_identifier; emitting
+                // TS2693 for type parameters or interfaces used inside type
+                // annotations (TypeReference, TupleType, etc.) is always wrong.
+                if self.is_identifier_in_type_position(idx) {
+                    return TypeId::ERROR;
                 }
 
                 self.error_type_only_value_at(name, idx);

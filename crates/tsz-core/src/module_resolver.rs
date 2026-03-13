@@ -1045,7 +1045,10 @@ impl ModuleResolver {
     }
 
     fn is_invalid_package_import_specifier(specifier: &str) -> bool {
-        specifier == "#" || specifier.starts_with("#/")
+        // `#` alone is invalid, but `#/` prefixed specifiers are allowed when
+        // the package.json imports field contains a matching wildcard pattern
+        // (e.g., `"#/*": "./src/*"`). TypeScript resolves these successfully.
+        specifier == "#"
     }
 
     /// Resolve an export/import value to a string path
@@ -2539,7 +2542,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolver_rejects_root_slash_package_import_specifier() {
+    fn test_resolver_resolves_root_slash_package_import_with_wildcard() {
         use std::fs;
         let dir = std::env::temp_dir().join("tsz_test_package_import_root_slash");
         let _ = fs::remove_dir_all(&dir);
@@ -2567,10 +2570,14 @@ mod tests {
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("#/foo.js", &dir.join("index.ts"), Span::new(0, 8));
 
-        let failure =
-            result.expect_err("Expected #/foo.js to remain unresolved under package imports");
-        let diagnostic = failure.to_diagnostic();
-        assert_eq!(diagnostic.code, 2307);
+        // TypeScript allows #/ prefixed specifiers when matched by wildcard
+        // patterns in the imports field (e.g., "#/*": "./src/*").
+        let resolved = result.expect("Expected #/foo.js to resolve via wildcard import pattern");
+        assert!(
+            resolved.resolved_path.ends_with("src/foo.ts"),
+            "Expected resolution to src/foo.ts, got {:?}",
+            resolved.resolved_path
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
