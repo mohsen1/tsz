@@ -202,7 +202,10 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if self.is_with_statement_in_strict_mode_context(stmt_idx) {
+        // TSC's grammarErrorOnNode suppresses TS1101 when hasParseDiagnostics is true.
+        if !self.has_syntax_parse_errors()
+            && self.is_with_statement_in_strict_mode_context(stmt_idx)
+        {
             self.error_at_node(
                 stmt_idx,
                 diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
@@ -263,8 +266,8 @@ impl<'a> CheckerState<'a> {
 
         // Like TSC's grammarErrorOnNode, suppress all grammar errors (TS1105, TS1107, TS1116)
         // for break/continue when the file has parser-generated syntax errors.
-        // TSC checks hasParseDiagnostics(sourceFile) before emitting these grammar errors.
-        if self.has_syntax_parse_errors() && self.node_span_contains_parse_error(stmt_idx) {
+        // TSC checks hasParseDiagnostics(sourceFile) at file level — not node level.
+        if self.has_syntax_parse_errors() {
             return;
         }
 
@@ -347,7 +350,8 @@ impl<'a> CheckerState<'a> {
 
         // Like TSC's grammarErrorOnNode, suppress grammar errors (TS1104, TS1107, TS1115)
         // for continue when the file has parser-generated syntax errors.
-        if self.has_syntax_parse_errors() && self.node_span_contains_parse_error(stmt_idx) {
+        // TSC checks hasParseDiagnostics(sourceFile) at file level — not node level.
+        if self.has_syntax_parse_errors() {
             return;
         }
 
