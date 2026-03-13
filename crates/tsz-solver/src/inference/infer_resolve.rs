@@ -394,7 +394,7 @@ impl<'a> InferenceContext<'a> {
                     // RequiresWidening check in getWidenedType().
                     let shape = self.interner.object_shape(shape_id);
                     if shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
-                        widening::widen_type(self.interner, resolved)
+                        widening::widen_type_for_inference(self.interner, resolved)
                     } else {
                         resolved
                     }

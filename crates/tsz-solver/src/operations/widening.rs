@@ -32,7 +32,7 @@ use crate::types::{TypeData, TypeId};
 pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true)
+    widen_type_cached(db, type_id, &mut cache, true, true)
 }
 
 /// Widen for diagnostic display: like `widen_type` but preserves boolean
@@ -41,7 +41,21 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false)
+    widen_type_cached(db, type_id, &mut cache, false, true)
+}
+
+/// Widen type for inference resolution: like `widen_type` but does NOT
+/// recurse into function/callable parameter or return types.
+///
+/// tsc's `getInferredType` deep-widens fresh object literals but preserves
+/// function types as-is. Widening function params in contravariant positions
+/// (e.g., `(x: 1 | 2) => void` → `(x: number) => void`) creates a resolved T
+/// that is structurally incompatible with the original arg type under strict
+/// function type checking, causing false TS2322.
+pub fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(db, type_id, &mut cache, true, false)
 }
 
 fn widen_type_cached(
@@ -49,6 +63,7 @@ fn widen_type_cached(
     type_id: TypeId,
     cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
     widen_boolean_intrinsics: bool,
+    widen_functions: bool,
 ) -> TypeId {
     // Fast path: most intrinsic types are never widened, but boolean
     // literal intrinsics (BOOLEAN_TRUE / BOOLEAN_FALSE) must widen to BOOLEAN.
@@ -77,7 +92,9 @@ fn widen_type_cached(
             let members = db.type_list(list_id);
             let widened_members: Vec<TypeId> = members
                 .iter()
-                .map(|&m| widen_type_cached(db, m, cache, widen_boolean_intrinsics))
+                .map(|&m| {
+                    widen_type_cached(db, m, cache, widen_boolean_intrinsics, widen_functions)
+                })
                 .collect();
             db.union(widened_members)
         }
@@ -93,14 +110,26 @@ fn widen_type_cached(
                 let widened_type = if prop.readonly {
                     prop.type_id
                 } else {
-                    widen_type_cached(db, prop.type_id, cache, widen_boolean_intrinsics)
+                    widen_type_cached(
+                        db,
+                        prop.type_id,
+                        cache,
+                        widen_boolean_intrinsics,
+                        widen_functions,
+                    )
                 };
 
                 // Write type follows read type logic
                 let widened_write_type = if prop.readonly {
                     prop.write_type
                 } else {
-                    widen_type_cached(db, prop.write_type, cache, widen_boolean_intrinsics)
+                    widen_type_cached(
+                        db,
+                        prop.write_type,
+                        cache,
+                        widen_boolean_intrinsics,
+                        widen_functions,
+                    )
                 };
 
                 if widened_type != prop.type_id || widened_write_type != prop.write_type {
@@ -128,7 +157,13 @@ fn widen_type_cached(
 
         // Arrays: recursively widen element type
         Some(TypeData::Array(element_type)) => {
-            let widened = widen_type_cached(db, element_type, cache, widen_boolean_intrinsics);
+            let widened = widen_type_cached(
+                db,
+                element_type,
+                cache,
+                widen_boolean_intrinsics,
+                widen_functions,
+            );
             if widened != element_type {
                 db.array(widened)
             } else {
@@ -142,7 +177,13 @@ fn widen_type_cached(
             let mut new_elements = Vec::with_capacity(elements.len());
             let mut changed = false;
             for elem in elements.iter() {
-                let widened = widen_type_cached(db, elem.type_id, cache, widen_boolean_intrinsics);
+                let widened = widen_type_cached(
+                    db,
+                    elem.type_id,
+                    cache,
+                    widen_boolean_intrinsics,
+                    widen_functions,
+                );
                 if widened != elem.type_id {
                     changed = true;
                 }
@@ -158,7 +199,7 @@ fn widen_type_cached(
         }
 
         // Functions: recursively widen parameter and return types for display contexts.
-        Some(TypeData::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) if widen_functions => {
             let shape = db.function_shape(shape_id);
             let mut widened_shape = shape.as_ref().clone();
             let mut changed = false;
@@ -167,8 +208,13 @@ fn widen_type_cached(
                 .iter()
                 .map(|param| {
                     let mut widened = param.clone();
-                    widened.type_id =
-                        widen_type_cached(db, param.type_id, cache, widen_boolean_intrinsics);
+                    widened.type_id = widen_type_cached(
+                        db,
+                        param.type_id,
+                        cache,
+                        widen_boolean_intrinsics,
+                        widen_functions,
+                    );
                     if widened.type_id != param.type_id {
                         changed = true;
                     }
@@ -176,7 +222,13 @@ fn widen_type_cached(
                 })
                 .collect();
             widened_shape.this_type = widened_shape.this_type.map(|this_ty| {
-                let widened = widen_type_cached(db, this_ty, cache, widen_boolean_intrinsics);
+                let widened = widen_type_cached(
+                    db,
+                    this_ty,
+                    cache,
+                    widen_boolean_intrinsics,
+                    widen_functions,
+                );
                 if widened != this_ty {
                     changed = true;
                 }
@@ -187,6 +239,7 @@ fn widen_type_cached(
                 widened_shape.return_type,
                 cache,
                 widen_boolean_intrinsics,
+                widen_functions,
             );
             if widened_return != widened_shape.return_type {
                 changed = true;
@@ -201,7 +254,7 @@ fn widen_type_cached(
         }
 
         // Callable objects: recursively widen all signature parameter/return types.
-        Some(TypeData::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) if widen_functions => {
             let shape = db.callable_shape(shape_id);
             let mut widened_shape = shape.as_ref().clone();
             let mut changed = false;
@@ -220,6 +273,7 @@ fn widen_type_cached(
                                 param.type_id,
                                 cache,
                                 widen_boolean_intrinsics,
+                                widen_functions,
                             );
                             if widened.type_id != param.type_id {
                                 changed = true;
@@ -228,8 +282,13 @@ fn widen_type_cached(
                         })
                         .collect();
                     widened_sig.this_type = widened_sig.this_type.map(|this_ty| {
-                        let widened =
-                            widen_type_cached(db, this_ty, cache, widen_boolean_intrinsics);
+                        let widened = widen_type_cached(
+                            db,
+                            this_ty,
+                            cache,
+                            widen_boolean_intrinsics,
+                            widen_functions,
+                        );
                         if widened != this_ty {
                             changed = true;
                         }
@@ -240,6 +299,7 @@ fn widen_type_cached(
                         widened_sig.return_type,
                         cache,
                         widen_boolean_intrinsics,
+                        widen_functions,
                     );
                     if widened_return != widened_sig.return_type {
                         changed = true;
@@ -256,13 +316,11 @@ fn widen_type_cached(
             }
         }
 
-        // All other types are not widened:
-        // - Primitives (already widened)
-        // - Type parameters (preserve identity)
-        // - Refs/Lazy (preserve what they resolve to)
-        // - Intrinsics (already widened)
-        // - Enums (nominal identity)
-        // - Applications (Array<T>, Promise<T>, etc.)
+        // All other types (including Function/Callable when widen_functions is false)
+        // are returned as-is. When widen_functions is false, tsc's getInferredType
+        // does NOT recurse into function parameter types during deep-widening.
+        // Widening function params changes contravariant positions
+        // (e.g., `(x: 1 | 2) => void` → `(x: number) => void`), causing false TS2322.
         _ => type_id,
     };
 
