@@ -116,6 +116,20 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
 
+        // Pre-scan: narrow union contextual type via discriminant properties.
+        // When the contextual type is a union (e.g. `A | B`) and the object literal
+        // has literal-valued properties that discriminate the union, narrow to the
+        // matching member(s) so other properties get precise contextual types.
+        if let Some(ctx_type) = self.ctx.contextual_type {
+            let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
+                ctx_type,
+                &obj.elements.nodes,
+            );
+            if narrowed != ctx_type {
+                self.ctx.contextual_type = Some(narrowed);
+            }
+        }
+
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
