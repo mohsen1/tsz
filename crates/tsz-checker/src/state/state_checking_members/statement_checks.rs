@@ -436,4 +436,54 @@ impl<'a> CheckerState<'a> {
             info.referenced = true;
         }
     }
+
+    /// TS1540: A 'namespace' declaration should not be declared using the 'module' keyword.
+    /// Emits on every module declaration that uses the `module` keyword (i.e., lacks the
+    /// NAMESPACE node flag) and has an identifier name (not a string literal).
+    pub(crate) fn check_module_keyword_deprecated(&mut self, module_idx: NodeIndex) {
+        use tsz_parser::parser::node_flags;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(module_idx) else {
+            return;
+        };
+
+        let has_namespace_flag = (node.flags as u32) & node_flags::NAMESPACE != 0;
+        let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0;
+        if has_namespace_flag || is_global_augmentation {
+            return;
+        }
+
+        let Some(module) = self.ctx.arena.get_module(node) else {
+            return;
+        };
+
+        // Only emit for identifier names, not string literal module names like `declare module "foo"`
+        // Also skip `declare global {}` which uses GlobalKeyword but name is "global"
+        if let Some(name_node) = self.ctx.arena.get(module.name) {
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                return;
+            }
+            // Skip `declare global` augmentations (name text is "global")
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == "global"
+            {
+                return;
+            }
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                module.name,
+                diagnostic_messages::A_NAMESPACE_DECLARATION_SHOULD_NOT_BE_DECLARED_USING_THE_MODULE_KEYWORD_PLEASE_U,
+                diagnostic_codes::A_NAMESPACE_DECLARATION_SHOULD_NOT_BE_DECLARED_USING_THE_MODULE_KEYWORD_PLEASE_U,
+            );
+        }
+
+        // For dotted module names (module A.B.C {}), the body is a nested MODULE_DECLARATION.
+        // Walk into it to emit TS1540 on each segment.
+        if let Some(body_node) = self.ctx.arena.get(module.body)
+            && body_node.kind == syntax_kind_ext::MODULE_DECLARATION
+        {
+            self.check_module_keyword_deprecated(module.body);
+        }
+    }
 }

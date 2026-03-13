@@ -1038,6 +1038,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let mut checker = crate::declarations::DeclarationChecker::new(&mut self.ctx);
             checker.check_module_declaration(module_idx);
 
+            // TS1540: 'module' keyword deprecated for namespace declarations
+            self.check_module_keyword_deprecated(module_idx);
+
             // Check module body and modifiers
             if let Some(module) = self.ctx.arena.get_module(node) {
                 // TS1212: Check module/namespace name for strict mode reserved words
