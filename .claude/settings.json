@@ -1,4 +1,8 @@
 {
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "attribution": {
     "commit": "",
     "pr": ""
@@ -59,10 +63,6 @@
       "Bash(sudo *)"
     ]
   },
-  "env": {
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
   "hooks": {
     "SessionStart": [
       {
@@ -109,6 +109,8 @@
   },
   "enabledPlugins": {
     "explanatory-output-style@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true
+    "superpowers@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true
   }
 }
