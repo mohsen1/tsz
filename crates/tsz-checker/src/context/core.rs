@@ -399,6 +399,18 @@ impl<'a> CheckerContext<'a> {
             self.emitted_diagnostics.remove(&(start, 2552));
         }
 
+        // TS2304 and TS2552 are mutually exclusive at the same position.
+        // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
+        // Multiple code paths can emit these for the same unresolved name.
+        if code == 2304 && self.emitted_diagnostics.contains(&(start, 2552)) {
+            return;
+        }
+        if code == 2552 {
+            self.diagnostics
+                .retain(|diag| !(diag.start == start && diag.code == 2304));
+            self.emitted_diagnostics.remove(&(start, 2304));
+        }
+
         // Check if we've already emitted this diagnostic
         let key = self.diagnostic_dedup_key_from_parts(start, code, &message);
         if self.emitted_diagnostics.contains(&key) {
@@ -441,6 +453,16 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         if diag.code == 2301 {
+            self.diagnostics
+                .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
+            self.emitted_diagnostics.remove(&(diag.start, 2304));
+        }
+        // TS2304 and TS2552 are mutually exclusive at the same position.
+        // TS2552 (with spelling suggestion) takes priority over TS2304 (without).
+        if diag.code == 2304 && self.emitted_diagnostics.contains(&(diag.start, 2552)) {
+            return;
+        }
+        if diag.code == 2552 {
             self.diagnostics
                 .retain(|existing| !(existing.start == diag.start && existing.code == 2304));
             self.emitted_diagnostics.remove(&(diag.start, 2304));

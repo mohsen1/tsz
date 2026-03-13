@@ -118,14 +118,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
 
             // TS2669/TS2670: Global scope augmentations must be directly nested in
-            // external modules or ambient module declarations, and should have `declare`
-            let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0
-                || self
-                    .ctx
-                    .arena
-                    .get(module.name)
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_some_and(|ident| ident.escaped_text == "global");
+            // external modules or ambient module declarations, and should have `declare`.
+            // Only check the GLOBAL_AUGMENTATION flag set by the parser — a plain
+            // `namespace global {}` in a non-module file is a regular namespace, not
+            // a global augmentation.
+            let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0;
             if is_global_augmentation {
                 let mut allowed_context = false;
                 if let Some(ext) = self.ctx.arena.get_extended(module_idx) {

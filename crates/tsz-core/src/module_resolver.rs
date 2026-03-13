@@ -2091,6 +2091,23 @@ impl ModuleResolver {
                 }
             }
 
+            // When rewriteRelativeImportExtensions is true, .ts/.tsx/.mts/.cts imports
+            // should resolve to their declaration file equivalents (.d.ts/.d.mts/.d.cts).
+            if self.rewrite_relative_import_extensions {
+                let decl_ext = match extension {
+                    "ts" | "tsx" => Some("d.ts"),
+                    "mts" => Some("d.mts"),
+                    "cts" => Some("d.cts"),
+                    _ => None,
+                };
+                if let Some(decl_ext) = decl_ext {
+                    let candidate = base.with_extension(decl_ext);
+                    if let Some(resolved) = try_file_with_suffixes(&candidate, suffixes) {
+                        return Some(resolved);
+                    }
+                }
+            }
+
             // Fall back to the original extension (e.g., literal .js file)
             if let Some(resolved) = try_file_with_suffixes_and_extension(&base, extension, suffixes)
             {
