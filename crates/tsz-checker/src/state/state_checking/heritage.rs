@@ -216,6 +216,12 @@ impl<'a> CheckerState<'a> {
                                     &[name.as_str()],
                                 );
                             }
+                            // Still resolve type arguments even when the type is not
+                            // generic. This ensures identifiers in type arguments are
+                            // marked as referenced for noUnusedLocals (TS6133).
+                            for &arg_idx in &type_args.nodes {
+                                self.get_type_of_node(arg_idx);
+                            }
                         } else {
                             if type_args.nodes.len() < required_count
                                 && let Some(name) = self.heritage_name_text(expr_idx)
