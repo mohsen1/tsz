@@ -537,8 +537,12 @@ impl<'a> CheckerState<'a> {
                     {
                         if *prev_heritage_idx != type_idx {
                             let optionality_differs = member_optional != *prev_optional;
+                            // Use identity checking (not assignability) — tsc uses
+                            // isTypeIdenticalTo for TS2320. Assignability is too loose
+                            // when `any` is involved (e.g., `f(x: any): any` vs `f<T>(x: T): T`
+                            // are mutually assignable but not identical).
                             let type_incompatible =
-                                !self.are_mutually_assignable(member_type, *prev_member_type);
+                                !self.are_var_decl_types_compatible(member_type, *prev_member_type);
                             if type_incompatible || optionality_differs {
                                 self.error_at_node(
                                         iface_data.name,
@@ -885,8 +889,10 @@ impl<'a> CheckerState<'a> {
                             )) = inherited_member_sources.get(&member_info.name)
                             {
                                 if *prev_heritage_idx != type_idx {
-                                    let type_incompatible = !self
-                                        .are_mutually_assignable(member_type, *prev_member_type);
+                                    let type_incompatible = !self.are_var_decl_types_compatible(
+                                        member_type,
+                                        *prev_member_type,
+                                    );
                                     if type_incompatible {
                                         self.error_at_node(
                                             iface_data.name,
