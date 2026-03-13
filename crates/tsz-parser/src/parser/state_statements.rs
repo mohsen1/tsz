@@ -348,10 +348,20 @@ impl ParserState {
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
                 previous_statement_was_block = false;
             } else {
-                previous_statement_was_block = self
-                    .arena
-                    .get(stmt)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK);
+                previous_statement_was_block = self.arena.get(stmt).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::BLOCK
+                        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || node.kind == syntax_kind_ext::IF_STATEMENT
+                        || node.kind == syntax_kind_ext::FOR_STATEMENT
+                        || node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                        || node.kind == syntax_kind_ext::WHILE_STATEMENT
+                        || node.kind == syntax_kind_ext::DO_STATEMENT
+                        || node.kind == syntax_kind_ext::SWITCH_STATEMENT
+                        || node.kind == syntax_kind_ext::TRY_STATEMENT
+                        || node.kind == syntax_kind_ext::WITH_STATEMENT
+                });
                 statements.push(stmt);
             }
 
@@ -460,10 +470,20 @@ impl ParserState {
                 self.resync_after_error_with_statement_starts(allow_statement_starts);
                 previous_statement_was_block = false;
             } else {
-                previous_statement_was_block = self
-                    .arena
-                    .get(stmt)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK);
+                previous_statement_was_block = self.arena.get(stmt).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::BLOCK
+                        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || node.kind == syntax_kind_ext::IF_STATEMENT
+                        || node.kind == syntax_kind_ext::FOR_STATEMENT
+                        || node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                        || node.kind == syntax_kind_ext::WHILE_STATEMENT
+                        || node.kind == syntax_kind_ext::DO_STATEMENT
+                        || node.kind == syntax_kind_ext::SWITCH_STATEMENT
+                        || node.kind == syntax_kind_ext::TRY_STATEMENT
+                        || node.kind == syntax_kind_ext::WITH_STATEMENT
+                });
                 statements.push(stmt);
             }
 
