@@ -1439,6 +1439,61 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns `true` when an identifier is inside a type annotation context
+    /// (e.g., as a child of `TypeReference`, `TupleType`, `FunctionType`, etc.).
+    ///
+    /// In multi-file mode the checker may dispatch type-position identifiers
+    /// through `get_type_of_identifier`.  This guard prevents false TS2693 for
+    /// type parameters and interfaces used inside type annotations.
+    pub(crate) fn is_identifier_in_type_position(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) if ext.parent.is_some() => ext,
+                _ => return false,
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                // Type nodes: identifier is in a type position
+                syntax_kind_ext::TYPE_REFERENCE
+                | syntax_kind_ext::TUPLE_TYPE
+                | syntax_kind_ext::ARRAY_TYPE
+                | syntax_kind_ext::UNION_TYPE
+                | syntax_kind_ext::INTERSECTION_TYPE
+                | syntax_kind_ext::FUNCTION_TYPE
+                | syntax_kind_ext::CONSTRUCTOR_TYPE
+                | syntax_kind_ext::TYPE_LITERAL
+                | syntax_kind_ext::MAPPED_TYPE
+                | syntax_kind_ext::INDEXED_ACCESS_TYPE
+                | syntax_kind_ext::CONDITIONAL_TYPE
+                | syntax_kind_ext::PARENTHESIZED_TYPE
+                | syntax_kind_ext::TYPE_PREDICATE
+                | syntax_kind_ext::TYPE_QUERY
+                | syntax_kind_ext::TYPE_PARAMETER
+                | syntax_kind_ext::PROPERTY_SIGNATURE
+                | syntax_kind_ext::METHOD_SIGNATURE
+                | syntax_kind_ext::INDEX_SIGNATURE
+                | syntax_kind_ext::CALL_SIGNATURE
+                | syntax_kind_ext::CONSTRUCT_SIGNATURE => return true,
+                // Expression/statement boundaries: stop walking
+                syntax_kind_ext::CALL_EXPRESSION
+                | syntax_kind_ext::NEW_EXPRESSION
+                | syntax_kind_ext::BINARY_EXPRESSION
+                | syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::RETURN_STATEMENT
+                | syntax_kind_ext::EXPRESSION_STATEMENT
+                | syntax_kind_ext::SOURCE_FILE => return false,
+                _ => {
+                    current = parent_idx;
+                }
+            }
+        }
+        false
+    }
+
     /// Returns `true` when the identifier is being evaluated inside a computed
     /// property name (`[expr]`) that belongs to a type-only or ambient context
     /// (interface member, type literal member, abstract member, `declare`
