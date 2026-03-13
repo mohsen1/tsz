@@ -5,6 +5,35 @@
 
 use crate::context::CheckerContext;
 
+impl<'a> CheckerContext<'a> {
+    /// Check if a lib interface has a heritage-merged version in the cache.
+    ///
+    /// During lib resolution, interface bodies are registered in `symbol_types`/`type_env`
+    /// before heritage merging completes. Later, `lib_type_resolution_cache` stores the
+    /// final heritage-merged body. This helper detects when the cached body differs from
+    /// the current candidate and returns the upgraded version.
+    fn lib_heritage_cache_override(
+        &self,
+        sym_id: Option<tsz_binder::SymbolId>,
+        current_ty: tsz_solver::TypeId,
+    ) -> Option<tsz_solver::TypeId> {
+        let sym_id = sym_id?;
+        let symbol = self.binder.symbols.get(sym_id).or_else(|| {
+            self.lib_contexts
+                .iter()
+                .find_map(|lib| lib.binder.symbols.get(sym_id))
+        })?;
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+        let cached_ty = self
+            .lib_type_resolution_cache
+            .get(symbol.escaped_name.as_str())?
+            .as_ref()?;
+        (*cached_ty != current_ty).then_some(*cached_ty)
+    }
+}
+
 /// Implement `TypeResolver` for `CheckerContext` to support Lazy type resolution.
 ///
 /// This enables `ApplicationEvaluator` to resolve `TypeData::Lazy(DefId)` references
@@ -124,6 +153,14 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 if tsz_solver::visitor::lazy_def_id(self.types, ty) == Some(def_id) {
                     // Defer this self-wrapper until after the type environment fallback.
                 } else {
+                    if let Some(override_ty) = self.lib_heritage_cache_override(Some(sym_id), ty) {
+                        tracing::trace!(
+                            def_id = def_id.0,
+                            type_id = override_ty.0,
+                            "resolve_lazy: lib heritage override (symbol_types path)"
+                        );
+                        return Some(override_ty);
+                    }
                     tracing::trace!(
                         def_id = def_id.0,
                         sym_id = sym_id.0,
@@ -145,6 +182,15 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if let Ok(env) = self.type_env.try_borrow()
             && let Some(body) = env.get_def(def_id)
         {
+            // For lib interfaces, check if the heritage-merged version is available.
+            if let Some(override_ty) = self.lib_heritage_cache_override(sym_id, body) {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    type_id = override_ty.0,
+                    "resolve_lazy: lib heritage override (type_env path)"
+                );
+                return Some(override_ty);
+            }
             tracing::trace!(
                 def_id = def_id.0,
                 type_id = body.0,

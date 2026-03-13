@@ -56,7 +56,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<DefId> {
         let source_def = self.application_base_def_id(source_base)?;
         let target_def = self.application_base_def_id(target_base)?;
-        (source_def == target_def).then_some(source_def)
+        self.resolver
+            .defs_are_equivalent(source_def, target_def)
+            .then_some(source_def)
     }
 
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
@@ -371,10 +373,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         if let Some(def_pair) = app_def_pair {
+            let visiting = self.def_guard.is_visiting(&def_pair);
+            let visiting_rev = self.def_guard.is_visiting(&(def_pair.1, def_pair.0));
             // Check for cycles before expansion
-            if self.def_guard.is_visiting(&def_pair)
-                || self.def_guard.is_visiting(&(def_pair.1, def_pair.0))
-            {
+            if visiting || visiting_rev {
                 return if self
                     .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
                 {
@@ -1053,12 +1055,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Create substitution and instantiate
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
+
         let mut instantiated = instantiate_type(self.interner, effective_body, &substitution);
         if crate::contains_this_type(self.interner, instantiated) {
             instantiated = crate::substitute_this_type(self.interner, instantiated, app_type);
         }
 
-        // Return the instantiated type for recursive checking
         Some(instantiated)
     }
 

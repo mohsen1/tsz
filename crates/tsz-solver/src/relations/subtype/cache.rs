@@ -263,7 +263,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             let s_app = self.interner.type_application(s_app_id);
             let t_app = self.interner.type_application(t_app_id);
+            // Check direct base equality first, then DefId/SymbolId-based aliasing
             s_app.base == t_app.base
+                || {
+                    let s_def = lazy_def_id(self.interner, s_app.base);
+                    let t_def = lazy_def_id(self.interner, t_app.base);
+                    matches!((s_def, t_def), (Some(sd), Some(td)) if self.resolver.defs_are_equivalent(sd, td))
+                }
         } else {
             false
         };
@@ -293,12 +299,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let t_sym = self.resolver.def_to_symbol_id(t_def);
             if let (Some(s_sid), Some(t_sid)) = (s_sym, t_sym) {
                 // Check if any visiting DefId pair maps to the same SymbolId pair
-                if self.def_guard.is_visiting_any(|&(visiting_s, visiting_t)| {
-                    visiting_s != s_def
-                        && visiting_t != t_def
-                        && self.resolver.def_to_symbol_id(visiting_s) == Some(s_sid)
-                        && self.resolver.def_to_symbol_id(visiting_t) == Some(t_sid)
-                }) {
+                let found_cycle = self.def_guard.is_visiting_any(|&(visiting_s, visiting_t)| {
+                    let different_pair = visiting_s != s_def || visiting_t != t_def;
+                    if !different_pair {
+                        return false;
+                    }
+                    // Forward match: visiting (A, B) matches new (A', B') at SymbolId level
+                    let s_sym_match = self.resolver.def_to_symbol_id(visiting_s) == Some(s_sid);
+                    let t_sym_match = self.resolver.def_to_symbol_id(visiting_t) == Some(t_sid);
+                    if s_sym_match && t_sym_match {
+                        return true;
+                    }
+                    // Reversed match: visiting (A, B) matches new (B', A') at SymbolId level.
+                    // This catches bivariant cross-recursion with aliased DefIds, e.g.,
+                    // when checking IteratorObject<...> <: Generator<...> while
+                    // Generator<...> <: IteratorObject<...> is being visited with
+                    // different DefIds for the same SymbolIds.
+                    let s_rev_match = self.resolver.def_to_symbol_id(visiting_s) == Some(t_sid);
+                    let t_rev_match = self.resolver.def_to_symbol_id(visiting_t) == Some(s_sid);
+                    s_rev_match && t_rev_match
+                });
+                if found_cycle {
                     self.guard.leave(pair);
                     leave_global!();
                     return self.cycle_result();
