@@ -97,6 +97,11 @@ pub struct LabelInfo {
     /// The function depth when this label was defined.
     /// Used to detect if a jump crosses a function boundary.
     pub function_depth: u32,
+    /// Whether the label was targeted by a break/continue statement.
+    /// Used for TS7028 (unused label) detection.
+    pub referenced: bool,
+    /// The AST node index of the label identifier (for error reporting).
+    pub label_node: tsz_parser::parser::NodeIndex,
 }
 
 /// Persistent cache for type checking results across LSP queries.

@@ -110,6 +110,7 @@ impl TsCompilerOptions {
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,
+            allow_unused_labels: None,
             no_property_access_from_index_signature: false,
             sound_mode: self.sound_mode.unwrap_or(false),
             experimental_decorators: false,

@@ -357,6 +357,8 @@ struct CheckOptions {
     #[serde(default)]
     allow_unreachable_code: Option<bool>,
     #[serde(default)]
+    allow_unused_labels: Option<bool>,
+    #[serde(default)]
     no_property_access_from_index_signature: bool,
     #[serde(default)]
     es_module_interop: bool,

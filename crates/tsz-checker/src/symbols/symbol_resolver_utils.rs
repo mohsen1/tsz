@@ -813,6 +813,9 @@ impl<'a> CheckerState<'a> {
         opts.allow_unreachable_code = Self::parse_test_option_bool(text, "@allowunreachablecode")
             .map(Some)
             .unwrap_or(defaults.allow_unreachable_code);
+        opts.allow_unused_labels = Self::parse_test_option_bool(text, "@allowunusedlabels")
+            .map(Some)
+            .unwrap_or(defaults.allow_unused_labels);
     }
 
     // =========================================================================

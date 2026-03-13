@@ -2052,6 +2052,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(val) = args.allow_unreachable_code {
         options.checker.allow_unreachable_code = Some(val);
     }
+    if let Some(val) = args.allow_unused_labels {
+        options.checker.allow_unused_labels = Some(val);
+    }
     if args.sound {
         options.checker.sound_mode = true;
     }
