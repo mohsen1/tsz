@@ -33,12 +33,24 @@ impl ParserState {
             let dot_dot_dot = self.parse_optional(SyntaxKind::DotDotDotToken);
 
             if dot_dot_dot {
-                // Rest element: just name
-                let name = self.parse_binding_element_name();
-                if name.is_none() {
+                // Rest element: parse name (may be property_name if followed by `:`)
+                let first_name = self.parse_binding_element_name();
+                if first_name.is_none() {
                     // Emit TS1109 for missing rest binding element: {...missing}
                     self.error_expression_expected();
                 }
+
+                // Handle `...propertyName: name` — invalid but parsed for error
+                // recovery. The checker will emit TS2566.
+                let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
+                    let actual_name = self.parse_binding_element_name();
+                    if actual_name.is_none() {
+                        self.error_expression_expected();
+                    }
+                    (first_name, actual_name)
+                } else {
+                    (NodeIndex::NONE, first_name)
+                };
 
                 // Check for illegal initializer: {...x = value} - emit TS1186
                 if self.is_token(SyntaxKind::EqualsToken) {
@@ -58,7 +70,7 @@ impl ParserState {
                     elem_end,
                     crate::parser::node::BindingElementData {
                         dot_dot_dot_token: true,
-                        property_name: NodeIndex::NONE,
+                        property_name,
                         name,
                         initializer: NodeIndex::NONE,
                     },

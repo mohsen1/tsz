@@ -761,28 +761,39 @@ impl<'a> CheckerState<'a> {
             });
 
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-            if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                && i < elements_len - 1
-                && let Some(element_node) = self.ctx.arena.get(element_idx)
+            if let Some(element_node) = self.ctx.arena.get(element_idx)
                 && let Some(element_data) = self.ctx.arena.get_binding_element(element_node)
                 && element_data.dot_dot_dot_token
             {
                 use tsz_common::diagnostics::diagnostic_codes;
-                let diag_node = if is_declarative_pattern {
-                    self.ctx
-                        .arena
-                        .get(element_data.name)
-                        .and_then(|node| self.ctx.arena.get_identifier(node))
-                        .and(Some(element_data.name))
-                        .unwrap_or(element_idx)
-                } else {
-                    element_idx
-                };
-                self.error_at_node_msg(
-                    diag_node,
-                    diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
-                    &[],
-                );
+
+                // TS2566: A rest element cannot have a property name.
+                if element_data.property_name.is_some() {
+                    self.error_at_node_msg(
+                        element_data.name,
+                        diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_A_PROPERTY_NAME,
+                        &[],
+                    );
+                }
+
+                // TS2462: A rest element must be last in a destructuring pattern.
+                if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN && i < elements_len - 1 {
+                    let diag_node = if is_declarative_pattern {
+                        self.ctx
+                            .arena
+                            .get(element_data.name)
+                            .and_then(|node| self.ctx.arena.get_identifier(node))
+                            .and(Some(element_data.name))
+                            .unwrap_or(element_idx)
+                    } else {
+                        element_idx
+                    };
+                    self.error_at_node_msg(
+                        diag_node,
+                        diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
+                        &[],
+                    );
+                }
             }
 
             self.check_binding_element(
