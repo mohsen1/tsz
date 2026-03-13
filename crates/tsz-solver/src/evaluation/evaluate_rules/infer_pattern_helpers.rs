@@ -190,6 +190,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
+                Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Function)) => {
+                    // Function intrinsic is structurally (...args: any[]) => any
+                    let function_params = vec![crate::types::ParamInfo {
+                        name: None,
+                        type_id: TypeId::ANY,
+                        optional: false,
+                        rest: true,
+                    }];
+                    match_params_and_return(source, &function_params, TypeId::ANY, bindings)
+                }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     match_params_and_return(
@@ -267,6 +277,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     bindings.extend(combined);
                     true
+                }
+                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
+                    // Check if the Object is structurally the Function interface
+                    // (lowered without call signatures due to cross-arena splitting)
+                    if crate::type_queries::is_function_interface_structural(
+                        self.interner(),
+                        source,
+                    ) {
+                        let function_params = vec![crate::types::ParamInfo {
+                            name: None,
+                            type_id: TypeId::ANY,
+                            optional: false,
+                            rest: true,
+                        }];
+                        match_params_and_return(source, &function_params, TypeId::ANY, bindings)
+                    } else {
+                        false
+                    }
                 }
                 _ => false,
             };
@@ -351,6 +379,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 };
 
                 return match self.interner().lookup(source) {
+                    Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Function)) => {
+                        // Function intrinsic is structurally (...args: any[]) => any
+                        let function_params = vec![crate::types::ParamInfo {
+                            name: None,
+                            type_id: TypeId::ANY,
+                            optional: false,
+                            rest: true,
+                        }];
+                        match_params_tuple(&function_params, &[], bindings)
+                    }
                     Some(TypeData::Function(source_fn_id)) => {
                         let source_fn = self.interner().function_shape(source_fn_id);
                         match_params_tuple(&source_fn.params, &source_fn.type_params, bindings)
@@ -407,6 +445,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         bindings.extend(combined);
                         true
+                    }
+                    Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
+                        if crate::type_queries::is_function_interface_structural(
+                            self.interner(),
+                            source,
+                        ) {
+                            let function_params = vec![crate::types::ParamInfo {
+                                name: None,
+                                type_id: TypeId::ANY,
+                                optional: false,
+                                rest: true,
+                            }];
+                            match_params_tuple(&function_params, &[], bindings)
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 };
