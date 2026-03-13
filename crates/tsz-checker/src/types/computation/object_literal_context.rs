@@ -888,6 +888,134 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Narrow a union contextual type by inspecting discriminant properties in the
+    /// object literal.  When the object literal has properties with literal values
+    /// (e.g. `kind: "a"`) that match only a subset of the union members, we narrow
+    /// the contextual type so that other properties receive precise contextual types
+    /// from the matching member(s) rather than a union of all members' property types.
+    ///
+    /// This is how tsc provides precise contextual typing for discriminated union
+    /// object literals:
+    /// ```ts
+    /// type A = { kind: "a"; onClick: (e: string) => void };
+    /// type B = { kind: "b"; onClick: (e: number) => void };
+    /// const x: A | B = { kind: "a", onClick: (e) => e.length }; // e: string
+    /// ```
+    pub(crate) fn narrow_contextual_union_via_object_literal_discriminants(
+        &mut self,
+        ctx_type: TypeId,
+        elements: &[NodeIndex],
+    ) -> TypeId {
+        // Get union members; bail if not a union.
+        let resolved = self.resolve_type_for_property_access(ctx_type);
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, resolved)
+        else {
+            return ctx_type;
+        };
+
+        if members.len() < 2 {
+            return ctx_type;
+        }
+
+        // Pre-scan: collect discriminant info from the object literal.
+        // - `unit_discriminants`: properties with unit-type literal values (e.g. `kind: "a"`)
+        // - `present_property_names`: all explicitly named properties (for never-elimination)
+        let mut unit_discriminants: Vec<(String, TypeId)> = Vec::new();
+        let mut present_property_names: Vec<String> = Vec::new();
+        for &elem_idx in elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                let Some(name) = self.get_property_name_resolved(prop.name) else {
+                    continue;
+                };
+                present_property_names.push(name.clone());
+                // Get the literal type of the initializer without full type computation.
+                if let Some(lit_type) = self.literal_type_from_initializer(prop.initializer)
+                    && tsz_solver::type_queries::is_unit_type(self.ctx.types, lit_type)
+                {
+                    unit_discriminants.push((name, lit_type));
+                }
+            } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                && let Some(name) = self.get_property_name_resolved(shorthand.name)
+            {
+                present_property_names.push(name);
+            }
+        }
+
+        if unit_discriminants.is_empty() && present_property_names.is_empty() {
+            return ctx_type;
+        }
+
+        // For each union member, check if all discriminant values are compatible
+        // AND no present property maps to `never` in that member.
+        let mut matching_members: Vec<TypeId> = Vec::new();
+        for &member in &members {
+            let resolved_member = self.resolve_type_for_property_access(member);
+
+            // Check unit-type discriminants: literal must be subtype of member's prop type.
+            let unit_match = unit_discriminants.iter().all(|(prop_name, lit_type)| {
+                let member_prop_type = self
+                    .ctx
+                    .types
+                    .contextual_property_type(resolved_member, prop_name)
+                    .or_else(|| self.ctx.types.contextual_property_type(member, prop_name));
+                match member_prop_type {
+                    Some(target_type) => {
+                        *lit_type == target_type || self.is_subtype_of(*lit_type, target_type)
+                    }
+                    // If the member doesn't have this property, it could still match
+                    // (the property might be optional or absent).
+                    None => true,
+                }
+            });
+
+            // Check present properties: eliminate members where a present property
+            // has type `never` (the member requires the property to be absent).
+            // Note: `prop?: never` resolves to `undefined` via contextual typing,
+            // so we check the raw property type from the object shape instead.
+            let never_match = present_property_names.iter().all(|prop_name| {
+                let prop_name_atom = self.ctx.types.intern_string(prop_name);
+                // Look up the raw property type from the member's object shape.
+                let raw_prop_type =
+                    tsz_solver::visitor::object_shape_id(self.ctx.types, resolved_member).and_then(
+                        |shape_id| {
+                            let shape = self.ctx.types.object_shape(shape_id);
+                            shape
+                                .properties
+                                .iter()
+                                .find(|p| p.name == prop_name_atom)
+                                .map(|p| p.type_id)
+                        },
+                    );
+                match raw_prop_type {
+                    Some(type_id) => type_id != TypeId::NEVER,
+                    // Property not in object shape; don't eliminate.
+                    None => true,
+                }
+            });
+
+            if unit_match && never_match {
+                matching_members.push(member);
+            }
+        }
+
+        // Only narrow if we eliminated at least one member.
+        if matching_members.is_empty() || matching_members.len() == members.len() {
+            return ctx_type;
+        }
+
+        if matching_members.len() == 1 {
+            matching_members[0]
+        } else {
+            self.ctx
+                .types
+                .factory()
+                .union_preserve_members(matching_members)
+        }
+    }
+
     fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
         if property_type == TypeId::ERROR
             || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, property_type)
