@@ -235,7 +235,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // TS1235: A namespace declaration is only allowed at the top level of a namespace or module.
             // This applies to non-string-named module/namespace declarations that are inside labeled statements
             // or other non-module constructs.
-            if !is_string_named {
+            // Suppressed when file has parse errors (tsc's grammarErrorOnNode checks hasParseDiagnostics).
+            if !is_string_named && !self.ctx.has_syntax_parse_errors {
                 // Check if the parent is a valid context
                 // Valid parents:
                 // - SourceFile (top-level namespace)
