@@ -1510,8 +1510,12 @@ impl<'a> CheckerState<'a> {
             let resolved_base_type = self.resolve_type_query_type(base_type);
 
             // Check type compatibility through centralized mismatch policy.
-            // Methods use bivariant relation checks; properties use regular assignability.
-            let should_report_mismatch = if is_method {
+            // Methods always use bivariant relation checks.
+            // Static properties also use bivariant checks — tsc checks the static
+            // side structurally (typeof Derived vs typeof Base) with the normal
+            // assignability relation, which without strictFunctionTypes is bivariant.
+            // Only instance property overrides use strict assignability (TS2416).
+            let should_report_mismatch = if is_method || is_static {
                 should_report_member_type_mismatch_bivariant(
                     self,
                     resolved_member_type,
