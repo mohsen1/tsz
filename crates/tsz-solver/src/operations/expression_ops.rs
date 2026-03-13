@@ -356,37 +356,49 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)
     //              [Dog, Animal] -> Animal (Animal is in the set and is a supertype)
     //
-    // OPTIMIZATION: Create ONE SubtypeChecker and reuse it for all comparisons.
-    // Previously, check_subtype() created a new SubtypeChecker (with 3 FxHashSets) for
-    // every single comparison. With N candidates and N types, that's O(N²) allocations.
-    // For enumLiteralsSubtypeReduction.ts (512 return types), this was 262,144 allocations!
+    // OPTIMIZATION: Tournament-style O(N) reduction instead of O(N²) brute-force.
+    // Pass 1 (O(N)): Find the "tournament winner" — iterate through candidates,
+    //   replacing `best` whenever we find a candidate that is a supertype of it.
+    // Pass 2 (O(N)): Verify the winner is truly a supertype of ALL types.
+    // Total: O(2N) instead of O(N²). For 50 candidates: 100 checks vs 2,500.
     //
     // We handle the two cases (with/without resolver) separately because SubtypeChecker<R>
     // and SubtypeChecker<NoopResolver> are different types.
     if let Some(res) = resolver {
         let mut checker = SubtypeChecker::with_resolver(interner, res);
-        for &candidate in &widened {
-            let is_supertype = widened.iter().all(|&ty| {
-                // CRITICAL: Reset the recursion guard counters for each top-level check.
-                // Otherwise, iterations accumulate across the loop and eventually
-                // cause spurious DepthExceeded failures (treated as false).
-                checker.guard.reset();
-                checker.is_subtype_of(ty, candidate)
-            });
-            if is_supertype {
-                return candidate;
+        // Pass 1: Tournament to find potential best candidate
+        let mut best = widened[0];
+        for &candidate in &widened[1..] {
+            checker.guard.reset();
+            if checker.is_subtype_of(best, candidate) {
+                best = candidate;
             }
+        }
+        // Pass 2: Verify the winner is supertype of all
+        let is_supertype = widened.iter().all(|&ty| {
+            checker.guard.reset();
+            checker.is_subtype_of(ty, best)
+        });
+        if is_supertype {
+            return best;
         }
     } else {
         let mut checker = SubtypeChecker::new(interner);
-        for &candidate in &widened {
-            let is_supertype = widened.iter().all(|&ty| {
-                checker.guard.reset();
-                checker.is_subtype_of(ty, candidate)
-            });
-            if is_supertype {
-                return candidate;
+        // Pass 1: Tournament to find potential best candidate
+        let mut best = widened[0];
+        for &candidate in &widened[1..] {
+            checker.guard.reset();
+            if checker.is_subtype_of(best, candidate) {
+                best = candidate;
             }
+        }
+        // Pass 2: Verify the winner is supertype of all
+        let is_supertype = widened.iter().all(|&ty| {
+            checker.guard.reset();
+            checker.is_subtype_of(ty, best)
+        });
+        if is_supertype {
+            return best;
         }
     }
 
