@@ -483,10 +483,10 @@ impl<'a> NarrowingContext<'a> {
             // yet. Resolving them and re-interning triggers distribution:
             // `(A | B) & C` → `(A & C) | (B & C)`, which enables discriminant narrowing.
             if let Some(TypeData::Intersection(members_id)) = self.db.lookup(type_id) {
-                let members = self.db.type_list(members_id).to_vec();
+                let members = self.db.type_list(members_id);
                 let mut changed = false;
                 let mut resolved_members = Vec::with_capacity(members.len());
-                for &m in &members {
+                for &m in members.iter() {
                     let r = self.resolve_type(m);
                     if r != m {
                         changed = true;
