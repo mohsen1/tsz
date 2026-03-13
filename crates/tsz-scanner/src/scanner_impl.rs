@@ -1362,11 +1362,10 @@ impl ScannerState {
             return false;
         }
 
-        let starts_identifier = if self.char_code_unchecked(self.pos) == CharacterCodes::BACKSLASH {
-            self.peek_unicode_escape().is_some_and(is_identifier_start)
-        } else {
-            is_identifier_start(self.char_code_unchecked(self.pos))
-        };
+        // Only check the raw character code, not unicode escapes.
+        // TSC uses `codePointAt(text, pos)` here which reads the literal char,
+        // so `\u005F` (backslash) is NOT treated as an identifier start.
+        let starts_identifier = is_identifier_start(self.char_code_unchecked(self.pos));
 
         if !starts_identifier {
             return false;
