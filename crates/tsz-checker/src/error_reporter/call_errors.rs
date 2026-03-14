@@ -910,18 +910,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Get the type of the property value in the object literal
+            // Get the type of the property value in the object literal.
+            // Use the cached (contextually-typed) type for the assignability check.
+            // This preserves literal types that were narrowed by contextual typing
+            // (e.g., `value: "hello"` in a mapped type context stays as `"hello"`,
+            // not widened to `string`).
             let is_function_value = self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
                 matches!(
                     node.kind,
                     syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
                 )
             });
-            let source_prop_type = if is_function_value {
-                self.get_type_of_node(prop_value_idx)
-            } else {
-                self.elaboration_source_expression_type(prop_value_idx)
-            };
+            let source_prop_type = self.get_type_of_node(prop_value_idx);
 
             if is_function_value
                 && target_prop_type != target_prop_type_for_diagnostic
