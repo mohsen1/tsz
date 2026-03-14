@@ -1712,7 +1712,15 @@ impl<'a> CheckerState<'a> {
             (arg_types.clone(), false)
         };
         let call_resolution_contextual_type = if is_generic_call {
-            None
+            // For generic calls with no arguments, pass the contextual type so the
+            // solver can infer type parameters from the contextual return type.
+            // Example: `declare function from<T>(): T[]; const x: string[] = from();`
+            // Here T should be inferred as `string` from the contextual return type.
+            if args.is_empty() {
+                self.ctx.contextual_type
+            } else {
+                None
+            }
         } else {
             self.ctx.contextual_type
         };
