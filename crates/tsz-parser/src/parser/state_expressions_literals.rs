@@ -1800,6 +1800,14 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
             self.make_node_list(vec![])
+        } else if self.is_token(SyntaxKind::CommaToken) {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            );
+            self.next_token();
+            self.make_node_list(vec![])
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
