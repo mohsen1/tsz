@@ -128,3 +128,4 @@ editors/
 # Website build output
 crates/tsz-website/dist/
 crates/tsz-website/data/
+.worktrees
