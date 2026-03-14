@@ -691,4 +691,171 @@ impl<'a> CheckerState<'a> {
             Some(object_type)
         }
     }
+
+    /// Enhance a partial Round 1 object type by including sensitive lambda properties
+    /// whose contextual parameter types from the generic function shape are concrete
+    /// (i.e., they don't depend on the type parameters being inferred).
+    ///
+    /// This enables "intra-expression inference" for patterns like:
+    /// ```ts
+    /// declare function callIt<T>(obj: { produce: (n: number) => T, consume: (x: T) => void }): void;
+    /// callIt({ produce: _a => 0, consume: n => n.toFixed() });
+    /// ```
+    /// Here `produce`'s param type `(n: number)` doesn't depend on `T`, so we can
+    /// safely type `_a` as `number` and use the return type `0` to infer `T = number`.
+    pub(crate) fn extract_inference_contributing_object_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        target_param_type: TypeId,
+        type_param_names: &[tsz_common::Atom],
+    ) -> Option<TypeId> {
+        use super::complex::is_contextually_sensitive;
+
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let obj = self.ctx.arena.get_literal_expr(node)?;
+
+        // Evaluate the target parameter type to get its object shape
+        let target_type = self.evaluate_type_with_env(target_param_type);
+        let target_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, target_type)?;
+
+        // Build a map of target property name -> type
+        let target_props: rustc_hash::FxHashMap<tsz_common::Atom, TypeId> = target_shape
+            .properties
+            .iter()
+            .map(|p| (p.name, p.type_id))
+            .collect();
+
+        let mut properties = Vec::new();
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                let Some(name) = self.get_property_name(prop.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+
+                if !is_contextually_sensitive(self, prop.initializer) {
+                    // Non-sensitive: compute type without context (already handled by
+                    // extract_non_sensitive_object_type, but include here for completeness
+                    // of the partial type).
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    let value_type = self.get_type_of_node(prop.initializer);
+                    self.ctx.contextual_type = prev_context;
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                    continue;
+                }
+
+                // Sensitive property: check if the contextual function type's params are concrete
+                let Some(&target_prop_type) = target_props.get(&name_atom) else {
+                    continue;
+                };
+
+                // Get the function shape for the target property
+                let target_fn_shape =
+                    tsz_solver::type_queries::get_function_shape(self.ctx.types, target_prop_type);
+                let Some(target_fn) = target_fn_shape else {
+                    continue;
+                };
+
+                // Check if ALL function parameter types are concrete (don't contain the
+                // type parameters being inferred). Return type MAY contain them - that's
+                // what we want to infer FROM.
+                let params_are_concrete = target_fn.params.iter().all(|param| {
+                    !self.type_contains_any_type_param(param.type_id, type_param_names)
+                });
+
+                if !params_are_concrete {
+                    continue;
+                }
+
+                // The contextual param types are concrete, so we can safely type this
+                // lambda with those contextual types and extract its return type.
+                // Use the target function type as contextual type for the lambda.
+                let prev_context = self.ctx.contextual_type;
+                self.ctx.contextual_type = Some(target_prop_type);
+
+                // Suppress TS7006 by temporarily marking that we're in a contextual
+                // inference context (the params WILL get contextual types).
+                let diag_len = self.ctx.diagnostics.len();
+                let value_type = self.get_type_of_node(prop.initializer);
+                // Remove any diagnostics emitted during this speculative evaluation
+                self.ctx.diagnostics.truncate(diag_len);
+                self.ctx.contextual_type = prev_context;
+
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+            // Shorthand properties are never contextually sensitive
+            else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                && let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                && let Some(name_node) = self.ctx.arena.get(shorthand.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.clone();
+                let value_type = self.get_type_of_node(shorthand.name);
+                let name_atom = self.ctx.types.intern_string(&name);
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+            // Method declarations: check similarly to lambda properties
+            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method) = self.ctx.arena.get_method_decl(elem_node)
+            {
+                let Some(name) = self.property_name_for_error(method.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+
+                let Some(&target_prop_type) = target_props.get(&name_atom) else {
+                    continue;
+                };
+
+                let target_fn_shape =
+                    tsz_solver::type_queries::get_function_shape(self.ctx.types, target_prop_type);
+                let Some(target_fn) = target_fn_shape else {
+                    continue;
+                };
+
+                let params_are_concrete = target_fn.params.iter().all(|param| {
+                    !self.type_contains_any_type_param(param.type_id, type_param_names)
+                });
+
+                if !params_are_concrete {
+                    continue;
+                }
+
+                let prev_context = self.ctx.contextual_type;
+                self.ctx.contextual_type = Some(target_prop_type);
+                let diag_len = self.ctx.diagnostics.len();
+                let value_type = self.get_type_of_node(elem_idx);
+                self.ctx.diagnostics.truncate(diag_len);
+                self.ctx.contextual_type = prev_context;
+
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+        }
+
+        if properties.is_empty() {
+            return None;
+        }
+
+        Some(self.ctx.types.factory().object_fresh(properties))
+    }
+
+    /// Check if a type contains any of the specified type parameter names.
+    fn type_contains_any_type_param(
+        &self,
+        type_id: TypeId,
+        type_param_names: &[tsz_common::Atom],
+    ) -> bool {
+        type_param_names
+            .iter()
+            .any(|&name| tsz_solver::contains_type_parameter_named(self.ctx.types, type_id, name))
+    }
 }
