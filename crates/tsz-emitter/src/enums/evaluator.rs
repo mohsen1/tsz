@@ -325,6 +325,21 @@ impl<'a> EnumEvaluator<'a> {
                 }
             }
 
+            // Element access - Enum["Member"]
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node)
+                    && let Some(obj_node) = self.arena.get(access.expression)
+                    && obj_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(index_node) = self.arena.get(access.name_or_argument)
+                    && index_node.kind == SyntaxKind::StringLiteral as u16
+                {
+                    // Reuse evaluate_property_access — it now handles string literal keys
+                    self.evaluate_property_access(access.expression, access.name_or_argument)
+                } else {
+                    EnumValue::Computed
+                }
+            }
+
             // Template literal (no substitutions)
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
@@ -563,6 +578,10 @@ impl<'a> EnumEvaluator<'a> {
 
         let prop_name = if let Some(ident) = self.arena.get_identifier(prop_node) {
             ident.escaped_text.clone()
+        } else if prop_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.arena.get_literal(prop_node)
+        {
+            lit.text.clone()
         } else {
             return EnumValue::Computed;
         };

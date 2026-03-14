@@ -917,6 +917,40 @@ impl<'a> EnumES5Transformer<'a> {
                 }
                 None
             }
+            // Element access: Enum["Member"] → resolve like property access
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                let obj_node = self.arena.get(access.expression)?;
+                if obj_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(obj_id) = self.arena.get_identifier(obj_node)
+                {
+                    // Get the string key from the index expression
+                    let index_node = self.arena.get(access.name_or_argument)?;
+                    let member_name = if index_node.kind == SyntaxKind::StringLiteral as u16 {
+                        self.arena
+                            .get_literal(index_node)
+                            .map(|lit| lit.text.as_str())
+                    } else {
+                        None
+                    };
+                    if let Some(member_name) = member_name {
+                        // Same enum self-reference
+                        if obj_id.escaped_text == self.current_enum_name
+                            && let Some(&val) = self.member_values.get(member_name)
+                        {
+                            return Some(val);
+                        }
+                        // Cross-enum reference
+                        if let Some(enum_vals) =
+                            self.prior_enum_values.get(obj_id.escaped_text.as_str())
+                            && let Some(&val) = enum_vals.get(member_name)
+                        {
+                            return Some(val);
+                        }
+                    }
+                }
+                None
+            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let bin = self.arena.get_binary_expr(node)?;
                 let left = self.evaluate_constant_expression(bin.left)?;
