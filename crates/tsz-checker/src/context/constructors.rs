@@ -53,7 +53,10 @@ impl<'a> CheckerContext<'a> {
             file_is_esm_map: None,
             spelling_suggestions_emitted: 0,
             no_implicit_override: false,
-            symbol_types: FxHashMap::with_capacity_and_hasher(binder.symbols.len() / 2, Default::default()),
+            symbol_types: FxHashMap::with_capacity_and_hasher(
+                binder.symbols.len() / 2,
+                Default::default(),
+            ),
             symbol_instance_types: FxHashMap::default(),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -62,7 +65,10 @@ impl<'a> CheckerContext<'a> {
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: FxHashSet::default(),
-            node_types: FxHashMap::with_capacity_and_hasher(arena.nodes.len() / 2, Default::default()),
+            node_types: FxHashMap::with_capacity_and_hasher(
+                arena.nodes.len() / 2,
+                Default::default(),
+            ),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
@@ -237,7 +243,10 @@ impl<'a> CheckerContext<'a> {
             file_is_esm_map: None,
             spelling_suggestions_emitted: 0,
             no_implicit_override: false,
-            symbol_types: FxHashMap::with_capacity_and_hasher(binder.symbols.len() / 2, Default::default()),
+            symbol_types: FxHashMap::with_capacity_and_hasher(
+                binder.symbols.len() / 2,
+                Default::default(),
+            ),
             symbol_instance_types: FxHashMap::default(),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -246,7 +255,10 @@ impl<'a> CheckerContext<'a> {
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: FxHashSet::default(),
-            node_types: FxHashMap::with_capacity_and_hasher(arena.nodes.len() / 2, Default::default()),
+            node_types: FxHashMap::with_capacity_and_hasher(
+                arena.nodes.len() / 2,
+                Default::default(),
+            ),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
@@ -412,7 +424,10 @@ impl<'a> CheckerContext<'a> {
             file_is_esm_map: None,
             spelling_suggestions_emitted: 0,
             no_implicit_override: false,
-            symbol_types: FxHashMap::with_capacity_and_hasher(binder.symbols.len() / 2, Default::default()),
+            symbol_types: FxHashMap::with_capacity_and_hasher(
+                binder.symbols.len() / 2,
+                Default::default(),
+            ),
             symbol_instance_types: FxHashMap::default(),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -421,7 +436,10 @@ impl<'a> CheckerContext<'a> {
             shared_lib_type_cache: None,
             skip_lib_type_resolution: false,
             lib_heritage_in_progress: FxHashSet::default(),
-            node_types: FxHashMap::with_capacity_and_hasher(arena.nodes.len() / 2, Default::default()),
+            node_types: FxHashMap::with_capacity_and_hasher(
+                arena.nodes.len() / 2,
+                Default::default(),
+            ),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
@@ -606,7 +624,10 @@ impl<'a> CheckerContext<'a> {
             lib_heritage_in_progress: FxHashSet::default(),
             // node_types is per-arena (keyed by raw node index u32), so it must NOT
             // be carried across files — indices from file A collide with file B.
-            node_types: FxHashMap::with_capacity_and_hasher(arena.nodes.len() / 2, Default::default()),
+            node_types: FxHashMap::with_capacity_and_hasher(
+                arena.nodes.len() / 2,
+                Default::default(),
+            ),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
@@ -784,7 +805,10 @@ impl<'a> CheckerContext<'a> {
             lib_heritage_in_progress: FxHashSet::default(),
             // node_types is per-arena (keyed by raw node index u32), so it must NOT
             // be carried across files — indices from file A collide with file B.
-            node_types: FxHashMap::with_capacity_and_hasher(arena.nodes.len() / 2, Default::default()),
+            node_types: FxHashMap::with_capacity_and_hasher(
+                arena.nodes.len() / 2,
+                Default::default(),
+            ),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
@@ -981,7 +1005,10 @@ impl<'a> CheckerContext<'a> {
             // Cross-arena delegation always uses a different arena, making shared node_types
             // a source of type cache poisoning (e.g., a StringKeyword cache entry could
             // incorrectly map to a class declaration with the same node index).
-            node_types: FxHashMap::with_capacity_and_hasher(arena.nodes.len() / 2, Default::default()),
+            node_types: FxHashMap::with_capacity_and_hasher(
+                arena.nodes.len() / 2,
+                Default::default(),
+            ),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
