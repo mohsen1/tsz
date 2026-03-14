@@ -846,8 +846,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Normalize optional/nullish parameter wrappers so object-literal elaboration
-        // still reports property-level TS2322 for cases like `{...} | undefined`.
+        // Normalize optional/nullish wrappers (e.g., `{...} | undefined`).
         let effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =
             self.split_nullish_type(param_type)
         {
@@ -856,8 +855,7 @@ impl<'a> CheckerState<'a> {
             param_type
         };
 
-        // When the target type is `never`, don't elaborate into property-level TS2322 errors.
-        // tsc emits a single TS2345 on the whole argument instead.
+        // Don't elaborate `never` targets — tsc emits a single TS2345 instead.
         if effective_param_type == TypeId::NEVER {
             return false;
         }
@@ -1050,11 +1048,8 @@ impl<'a> CheckerState<'a> {
 
             let elem_type = self.elaboration_source_expression_type(elem_idx);
 
-            // For object/array literal elements, use the contextually-typed type
-            // (get_type_of_node) to decide whether to elaborate. Without contextual
-            // typing, `{ kind: "bluray" }` widens to `{ kind: string }` and fails
-            // the check even though the contextually-typed version IS assignable.
-            // Skip entirely if the contextual type IS assignable.
+            // For object/array literal elements, use contextually-typed type
+            // to decide whether to elaborate (avoids false positives from widening).
             if matches!(
                 elem_node.kind,
                 syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -1122,15 +1117,7 @@ impl<'a> CheckerState<'a> {
         elaborated
     }
 
-    /// Try to elaborate a variable initializer assignment failure by checking
-    /// each property of an object literal against the target type's properties
-    /// or index signatures.
-    ///
-    /// This is specifically for variable declarations (not function call arguments).
-    /// Only handles `OBJECT_LITERAL_EXPRESSION` — arrays and functions are handled
-    /// separately by `try_elaborate_initializer_elements`.
-    ///
-    /// Returns `true` if elaboration produced property-level diagnostics.
+    /// Elaborate object literal property mismatches for variable declarations.
     pub fn try_elaborate_object_literal_properties_for_var_init(
         &mut self,
         init_idx: NodeIndex,
@@ -1149,14 +1136,7 @@ impl<'a> CheckerState<'a> {
         self.try_elaborate_object_literal_properties(init_idx, declared_type)
     }
 
-    /// Try to elaborate a variable initializer assignment failure with per-element errors.
-    ///
-    /// When a variable like `let x: [number, any] = [undefined, undefined]` fails assignability,
-    /// tsc reports TS2322 on each mismatching element instead of on the whole assignment.
-    /// This method first checks if the assignment would fail, then tries element-level elaboration.
-    ///
-    /// Returns `true` if elaboration handled the error (emitted element-level diagnostics),
-    /// meaning the caller should NOT emit a generic TS2322.
+    /// Elaborate array literal element mismatches for variable declarations.
     pub fn try_elaborate_initializer_elements(
         &mut self,
         init_type: TypeId,
@@ -1164,24 +1144,17 @@ impl<'a> CheckerState<'a> {
         init_idx: NodeIndex,
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
-
-        // Check if initializer is an array literal
         let init_node = match self.ctx.arena.get(init_idx) {
             Some(node) if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => node,
             _ => return false,
         };
 
-        // Only elaborate array literal elements when the overall assignment fails.
-        // Non-array initializers should return early above without triggering an
-        // unrelated assignability relation on the full source/target types.
+        // Only elaborate when the overall assignment fails.
         if self.is_assignable_to(init_type, declared_type) {
             return false;
         }
 
-        // When the source array has more elements than the target tuple,
-        // the arity mismatch should be reported at the whole-assignment level,
-        // not per-element. TSC reports "Type '[a, b, c, d]' is not assignable
-        // to type '[a, b, c]'" for arity mismatches.
+        // Arity mismatch — report at whole-assignment level, not per-element.
         if let Some(arr) = self.ctx.arena.get_literal_expr(init_node) {
             let source_count = arr.elements.nodes.len();
             if let Some(target_count) =
@@ -1205,25 +1178,21 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress cascading errors when both types display identically (no
-        // visible type mismatch to the user), or when either type is special.
-        if arg_type == param_type {
-            return;
-        }
-        if arg_type == TypeId::ERROR || param_type == TypeId::ERROR {
-            return;
-        }
-        if arg_type == TypeId::ANY || param_type == TypeId::ANY {
-            return;
-        }
-        if arg_type == TypeId::UNKNOWN || param_type == TypeId::UNKNOWN {
+        // Suppress when types are identical or either is a special escape-hatch type.
+        if arg_type == param_type
+            || arg_type == TypeId::ERROR
+            || param_type == TypeId::ERROR
+            || arg_type == TypeId::ANY
+            || param_type == TypeId::ANY
+            || arg_type == TypeId::UNKNOWN
+            || param_type == TypeId::UNKNOWN
+        {
             return;
         }
         let Some(loc) = self.get_source_location(idx) else {
             return;
         };
-        // Avoid cascading TS2345 when an excess-property diagnostic (TS2353)
-        // has already been reported within this argument object literal span.
+        // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         let arg_end = loc.start.saturating_add(loc.length());
         if self.ctx.diagnostics.iter().any(|diag| {
             diag.code
