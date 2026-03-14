@@ -20,7 +20,6 @@ use tsz::checker::TypeCache;
 use tsz::checker::context::LibContext;
 use tsz::checker::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    diagnostic_messages, format_message,
 };
 use tsz::checker::state::CheckerState;
 use tsz::lib_loader::LibFile;
@@ -852,11 +851,12 @@ fn compile_inner(
         resolved.checker.module = default_module;
     }
 
-    if check_module_resolution_compatibility_mut(
-        &resolved,
-        tsconfig_path.as_deref(),
-        &mut config_diagnostics,
-    ) {
+    // If config validation already emitted TS5110 (module/moduleResolution mismatch),
+    // bail out early — compilation cannot proceed with incompatible settings.
+    if config_diagnostics.iter().any(|d| {
+        d.code
+            == diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
+    }) {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
             emitted_files: Vec::new(),
@@ -1362,6 +1362,7 @@ pub(super) fn no_input_diagnostics_for_config(
     config_diagnostics
 }
 
+#[cfg(test)]
 fn check_module_resolution_compatibility_mut(
     resolved: &ResolvedCompilerOptions,
     tsconfig_path: Option<&Path>,
@@ -1375,10 +1376,12 @@ fn check_module_resolution_compatibility_mut(
     }
 }
 
+#[cfg(test)]
 fn check_module_resolution_compatibility(
     resolved: &ResolvedCompilerOptions,
     tsconfig_path: Option<&Path>,
 ) -> Option<Diagnostic> {
+    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
     use tsz::config::ModuleResolutionKind;
 
     let module_resolution = resolved.module_resolution?;
