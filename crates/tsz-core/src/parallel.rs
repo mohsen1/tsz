@@ -557,10 +557,10 @@ pub fn load_lib_files_for_binding_strict(
     if let Ok(entries) = std::fs::read_dir(lib_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "ts") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    file_cache.insert(path, content);
-                }
+            if path.extension().is_some_and(|ext| ext == "ts")
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                file_cache.insert(path, content);
             }
         }
     }
@@ -594,7 +594,7 @@ pub fn load_lib_files_for_binding_strict(
     results.into_iter().collect()
 }
 
-/// Parse and bind a single lib file, returning a LibFile or error.
+/// Parse and bind a single lib file, returning a `LibFile` or error.
 fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,
@@ -1168,12 +1168,12 @@ fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeInd
     existing.extend_from_slice(incoming);
 }
 
-/// Remap `__unique_{SymbolId}` keys in expando_properties to use global SymbolIds.
+/// Remap `__unique_{SymbolId}` keys in `expando_properties` to use global `SymbolIds`.
 ///
 /// During binding, expando property tracking stores unique symbol keys as
-/// `__unique_{local_SymbolId}`. After merge_bind_results remaps all SymbolIds
+/// `__unique_{local_SymbolId}`. After `merge_bind_results` remaps all `SymbolIds`
 /// to a global arena, these encoded IDs become stale. This function updates
-/// them so the checker's UniqueSymbol types (which use global IDs) match.
+/// them so the checker's `UniqueSymbol` types (which use global IDs) match.
 fn remap_expando_properties(
     expando: &FxHashMap<String, FxHashSet<String>>,
     id_remap: &FxHashMap<SymbolId, SymbolId>,

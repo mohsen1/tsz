@@ -1320,6 +1320,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // to arbitrary expressions like `target ?? component` can
                         // manufacture spurious TS2322s inside an `as` assertion.
                         let prev_contextual_type = self.checker.ctx.contextual_type;
+                        let prev_contextual_is_assertion =
+                            self.checker.ctx.contextual_type_is_assertion;
                         if !is_const_assertion
                             && self.checker.argument_needs_contextual_type(
                                 self.checker
@@ -1329,11 +1331,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             )
                         {
                             self.checker.ctx.contextual_type = Some(asserted_type);
+                            // Mark that this contextual type comes from a type
+                            // assertion so that function body return types are
+                            // NOT checked against the contextual return type.
+                            // Only TS2352 should fire at the assertion site.
+                            if k != syntax_kind_ext::SATISFIES_EXPRESSION {
+                                self.checker.ctx.contextual_type_is_assertion = true;
+                            }
                         }
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self.checker.get_type_of_node(assertion.expression);
                         // Restore contextual type
                         self.checker.ctx.contextual_type = prev_contextual_type;
+                        self.checker.ctx.contextual_type_is_assertion =
+                            prev_contextual_is_assertion;
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // TS8037: Type satisfaction expressions can only be used in TypeScript files

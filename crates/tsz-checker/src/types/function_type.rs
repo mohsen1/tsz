@@ -1037,16 +1037,25 @@ impl<'a> CheckerState<'a> {
             }
 
             if !has_type_annotation {
-                let return_context = jsdoc_return_context.or_else(|| {
-                    ctx_helper
-                        .as_ref()
-                        .and_then(tsz_solver::ContextualTypeContext::get_return_type)
-                        .or_else(|| {
-                            self.ctx.contextual_type.and_then(|ty| {
-                                tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                // When the contextual type comes from a type assertion (`as` or
+                // angle-bracket cast), suppress the contextual return type.
+                // Parameter types are still contextually typed, but the body's
+                // return value should NOT be checked against the asserted return
+                // type — only TS2352 fires at the assertion site.
+                let return_context = if self.ctx.contextual_type_is_assertion {
+                    jsdoc_return_context
+                } else {
+                    jsdoc_return_context.or_else(|| {
+                        ctx_helper
+                            .as_ref()
+                            .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                            .or_else(|| {
+                                self.ctx.contextual_type.and_then(|ty| {
+                                    tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                                })
                             })
-                        })
-                });
+                    })
+                };
                 // Async function bodies return the awaited inner type; the function
                 // type itself is Promise<inner>. Contextual return typing must
                 // therefore use the inner type, not Promise<inner>.

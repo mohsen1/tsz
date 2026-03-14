@@ -538,6 +538,12 @@ pub struct CheckerContext<'a> {
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 
+    /// When true, the contextual type originates from a type assertion (`as` or
+    /// `<T>` cast).  In that case parameter types are contextually typed but the
+    /// function body's return type should NOT be checked against the contextual
+    /// return type — only TS2352 is emitted at the assertion site.
+    pub contextual_type_is_assertion: bool,
+
     /// Temporarily holds information about children of the current JSX element
     /// being checked. Set in dispatch.rs before calling `get_type_of_jsx_opening_element`,
     /// consumed in `check_jsx_attributes_against_props` for children validation.
