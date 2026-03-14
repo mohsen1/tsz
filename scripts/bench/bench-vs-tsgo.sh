@@ -321,7 +321,7 @@ check_prerequisites() {
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
         local llvm_profdata
-        llvm_profdata="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata 2>/dev/null | head -1)"
+        llvm_profdata="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata 2>/dev/null | head -1 || true)"
 
         if [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
             echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
