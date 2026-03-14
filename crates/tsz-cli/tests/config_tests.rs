@@ -157,7 +157,7 @@ fn load_tsconfig_resolves_package_exports_wildcard_extends() {
 fn resolve_compiler_options_defaults() {
     let resolved = resolve_compiler_options(None).expect("defaults should resolve");
 
-    assert_eq!(resolved.printer.target, ScriptTarget::ESNext);
+    assert_eq!(resolved.printer.target, ScriptTarget::ES2024);
     assert_eq!(resolved.printer.module, ModuleKind::None);
     assert!(resolved.jsx.is_none());
     assert!(!resolved.lib_files.is_empty());
