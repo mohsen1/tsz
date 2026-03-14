@@ -109,7 +109,7 @@ for branch in "${branches[@]}"; do
 
     # Show commits
     echo "Commits:"
-    git -C "$REPO_ROOT" log --oneline "origin/main..origin/$branch" | head -10
+    git -C "$REPO_ROOT" log --oneline -10 "origin/main..origin/$branch"
 
     if $DRY_RUN; then
         echo "[DRY RUN] Would attempt merge and validation"
@@ -120,7 +120,7 @@ for branch in "${branches[@]}"; do
         read -p "Attempt merge and validate? [y/N] " confirm
         if [[ "$confirm" != "y" ]]; then
             echo "Skipped."
-            ((SKIPPED++))
+            SKIPPED=$((SKIPPED + 1))
             continue
         fi
     fi
@@ -137,17 +137,24 @@ for branch in "${branches[@]}"; do
     MERGE_BRANCH="merge-validation-$(date +%s)"
     git -C "$REPO_ROOT" worktree add "$MERGE_DIR" -b "$MERGE_BRANCH" origin/main --quiet 2>/dev/null
 
+    # Initialize submodules in worktree (needed for TypeScript test fixtures)
+    git -C "$MERGE_DIR" submodule update --init --quiet 2>/dev/null
+
     # Attempt merge
     if ! git -C "$MERGE_DIR" merge "origin/$branch" --no-edit --quiet 2>/dev/null; then
         echo "MERGE CONFLICT — cannot auto-merge $branch"
         echo "  Manual resolution needed. Skipping."
         git -C "$REPO_ROOT" worktree remove "$MERGE_DIR" --force 2>/dev/null || rm -rf "$MERGE_DIR"
         git -C "$REPO_ROOT" branch -D "$MERGE_BRANCH" 2>/dev/null || true
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         continue
     fi
 
     echo "Merge succeeded. Running validation..."
+
+    # Unset CARGO_TARGET_DIR so the worktree's .cargo/config.toml target-dir = ".target" takes effect.
+    # Otherwise builds go to the shared cache and the conformance script can't find the binary.
+    unset CARGO_TARGET_DIR
 
     # Build check
     echo "  Building..."
@@ -155,7 +162,7 @@ for branch in "${branches[@]}"; do
         echo "BUILD FAILED — rejecting $branch"
         git -C "$REPO_ROOT" worktree remove "$MERGE_DIR" --force 2>/dev/null || rm -rf "$MERGE_DIR"
         git -C "$REPO_ROOT" branch -D "$MERGE_BRANCH" 2>/dev/null || true
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         continue
     fi
 
@@ -170,7 +177,7 @@ for branch in "${branches[@]}"; do
         echo "  Rejecting merge. Campaign agent needs to investigate."
         git -C "$REPO_ROOT" worktree remove "$MERGE_DIR" --force 2>/dev/null || rm -rf "$MERGE_DIR"
         git -C "$REPO_ROOT" branch -D "$MERGE_BRANCH" 2>/dev/null || true
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         continue
     fi
 
@@ -190,7 +197,7 @@ for branch in "${branches[@]}"; do
     if [[ "$CURRENT_MAIN" != "$VALIDATED_MAIN" ]]; then
         echo "  WARNING: origin/main advanced during validation. Re-validating would be needed."
         echo "  Skipping this branch for now. Will retry on next integration cycle."
-        ((SKIPPED++))
+        SKIPPED=$((SKIPPED + 1))
         continue
     fi
 
@@ -215,7 +222,7 @@ for branch in "${branches[@]}"; do
         git -C "$REPO_ROOT" push origin --delete "${branch}" --quiet 2>/dev/null || true
     fi
 
-    ((MERGED++))
+    MERGED=$((MERGED + 1))
 done
 
 echo ""
