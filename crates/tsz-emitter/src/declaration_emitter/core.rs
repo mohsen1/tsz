@@ -1605,23 +1605,25 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // tsc emits computed methods with well-typed keys as method signatures
-        // (`[G.A](): void;`) but falls back to property signatures when the
-        // computed key type is `any` (e.g., from shorthand ambient modules).
-        // Optional methods use method syntax with `?` (g?(): number), NOT
-        // property syntax (g?: (() => number) | undefined).
-        let is_computed_with_any_key = self
+        // tsc uses property syntax for computed method names in these cases:
+        // 1. Computed key with `any` type (from shorthand ambient modules)
+        // 2. Optional computed methods (`[key]?()` → `[key]?: (() => T) | undefined`)
+        // Non-computed optional methods keep method syntax: `g?(): T`
+        let is_computed_name = self
             .arena
             .get(method.name)
-            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-            && self
-                .arena
-                .get(method.name)
-                .and_then(|node| self.arena.get_computed_property(node))
-                .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
-                .is_some_and(|t| t == tsz_solver::types::TypeId::ANY);
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
-        if is_computed_with_any_key {
+        let use_property_syntax = is_computed_name
+            && (method.question_token
+                || self
+                    .arena
+                    .get(method.name)
+                    .and_then(|node| self.arena.get_computed_property(node))
+                    .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+                    .is_some_and(|t| t == tsz_solver::types::TypeId::ANY));
+
+        if use_property_syntax {
             self.write(": ");
             if method.question_token {
                 self.write("(");
