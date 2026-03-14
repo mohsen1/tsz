@@ -916,11 +916,13 @@ impl<'a> Printer<'a> {
         self.ctx.original_module_kind = Some(prev_module);
         self.ctx.options.module = ModuleKind::CommonJS;
         self.ctx.auto_detect_module = false;
+        self.in_system_execute_body = true;
 
         let Some(source) = self.arena.get_source_file(source_node) else {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.in_system_execute_body = false;
             return;
         };
         self.register_system_import_substitutions(source, dep_vars);
@@ -1000,6 +1002,7 @@ impl<'a> Printer<'a> {
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;
+        self.in_system_execute_body = false;
     }
 
     fn emit_system_import_equals_declaration(

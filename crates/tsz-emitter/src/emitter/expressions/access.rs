@@ -64,6 +64,19 @@ impl<'a> Printer<'a> {
             self.write("(");
         }
 
+        // In System.register modules, `import.meta` is replaced with `context_1.meta`.
+        // The parser represents `import.meta` as PropertyAccessExpression with
+        // expression=ImportKeyword, name=meta.
+        if self.in_system_execute_body
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && expr_node.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
+        {
+            self.write("context_1");
+            self.write_dot_token(access.expression);
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
+            return;
+        }
+
         // Signal that the expression is in access position so `emit_parenthesized`
         // preserves parens around `new` expressions: `(new a).b` vs `new a.b`.
         let prev = self.paren_in_access_position;
