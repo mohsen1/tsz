@@ -775,13 +775,18 @@ impl<'a> DeclarationEmitter<'a> {
                     || (trimmed.starts_with("<reference") && trimmed.contains("preserve=\"true\""));
 
                 if should_emit {
-                    // Normalize: ensure space before /> (tsc normalizes this)
-                    let normalized = if text.ends_with("/>") && !text.ends_with(" />") {
-                        let base = &text[..text.len() - 2];
-                        format!("{base} />")
+                    // Normalize spacing to match tsc:
+                    // 1. Ensure space after `///`: `///<reference` → `/// <reference`
+                    // 2. Ensure space before `/>`: `/>` → ` />`
+                    let mut normalized = if !stripped.starts_with(' ') {
+                        format!("/// {}", stripped.trim_start())
                     } else {
                         text.to_string()
                     };
+                    if normalized.ends_with("/>") && !normalized.ends_with(" />") {
+                        let base = &normalized[..normalized.len() - 2];
+                        normalized = format!("{base} />");
+                    }
                     self.write(&normalized);
                     self.write_line();
                 }
