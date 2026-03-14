@@ -1605,14 +1605,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        let is_computed_name = self
-            .arena
-            .get(method.name)
-            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-
-        // Computed class methods are emitted in .d.ts as property signatures
-        // with function types. Optional methods additionally include `| undefined`.
-        if method.question_token || is_computed_name {
+        // Optional methods are emitted as property signatures with function types
+        // and `| undefined` suffix. Computed methods use normal method syntax
+        // (matching tsc behavior: `[G.A](): void;` not `[G.A]: () => void;`).
+        if method.question_token {
             self.write(": ");
             if method.question_token {
                 self.write("(");

@@ -517,13 +517,14 @@ export class C {
 "#,
     );
 
+    // tsc emits computed methods as method signatures, not property signatures.
     assert!(
-        output.contains("[key]: () => string;"),
-        "Expected computed method to emit as a property signature: {output}"
+        output.contains("[key](): string;"),
+        "Expected computed method to use method syntax (matching tsc): {output}"
     );
     assert!(
-        !output.contains("[key](): string;"),
-        "Did not expect computed method syntax in declaration emit: {output}"
+        !output.contains("[key]: () => string;"),
+        "Did not expect property signature for computed method: {output}"
     );
     assert!(
         output.contains("regular(): number;"),
@@ -3128,12 +3129,13 @@ fn test_static_computed_methods_emit_body_inferred_return_types() {
     export const staticLookup = Holder["x"];
     "#,
     );
+    // tsc emits computed methods as method signatures, not property signatures.
     assert!(
-        output.contains("static [f1]: () => {")
+        output.contains("static [f1](): {")
             && output.contains("static: boolean;")
-            && output.contains("static [f2]: () => {")
+            && output.contains("static [f2](): {")
             && output.contains("static: string;"),
-        "Expected static computed methods to preserve body-inferred return types instead of () => any: {output}"
+        "Expected static computed methods to use method syntax with body-inferred return types: {output}"
     );
 }
 
