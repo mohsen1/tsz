@@ -49,8 +49,22 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_nested_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        // Depth guard: prevents stack overflow from mutually recursive types
+        // (e.g., Foo<T> ↔ Bar<T>) where each fresh visited set misses cross-function cycles.
+        thread_local! { static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
+        let depth = DEPTH.with(|d| {
+            let v = d.get();
+            d.set(v + 1);
+            v
+        });
+        if depth >= 10 {
+            DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            return type_id;
+        }
         let mut visited = FxHashSet::default();
-        self.normalize_nested_type_for_assignability_inner(type_id, &mut visited)
+        let result = self.normalize_nested_type_for_assignability_inner(type_id, &mut visited);
+        DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        result
     }
 
     fn normalize_nested_type_for_assignability_inner(
@@ -501,10 +515,7 @@ impl<'a> CheckerState<'a> {
             || contains_infer_types(self.ctx.types, target)
     }
 
-    /// Suppress assignability diagnostics when they are likely parser-recovery artifacts.
-    ///
-    /// In files with real syntax errors, we often get placeholder nodes and transient
-    /// parse states. Checker-level semantics should not emit TS2322 there.
+    /// Suppress assignability diagnostics for parser-recovery artifacts.
     fn should_suppress_assignability_for_parse_recovery(
         &self,
         source_idx: NodeIndex,
@@ -522,12 +533,7 @@ impl<'a> CheckerState<'a> {
             || self.is_parse_recovery_anchor_node(diag_idx)
     }
 
-    /// Detect nodes that look like parser-recovery artifacts.
-    ///
-    /// Recovery heuristics:
-    /// - Missing-expression placeholders are currently identifiers with empty text.
-    /// - Nodes that start very near a syntax parse error are considered unstable.
-    /// - Nodes in subtrees that were marked as parse-recovery by the parser are suppressed.
+    /// Detect nodes that look like parser-recovery artifacts (empty text, near errors).
     fn is_parse_recovery_anchor_node(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -590,12 +596,7 @@ impl<'a> CheckerState<'a> {
     // Type Evaluation for Assignability
     // =========================================================================
 
-    /// Ensure all Ref types in a type are resolved and in the type environment.
-    ///
-    /// This is critical for intersection/union type assignability. When we have
-    /// `type AB = A & B`, the intersection contains Ref(A) and Ref(B). Before we
-    /// can check assignability against the intersection, we need to ensure A and B
-    /// are resolved and in `type_env` so the subtype checker can resolve them.
+    /// Ensure all Lazy/Ref types in a type are resolved into the type environment.
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
         use crate::state_domain::type_environment::lazy::{
             enter_refs_resolution_scope, exit_refs_resolution_scope,
