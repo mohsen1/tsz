@@ -185,15 +185,22 @@ impl<'a> CheckerState<'a> {
         // Strip `undefined` from the initial type for parameters with default values.
         // Matches tsc's getInitialType: a parameter like `x: string | undefined = "val"`
         // starts as `string` (not `string | undefined`) because the default guarantees it.
+        //
+        // PERF: Check cheapest conditions first to short-circuit early.
+        // 1. Check if override provided (instant)
+        // 2. Resolve symbol and check if it has an initializer (cheap hash lookups)
+        // 3. Only walk the AST tree for is_in_default_parameter when we know the
+        //    symbol IS a parameter with a default — this saves ~5 parent lookups
+        //    per call for the vast majority of identifiers that aren't defaulted params.
         let initial_type = if let Some(initial_type) = initial_type_override {
             initial_type
-        } else if !self.is_in_default_parameter(idx)
-            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
+        } else if let Some(sym_id) = self.get_symbol_for_identifier(idx)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
             && sym.value_declaration.is_some()
             && let Some(decl_node) = self.ctx.arena.get(sym.value_declaration)
             && let Some(param) = self.ctx.arena.get_parameter(decl_node)
             && param.initializer.is_some()
+            && !self.is_in_default_parameter(idx)
         {
             tsz_solver::remove_undefined(self.ctx.types, declared_type)
         } else {
