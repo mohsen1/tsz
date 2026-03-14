@@ -342,7 +342,7 @@ check_prerequisites() {
             done
 
             echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw 2>/dev/null
+            "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
             (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
                 RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
                 cargo build --profile dist -p tsz-cli)

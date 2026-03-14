@@ -33,7 +33,7 @@ jobs:
       any_rust: ${{ steps.filter.outputs.any_rust }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
+      # No submodule setup needed — paths-filter only reads git history
       - uses: dorny/paths-filter@v3
         id: filter
         with:
