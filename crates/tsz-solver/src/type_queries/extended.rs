@@ -889,9 +889,9 @@ pub enum PropertyAccessResolutionKind {
     /// Complex types that need evaluation
     NeedsEvaluation,
     /// Union - resolve each member
-    Union(Vec<TypeId>),
+    Union(std::sync::Arc<[TypeId]>),
     /// Intersection - resolve each member
-    Intersection(Vec<TypeId>),
+    Intersection(std::sync::Arc<[TypeId]>),
     /// Readonly wrapper - unwrap
     Readonly(TypeId),
     /// Function or Callable - may need Function interface
@@ -922,13 +922,9 @@ pub fn classify_for_property_access_resolution(
         | TypeData::Mapped(_)
         | TypeData::IndexAccess(_, _)
         | TypeData::KeyOf(_) => PropertyAccessResolutionKind::NeedsEvaluation,
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            PropertyAccessResolutionKind::Union(members.to_vec())
-        }
+        TypeData::Union(list_id) => PropertyAccessResolutionKind::Union(db.type_list(list_id)),
         TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            PropertyAccessResolutionKind::Intersection(members.to_vec())
+            PropertyAccessResolutionKind::Intersection(db.type_list(list_id))
         }
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             PropertyAccessResolutionKind::Readonly(inner)
