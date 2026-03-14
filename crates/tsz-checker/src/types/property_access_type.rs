@@ -341,6 +341,31 @@ impl<'a> CheckerState<'a> {
             && !self.is_super_expression(access.expression)
         {
             let property_name = &ident.escaped_text;
+
+            // TOP-LEVEL CACHE: check the dedicated optional_chain_cache first.
+            // This is keyed by (object_type_with_nullish, prop_atom) and stores
+            // the FINAL result including undefined union. On cache hit, we skip
+            // split_nullish, resolve_type, contains_type_params, property lookup,
+            // and union2 — eliminating 4+ RefCell borrows and HashMap lookups.
+            // Only used when flow narrowing is skipped (skip_result_flow_for_result),
+            // which guarantees the result is context-independent.
+            if skip_result_flow_for_result {
+                let oc_atom = if ident.atom != tsz_common::interner::Atom::none() {
+                    ident.atom
+                } else {
+                    self.ctx.types.intern_string(property_name)
+                };
+                if let Some(&cached) = self
+                    .ctx
+                    .narrowing_cache
+                    .optional_chain_cache
+                    .borrow()
+                    .get(&(object_type, oc_atom))
+                {
+                    return cached;
+                }
+            }
+
             let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
             let Some(non_nullish_base) = non_nullish_base else {
                 return TypeId::UNDEFINED;
@@ -372,6 +397,14 @@ impl<'a> CheckerState<'a> {
                                 && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                             {
                                 result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                            }
+                            // Store in optional_chain_cache for instant hits next time.
+                            if skip_result_flow_for_result {
+                                self.ctx
+                                    .narrowing_cache
+                                    .optional_chain_cache
+                                    .borrow_mut()
+                                    .insert((object_type, prop_atom), result_type);
                             }
                             return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
                                 result_type

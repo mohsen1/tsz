@@ -244,6 +244,13 @@ pub struct NarrowingCache {
     pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,
     /// Cache for "type contains type parameters" checks.
     pub contains_type_parameters_cache: RefCell<FxHashMap<TypeId, bool>>,
+    /// Cache for optional chain property access results.
+    /// Keyed by `(object_type_with_nullish, property_atom)` → final result TypeId.
+    /// Unlike `property_cache` which is keyed by resolved (non-nullish) base type,
+    /// this caches the COMPLETE result including nullish union and undefined addition.
+    /// This skips split_nullish, resolve_type, contains_type_params, and property
+    /// lookup on cache hits — eliminating 4+ RefCell borrows per repeated access.
+    pub optional_chain_cache: RefCell<FxHashMap<(TypeId, Atom), TypeId>>,
     /// Cache for contextual type resolution in object literal property typing.
     /// Maps raw contextual TypeId -> fully resolved TypeId after the
     /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
@@ -268,6 +275,10 @@ impl NarrowingCache {
             )),
             contains_type_parameters_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
+                Default::default(),
+            )),
+            optional_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
                 Default::default(),
             )),
             contextual_resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
