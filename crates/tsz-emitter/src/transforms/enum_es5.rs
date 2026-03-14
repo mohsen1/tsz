@@ -65,6 +65,9 @@ pub struct EnumES5Transformer<'a> {
     current_enum_name: String,
     /// When true, emit const enums instead of erasing them
     preserve_const_enums: bool,
+    /// Previously-evaluated enum member values from other enums.
+    /// Keyed by `enum_name` → `member_name` → value.
+    prior_enum_values: HashMap<String, HashMap<String, i64>>,
 }
 
 impl<'a> EnumES5Transformer<'a> {
@@ -80,6 +83,7 @@ impl<'a> EnumES5Transformer<'a> {
             string_member_values: HashMap::new(),
             current_enum_name: String::new(),
             preserve_const_enums: false,
+            prior_enum_values: HashMap::new(),
         }
     }
 
@@ -90,6 +94,32 @@ impl<'a> EnumES5Transformer<'a> {
     /// Set source text for raw expression extraction
     pub const fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+    }
+
+    /// Set previously-evaluated enum values for cross-enum reference resolution.
+    pub fn set_prior_enum_values(
+        &mut self,
+        values: &rustc_hash::FxHashMap<String, rustc_hash::FxHashMap<String, i64>>,
+    ) {
+        self.prior_enum_values = values
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.iter().map(|(mk, mv)| (mk.clone(), *mv)).collect(),
+                )
+            })
+            .collect();
+    }
+
+    /// Get the accumulated member values for this enum (for persisting across declarations).
+    pub const fn get_member_values(&self) -> &HashMap<String, i64> {
+        &self.member_values
+    }
+
+    /// Get the current enum name (from the last `transform_enum` call).
+    pub fn current_enum_name_ref(&self) -> &str {
+        &self.current_enum_name
     }
 
     /// Transform an enum declaration to IR
@@ -849,22 +879,40 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 // Resolve references to previously evaluated enum members
                 let id = self.arena.get_identifier(node)?;
-                self.member_values.get(id.escaped_text.as_str()).copied()
+                // Check current enum members first
+                if let Some(&val) = self.member_values.get(id.escaped_text.as_str()) {
+                    return Some(val);
+                }
+                // Check prior blocks of the same merged enum
+                if let Some(prior) = self.prior_enum_values.get(&self.current_enum_name)
+                    && let Some(&val) = prior.get(id.escaped_text.as_str())
+                {
+                    return Some(val);
+                }
+                None
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                // Resolve E.Member references (same enum self-references)
+                // Resolve E.Member references
                 let access = self.arena.get_access_expr(node)?;
                 let obj_node = self.arena.get(access.expression)?;
                 if obj_node.kind == SyntaxKind::Identifier as u16
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
-                    && obj_id.escaped_text == self.current_enum_name
                 {
                     let prop_node = self.arena.get(access.name_or_argument)?;
-                    if let Some(prop_id) = self.arena.get_identifier(prop_node) {
-                        return self
-                            .member_values
-                            .get(prop_id.escaped_text.as_str())
-                            .copied();
+                    let prop_id = self.arena.get_identifier(prop_node)?;
+
+                    // Same enum self-reference
+                    if obj_id.escaped_text == self.current_enum_name
+                        && let Some(&val) = self.member_values.get(prop_id.escaped_text.as_str())
+                    {
+                        return Some(val);
+                    }
+                    // Cross-enum reference (Foo.A from within enum Bar)
+                    if let Some(enum_vals) =
+                        self.prior_enum_values.get(obj_id.escaped_text.as_str())
+                        && let Some(&val) = enum_vals.get(prop_id.escaped_text.as_str())
+                    {
+                        return Some(val);
                     }
                 }
                 None
