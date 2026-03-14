@@ -1441,6 +1441,17 @@ impl ParserState {
             let body = if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_block()
             } else {
+                // TS1144: '{' or ';' expected — unexpected token after method signature
+                // (e.g., comma instead of body or semicolon)
+                if !self.parse_optional(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.parse_error_at_current_token(
+                        "'{' or ';' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::OR_EXPECTED,
+                    );
+                }
                 NodeIndex::NONE
             };
             self.pop_label_scope();
