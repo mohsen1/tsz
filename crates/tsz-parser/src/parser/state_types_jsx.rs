@@ -353,8 +353,49 @@ impl ParserState {
                 self.token_pos()
             };
 
+            // Capture position right after the dot (before scanning to next token)
+            let dot_end = self.token_end();
             self.next_token(); // consume .
-            let right = self.parse_identifier_name();
+
+            // Line break recovery: if there's a line break before the next token and it
+            // looks like a new declaration (keyword followed by identifier on same line),
+            // emit TS1003 and create a missing identifier instead of consuming the keyword.
+            // This matches tsc's parseRightSideOfDot heuristic.
+            let right =
+                if self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword() {
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+                    let next_is_ident_on_same_line =
+                        !self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+                    if next_is_ident_on_same_line {
+                        // Looks like a new declaration — emit TS1003 at the position
+                        // right after the dot (matching tsc's reportAtCurrentPosition)
+                        self.parse_error_at(
+                            dot_end,
+                            0,
+                            "Identifier expected.",
+                            tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                        );
+                        self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            dot_end,
+                            dot_end,
+                            crate::parser::node::IdentifierData {
+                                atom: tsz_common::interner::Atom::NONE,
+                                escaped_text: String::new(),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        )
+                    } else {
+                        self.parse_identifier_name()
+                    }
+                } else {
+                    self.parse_identifier_name()
+                };
             let end_pos = self.token_end();
 
             current = self.arena.add_qualified_name(
