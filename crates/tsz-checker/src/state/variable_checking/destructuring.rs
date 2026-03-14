@@ -860,7 +860,17 @@ impl<'a> CheckerState<'a> {
                 NodeIndex::NONE
             };
             if let Some(prop_name_str) = property_name.as_deref() {
-                if !defer_property_not_found && !suppress_missing_property_for_literal_default {
+                // Suppress TS2339 when:
+                // 1. Contextual destructuring defers the check, OR
+                // 2. The source is a literal with defaults, OR
+                // 3. The binding element has a default initializer.
+                //    In tsc, `{x = val} = {}` doesn't error even though `{}` has no `x`,
+                //    because the default handles the missing property. This applies to
+                //    for-of patterns like `for (let {x = true} of [{}])`.
+                if !defer_property_not_found
+                    && !suppress_missing_property_for_literal_default
+                    && element_data.initializer.is_none()
+                {
                     self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
                 }
             } else if element_data.initializer.is_none()

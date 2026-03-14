@@ -743,16 +743,12 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            // tsc displays optional params WITH `| undefined` in error messages:
-            // `(x?: string | undefined) => void`. If the stored type doesn't
-            // already contain undefined, we append it to match tsc's output.
+            // tsc displays optional params WITHOUT `| undefined` in
+            // function type signatures — the `?` already communicates
+            // optionality. Strip `undefined` from union types so that
+            // `(a?: string | undefined)` displays as `(a?: string)`.
             let type_str: String = if p.optional {
-                let formatted = self.format(p.type_id).into_owned();
-                if !self.type_contains_undefined(p.type_id) {
-                    format!("{formatted} | undefined")
-                } else {
-                    formatted
-                }
+                self.format_stripping_undefined(p.type_id)
             } else {
                 self.format(p.type_id).into_owned()
             };
@@ -3205,8 +3201,8 @@ mod tests {
 
     #[test]
     fn optional_param_shows_undefined() {
-        // tsc shows `| undefined` for optional params in error messages:
-        // `(a?: string | undefined) => any`
+        // tsc strips `| undefined` for optional params — `?` implies it:
+        // `(a?: string) => any`
         let db = TypeInterner::new();
         let mut fmt = TypeFormatter::new(&db);
 
@@ -3226,8 +3222,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string | undefined) => any",
-            "Optional param should show '| undefined' to match tsc"
+            result, "(a?: string) => any",
+            "Optional param strips '| undefined' — '?' implies it"
         );
     }
 
@@ -3254,8 +3250,8 @@ mod tests {
         });
         let result = fmt.format(func);
         assert_eq!(
-            result, "(a?: string | undefined) => any",
-            "Optional param with string | undefined should keep it as-is"
+            result, "(a?: string) => any",
+            "Optional param with string | undefined strips undefined"
         );
     }
 
