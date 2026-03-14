@@ -544,6 +544,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Save outer generator's yield collection state (for nested generators)
             let saved_yield_collection =
                 std::mem::take(&mut self.ctx.generator_yield_operand_types);
+            let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
 
             self.check_statement(func.body);
 
@@ -558,21 +559,17 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 );
             }
 
-            // For unannotated generators, determine the inferred yield type
-            // and emit TS7055 (function-level) if TYield is 'any'.
-            // TS7055 and TS7057 are independent — TS7055 fires at function name when TYield
-            // is implicit any, while TS7057 fires per-expression when yield result is any.
+            // For unannotated generators, emit TS7055 if yield type is implicit 'any'
+            // (suppressed when TS7057 was already emitted — tsc emits one, not both).
             if is_generator && !has_type_annotation {
                 let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
 
-                // Compute inferred yield type from collected operand types
                 let inferred_yield = if yield_types.is_empty() {
                     TypeId::NEVER // No yields → never
                 } else {
                     self.ctx.types.factory().union(yield_types)
                 };
 
-                // Widen and check for implicit any (mirrors infer_return_type_from_body)
                 let widened = self.widen_literal_type(inferred_yield);
                 let final_yield = if !self.ctx.strict_null_checks()
                     && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
@@ -582,7 +579,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     widened
                 };
 
-                if final_yield == TypeId::ANY && self.ctx.no_implicit_any() && !self.is_js_file() {
+                if final_yield == TypeId::ANY
+                    && self.ctx.no_implicit_any()
+                    && !self.is_js_file()
+                    && !self.ctx.generator_had_ts7057
+                {
                     // TS7055: Named generator's yield type is implicitly 'any'
                     use crate::diagnostics::diagnostic_codes;
                     if let Some(func_name) = self.get_function_name_from_node(func_idx) {
@@ -604,6 +605,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // Restore outer generator's yield collection state
             self.ctx.generator_yield_operand_types = saved_yield_collection;
+            self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
             // Restore control flow context
             self.ctx.iteration_depth = saved_cf_context.0;

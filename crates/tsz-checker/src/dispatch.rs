@@ -572,6 +572,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     diagnostic_messages::YIELD_EXPRESSION_IMPLICITLY_RESULTS_IN_AN_ANY_TYPE_BECAUSE_ITS_CONTAINING_GENERA,
                     diagnostic_codes::YIELD_EXPRESSION_IMPLICITLY_RESULTS_IN_AN_ANY_TYPE_BECAUSE_ITS_CONTAINING_GENERA,
                 );
+                // Track that TS7057 was emitted so TS7055 is suppressed at the
+                // function level (tsc emits one or the other, not both).
+                self.checker.ctx.generator_had_ts7057 = true;
             }
         }
         TypeId::ANY
