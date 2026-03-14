@@ -142,8 +142,8 @@ impl<'a> InferenceContext<'a> {
             // We try each intersection member so that type parameters within the
             // target (like OwnProps, or union branches) can be inferred from the source.
             (_, Some(TypeData::Union(target_members) | TypeData::Intersection(target_members))) => {
-                let target_list: Vec<TypeId> = self.interner.type_list(target_members).to_vec();
-                for &target_member in &target_list {
+                let target_list = self.interner.type_list(target_members);
+                for &target_member in target_list.iter() {
                     let _ = self.infer_from_types(source, target_member, priority);
                 }
             }
@@ -151,8 +151,8 @@ impl<'a> InferenceContext<'a> {
             // Source is an intersection but target is not: try inferring from
             // each source member against the target.
             (Some(TypeData::Intersection(source_members)), _) => {
-                let source_list: Vec<TypeId> = self.interner.type_list(source_members).to_vec();
-                for &source_member in &source_list {
+                let source_list = self.interner.type_list(source_members);
+                for &source_member in source_list.iter() {
                     let _ = self.infer_from_types(source_member, target, priority);
                 }
             }
@@ -728,14 +728,14 @@ impl<'a> InferenceContext<'a> {
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 let base = app.base;
-                let args: Vec<TypeId> = app.args.to_vec();
+                let args = app.args.clone();
                 self.target_contains_inference_param_inner(base, visited)
                     || args
                         .iter()
                         .any(|&arg| self.target_contains_inference_param_inner(arg, visited))
             }
             TypeData::Union(members) | TypeData::Intersection(members) => {
-                let list: Vec<TypeId> = self.interner.type_list(members).to_vec();
+                let list = self.interner.type_list(members);
                 list.iter()
                     .any(|&m| self.target_contains_inference_param_inner(m, visited))
             }
