@@ -42,6 +42,8 @@ pub struct ProcessPool {
     available_rx: Mutex<tokio::sync::mpsc::Receiver<usize>>,
     /// Maximum compilations per worker before recycling (0 = no limit).
     max_compilations: usize,
+    /// Maximum RSS in bytes per worker before recycling (0 = no limit).
+    max_rss_bytes: usize,
     /// Per-worker compilation counters.
     compilation_counts: Vec<AtomicUsize>,
 }
@@ -54,7 +56,16 @@ impl ProcessPool {
     /// This returns all process memory to the OS, preventing unbounded RSS growth
     /// from arena/cache accumulation and malloc fragmentation in long-lived workers.
     /// Set to 0 to disable recycling.
-    pub async fn new(tsz_binary: &str, n: usize, max_compilations: usize) -> anyhow::Result<Self> {
+    ///
+    /// `max_rss_bytes` adds RSS-based recycling: after each compilation, the worker's
+    /// resident memory is checked and it is recycled if it exceeds this threshold.
+    /// Set to 0 to disable RSS-based recycling.
+    pub async fn new(
+        tsz_binary: &str,
+        n: usize,
+        max_compilations: usize,
+        max_rss_bytes: usize,
+    ) -> anyhow::Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::channel(n);
         let mut workers = Vec::with_capacity(n);
         let mut compilation_counts = Vec::with_capacity(n);
@@ -72,6 +83,7 @@ impl ProcessPool {
             available_tx: tx,
             available_rx: Mutex::new(rx),
             max_compilations,
+            max_rss_bytes,
             compilation_counts,
         })
     }
@@ -176,14 +188,37 @@ impl ProcessPool {
         // Successful compilation — check if this worker should be recycled.
         // Recycling kills the process so the OS reclaims all memory, preventing
         // unbounded RSS growth from global caches and malloc fragmentation.
+        let mut should_recycle = false;
+
         if self.max_compilations > 0 {
             let count = self.compilation_counts[idx].fetch_add(1, Ordering::Relaxed) + 1;
             if count >= self.max_compilations {
-                if let Some(mut w) = guard.take() {
-                    let _ = w.child.kill().await;
-                }
-                // Worker is now None; it will be respawned on next use.
+                should_recycle = true;
             }
+        }
+
+        // RSS-based recycling: check worker memory after each compilation.
+        // Some tests (JSX, JSDoc, large multi-file) can cause a single worker
+        // to allocate 2-3GB. With 2 workers on a 7GB runner, this OOM-kills
+        // the entire process tree.
+        if !should_recycle && self.max_rss_bytes > 0 {
+            if let Some(ref w) = *guard {
+                if let Some(pid) = w.child.id() {
+                    if let Some(rss) = get_process_rss(pid) {
+                        if rss > self.max_rss_bytes {
+                            should_recycle = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if should_recycle {
+            if let Some(mut w) = guard.take() {
+                let _ = w.child.kill().await;
+            }
+            self.compilation_counts[idx].store(0, Ordering::Relaxed);
+            // Worker is now None; it will be respawned on next use.
         }
 
         Ok(outcome)
@@ -223,6 +258,37 @@ impl ProcessPool {
             stdout: BufReader::new(stdout),
         })
     }
+}
+
+/// Get the RSS (Resident Set Size) of a process in bytes.
+/// Returns `None` if the RSS cannot be determined.
+fn get_process_rss(pid: u32) -> Option<usize> {
+    // On Linux, read /proc/{pid}/statm (page counts, space-separated).
+    // Field 1 (index 1) is resident pages.
+    #[cfg(target_os = "linux")]
+    {
+        let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+        let resident_pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+        let page_size = 4096; // standard on x86_64 Linux
+        return Some(resident_pages * page_size);
+    }
+
+    // On macOS, use `ps -o rss= -p {pid}` (returns RSS in KB).
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        let rss_kb: usize = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .ok()?;
+        return Some(rss_kb * 1024);
+    }
+
+    #[allow(unreachable_code)]
+    None
 }
 
 /// Read lines from the worker's stdout until the sentinel line is found.

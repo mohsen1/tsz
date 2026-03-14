@@ -90,6 +90,14 @@ pub struct Args {
     #[arg(long, default_value_t = 100)]
     pub max_compilations_per_worker: usize,
 
+    /// Max RSS (in MB) per batch worker before recycling (0 = no limit).
+    /// After each compilation, the worker's resident memory is checked. If it
+    /// exceeds this threshold, the worker is killed and respawned. This prevents
+    /// individual memory-hungry tests (JSX, JSDoc, large multi-file) from pushing
+    /// the total process tree past the CI runner's RAM limit.
+    #[arg(long, default_value_t = 1536)]
+    pub max_worker_rss_mb: usize,
+
     /// Write structured parity diff artifacts for failed tests.
     #[arg(long)]
     pub write_diff_artifacts: bool,

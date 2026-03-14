@@ -536,11 +536,14 @@ jobs:
           # Each shard runs ~1300 tests (1/10 of ~12,600 total).
           # 2 workers keeps peak memory low on ubuntu-latest (7GB RAM).
           # Recycle workers every 50 compilations to return memory to OS.
+          # RSS limit (1024MB) recycles workers that hit memory-hungry tests
+          # (JSX, JSDoc, multi-file) before they OOM-kill the runner.
           # 30s timeout accommodates complex tests on CI hardware.
           .target/dist-fast/tsz-conformance \
             --offset "$OFFSET" --max "$CHUNK" \
             --workers 2 --timeout 30 \
             --max-compilations-per-worker 50 \
+            --max-worker-rss-mb 1024 \
             --cache-file scripts/conformance/tsc-cache-full.json \
             2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
