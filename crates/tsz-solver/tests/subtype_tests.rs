@@ -3029,7 +3029,9 @@ fn test_readonly_index_signature_subtyping() {
         }),
     });
 
-    assert!(!checker.is_subtype_of(readonly_source, mutable_target));
+    // Per tsc behavior, readonly on index signatures does NOT affect assignability.
+    // A readonly index signature IS assignable to a mutable index signature.
+    assert!(checker.is_subtype_of(readonly_source, mutable_target));
     assert!(checker.is_subtype_of(mutable_target, readonly_target));
 }
 
@@ -15275,8 +15277,9 @@ fn test_index_signature_readonly_to_mutable() {
         number_index: None,
     });
 
-    // Readonly is not assignable to mutable (can't write)
-    assert!(!checker.is_subtype_of(obj_readonly, obj_mutable));
+    // Per tsc behavior, readonly on index signatures does NOT affect assignability.
+    // A readonly index signature IS assignable to a mutable index signature.
+    assert!(checker.is_subtype_of(obj_readonly, obj_mutable));
 }
 
 #[test]
@@ -21851,8 +21854,9 @@ fn test_readonly_index_vs_mutable() {
     // Mutable index is subtype of readonly index
     assert!(checker.is_subtype_of(mutable_index, readonly_index));
 
-    // Readonly index is NOT subtype of mutable index
-    assert!(!checker.is_subtype_of(readonly_index, mutable_index));
+    // Per tsc behavior, readonly on index signatures does NOT affect assignability.
+    // A readonly index signature IS assignable to a mutable index signature.
+    assert!(checker.is_subtype_of(readonly_index, mutable_index));
 }
 
 #[test]
