@@ -1528,6 +1528,42 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ));
         }
 
+        // TS5091: preserveConstEnums cannot be disabled when isolatedModules is enabled.
+        // tsc emits this at both key positions; we emit once per enabler.
+        if matches!(
+            compiler_opts.get("preserveConstEnums"),
+            Some(serde_json::Value::Bool(false))
+        ) {
+            let enablers: &[&str] = &["isolatedModules", "isolatedDeclarations"];
+            for enabler in enablers {
+                if option_is_truthy(compiler_opts.get(*enabler)) {
+                    let start = find_key_offset_in_source(&stripped, "preserveConstEnums");
+                    let key_len = "preserveConstEnums".len() as u32 + 2;
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
+                        &[enabler],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        msg.clone(),
+                        diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
+                    ));
+                    // tsc also emits at the enabler key position
+                    let enabler_start = find_key_offset_in_source(&stripped, enabler);
+                    let enabler_key_len = enabler.len() as u32 + 2;
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        enabler_start,
+                        enabler_key_len,
+                        msg,
+                        diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
+                    ));
+                }
+            }
+        }
+
         // TS6304: Composite projects may not disable declaration emit.
         // When composite: true, declaration must not be explicitly false.
         if option_is_truthy(compiler_opts.get("composite"))
