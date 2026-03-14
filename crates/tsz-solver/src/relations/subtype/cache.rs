@@ -451,6 +451,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             let source_eval = self.evaluate_type(source);
             let target_eval = self.evaluate_type(target);
+            // DEBUG: Show Application evaluation results with property details
+            if target_eval != target {
+                if let Some(crate::TypeData::Application(_)) = self.interner.lookup(target) {
+                    if let Some(crate::TypeData::Object(sid)) = self.interner.lookup(target_eval) {
+                        let shape = self.interner.object_shape(sid);
+                        eprintln!(
+                            "DEBUG APP_EVAL: Application {:?} → Object {:?} with {} props",
+                            target,
+                            target_eval,
+                            shape.properties.len()
+                        );
+                        for p in shape.properties.iter().take(5) {
+                            eprintln!(
+                                "  prop {:?}: {:?} [{:?}]",
+                                self.interner.resolve_atom(p.name),
+                                p.type_id,
+                                self.interner.lookup(p.type_id)
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "DEBUG APP_EVAL: Application {:?} → {:?} [{:?}]",
+                            target,
+                            target_eval,
+                            self.interner.lookup(target_eval)
+                        );
+                    }
+                }
+            }
             if source_eval != source || target_eval != target {
                 // Leave def_guard before recursing ONLY when a Lazy type resolved to an
                 // Enum with the same DefId. When Lazy(DefId(X)) evaluates to Enum(DefId(X), ...),
