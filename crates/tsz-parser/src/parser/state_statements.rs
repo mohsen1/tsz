@@ -796,10 +796,12 @@ impl ParserState {
             self.parse_expression_statement()
         } else if self.look_ahead_is_import_equals() {
             self.parse_import_equals_declaration()
-        } else if self.look_ahead_is_import_declaration() {
-            self.parse_import_declaration()
         } else {
-            NodeIndex::NONE
+            // Always parse as declaration — matches tsc which always enters
+            // parseImportDeclarationOrImportEqualsDeclaration for import at
+            // statement level. The import clause logic inside handles the case
+            // where the token after `import` can't start a valid clause.
+            self.parse_import_declaration()
         }
     }
 
