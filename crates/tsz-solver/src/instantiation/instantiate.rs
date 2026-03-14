@@ -1331,6 +1331,13 @@ pub fn substitute_this_type(
     let empty_subst = TypeSubstitution::new();
     let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
     instantiator.this_type = Some(this_type);
+    // Preserve type parameters during this-only substitution. Without this,
+    // the instantiator's constraint fallback would collapse type parameters
+    // to their constraints when the constraint contains ThisType.
+    // Example: T extends A where A has self(): this — substitute_this_type(T, T)
+    // would walk into T's constraint A, find ThisType, replace it, and return
+    // the modified constraint instead of T.
+    instantiator.preserve_unsubstituted_type_params = true;
     let result = instantiator.instantiate(type_id);
     if instantiator.depth_exceeded {
         TypeId::ERROR
