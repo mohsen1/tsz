@@ -1451,11 +1451,23 @@ impl ParserState {
         // This prevents cascading errors when a missing token causes identifier to be expected
         // Use centralized error suppression heuristic
         if self.should_report_error() {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Identifier expected.",
-                diagnostic_codes::IDENTIFIER_EXPECTED,
-            );
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            // tsc uses TS1359 for reserved words ("'X' is a reserved word that cannot
+            // be used here") and TS1003 for other non-identifier tokens.
+            if self.is_reserved_word() {
+                let word = self.current_keyword_text();
+                let msg = diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+                    .replace("{0}", word);
+                self.parse_error_at_current_token(
+                    &msg,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
         }
     }
 
