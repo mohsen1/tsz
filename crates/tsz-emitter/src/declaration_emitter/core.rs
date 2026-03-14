@@ -1134,12 +1134,26 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(effective_return_type_id));
                 }
-            } else if func_body.is_some() && self.body_returns_void(func_body) {
-                self.write(": void");
+            } else if func_body.is_some() {
+                if self.body_returns_void(func_body) {
+                    self.write(": void");
+                } else if let Some(return_text) =
+                    self.function_body_preferred_return_type_text(func_body)
+                {
+                    self.write(": ");
+                    self.write(&return_text);
+                }
             }
-        } else if func_body.is_some() && self.body_returns_void(func_body) {
-            // No type cache available, but we can check the body
-            self.write(": void");
+        } else if func_body.is_some() {
+            // No type cache available, but we can infer from the body
+            if self.body_returns_void(func_body) {
+                self.write(": void");
+            } else if let Some(return_text) =
+                self.function_body_preferred_return_type_text(func_body)
+            {
+                self.write(": ");
+                self.write(&return_text);
+            }
         }
 
         self.write(";");
@@ -2106,6 +2120,11 @@ impl<'a> DeclarationEmitter<'a> {
             } else if accessor_body.is_some() {
                 if self.body_returns_void(accessor_body) {
                     self.write(": void");
+                } else if let Some(return_text) =
+                    self.function_body_preferred_return_type_text(accessor_body)
+                {
+                    self.write(": ");
+                    self.write(&return_text);
                 } else if !self.source_is_declaration_file {
                     self.write(": any");
                 }
