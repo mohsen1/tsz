@@ -614,6 +614,9 @@ pub struct CheckerContext<'a> {
     /// Collected yield operand types during body check for unannotated generators.
     /// After body check, the union determines the inferred yield type for TS7055/TS7025 vs TS7057.
     pub generator_yield_operand_types: Vec<TypeId>,
+    /// Whether TS7057 was emitted for any yield in the current generator.
+    /// When true, TS7055 is suppressed (tsc emits one or the other, not both).
+    pub generator_had_ts7057: bool,
     /// Stack of current `this` types for class member bodies.
     pub this_type_stack: Vec<TypeId>,
 

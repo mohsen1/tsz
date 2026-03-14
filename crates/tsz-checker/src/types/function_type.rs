@@ -1719,6 +1719,7 @@ impl<'a> CheckerState<'a> {
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
+                let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 self.check_statement(body);
 
                 if suppress_expression_body_diagnostics {
@@ -1770,9 +1771,14 @@ impl<'a> CheckerState<'a> {
                         widened
                     };
                     final_generator_yield_type = Some(final_yield);
+                    // Suppress TS7055 when TS7057 was already emitted for a yield
+                    // in this generator. tsc emits one or the other, not both:
+                    // TS7057 covers the per-expression case; TS7055 is for the
+                    // function-level "yield type is implicitly any" case.
                     if final_yield == TypeId::ANY
                         && self.ctx.no_implicit_any()
                         && !self.is_js_file()
+                        && !self.ctx.generator_had_ts7057
                     {
                         use crate::diagnostics::diagnostic_codes;
                         if let Some(name) = &name_for_error {
@@ -1795,6 +1801,7 @@ impl<'a> CheckerState<'a> {
 
                 // Restore outer generator's yield collection state
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
+                self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
                 self.ctx.contextual_type = prev_ctx_for_body;
                 // Restore control flow context
