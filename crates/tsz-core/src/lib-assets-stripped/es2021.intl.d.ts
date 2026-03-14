@@ -1,0 +1,50 @@
+declare namespace Intl {
+    interface DateTimeFormatPartTypesRegistry {
+        fractionalSecond: any;
+    }
+    interface DateTimeFormatOptions {
+        formatMatcher?: "basic" | "best fit" | "best fit" | undefined;
+        dateStyle?: "full" | "long" | "medium" | "short" | undefined;
+        timeStyle?: "full" | "long" | "medium" | "short" | undefined;
+        dayPeriod?: "narrow" | "short" | "long" | undefined;
+        fractionalSecondDigits?: 1 | 2 | 3 | undefined;
+    }
+    interface DateTimeRangeFormatPart extends DateTimeFormatPart {
+        source: "startRange" | "endRange" | "shared";
+    }
+    interface DateTimeFormat {
+        formatRange(startDate: Date | number | bigint, endDate: Date | number | bigint): string;
+        formatRangeToParts(startDate: Date | number | bigint, endDate: Date | number | bigint): DateTimeRangeFormatPart[];
+    }
+    interface ResolvedDateTimeFormatOptions {
+        formatMatcher?: "basic" | "best fit" | "best fit";
+        dateStyle?: "full" | "long" | "medium" | "short";
+        timeStyle?: "full" | "long" | "medium" | "short";
+        hourCycle?: "h11" | "h12" | "h23" | "h24";
+        dayPeriod?: "narrow" | "short" | "long";
+        fractionalSecondDigits?: 1 | 2 | 3;
+    }
+    type ListFormatLocaleMatcher = "lookup" | "best fit";
+    type ListFormatType = "conjunction" | "disjunction" | "unit";
+    type ListFormatStyle = "long" | "short" | "narrow";
+    interface ListFormatOptions {
+        localeMatcher?: ListFormatLocaleMatcher | undefined;
+        type?: ListFormatType | undefined;
+        style?: ListFormatStyle | undefined;
+    }
+    interface ResolvedListFormatOptions {
+        locale: string;
+        style: ListFormatStyle;
+        type: ListFormatType;
+    }
+    interface ListFormat {
+        format(list: Iterable<string>): string;
+        formatToParts(list: Iterable<string>): { type: "element" | "literal"; value: string; }[];
+        resolvedOptions(): ResolvedListFormatOptions;
+    }
+    const ListFormat: {
+        prototype: ListFormat;
+        new (locales?: LocalesArgument, options?: ListFormatOptions): ListFormat;
+        supportedLocalesOf(locales: LocalesArgument, options?: Pick<ListFormatOptions, "localeMatcher">): UnicodeBCP47LocaleIdentifier[];
+    };
+}
