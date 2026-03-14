@@ -158,10 +158,43 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
-## 20.25) Multi-Session Work
-- When work is intentionally split across multiple concurrent Claude sessions, prefer Claude agent teams over unrelated standalone sessions.
-- For conformance campaigns, use teams to divide the campaign into distinct root-cause lanes rather than duplicating the same investigation.
-- `scripts/run-session.sh` should enable Claude agent teams by default so session runners can coordinate instead of drifting into parallel whack-a-mole work.
+## 20.25) Multi-Session Work (Campaign System)
+- **10 concurrent agents** run across 2-3 machines, coordinated via git branches.
+- Each agent owns a **campaign** (mechanism area). See `scripts/session/campaigns.yaml`.
+- Agents work on `campaign/<name>` branches, never push directly to main.
+- An **integrator agent** validates and merges campaign branches to main.
+- Follow the **discipline cycle**: research → plan → implement → verify → commit → push.
+- Read `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
+
+### Quick Reference
+```bash
+# See campaign status (what's claimed vs available):
+scripts/session/check-status.sh
+
+# Claim a campaign and create a worktree:
+scripts/session/start-campaign.sh <campaign-name>
+
+# Integrator: validate and merge campaign branches:
+scripts/session/integrate.sh --auto
+
+# Clean up disk (stale worktrees, old targets):
+scripts/session/cleanup.sh --auto
+
+# Setup a new machine:
+scripts/session/setup-machine.sh
+```
+
+### Periodic coordination via /loop
+```bash
+# Worker agents — rebase and check status:
+/loop 30m run scripts/session/check-status.sh and rebase on origin/main if needed
+
+# Integrator — validate and merge:
+/loop 30m run scripts/session/integrate.sh --auto
+
+# Cleanup — free disk space:
+/loop 4h run scripts/session/cleanup.sh --auto
+```
 
 ## 20.5) Conformance Analysis Tools
 
