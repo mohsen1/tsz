@@ -2469,7 +2469,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 | TypeData::Tuple(_)
                 | TypeData::Function(_)
                 | TypeData::Callable(_)
-                | TypeData::Intersection(_),
+                | TypeData::Intersection(_)
+                | TypeData::Enum(..)
+                | TypeData::Lazy(_)
+                | TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(..)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::ReadonlyType(_)
+                | TypeData::KeyOf(_),
             ) => true,
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
