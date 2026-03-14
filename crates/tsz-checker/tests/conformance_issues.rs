@@ -7106,6 +7106,32 @@ var f1 = function () {
     );
 }
 
+// TS1360: `satisfies` with `as const` should accept readonly-to-mutable arrays.
+// From: typeSatisfaction_asConstArrays.ts
+
+/// tsc 6.0 accepts `[1,2,3] as const satisfies unknown[]` because `satisfies`
+/// checks structural shape, not mutability constraints. The readonly modifier
+/// from `as const` should not cause a TS1360 failure.
+#[test]
+fn test_ts1360_not_emitted_for_as_const_satisfies_mutable_array() {
+    let opts = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+const arr1 = [1, 2, 3] as const satisfies readonly unknown[]
+const arr2 = [1, 2, 3] as const satisfies unknown[]
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 1360),
+        "Should NOT emit TS1360 for `as const satisfies` readonly-to-mutable.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 // TS7034: Variable implicitly has type 'any' in some locations where its type cannot be determined.
 
 /// TS7034 should fire for variables without type annotation that are captured by nested functions.
