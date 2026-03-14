@@ -277,23 +277,10 @@ fn test_resolve_multiple_lower_bounds_union() {
     ctx.add_lower_bound(var, hello);
     ctx.add_lower_bound(var, forty_two);
 
-    // Resolve should return a union of string | number (widened from literals)
+    // Resolve should widen fresh literal candidates: "hello" | 42 → string | number
     let result = ctx.resolve_with_constraints(var).unwrap();
-    let result_data = interner.lookup(result).expect("result type should exist");
-    match result_data {
-        TypeData::Union(list_id) => {
-            let members = interner.type_list(list_id);
-            let has_string_like = members.iter().any(|&m| m == TypeId::STRING || m == hello);
-            let has_number_like = members
-                .iter()
-                .any(|&m| m == TypeId::NUMBER || m == forty_two);
-            assert!(
-                has_string_like && has_number_like,
-                "Expected union with string/number types, got members: {members:?}"
-            );
-        }
-        _ => panic!("Expected union type, got {result_data:?}"),
-    }
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -11014,23 +11001,9 @@ fn test_constraint_satisfaction_multiple_candidates() {
     ctx.add_lower_bound(var_t, forty_two);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // Result is a union whose members are either the literal types or their
-    // widened base types (string/number), depending on the current widening logic.
-    let result_data = interner.lookup(result).expect("result type should exist");
-    match result_data {
-        TypeData::Union(list_id) => {
-            let members = interner.type_list(list_id);
-            let has_string_like = members.iter().any(|&m| m == TypeId::STRING || m == hello);
-            let has_number_like = members
-                .iter()
-                .any(|&m| m == TypeId::NUMBER || m == forty_two);
-            assert!(
-                has_string_like && has_number_like,
-                "Expected union with string/number types, got members: {members:?}"
-            );
-        }
-        _ => panic!("Expected union type, got {result_data:?}"),
-    }
+    // Fresh literal candidates are widened: "hello" | 42 → string | number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected);
 }
 
 #[test]
