@@ -334,16 +334,26 @@ impl<'a> Printer<'a> {
             // Pass previously-evaluated enum member values for cross-enum
             // reference resolution (e.g., `enum Bar { B = Foo.A }`)
             transformer.set_prior_enum_values(&self.prior_enum_member_values);
+            transformer.set_prior_string_members(&self.prior_enum_string_members);
             if let Some(mut ir) = transformer.transform_enum(idx) {
-                // Accumulate member values for cross-enum reference resolution
+                // Accumulate member values and string member names
                 let enum_name_for_accum = transformer.current_enum_name_ref().to_string();
                 if !enum_name_for_accum.is_empty() {
                     let entry = self
                         .prior_enum_member_values
-                        .entry(enum_name_for_accum)
+                        .entry(enum_name_for_accum.clone())
                         .or_default();
                     for (k, &v) in transformer.get_member_values() {
                         entry.insert(k.clone(), v);
+                    }
+                    if !transformer.get_string_members().is_empty() {
+                        let str_entry = self
+                            .prior_enum_string_members
+                            .entry(enum_name_for_accum)
+                            .or_default();
+                        for name in transformer.get_string_members() {
+                            str_entry.insert(name.clone());
+                        }
                     }
                 }
                 let mut printer = IRPrinter::with_arena(self.arena);

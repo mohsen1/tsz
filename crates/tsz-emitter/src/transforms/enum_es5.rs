@@ -68,6 +68,9 @@ pub struct EnumES5Transformer<'a> {
     /// Previously-evaluated enum member values from other enums.
     /// Keyed by `enum_name` → `member_name` → value.
     prior_enum_values: HashMap<String, HashMap<String, i64>>,
+    /// Previously-evaluated string enum member names from other enums.
+    /// Keyed by `enum_name` → set of member names that have string values.
+    prior_string_members: HashMap<String, HashSet<String>>,
 }
 
 impl<'a> EnumES5Transformer<'a> {
@@ -84,6 +87,7 @@ impl<'a> EnumES5Transformer<'a> {
             current_enum_name: String::new(),
             preserve_const_enums: false,
             prior_enum_values: HashMap::new(),
+            prior_string_members: HashMap::new(),
         }
     }
 
@@ -112,9 +116,25 @@ impl<'a> EnumES5Transformer<'a> {
             .collect();
     }
 
+    /// Set previously-known string enum member names for cross-enum detection.
+    pub fn set_prior_string_members(
+        &mut self,
+        members: &rustc_hash::FxHashMap<String, rustc_hash::FxHashSet<String>>,
+    ) {
+        self.prior_string_members = members
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().cloned().collect()))
+            .collect();
+    }
+
     /// Get the accumulated member values for this enum (for persisting across declarations).
     pub const fn get_member_values(&self) -> &HashMap<String, i64> {
         &self.member_values
+    }
+
+    /// Get the string member names for this enum.
+    pub const fn get_string_members(&self) -> &HashSet<String> {
+        &self.string_members
     }
 
     /// Get the current enum name (from the last `transform_enum` call).
@@ -1148,16 +1168,24 @@ impl<'a> EnumES5Transformer<'a> {
                                 .get_identifier(n)
                                 .is_some_and(|id| id.escaped_text == self.current_enum_name)
                     });
-                    if obj_is_enum {
-                        // Check if the property name is a known string member
-                        let prop_name = self
-                            .arena
-                            .get(access.name_or_argument)
-                            .and_then(|n| self.arena.get_identifier(n))
-                            .map(|id| id.escaped_text.as_str());
-                        if let Some(name) = prop_name {
-                            return self.string_members.contains(name);
-                        }
+                    let prop_name = self
+                        .arena
+                        .get(access.name_or_argument)
+                        .and_then(|n| self.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str());
+
+                    if obj_is_enum && let Some(name) = prop_name {
+                        return self.string_members.contains(name);
+                    }
+
+                    // Cross-enum reference: check prior enum string members
+                    if let Some(obj_name) = obj_node
+                        .and_then(|n| self.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str())
+                        && let Some(prior) = self.prior_string_members.get(obj_name)
+                        && let Some(name) = prop_name
+                    {
+                        return prior.contains(name);
                     }
                     false
                 } else {
@@ -1167,10 +1195,15 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 // Bare identifier that matches a known string member
                 if let Some(id) = self.arena.get_identifier(node) {
-                    self.string_members.contains(id.escaped_text.as_str())
-                } else {
-                    false
+                    if self.string_members.contains(id.escaped_text.as_str()) {
+                        return true;
+                    }
+                    // Check prior blocks of the same merged enum
+                    if let Some(prior) = self.prior_string_members.get(&self.current_enum_name) {
+                        return prior.contains(id.escaped_text.as_str());
+                    }
                 }
+                false
             }
             _ => false,
         }
