@@ -2520,6 +2520,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// primitive families (e.g., a string literal and a number literal). This indicates
     /// heterogeneous candidates that tsc would NOT merge into a union.
     fn has_conflicting_literal_bases(&self, lower_bounds: &[TypeId]) -> bool {
+        // When all lower bounds are primitives or literals, different bases are safe
+        // to merge into a union. tsc infers `T = string | number` for `f<T>(a: T, b: T)`
+        // called with `f("hello", 42)`, and also for mapped type inference like
+        // `{ [P in K]: T }` with heterogeneous property values.
+        // Only treat as conflicting when non-primitive types (objects, functions, etc.)
+        // are mixed with primitives, indicating structural ambiguity.
+        let all_primitive_or_literal = lower_bounds.iter().all(|&ty| {
+            self.primitive_base_of(ty).is_some()
+                || ty.is_nullish()
+                || ty == TypeId::NEVER
+                || ty == TypeId::VOID
+        });
+        if all_primitive_or_literal {
+            return false;
+        }
+
         let mut seen_base: Option<TypeId> = None;
         for &ty in lower_bounds {
             let base = self.primitive_base_of(ty);
