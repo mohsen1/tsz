@@ -251,12 +251,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
         let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
 
-        let depth = self.def_depth.entry(def_id).or_insert(0);
-        if *depth >= Self::MAX_DEF_DEPTH {
-            self.mark_depth_exceeded();
-            return Some(TypeId::ERROR);
-        }
-        *depth += 1;
+        // Do NOT check/increment def_depth for tail-call instantiations.
+        // The caller (tail-call loop in evaluate_conditional) has its own
+        // MAX_TAIL_RECURSION_DEPTH (1000) limit. Incrementing def_depth here
+        // defeats tail-call optimization by hitting MAX_DEF_DEPTH (100) first.
+        // Example: `type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S`
+        // needs 128+ iterations for long strings.
 
         // Expand type arguments
         let body_is_conditional_with_app_infer =
