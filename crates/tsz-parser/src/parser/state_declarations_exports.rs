@@ -749,7 +749,19 @@ impl ParserState {
         if self.look_ahead_is_const_enum() {
             self.parse_const_enum_declaration(self.token_pos(), Vec::new())
         } else {
-            self.parse_variable_statement()
+            // Add ExportKeyword modifier so the variable statement knows it's exported.
+            // Without this, System module emit can't detect the export and omits
+            // the exports_1() wrapper.
+            let start_pos = self.token_pos();
+            let export_end = if start_pos >= 6 { start_pos } else { 6 };
+            let export_start = export_end - 6;
+            let export_node = self.arena.add_token(
+                tsz_scanner::SyntaxKind::ExportKeyword as u16,
+                export_start,
+                export_end,
+            );
+            let modifiers = self.make_node_list(vec![export_node]);
+            self.parse_variable_statement_with_modifiers(Some(export_start), Some(modifiers))
         }
     }
 
