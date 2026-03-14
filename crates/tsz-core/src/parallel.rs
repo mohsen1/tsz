@@ -782,7 +782,7 @@ fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBu
         candidate
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(|name| crate::embedded_libs::is_embedded_lib(name))
+            .is_some_and(crate::embedded_libs::is_embedded_lib)
             || candidate.exists()
     })
 }

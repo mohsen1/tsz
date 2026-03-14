@@ -68,6 +68,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          # bench-vs-tsgo.sh uses .target-bench/ for LTO builds — cache it
+          workspaces: ". -> .target-bench"
 
       - uses: actions/setup-node@v4
         with:

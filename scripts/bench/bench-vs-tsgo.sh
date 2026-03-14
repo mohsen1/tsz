@@ -329,7 +329,7 @@ check_prerequisites() {
             mkdir -p "$pgo_dir"
             (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
                 RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
-                cargo build --profile dist -p tsz-cli 2>/dev/null)
+                cargo build --profile dist -p tsz-cli)
 
             echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
             # Run representative workloads
