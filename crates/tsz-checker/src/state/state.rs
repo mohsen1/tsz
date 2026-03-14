@@ -330,9 +330,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn should_apply_flow_narrowing_for_identifier(&self, idx: NodeIndex) -> bool {
-        use tsz_binder::symbol_flags;
-        use tsz_scanner::SyntaxKind;
-
         if self.ctx.skip_flow_narrowing {
             return false;
         }
@@ -343,6 +340,15 @@ impl<'a> CheckerState<'a> {
         if self.ctx.daa_error_nodes.contains(&idx.0) {
             return false;
         }
+
+        self.is_narrowable_identifier(idx)
+    }
+
+    /// Check if a node is a narrowable identifier (variable with flow analysis).
+    /// This is pure — depends only on AST structure, not type-checking state.
+    fn is_narrowable_identifier(&self, idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
