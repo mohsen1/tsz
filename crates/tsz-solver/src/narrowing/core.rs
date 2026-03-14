@@ -1478,7 +1478,7 @@ impl<'a> NarrowingContext<'a> {
             TypeGuard::NullishEquality => {
                 if sense {
                     // Equality with null: narrow to null | undefined
-                    self.db.union(vec![TypeId::NULL, TypeId::UNDEFINED])
+                    self.db.union2(TypeId::NULL, TypeId::UNDEFINED)
                 } else {
                     // Inequality: exclude null and undefined
                     let without_null = self.narrow_excluding_type(source_type, TypeId::NULL);

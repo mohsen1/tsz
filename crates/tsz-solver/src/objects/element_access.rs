@@ -297,7 +297,7 @@ mod tests {
         });
 
         let obj = interner.object(vec![]);
-        let union = interner.union(vec![mapped, obj]);
+        let union = interner.union2(mapped, obj);
 
         let evaluator = ElementAccessEvaluator::new(&interner);
         assert!(
