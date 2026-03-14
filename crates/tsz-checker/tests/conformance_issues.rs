@@ -7058,6 +7058,33 @@ var f2 = () => f2();
     );
 }
 
+/// TS7023 should NOT fire when the recursive function has a non-recursive base case.
+/// tsc infers the return type from the base case (`return 0` → `number`), ignoring
+/// the circular self-reference. From: simpleRecursionWithBaseCase3.ts
+#[test]
+fn test_ts7023_not_emitted_with_base_case() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+const fn1 = () => {
+  if (Math.random() > 0.5) {
+    return fn1()
+  }
+  return 0
+}
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7023),
+        "Should NOT emit TS7023 when recursive function has a base case.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 /// TS7023 should NOT fire when noImplicitAny is off.
 #[test]
 fn test_ts7023_not_emitted_without_no_implicit_any() {

@@ -460,6 +460,18 @@ impl<'a> CheckerState<'a> {
             return_types.push(TypeId::UNDEFINED);
         }
 
+        // Filter out ERROR types from return type inference when there are
+        // non-ERROR alternatives. This handles recursive self-referencing functions
+        // like `const fn1 = () => { if (...) return fn1(); return 0; }`.
+        // The recursive call resolves to ERROR during type computation (circular
+        // reference), but the base case `return 0` provides a concrete `number` type.
+        // tsc filters out circular contributions and infers the return type from
+        // non-circular branches only, so `fn1` gets return type `number`.
+        let has_non_error = return_types.iter().any(|&t| t != TypeId::ERROR);
+        if has_non_error {
+            return_types.retain(|&t| t != TypeId::ERROR);
+        }
+
         factory.union(return_types)
     }
 
