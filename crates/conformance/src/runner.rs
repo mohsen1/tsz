@@ -190,6 +190,7 @@ impl Runner {
                 &self.tsz_binary,
                 concurrency_limit,
                 self.args.max_compilations_per_worker,
+                self.args.max_worker_rss_mb * 1024 * 1024,
             )
             .await
             {
