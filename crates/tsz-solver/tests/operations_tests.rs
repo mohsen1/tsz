@@ -2343,10 +2343,13 @@ fn test_call_generic_direct_param_candidate_keeps_first_for_conflicting_literals
     let two = interner.literal_string("");
 
     let result = evaluator.resolve_call(func, &[one, two]);
-    // tsc infers T = 1 (first candidate) and errors on "": conflicting primitive bases
+    // tsc infers T = 1 | "" (union of both candidates) when all bounds are
+    // primitives/literals. Both arguments are assignable to the union, so the
+    // call succeeds. This matches tsc's behavior for `f<T>(a: T, b: T)` with
+    // mixed primitive types.
     assert!(
-        matches!(result, CallResult::ArgumentTypeMismatch { .. }),
-        "Expected ArgumentTypeMismatch for conflicting literal bases, got {result:?}"
+        matches!(result, CallResult::Success(_)),
+        "Expected Success for all-primitive inference candidates, got {result:?}"
     );
 }
 
