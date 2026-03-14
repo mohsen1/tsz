@@ -1205,7 +1205,11 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress cascading errors when either type is ERROR, ANY, or UNKNOWN
+        // Suppress cascading errors when both types display identically (no
+        // visible type mismatch to the user), or when either type is special.
+        if arg_type == param_type {
+            return;
+        }
         if arg_type == TypeId::ERROR || param_type == TypeId::ERROR {
             return;
         }

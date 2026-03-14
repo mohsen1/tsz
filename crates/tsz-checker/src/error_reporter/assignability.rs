@@ -459,6 +459,14 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
+        // If source and target are the same TypeId, there is no actual type
+        // mismatch — the failure was at a higher structural level (e.g., the
+        // containing object), not at the property type level. Emitting TS2322
+        // for identical types produces confusing "Type 'X' is not assignable
+        // to type 'X'" diagnostics.
+        if source == target {
+            return;
+        }
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if self.should_suppress_assignability_diagnostic(source, target) {
             if tracing::enabled!(Level::TRACE) {
