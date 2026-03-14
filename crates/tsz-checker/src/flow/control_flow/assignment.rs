@@ -90,9 +90,6 @@ impl<'a> FlowAnalyzer<'a> {
             let bin = self.arena.get_binary_expr(node)?;
             // Check if this is an assignment to our target reference
             if self.is_matching_reference(bin.left, target) {
-                if self.is_access_reference(target) && !self.is_this_access_reference(target) {
-                    return None;
-                }
                 if bin.operator_token == SyntaxKind::EqualsToken as u16
                     && self.is_declared_in_for_in_header(target)
                 {
