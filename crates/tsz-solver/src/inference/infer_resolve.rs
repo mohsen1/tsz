@@ -356,19 +356,29 @@ impl<'a> InferenceContext<'a> {
         let preserve_literals = is_const
             || self.constraint_implies_literals(upper_bounds)
             || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c));
-        let widened = if preserve_literals {
-            if is_const {
-                filtered_no_never
-                    .iter()
-                    .map(|c| widening::apply_const_assertion(self.interner, c.type_id))
-                    .collect()
-            } else {
-                filtered_no_never.iter().map(|c| c.type_id).collect()
-            }
+        // Match tsc's order: union/reduce candidates FIRST, then widen.
+        // tsc calls getUnionType(candidates, SubtypeReduction) then getWidenedLiteralType.
+        // If we widen before reducing, a fresh literal `1` widens to `number` and
+        // prevents subtype reduction from eliminating it against a non-fresh union
+        // like `Bit = 0 | 1`, leading to `number` instead of `Bit`.
+        let candidate_types: Vec<TypeId> = if is_const {
+            filtered_no_never
+                .iter()
+                .map(|c| widening::apply_const_assertion(self.interner, c.type_id))
+                .collect()
         } else {
-            self.widen_candidate_types(&filtered_no_never)
+            filtered_no_never.iter().map(|c| c.type_id).collect()
         };
-        let resolved = self.best_common_type(&widened);
+        let resolved = self.best_common_type(&candidate_types);
+        // Now widen the resolved type (only if literals should not be preserved).
+        // After best_common_type, subtype reduction has already eliminated redundant
+        // fresh literals (e.g., `1` is absorbed by `0 | 1`), so widening the result
+        // only affects cases where the literal was the sole candidate.
+        let resolved = if !preserve_literals && !is_const {
+            self.widen_resolved_inference(resolved)
+        } else {
+            resolved
+        };
         // Deep-widen the resolved type when it is an object literal containing
         // fresh literals. TSC calls getWidenedType() in getInferredType() for this.
         // E.g., { c: false } → { c: boolean }.
@@ -452,9 +462,9 @@ impl<'a> InferenceContext<'a> {
                     })
                     .map(|(_, _, fallback_idx)| fallback_idx)
                 {
-                    return widened[fallback_idx];
+                    return candidate_types[fallback_idx];
                 }
-                return widened[0];
+                return candidate_types[0];
             }
         }
         resolved
@@ -533,21 +543,19 @@ impl<'a> InferenceContext<'a> {
             .collect()
     }
 
-    fn widen_candidate_types(&self, candidates: &[InferenceCandidate]) -> Vec<TypeId> {
-        candidates
-            .iter()
-            .map(|candidate| {
-                if candidate.is_fresh_literal {
-                    // Widen direct literal candidates (0 → number, false → boolean).
-                    // Const type parameters are protected by the is_const check in
-                    // resolve_from_candidates which uses apply_const_assertion instead.
-                    self.get_base_type(candidate.type_id)
-                        .unwrap_or(candidate.type_id)
-                } else {
-                    candidate.type_id
-                }
-            })
-            .collect()
+    /// Widen the resolved inference result, matching tsc's `getWidenedLiteralType`.
+    ///
+    /// Only widens a single literal type (e.g., `1` → `number`). Unions are NOT
+    /// widened because:
+    /// - If the union came from subtype reduction (e.g., `append(aa, 1)` where
+    ///   `aa: Bit[]`), the result is `Bit = 0 | 1` which shouldn't be widened.
+    /// - If the union was formed from multiple candidates (e.g., `g2(1, 2)` →
+    ///   `1 | 2`), tsc also preserves the literal union.
+    fn widen_resolved_inference(&self, type_id: TypeId) -> TypeId {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Literal(_)) => self.get_base_type(type_id).unwrap_or(type_id),
+            _ => type_id,
+        }
     }
 
     // =========================================================================
