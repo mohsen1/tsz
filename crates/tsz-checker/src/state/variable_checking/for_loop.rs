@@ -315,6 +315,35 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2487: For-of LHS must be a variable or a property access.
+        // Unlike for-in, for-of allows destructuring patterns (array/object literals).
+        if is_for_of && let Some(init_node) = self.ctx.arena.get(initializer) {
+            let unwrapped = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(initializer);
+            let init_kind = self
+                .ctx
+                .arena
+                .get(unwrapped)
+                .map_or(init_node.kind, |n| n.kind);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use tsz_parser::parser::syntax_kind_ext;
+
+            if init_kind != SyntaxKind::Identifier as u16
+                && init_kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && init_kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && init_kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && init_kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
+                );
+            }
+        }
+
         // For-in specific LHS checks (TS2491, TS2406, TS2405)
         if !is_for_of && let Some(init_node) = self.ctx.arena.get(initializer) {
             // Unwrap parenthesized/satisfies/as wrappers before checking the kind,

@@ -7106,6 +7106,40 @@ var f1 = function () {
     );
 }
 
+// TS2487: The left-hand side of a 'for...of' statement must be a variable or a property access.
+// From: for-of3.ts
+
+/// `for (v++ of [])` should emit TS2487 because `v++` is not a valid assignment target.
+#[test]
+fn test_ts2487_invalid_for_of_lhs() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+var v: any;
+for (v++ of []) { }
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2487),
+        "Should emit TS2487 for invalid for-of LHS.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// Valid for-of LHS patterns should NOT emit TS2487.
+#[test]
+fn test_ts2487_valid_for_of_lhs() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+var v: any;
+var arr: any[] = [];
+for (v of arr) { }
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2487),
+        "Should NOT emit TS2487 for valid for-of LHS.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 // TS1360: `satisfies` with `as const` should accept readonly-to-mutable arrays.
 // From: typeSatisfaction_asConstArrays.ts
 
