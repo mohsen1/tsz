@@ -440,11 +440,25 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
                 }
-            } else if func_body.is_some() && self.body_returns_void(func_body) {
-                self.write(": void");
+            } else if func_body.is_some() {
+                if self.body_returns_void(func_body) {
+                    self.write(": void");
+                } else if let Some(return_text) =
+                    self.function_body_preferred_return_type_text(func_body)
+                {
+                    self.write(": ");
+                    self.write(&return_text);
+                }
             }
-        } else if func_body.is_some() && self.body_returns_void(func_body) {
-            self.write(": void");
+        } else if func_body.is_some() {
+            if self.body_returns_void(func_body) {
+                self.write(": void");
+            } else if let Some(return_text) =
+                self.function_body_preferred_return_type_text(func_body)
+            {
+                self.write(": ");
+                self.write(&return_text);
+            }
         }
 
         self.write(";");
