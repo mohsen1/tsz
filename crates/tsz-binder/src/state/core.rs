@@ -11,8 +11,6 @@ use crate::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
-use tracing::debug;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -765,18 +763,6 @@ impl BinderState {
             SymbolTable::new()
         };
 
-        // Debug: log what's going into file_locals
-        #[cfg(not(target_arch = "wasm32"))]
-        if std::env::var("BIND_DEBUG").is_ok() {
-            debug!(
-                "[FILE_LOCALS] Root scope has {} symbols",
-                root_scope_symbols.len()
-            );
-            for (name, _) in root_scope_symbols.iter() {
-                debug!("[FILE_LOCALS]   - {}", name);
-            }
-        }
-
         self.file_locals = root_scope_symbols;
 
         // Merge back any existing file locals (e.g., lib symbols) that were pre-populated.
@@ -820,6 +806,13 @@ impl BinderState {
                 export_equals_target = Some(sym_id);
             }
             if let Some(symbol) = self.symbols.get(sym_id) {
+                // Skip lib/global symbols (identified by decl_file_idx == u32::MAX)
+                // merged into file_locals from lib.d.ts. These are global builtins
+                // that should not appear in a user module's module_exports.
+                if symbol.decl_file_idx == u32::MAX {
+                    continue;
+                }
+
                 // Check if this is a module/namespace symbol
                 if symbol.is_exported
                     && (symbol.flags
@@ -865,7 +858,6 @@ impl BinderState {
             }
         }
 
-        // Add to module_exports if we found any exports
         if !file_exports.is_empty() {
             self.module_exports
                 .insert(file_name.to_string(), file_exports);
