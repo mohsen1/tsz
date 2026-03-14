@@ -5081,8 +5081,9 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
     });
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
-    // NOTE: Returns ERROR due to my changes - was expecting ANY before
-    assert_eq!(result, TypeId::ERROR);
+    // Per tsc behavior, readonly on index signatures does NOT affect assignability.
+    // Inference should succeed and infer T = number from the value type.
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]
@@ -5138,8 +5139,9 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
     });
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
-    // NOTE: Returns ERROR due to my changes - was expecting ANY before
-    assert_eq!(result, TypeId::ERROR);
+    // Per tsc behavior, readonly on index signatures does NOT affect assignability.
+    // Inference should succeed and infer T = number from the value type.
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]

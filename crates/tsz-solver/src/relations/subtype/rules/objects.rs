@@ -479,10 +479,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         match &source.string_index {
             Some(s_string_idx) => {
-                // Source string index must be subtype of target
-                if s_string_idx.readonly && !t_string_idx.readonly {
-                    return SubtypeResult::False;
-                }
+                // Note: tsc does NOT enforce readonly on index signatures during
+                // assignability. A readonly source index IS assignable to a writable
+                // target index — readonly only prevents mutation through the reference.
                 let source_value =
                     self.bind_property_receiver_this(source_receiver, s_string_idx.value_type);
                 let target_value =
@@ -573,10 +572,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         match &source.number_index {
             Some(s_number_idx) => {
-                // Source number index must be subtype of target
-                if s_number_idx.readonly && !t_number_idx.readonly {
-                    return SubtypeResult::False;
-                }
+                // Note: tsc does NOT enforce readonly on index signatures during
+                // assignability. Readonly source index IS assignable to writable target.
                 let source_value =
                     self.bind_property_receiver_this(source_receiver, s_number_idx.value_type);
                 let target_value =
@@ -591,9 +588,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let Some(s_string_idx) = source.string_index.as_ref() else {
                     return SubtypeResult::False;
                 };
-                if s_string_idx.readonly && !t_number_idx.readonly {
-                    return SubtypeResult::False;
-                }
+                // Note: tsc does NOT enforce readonly on index signatures during
+                // assignability. Readonly source index IS assignable to writable target.
                 let source_value =
                     self.bind_property_receiver_this(source_receiver, s_string_idx.value_type);
                 let target_value =
@@ -634,10 +630,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                     found_numeric_prop = true;
 
-                    if !t_number_idx.readonly && prop.readonly {
-                        return SubtypeResult::False;
-                    }
-
+                    // Note: tsc does NOT reject readonly properties against writable
+                    // number index targets during assignability checks.
                     let prop_type = self.bind_property_receiver_this(
                         source_receiver,
                         self.optional_property_type(prop),
@@ -977,9 +971,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return SubtypeResult::False;
                 }
-                if is_numeric && !number_idx.readonly && prop.readonly {
-                    return SubtypeResult::False;
-                }
+                // Note: tsc does NOT reject readonly properties against writable
+                // number index targets during assignability checks.
             }
 
             if let Some(string_idx) = string_index {
