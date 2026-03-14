@@ -786,16 +786,28 @@ impl ParserState {
         let text = self.scanner.get_token_value_ref().to_string();
         let raw_text = self.scanner.get_token_text_ref().to_string();
 
-        // Check for unterminated string literal (TS1002)
-        // tsc emits this diagnostic from the scanner at the position where scanning stopped
-        // (at the newline or EOF), with length 0. We match that by using end_pos.
+        // Check for unterminated string literal.
+        // tsc emits TS1126 "Unexpected end of text" when the string is unterminated because
+        // EOF was reached, and TS1002 "Unterminated string literal" when it's unterminated
+        // because of a newline. We use the UnterminatedAtEof flag to distinguish.
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
-            self.parse_error_at(
-                end_pos,
-                0,
-                diagnostic_messages::UNTERMINATED_STRING_LITERAL,
-                diagnostic_codes::UNTERMINATED_STRING_LITERAL,
-            );
+            let at_eof =
+                (self.scanner.get_token_flags() & TokenFlags::UnterminatedAtEof as u32) != 0;
+            if at_eof {
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    diagnostic_messages::UNEXPECTED_END_OF_TEXT,
+                    diagnostic_codes::UNEXPECTED_END_OF_TEXT,
+                );
+            } else {
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    diagnostic_messages::UNTERMINATED_STRING_LITERAL,
+                    diagnostic_codes::UNTERMINATED_STRING_LITERAL,
+                );
+            }
         }
 
         self.report_invalid_string_or_template_escape_errors();
@@ -1607,7 +1619,16 @@ impl ParserState {
         reported_duplicate_default: &mut bool,
     ) -> NodeIndex {
         let clause_start = self.token_pos();
-        if *seen_default && !*reported_duplicate_default {
+
+        // TS1260: Keywords cannot contain escape characters.
+        // tsc emits this when `default` is written with unicode escapes like `def\u0061ult`.
+        // The scanner resolves it to DefaultKeyword but sets UnicodeEscape flag.
+        if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+            self.parse_error_at_current_token(
+                diagnostic_messages::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,
+                diagnostic_codes::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,
+            );
+        } else if *seen_default && !*reported_duplicate_default {
             self.parse_error_at_current_token(
                 "A 'default' clause cannot appear more than once in a 'switch' statement.",
                 diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,

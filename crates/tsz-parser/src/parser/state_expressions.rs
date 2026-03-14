@@ -756,10 +756,14 @@ impl ParserState {
     // Parse type parameter modifiers: `const`, `in`, `out`
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
+        let mut seen_in = false;
+        let mut seen_out = false;
+        let mut seen_const = false;
 
         loop {
             match self.token() {
-                SyntaxKind::ConstKeyword => {
+                SyntaxKind::ConstKeyword if !seen_const => {
+                    seen_const = true;
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
@@ -768,13 +772,15 @@ impl ParserState {
                             .add_token(SyntaxKind::ConstKeyword as u16, pos, end),
                     );
                 }
-                SyntaxKind::InKeyword => {
+                SyntaxKind::InKeyword if !seen_in => {
+                    seen_in = true;
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
                     modifiers.push(self.arena.add_token(SyntaxKind::InKeyword as u16, pos, end));
                 }
-                SyntaxKind::OutKeyword => {
+                SyntaxKind::OutKeyword if !seen_out => {
+                    seen_out = true;
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
@@ -1716,6 +1722,29 @@ impl ParserState {
                             call_node.flags |= optional_chain_flag;
                         }
                         expr = call_expr;
+                    } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
+                        || self.is_token(SyntaxKind::TemplateHead)
+                    {
+                        // expr?.`template` — tagged template in optional chain is not allowed.
+                        // tsc emits TS1358 and still parses the tagged template expression.
+                        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.parse_error_at_current_token(
+                            diagnostic_messages::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
+                            diagnostic_codes::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
+                        );
+                        let template = self.parse_template_literal();
+                        let end_pos = self.token_end();
+                        expr = self.arena.add_tagged_template(
+                            syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+                            start_pos,
+                            end_pos,
+                            TaggedTemplateData {
+                                tag: expr,
+                                type_arguments: None,
+                                template,
+                            },
+                        );
+                        continue;
                     } else {
                         // expr?.prop
                         let is_private_identifier = self.is_token(SyntaxKind::PrivateIdentifier);
@@ -2090,6 +2119,14 @@ impl ParserState {
                 }
 
                 if self.is_identifier_or_keyword() {
+                    // Check for future reserved words used as identifiers in strict mode.
+                    // tsc emits TS1212/1213/1214 when implements, interface, let, package,
+                    // private, protected, public, static, or yield appear as identifiers
+                    // in class bodies or modules (which are always strict mode).
+                    if self.is_future_reserved_word() && self.in_strict_mode_context() {
+                        let word = self.current_keyword_text().to_string();
+                        self.report_strict_mode_reserved_word_error(&word);
+                    }
                     self.parse_identifier_name()
                 } else {
                     // Unknown primary expression - create an error token

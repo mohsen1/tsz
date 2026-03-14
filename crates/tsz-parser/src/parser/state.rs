@@ -387,6 +387,33 @@ impl ParserState {
         self.current_token as u16 >= SyntaxKind::Identifier as u16
     }
 
+    /// Check if current token is an identifier (excluding reserved words).
+    /// Matches tsc's `isIdentifier()`: returns true for plain identifiers and
+    /// contextual/future-reserved keywords, but false for reserved words like
+    /// `import`, `export`, `class`, `function`, etc.
+    #[inline]
+    pub(crate) const fn is_identifier(&self) -> bool {
+        self.current_token as u16 == SyntaxKind::Identifier as u16
+            || (self.current_token as u16 > SyntaxKind::WithKeyword as u16
+                && self.current_token as u16 <= SyntaxKind::DeferKeyword as u16)
+    }
+
+    /// Check if current token is a future reserved word (strict mode reserved).
+    /// These are: implements, interface, let, package, private, protected, public, static, yield.
+    /// In strict mode contexts these cannot be used as identifiers.
+    #[inline]
+    pub(crate) const fn is_future_reserved_word(&self) -> bool {
+        self.current_token as u16 >= SyntaxKind::FIRST_FUTURE_RESERVED_WORD as u16
+            && self.current_token as u16 <= SyntaxKind::LAST_FUTURE_RESERVED_WORD as u16
+    }
+
+    /// Check if we're in a strict mode context (class body or module).
+    /// TypeScript class bodies and modules are always in strict mode.
+    #[inline]
+    pub(crate) const fn in_strict_mode_context(&self) -> bool {
+        self.in_class_body() || self.seen_module_indicator
+    }
+
     /// Check if current token can start a type member declaration
     #[inline]
     pub(crate) const fn is_type_member_start(&self) -> bool {
@@ -536,21 +563,34 @@ impl ParserState {
     }
 
     pub(crate) fn report_yield_reserved_word_error(&mut self) {
+        self.report_strict_mode_reserved_word_error("yield");
+    }
+
+    /// Report TS1212/TS1213/TS1214 for a future reserved word used as an identifier
+    /// in strict mode. Uses context-specific messages matching tsc.
+    pub(crate) fn report_strict_mode_reserved_word_error(&mut self, word: &str) {
         use tsz_common::diagnostics::diagnostic_codes;
 
         if self.in_class_body() || self.in_class_member_name() {
+            let msg = format!(
+                "Identifier expected. '{word}' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+            );
             self.parse_error_at_current_token(
-                "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                &msg,
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
             );
         } else if self.in_module_context() {
+            let msg = format!(
+                "Identifier expected. '{word}' is a reserved word in strict mode. Modules are automatically in strict mode."
+            );
             self.parse_error_at_current_token(
-                "Identifier expected. 'yield' is a reserved word in strict mode. Modules are automatically in strict mode.",
+                &msg,
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
             );
         } else {
+            let msg = format!("Identifier expected. '{word}' is a reserved word in strict mode.");
             self.parse_error_at_current_token(
-                "Identifier expected. 'yield' is a reserved word in strict mode.",
+                &msg,
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
             );
         }
@@ -1411,11 +1451,23 @@ impl ParserState {
         // This prevents cascading errors when a missing token causes identifier to be expected
         // Use centralized error suppression heuristic
         if self.should_report_error() {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Identifier expected.",
-                diagnostic_codes::IDENTIFIER_EXPECTED,
-            );
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            // tsc uses TS1359 for reserved words ("'X' is a reserved word that cannot
+            // be used here") and TS1003 for other non-identifier tokens.
+            if self.is_reserved_word() {
+                let word = self.current_keyword_text();
+                let msg = diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE
+                    .replace("{0}", word);
+                self.parse_error_at_current_token(
+                    &msg,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
         }
     }
 
@@ -1430,7 +1482,7 @@ impl ParserState {
     }
 
     /// Get the text representation of the current keyword token
-    const fn current_keyword_text(&self) -> &'static str {
+    pub(crate) const fn current_keyword_text(&self) -> &'static str {
         match self.current_token {
             SyntaxKind::BreakKeyword => "break",
             SyntaxKind::CaseKeyword => "case",
@@ -1468,6 +1520,16 @@ impl ParserState {
             SyntaxKind::VoidKeyword => "void",
             SyntaxKind::WhileKeyword => "while",
             SyntaxKind::WithKeyword => "with",
+            // Future reserved words (strict mode)
+            SyntaxKind::ImplementsKeyword => "implements",
+            SyntaxKind::InterfaceKeyword => "interface",
+            SyntaxKind::LetKeyword => "let",
+            SyntaxKind::PackageKeyword => "package",
+            SyntaxKind::PrivateKeyword => "private",
+            SyntaxKind::ProtectedKeyword => "protected",
+            SyntaxKind::PublicKeyword => "public",
+            SyntaxKind::StaticKeyword => "static",
+            SyntaxKind::YieldKeyword => "yield",
             _ => "reserved word",
         }
     }

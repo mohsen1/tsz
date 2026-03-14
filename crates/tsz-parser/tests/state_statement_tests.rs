@@ -63,12 +63,15 @@ let b: number;
 }
 
 #[test]
-fn parse_invalid_import_expression_start_reports_ts1128_instead_of_from_expected() {
+fn parse_invalid_import_expression_start_reports_ts1109() {
+    // `import 10;` — `10` is not a valid import clause start (not an identifier,
+    // not `*`, `{`, `type`, or `defer`). tsc emits TS1109 "Expression expected"
+    // because `10` can't be used as a module specifier expression.
     let (parser, _root) = parse_source("import 10;");
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
-        "expected TS1128 for invalid import statement start, got {codes:?}"
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 for invalid import module specifier, got {codes:?}"
     );
     assert!(
         !codes.contains(&diagnostic_codes::EXPECTED),
