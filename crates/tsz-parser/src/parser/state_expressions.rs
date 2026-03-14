@@ -756,10 +756,14 @@ impl ParserState {
     // Parse type parameter modifiers: `const`, `in`, `out`
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
+        let mut seen_in = false;
+        let mut seen_out = false;
+        let mut seen_const = false;
 
         loop {
             match self.token() {
-                SyntaxKind::ConstKeyword => {
+                SyntaxKind::ConstKeyword if !seen_const => {
+                    seen_const = true;
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
@@ -768,13 +772,15 @@ impl ParserState {
                             .add_token(SyntaxKind::ConstKeyword as u16, pos, end),
                     );
                 }
-                SyntaxKind::InKeyword => {
+                SyntaxKind::InKeyword if !seen_in => {
+                    seen_in = true;
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
                     modifiers.push(self.arena.add_token(SyntaxKind::InKeyword as u16, pos, end));
                 }
-                SyntaxKind::OutKeyword => {
+                SyntaxKind::OutKeyword if !seen_out => {
+                    seen_out = true;
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
