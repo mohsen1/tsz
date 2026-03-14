@@ -3104,11 +3104,11 @@ fn test_optional_computed_method_in_class_emits_optional_property_function_type(
     }
     "#,
     );
-    // tsc emits optional methods with method syntax: [key]?(): type;
-    // The `?` mark conveys optionality without needing `| undefined`.
+    // tsc emits optional COMPUTED methods as property signatures with function
+    // types (unlike non-computed optional methods which keep method syntax).
     assert!(
-        output.contains("[dataSomething]?(): string;"),
-        "Expected optional computed method to use method syntax with ?: {output}"
+        output.contains("[dataSomething]?: (() => string) | undefined;"),
+        "Expected optional computed method to emit as property signature: {output}"
     );
 }
 
