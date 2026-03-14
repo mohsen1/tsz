@@ -23,10 +23,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Default lib assets for fresh checkouts (tsz expects a lib directory)
-TSZ_LIB_DIR_DEFAULT="$PROJECT_ROOT/crates/tsz-core/src/lib-assets"
-TSZ_LIB_DIR="${TSZ_LIB_DIR:-$TSZ_LIB_DIR_DEFAULT}"
-export TSZ_LIB_DIR
+# Lib assets: tsz uses embedded (comment-stripped) lib files by default.
+# Setting TSZ_LIB_DIR forces disk-based loading which can cause
+# NodeIndex mismatches between the binder and lowering arenas.
+# Only set TSZ_LIB_DIR when explicitly overridden by the user.
+if [ -n "${TSZ_LIB_DIR:-}" ]; then
+    export TSZ_LIB_DIR
+fi
 
 # Dedicated target directory for benchmarks - isolated from dev builds
 # This prevents other cargo builds from accidentally overwriting the optimized binary
@@ -97,7 +100,7 @@ while [[ $# -gt 0 ]]; do
             echo "  TSGO_NPM_SPEC=<spec>   Override pinned npm package (default: $TSGO_NPM_SPEC)"
             echo "  TSC=<path>             Use a specific tsc binary (skip auto-install)"
             echo "  TSC_NPM_SPEC=<spec>    Override pinned typescript npm version"
-            echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: $TSZ_LIB_DIR_DEFAULT)"
+            echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: embedded)"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
             echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
             echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
@@ -281,7 +284,7 @@ check_prerequisites() {
     fi
     
     # Check for lib assets directory used by tsz
-    if [ ! -d "$TSZ_LIB_DIR" ]; then
+    if [ -n "${TSZ_LIB_DIR:-}" ] && [ ! -d "$TSZ_LIB_DIR" ]; then
         echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
         echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
         exit 1
@@ -333,10 +336,10 @@ check_prerequisites() {
 
             echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
             # Run representative workloads
-            echo "const x: number = 1;" | TSZ_LIB_DIR="$TSZ_LIB_DIR" "$TSZ" --noEmit /dev/stdin 2>/dev/null || true
+            echo "const x: number = 1;" | ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$TSZ" --noEmit /dev/stdin 2>/dev/null || true
             for _i in 1 2 3; do
                 if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
-                    TSZ_LIB_DIR="$TSZ_LIB_DIR" "$TSZ" --noEmit \
+                    ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$TSZ" --noEmit \
                         "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" 2>/dev/null || true
                 fi
             done
@@ -401,7 +404,7 @@ run_benchmark() {
     fi
 
     # Pre-validate: record errors in summary table instead of skipping
-    local tsz_check=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+    local tsz_check=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
     local tsgo_check=$($TSGO --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
@@ -418,7 +421,7 @@ run_benchmark() {
         if [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
             tsz_ms="ERR"
-            local tsz_error=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
+            local tsz_error=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -445,7 +448,7 @@ run_benchmark() {
         --max-runs "$MAX_RUNS" \
         --style full \
         --export-json "$json_file" \
-        -n "tsz" "TSZ_LIB_DIR=$TSZ_LIB_DIR $TSZ --noEmit $extra_args $file 2>/dev/null" \
+        -n "tsz" "${TSZ_LIB_DIR:+TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
         -n "tsgo" "$TSGO --noEmit $extra_args $file 2>/dev/null"; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
@@ -514,7 +517,7 @@ run_project_benchmark() {
     fi
 
     # Pre-validate: record errors in summary table instead of skipping
-    local tsz_check=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+    local tsz_check=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
     local tsgo_check=$($TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
@@ -531,7 +534,7 @@ run_project_benchmark() {
         if [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
             tsz_ms="ERR"
-            local tsz_error=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
+            local tsz_error=$(${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -560,7 +563,7 @@ run_project_benchmark() {
         --max-runs "$MAX_RUNS" \
         --style full \
         --export-json "$json_file" \
-        -n "tsz" "TSZ_LIB_DIR=$TSZ_LIB_DIR $TSZ --noEmit -p $tsconfig 2>/dev/null" \
+        -n "tsz" "${TSZ_LIB_DIR:+TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit -p $tsconfig 2>/dev/null" \
         -n "tsgo" "$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
