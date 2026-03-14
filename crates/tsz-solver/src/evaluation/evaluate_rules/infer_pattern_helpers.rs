@@ -1787,7 +1787,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             return false; // Not enough characters for this infer
                         }
                         // Find the next char boundary (for UTF-8 safety)
-                        
+
                         source[pos..]
                             .char_indices()
                             .nth(1)
