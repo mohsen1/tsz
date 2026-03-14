@@ -674,7 +674,14 @@ fn collect_lib_files_recursive_cached(
     file_contents: &mut Vec<(String, String)>,
     file_cache: &FxHashMap<PathBuf, String>,
 ) -> Result<()> {
-    let lib_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Skip canonicalize (stat syscall) when using embedded content.
+    let basename_check = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let lib_path = if crate::embedded_libs::is_embedded_lib(basename_check) && file_cache.is_empty()
+    {
+        path.to_path_buf()
+    } else {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    };
     if !loaded.insert(lib_path.clone()) {
         return Ok(());
     }
@@ -770,7 +777,14 @@ fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBu
             ]
         })
         .collect();
-    candidates.into_iter().find(|candidate| candidate.exists())
+    // Check embedded libs first (no syscall), then fall back to disk stat.
+    candidates.into_iter().find(|candidate| {
+        candidate
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| crate::embedded_libs::is_embedded_lib(name))
+            || candidate.exists()
+    })
 }
 
 fn normalize_lib_reference_name(name: &str) -> String {
