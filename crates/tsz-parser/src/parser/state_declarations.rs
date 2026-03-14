@@ -1369,6 +1369,18 @@ impl ParserState {
                     export_end,
                 );
                 let modifiers = self.make_node_list(vec![declare_modifier, export_modifier]);
+                // TS1029: 'export' modifier must precede 'declare' modifier.
+                // Skip for `declare export as namespace` which is a valid UMD pattern.
+                if !self.is_token(SyntaxKind::AsKeyword) {
+                    self.parse_error_at(
+                        export_start,
+                        export_end - export_start,
+                        &tsz_common::diagnostics::diagnostic_messages::MODIFIER_MUST_PRECEDE_MODIFIER
+                            .replace("{0}", "export")
+                            .replace("{1}", "declare"),
+                        tsz_common::diagnostics::diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
                 match self.token() {
                     SyntaxKind::AsKeyword => {
                         // `declare export as namespace Foo;` — parse as namespace export declaration.
@@ -1404,6 +1416,17 @@ impl ParserState {
                             diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                         );
                         self.parse_export_assignment(error_start)
+                    }
+                    SyntaxKind::ImportKeyword => {
+                        // `declare export import a = x.c;`
+                        if self.look_ahead_is_import_equals() {
+                            self.parse_import_equals_declaration_with_modifiers(
+                                start_pos,
+                                Some(modifiers),
+                            )
+                        } else {
+                            self.parse_import_declaration_with_modifiers(start_pos, Some(modifiers))
+                        }
                     }
                     _ => {
                         self.error_declaration_expected();
