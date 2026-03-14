@@ -615,6 +615,36 @@ impl<'a> CheckerState<'a> {
         if method.body.is_some() {
             if !has_type_annotation {
                 return_type = self.infer_return_type_from_body(member_idx, method.body, None);
+
+                // Async methods implicitly return Promise<T>. Wrap the inferred
+                // return type so the DTS emitter can emit `a(): Promise<void>`
+                // instead of `a(): void`. Uses the same wrapping logic as
+                // get_type_of_function (function_type.rs lines 1896-1919).
+                if is_async && !is_generator {
+                    if let Some(inner) = self.unwrap_promise_type(return_type) {
+                        return_type = inner;
+                    }
+                    let promise_base = self
+                        .ctx
+                        .binder
+                        .file_locals
+                        .get("Promise")
+                        .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                        .or_else(|| {
+                            let lib_binders = self.get_lib_binders();
+                            self.ctx
+                                .binder
+                                .get_global_type_with_libs("Promise", &lib_binders)
+                                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                        })
+                        .unwrap_or(TypeId::PROMISE_BASE);
+                    return_type = self
+                        .ctx
+                        .types
+                        .factory()
+                        .application(promise_base, vec![return_type]);
+                }
+
                 // Cache the inferred return type so the declaration emitter can look it up
                 self.ctx.node_types.insert(member_idx.0, return_type);
             }
