@@ -3069,7 +3069,10 @@ fn test_readonly_property_with_mutable_index_signature() {
         }),
     });
 
-    assert!(!checker.is_subtype_of(source, mutable_index));
+    // tsc allows readonly properties to be assigned to writable index signatures.
+    // The readonly constraint prevents writing through the source reference, but
+    // doesn't prevent the type from satisfying a writable index signature target.
+    assert!(checker.is_subtype_of(source, mutable_index));
     assert!(checker.is_subtype_of(source, readonly_index));
 }
 

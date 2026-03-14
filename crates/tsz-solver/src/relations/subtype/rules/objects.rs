@@ -499,14 +499,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // So `{ [n: number]: T }` is assignable to `{ [s: string]: T }` when
                 // the value types are compatible.
                 if let Some(s_number_idx) = &source.number_index {
-                    if s_number_idx.readonly && !t_string_idx.readonly {
-                        return SubtypeResult::False;
-                    }
+                    // Note: We intentionally do NOT enforce readonly here. When a
+                    // source type has a readonly number index (e.g., enum reverse
+                    // mappings like `typeof E1`), it should still satisfy a writable
+                    // string index target. The readonly constraint is about mutability,
+                    // not value type compatibility. tsc allows `typeof E1` (with
+                    // readonly number index for reverse mappings) to be assigned to
+                    // `{ [x: string]: T }` (writable string index) when the value
+                    // types are compatible.
                     let source_value =
                         self.bind_property_receiver_this(source_receiver, s_number_idx.value_type);
                     let target_value =
                         self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
-                    return self.check_subtype(source_value, target_value);
+                    if !self.check_subtype(source_value, target_value).is_true() {
+                        return SubtypeResult::False;
+                    }
+                    // Don't return here — fall through to also check named properties
+                    // against the target string index (implicit index signature path).
                 }
 
                 // An empty source vacuously satisfies the string index constraint.
@@ -516,9 +525,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 for prop in &source.properties {
-                    if !t_string_idx.readonly && prop.readonly {
-                        return SubtypeResult::False;
-                    }
+                    // Note: We do NOT check property readonly vs target index readonly
+                    // here. A source with readonly properties (e.g., enum namespaces)
+                    // IS assignable to a target with a writable index signature. The
+                    // readonly constraint means the property can't be written through
+                    // the source, but assignability only checks value types. tsc
+                    // allows `{ readonly A: E1 } <: { [k: string]: E1 }`.
+                    //
+                    // The inverse (writable source property vs readonly target index)
+                    // is checked elsewhere via index signature compatibility.
                     let prop_type = self.bind_property_receiver_this(
                         source_receiver,
                         self.optional_property_type(prop),
@@ -968,9 +983,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if let Some(string_idx) = string_index {
-                if !string_idx.readonly && prop.readonly {
-                    return SubtypeResult::False;
-                }
+                // Note: We do NOT reject readonly source properties against writable
+                // string index targets. A source with readonly properties (e.g., enum
+                // namespaces, frozen objects) IS assignable to a target with a writable
+                // index signature — the readonly constraint means the property can't be
+                // written through the source reference, but assignability only checks
+                // value type compatibility. tsc allows this pattern.
                 let target_value =
                     self.bind_property_receiver_this(target_receiver, string_idx.value_type);
                 if !self
