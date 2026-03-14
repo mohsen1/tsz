@@ -1202,6 +1202,16 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
+                // When a local type alias has no own type parameters but is
+                // inside a generic function (e.g., `function foo<T>() { type X = T extends ... }`),
+                // the enclosing function's type parameters must be in scope during lowering.
+                // Push them before lowering and pop after.
+                let enclosing_tp_updates = if type_alias.type_parameters.is_none() {
+                    self.push_enclosing_type_params_for_node(decl_arena, decl_idx)
+                } else {
+                    Vec::new()
+                };
+
                 let (mut alias_type, params) = if has_cross_arena_metadata {
                     self.lower_cross_arena_type_alias_declaration(
                         sym_id, decl_idx, decl_arena, type_alias,
@@ -1212,6 +1222,9 @@ impl<'a> CheckerState<'a> {
                     self.pop_type_parameters(updates);
                     (alias_type, params)
                 };
+
+                // Pop enclosing type parameters that were pushed for local type aliases.
+                self.pop_type_parameters(enclosing_tp_updates);
 
                 // Eagerly evaluate non-generic type aliases whose body is a concrete
                 // conditional type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`

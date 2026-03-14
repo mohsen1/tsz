@@ -127,6 +127,7 @@ impl<'a> CheckerState<'a> {
             &resolve_type_name,
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
+        let bindings = self.get_type_param_bindings();
         let lowering = TypeLowering::with_hybrid_resolver(
             decl_arena,
             self.ctx.types,
@@ -134,7 +135,7 @@ impl<'a> CheckerState<'a> {
             &def_id_resolver,
             &value_resolver,
         )
-        .with_type_param_bindings(self.get_type_param_bindings())
+        .with_type_param_bindings(bindings)
         .with_computed_name_resolver(&computed_name_resolver)
         .with_name_def_id_resolver(&name_resolver);
 
