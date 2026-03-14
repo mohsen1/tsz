@@ -1665,9 +1665,9 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Update symbol_types and type_env for augmentation-local interface symbols
+    /// Update `symbol_types` and `type_env` for augmentation-local interface symbols
     /// so self-referential type references resolve to the merged type.
-    /// Searches both the current binder and all_binders since the augmentation
+    /// Searches both the current binder and `all_binders` since the augmentation
     /// may be declared in a different file than the one being checked.
     fn update_augmentation_local_symbol_types(
         &mut self,
@@ -1680,12 +1680,11 @@ impl<'a> CheckerState<'a> {
 
         // Check current binder
         for (&aug_sym_id, aug_module) in &self.ctx.binder.augmentation_target_modules {
-            if aug_module == module_spec {
-                if let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id) {
-                    if aug_sym.escaped_name == interface_name {
-                        matching_sym_ids.push(aug_sym_id);
-                    }
-                }
+            if aug_module == module_spec
+                && let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id)
+                && aug_sym.escaped_name == interface_name
+            {
+                matching_sym_ids.push(aug_sym_id);
             }
         }
 
@@ -1693,14 +1692,12 @@ impl<'a> CheckerState<'a> {
         if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             for binder in all_binders.iter() {
                 for (&aug_sym_id, aug_module) in &binder.augmentation_target_modules {
-                    if aug_module == module_spec {
-                        if let Some(aug_sym) = binder.get_symbol(aug_sym_id) {
-                            if aug_sym.escaped_name == interface_name
-                                && !matching_sym_ids.contains(&aug_sym_id)
-                            {
-                                matching_sym_ids.push(aug_sym_id);
-                            }
-                        }
+                    if aug_module == module_spec
+                        && let Some(aug_sym) = binder.get_symbol(aug_sym_id)
+                        && aug_sym.escaped_name == interface_name
+                        && !matching_sym_ids.contains(&aug_sym_id)
+                    {
+                        matching_sym_ids.push(aug_sym_id);
                     }
                 }
             }

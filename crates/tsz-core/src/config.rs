@@ -1440,38 +1440,37 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 mod_normalized.as_str(),
                 "node16" | "node18" | "node20" | "nodenext"
             );
-            if is_node_module {
-                if let Some(serde_json::Value::String(mr_value)) =
+            if is_node_module
+                && let Some(serde_json::Value::String(mr_value)) =
                     compiler_opts.get("moduleResolution")
-                {
-                    let mr_normalized =
-                        normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
-                    let mr_ok = matches!(
-                        mr_normalized.as_str(),
-                        "node16" | "node18" | "node20" | "nodenext"
+            {
+                let mr_normalized =
+                    normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                let mr_ok = matches!(
+                    mr_normalized.as_str(),
+                    "node16" | "node18" | "node20" | "nodenext"
+                );
+                if !mr_ok {
+                    let start = find_value_offset_in_source(&stripped, "moduleResolution");
+                    let value_len = mr_value.len() as u32 + 2;
+                    let mod_display = match mod_normalized.as_str() {
+                        "node16" => "Node16",
+                        "node18" => "Node18",
+                        "node20" => "Node20",
+                        "nodenext" => "NodeNext",
+                        _ => &mod_normalized,
+                    };
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
+                        &[mod_display, mod_display],
                     );
-                    if !mr_ok {
-                        let start = find_value_offset_in_source(&stripped, "moduleResolution");
-                        let value_len = mr_value.len() as u32 + 2;
-                        let mod_display = match mod_normalized.as_str() {
-                            "node16" => "Node16",
-                            "node18" => "Node18",
-                            "node20" => "Node20",
-                            "nodenext" => "NodeNext",
-                            _ => &mod_normalized,
-                        };
-                        let msg = format_message(
-                            diagnostic_messages::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
-                            &[mod_display, mod_display],
-                        );
-                        diagnostics.push(Diagnostic::error(
-                            file_path,
-                            start,
-                            value_len,
-                            msg,
-                            diagnostic_codes::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
-                        ));
-                    }
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        value_len,
+                        msg,
+                        diagnostic_codes::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
+                    ));
                 }
             }
         }
@@ -4062,35 +4061,35 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5095_not_emitted_for_bundler_with_node16() {
+    fn test_ts5095_emitted_for_bundler_with_node16() {
         let source = r#"{"compilerOptions":{"module":"node16","moduleResolution":"bundler"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            !codes.contains(&5095),
-            "Should NOT emit TS5095 for bundler+node16, got: {codes:?}"
+            codes.contains(&5095),
+            "Should emit TS5095 for bundler+node16 (tsc behavior), got: {codes:?}"
         );
     }
 
     #[test]
-    fn test_ts5095_not_emitted_for_bundler_with_node18() {
+    fn test_ts5095_emitted_for_bundler_with_node18() {
         let source = r#"{"compilerOptions":{"module":"node18","moduleResolution":"bundler"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            !codes.contains(&5095),
-            "Should NOT emit TS5095 for bundler+node18, got: {codes:?}"
+            codes.contains(&5095),
+            "Should emit TS5095 for bundler+node18 (tsc behavior), got: {codes:?}"
         );
     }
 
     #[test]
-    fn test_ts5095_not_emitted_for_bundler_with_nodenext() {
+    fn test_ts5095_emitted_for_bundler_with_nodenext() {
         let source = r#"{"compilerOptions":{"module":"nodenext","moduleResolution":"bundler"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            !codes.contains(&5095),
-            "Should NOT emit TS5095 for bundler+nodenext, got: {codes:?}"
+            codes.contains(&5095),
+            "Should emit TS5095 for bundler+nodenext (tsc behavior), got: {codes:?}"
         );
     }
 

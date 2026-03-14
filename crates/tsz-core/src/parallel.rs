@@ -559,7 +559,7 @@ pub fn load_lib_files_for_binding_strict(
     let all_embedded = lib_files.iter().all(|p| {
         p.file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(|name| crate::embedded_libs::is_embedded_lib(name))
+            .is_some_and(crate::embedded_libs::is_embedded_lib)
     });
 
     let lib_dir = lib_files
