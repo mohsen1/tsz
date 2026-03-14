@@ -391,6 +391,10 @@ pub struct Printer<'a> {
     /// `new` expressions where removal would change semantics: `(new a).b` vs `new a.b`.
     pub(crate) paren_in_access_position: bool,
 
+    /// True when emitting inside a System.register `execute` function body.
+    /// Used to substitute `import.meta` with `context_1.meta`.
+    pub(crate) in_system_execute_body: bool,
+
     /// When true, the current parenthesized expression is being emitted as the
     /// callee of a `new` expression. This prevents stripping parens around
     /// call expressions where removal would change semantics:
@@ -563,6 +567,7 @@ impl<'a> Printer<'a> {
             iterator_for_of_depth: 0,
             destructuring_read_depth: 0,
             paren_in_access_position: false,
+            in_system_execute_body: false,
             paren_in_new_callee: false,
             object_literal_accessor_depth: 0,
             is_current_root_js_source: false,
