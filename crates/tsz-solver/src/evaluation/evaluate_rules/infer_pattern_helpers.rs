@@ -1746,6 +1746,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         TemplateSpan::Text(text) => Some(*text),
                         TemplateSpan::Type(_) => None,
                     });
+                    // Check if the next span is another Type (no text separator).
+                    // In tsc, consecutive infer types like `${infer C}${infer R}`
+                    // require the first infer to capture exactly 1 character.
+                    // Without this, `""` would match both infers with empty strings,
+                    // causing infinite recursion in tail-recursive conditional types
+                    // like `type GetChars<S> = S extends `${infer C}${infer R}` ? ... : ...`.
+                    let next_is_type = pattern
+                        .get(index + 1)
+                        .is_some_and(|s| matches!(s, TemplateSpan::Type(_)));
                     let end = if let Some(next_text) = next_text {
                         let next_value = self.interner().resolve_atom_ref(next_text);
                         // When there are no more Type (infer) spans after the next text
@@ -1770,6 +1779,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             Some(offset) => pos + offset,
                             None => return false,
                         }
+                    } else if next_is_type {
+                        // Consecutive infer types: capture exactly 1 character.
+                        // This matches tsc behavior where `${infer C}${infer R}`
+                        // splits "AB" as C="A", R="B" and fails on "".
+                        if pos >= source.len() {
+                            return false; // Not enough characters for this infer
+                        }
+                        // Find the next char boundary (for UTF-8 safety)
+                        
+                        source[pos..]
+                            .char_indices()
+                            .nth(1)
+                            .map_or(source.len(), |(idx, _)| pos + idx)
                     } else {
                         source.len()
                     };
