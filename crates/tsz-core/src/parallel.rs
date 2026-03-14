@@ -549,18 +549,29 @@ pub fn load_lib_files_for_binding_strict(
     // I/O contention under system load. On a loaded system (load avg 20+),
     // individual file reads can take 10-20ms each due to scheduling delays.
     // Batch reading brings this down to ~2-5ms total for the entire directory.
+    // Check if all requested lib files are available as embedded content.
+    // If so, skip the batch disk read entirely (zero I/O startup).
+    let all_embedded = lib_files.iter().all(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| crate::embedded_libs::is_embedded_lib(name))
+    });
+
     let lib_dir = lib_files
         .first()
         .and_then(|p| p.parent())
         .unwrap_or(Path::new("."));
     let mut file_cache: FxHashMap<PathBuf, String> = FxHashMap::default();
-    if let Ok(entries) = std::fs::read_dir(lib_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "ts")
-                && let Ok(content) = std::fs::read_to_string(&path)
-            {
-                file_cache.insert(path, content);
+    if !all_embedded {
+        // Custom lib dir or non-embedded files — read from disk
+        if let Ok(entries) = std::fs::read_dir(lib_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "ts")
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                {
+                    file_cache.insert(path, content);
+                }
             }
         }
     }
@@ -650,8 +661,8 @@ fn collect_lib_files_recursive(
     Ok(())
 }
 
-/// Phase 1 helper with pre-loaded file cache. Uses pre-read file contents
-/// instead of per-file I/O to avoid syscall overhead under system load.
+/// Phase 1 helper with pre-loaded file cache. Uses embedded lib contents
+/// first (zero I/O), then pre-read file cache, then disk as last resort.
 fn collect_lib_files_recursive_cached(
     path: &Path,
     loaded: &mut FxHashSet<PathBuf>,
@@ -663,10 +674,18 @@ fn collect_lib_files_recursive_cached(
         return Ok(());
     }
 
-    // Use pre-cached content, fall back to disk read if not in cache.
+    // Priority: disk cache (supports custom TSZ_LIB_DIR / npm tslib) > embedded > disk read.
+    // Embedded libs are only used when the file wasn't pre-read from disk,
+    // ensuring custom lib directories take precedence over built-in content.
+    let basename = lib_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let source_text = if let Some(cached) = file_cache.get(&lib_path) {
+        // File was read from disk (custom lib dir) — use it
         cached.clone()
+    } else if let Some(embedded) = crate::embedded_libs::get_lib_content(basename) {
+        // Built-in embedded content — zero I/O
+        embedded.to_string()
     } else {
+        // Fallback to disk read
         std::fs::read_to_string(&lib_path)
             .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
     };
