@@ -1716,6 +1716,29 @@ impl ParserState {
                             call_node.flags |= optional_chain_flag;
                         }
                         expr = call_expr;
+                    } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
+                        || self.is_token(SyntaxKind::TemplateHead)
+                    {
+                        // expr?.`template` — tagged template in optional chain is not allowed.
+                        // tsc emits TS1358 and still parses the tagged template expression.
+                        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.parse_error_at_current_token(
+                            diagnostic_messages::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
+                            diagnostic_codes::TAGGED_TEMPLATE_EXPRESSIONS_ARE_NOT_PERMITTED_IN_AN_OPTIONAL_CHAIN,
+                        );
+                        let template = self.parse_template_literal();
+                        let end_pos = self.token_end();
+                        expr = self.arena.add_tagged_template(
+                            syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+                            start_pos,
+                            end_pos,
+                            TaggedTemplateData {
+                                tag: expr,
+                                type_arguments: None,
+                                template,
+                            },
+                        );
+                        continue;
                     } else {
                         // expr?.prop
                         let is_private_identifier = self.is_token(SyntaxKind::PrivateIdentifier);
