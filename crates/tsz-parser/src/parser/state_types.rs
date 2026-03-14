@@ -515,7 +515,7 @@ impl ParserState {
             let saved_token = self.current_token;
             self.next_token(); // consume ...
 
-            if self.is_token(SyntaxKind::Identifier) {
+            if self.is_identifier_or_keyword() {
                 self.next_token(); // consume identifier
                 let has_question = self.parse_optional(SyntaxKind::QuestionToken);
                 let has_colon = self.is_token(SyntaxKind::ColonToken);
@@ -546,7 +546,8 @@ impl ParserState {
 
         // Check if this is a named tuple element: name: T or name?: T
         // Need to look ahead to see if there's a colon after the identifier
-        if self.is_token(SyntaxKind::Identifier) {
+        // Use is_identifier_or_keyword() because keywords like `type` can be tuple element labels
+        if self.is_identifier_or_keyword() {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
 
