@@ -922,7 +922,27 @@ impl ParserState {
 
         // Dynamic import: import(...)
         self.parse_expected(SyntaxKind::OpenParenToken);
-        let argument = self.parse_assignment_expression();
+
+        // Handle spread arguments: import(...expr)
+        // tsc parses these as spread elements and reports TS1325 from the checker.
+        let argument = if self.is_token(SyntaxKind::DotDotDotToken) {
+            let spread_start = self.token_pos();
+            self.next_token();
+            let expression = self.parse_assignment_expression();
+            let spread_end = self.token_end();
+            self.arena.add_spread(
+                syntax_kind_ext::SPREAD_ELEMENT,
+                spread_start,
+                spread_end,
+                crate::parser::node::SpreadData { expression },
+            )
+        } else if self.is_token(SyntaxKind::CloseParenToken) {
+            // import() with no arguments — tsc parses this as missing argument
+            // and the checker reports TS2554 "Expected 1-2 arguments, but got 0."
+            self.create_missing_expression()
+        } else {
+            self.parse_assignment_expression()
+        };
 
         // Optional second argument (import attributes/assertions)
         let options = if self.parse_optional(SyntaxKind::CommaToken) {
