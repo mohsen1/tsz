@@ -371,7 +371,7 @@ impl<'a> CheckerState<'a> {
                             if base_nullish.is_some()
                                 && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                             {
-                                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                                result_type = factory.union2(result_type, TypeId::UNDEFINED);
                             }
                             return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
                                 result_type
@@ -428,7 +428,7 @@ impl<'a> CheckerState<'a> {
                             if base_nullish.is_some()
                                 && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                             {
-                                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                                result_type = factory.union2(result_type, TypeId::UNDEFINED);
                             }
                             return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
                                 result_type
@@ -448,7 +448,7 @@ impl<'a> CheckerState<'a> {
                         if base_nullish.is_some()
                             && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
                         {
-                            result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                            result_type = factory.union2(result_type, TypeId::UNDEFINED);
                         }
                         return self.apply_flow_narrowing(idx, result_type);
                     }
@@ -1114,7 +1114,7 @@ impl<'a> CheckerState<'a> {
                         }
                         // Suppress error, return (property_type | undefined)
                         let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-                        return factory.union(vec![base_type, TypeId::UNDEFINED]);
+                        return factory.union2(base_type, TypeId::UNDEFINED);
                     }
 
                     // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
