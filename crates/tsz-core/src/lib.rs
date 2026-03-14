@@ -178,6 +178,9 @@ pub use tsz_emitter::enums;
 // Parallel processing with Rayon (Phase 0.4)
 pub mod parallel;
 
+// Embedded lib.d.ts files for zero-I/O startup
+pub mod embedded_libs;
+
 // Comment preservation (Phase 6.3)
 pub use tsz_common::comments;
 #[cfg(test)]
