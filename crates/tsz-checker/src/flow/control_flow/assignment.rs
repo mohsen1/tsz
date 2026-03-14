@@ -200,6 +200,23 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(self.interner.array(TypeId::ANY));
             }
 
+            // Also handle `let x; x = []` — assignment of empty array to an
+            // unannotated variable declared without initializer. This should
+            // also create an evolving array (any[]) matching tsc's behavior.
+            let is_rhs_empty_array = self.arena.get(rhs).is_some_and(|rhs_node| {
+                rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    && self
+                        .arena
+                        .get_literal_expr(rhs_node)
+                        .is_some_and(|lit| lit.elements.nodes.is_empty())
+            });
+            if is_rhs_empty_array
+                && let Some(sym_id) = self.binder.resolve_identifier(self.arena, target)
+                && self.is_control_flow_typed_any_symbol(sym_id)
+            {
+                return Some(self.interner.array(TypeId::ANY));
+            }
+
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types
