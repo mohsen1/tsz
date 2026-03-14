@@ -409,9 +409,10 @@ impl<'a> CheckerState<'a> {
         let members = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)?;
         for member in &members {
             if let Some(sigs) = get_call_signatures(self.ctx.types, *member)
-                && let Some(first) = sigs.first() {
-                    return first.params.first().map(|p| p.type_id);
-                }
+                && let Some(first) = sigs.first()
+            {
+                return first.params.first().map(|p| p.type_id);
+            }
             if let Some(shape) = get_function_shape(self.ctx.types, *member) {
                 return shape.params.first().map(|p| p.type_id);
             }
