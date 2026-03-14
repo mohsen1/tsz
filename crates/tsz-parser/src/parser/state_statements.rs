@@ -1884,7 +1884,17 @@ impl ParserState {
             NodeIndex::NONE
         } else {
             // Consume the semicolon if present (overload signature)
-            self.parse_optional(SyntaxKind::SemicolonToken);
+            if !self.parse_optional(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+            {
+                // TS1144: '{' or ';' expected — unexpected token after function signature
+                self.parse_error_at_current_token(
+                    "'{' or ';' expected.",
+                    diagnostic_codes::OR_EXPECTED,
+                );
+            }
             NodeIndex::NONE
         };
         self.pop_label_scope();
