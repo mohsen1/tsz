@@ -213,7 +213,16 @@ impl<'a> CheckerState<'a> {
 
         // Direct exports from module_exports (populated during binding, pre-merge)
         if let Some(exports) = binder.module_exports.get(&file_name) {
-            for (name, _) in exports.iter() {
+            for (name, &sym_id) in exports.iter() {
+                // Skip lib/global symbols that leaked into module_exports.
+                // These have decl_file_idx == u32::MAX (sentinel for lib symbols).
+                if binder
+                    .symbols
+                    .get(sym_id)
+                    .is_some_and(|s| s.decl_file_idx == u32::MAX)
+                {
+                    continue;
+                }
                 names.insert(name.to_string());
             }
         }
