@@ -932,9 +932,30 @@ impl<'a> CheckerState<'a> {
                             type_idx,
                             &interface_display_name,
                         );
+                    // Compute the derived class instance type for `this` substitution.
+                    // Interface methods may use `this` type (e.g. `view(vnode: Vnode<A, this>)`).
+                    // When checking if the class implements the interface, `this` must be
+                    // replaced with the class instance type.
+                    let class_this_type = self
+                        .ctx
+                        .binder
+                        .get_node_symbol(class_idx)
+                        .and_then(|sym_id| self.class_instance_type_from_symbol(sym_id))
+                        .or_else(|| self.current_this_type());
+
                     for prop in &interface_properties {
                         let member_name = self.ctx.types.resolve_atom(prop.name);
-                        let interface_member_type = prop.type_id;
+                        let mut interface_member_type = prop.type_id;
+                        // Substitute `this` type in interface members
+                        if let Some(this_type) = class_this_type
+                            && tsz_solver::contains_this_type(self.ctx.types, interface_member_type)
+                        {
+                            interface_member_type = tsz_solver::substitute_this_type(
+                                self.ctx.types,
+                                interface_member_type,
+                                this_type,
+                            );
+                        }
 
                         // Skip optional properties
                         if prop.optional {
