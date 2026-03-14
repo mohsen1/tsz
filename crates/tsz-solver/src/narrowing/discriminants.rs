@@ -420,7 +420,7 @@ impl<'a> NarrowingContext<'a> {
                 self.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
             };
             if narrowed_constraint != constraint {
-                return self.db.intersection(vec![type_id, narrowed_constraint]);
+                return self.db.intersection2(type_id, narrowed_constraint);
             }
         }
 

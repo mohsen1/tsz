@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
                 if module_is_non_module_entity {
                     return Some(export_equals_type);
                 }
-                return Some(factory.intersection(vec![export_equals_type, namespace_type]));
+                return Some(factory.intersection2(export_equals_type, namespace_type));
             }
 
             return Some(namespace_type);
@@ -1704,7 +1704,7 @@ impl<'a> CheckerState<'a> {
                                 return (export_equals_type, Vec::new());
                             }
                             return (
-                                factory.intersection(vec![export_equals_type, namespace_type]),
+                                factory.intersection2(export_equals_type, namespace_type),
                                 Vec::new(),
                             );
                         }
@@ -1978,15 +1978,14 @@ impl<'a> CheckerState<'a> {
                                 // that `ns.default` resolves to the export= value.
                                 if self.ctx.allow_synthetic_default_imports() {
                                     return (
-                                        factory
-                                            .intersection(vec![export_equals_type, namespace_type]),
+                                        factory.intersection2(export_equals_type, namespace_type),
                                         Vec::new(),
                                     );
                                 }
                                 return (export_equals_type, Vec::new());
                             }
                             return (
-                                factory.intersection(vec![export_equals_type, namespace_type]),
+                                factory.intersection2(export_equals_type, namespace_type),
                                 Vec::new(),
                             );
                         }

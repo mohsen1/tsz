@@ -1869,11 +1869,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Build target: IntrinsicAttributes & spread_type
-            let target = self
-                .ctx
-                .types
-                .factory()
-                .intersection(vec![ia_type, spread_type]);
+            let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
 
             if !self.is_assignable_to(spread_type, target) {
                 let spread_name = self.format_type(spread_type);

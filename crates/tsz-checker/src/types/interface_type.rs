@@ -877,7 +877,7 @@ impl<'a> CheckerState<'a> {
 
         // Get the intersection members
         let Some(members) = get_intersection_members(self.ctx.types, intersection_id) else {
-            return factory.intersection(vec![derived, base]);
+            return factory.intersection2(derived, base);
         };
 
         // Find the callable member in the intersection (if any)
@@ -915,7 +915,7 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             // No callable found in intersection - fall back to plain intersection
-            factory.intersection(vec![derived, base])
+            factory.intersection2(derived, base)
         }
     }
 
@@ -1640,7 +1640,7 @@ impl<'a> CheckerState<'a> {
                 // and a new object with the augmentation members.
                 if !augmentation_members.is_empty() {
                     let aug_object = factory.object(augmentation_members);
-                    factory.intersection(vec![base_type, aug_object])
+                    factory.intersection2(base_type, aug_object)
                 } else {
                     base_type
                 }

@@ -1135,7 +1135,7 @@ impl<'a> FlowAnalyzer<'a> {
         if query::is_type_parameter_like(db, keyof_type) || query::is_keyof_type(db, keyof_type) {
             self.interner
                 .factory()
-                .intersection(vec![keyof_type, TypeId::STRING])
+                .intersection2(keyof_type, TypeId::STRING)
         } else {
             TypeId::STRING
         }

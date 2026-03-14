@@ -77,6 +77,11 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
+    pub fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.db.intersection2(left, right)
+    }
+
+    #[inline]
     pub fn array(&self, element: TypeId) -> TypeId {
         self.db.array(element)
     }

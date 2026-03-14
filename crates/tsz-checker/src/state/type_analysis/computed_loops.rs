@@ -73,12 +73,12 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .types
                 .factory()
-                .intersection(vec![keyof_evaluated, TypeId::STRING])
+                .intersection2(keyof_evaluated, TypeId::STRING)
         } else if self.contains_type_parameters_cached(non_nullable) {
             self.ctx
                 .types
                 .factory()
-                .intersection(vec![keyof_type, TypeId::STRING])
+                .intersection2(keyof_type, TypeId::STRING)
         } else {
             TypeId::STRING
         }
