@@ -1487,7 +1487,7 @@ module.exports.Strings = Strings;
 
     let expected = r#"export = Handler;
 declare class Handler {
-    static get OPTIONS(): any;
+    static get OPTIONS(): number;
     process(): void;
 }
 declare namespace Handler {
