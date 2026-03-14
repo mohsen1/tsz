@@ -103,7 +103,15 @@ impl<'a> CheckerState<'a> {
 
     /// TS1214: Check import binding names for strict-mode reserved words.
     /// Import declarations make the file a module (always strict mode), so TS1214 applies.
+    /// Matches tsc's binder: `checkContextualIdentifier` is guarded by
+    /// `!file.parseDiagnostics.length`, so strict-mode checks are skipped
+    /// entirely when the file has any parser errors.
     fn check_import_binding_reserved_words(&mut self, import_clause_idx: NodeIndex) {
+        // Skip when there are parser errors (matches tsc binder behavior)
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
         use crate::state_checking::is_strict_mode_reserved_name;
         use tsz_parser::parser::syntax_kind_ext;
 
