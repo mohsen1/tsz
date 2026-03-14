@@ -1431,6 +1431,88 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS5109: moduleResolution must match module for node16/nodenext modules.
+        // When module is node16/nodenext, moduleResolution must be the same (or left unspecified).
+        if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+            let mod_normalized =
+                normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+            let is_node_module = matches!(
+                mod_normalized.as_str(),
+                "node16" | "node18" | "node20" | "nodenext"
+            );
+            if is_node_module {
+                if let Some(serde_json::Value::String(mr_value)) =
+                    compiler_opts.get("moduleResolution")
+                {
+                    let mr_normalized =
+                        normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+                    let mr_ok = matches!(
+                        mr_normalized.as_str(),
+                        "node16" | "node18" | "node20" | "nodenext"
+                    );
+                    if !mr_ok {
+                        let start = find_value_offset_in_source(&stripped, "moduleResolution");
+                        let value_len = mr_value.len() as u32 + 2;
+                        let mod_display = match mod_normalized.as_str() {
+                            "node16" => "Node16",
+                            "node18" => "Node18",
+                            "node20" => "Node20",
+                            "nodenext" => "NodeNext",
+                            _ => &mod_normalized,
+                        };
+                        let msg = format_message(
+                            diagnostic_messages::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
+                            &[mod_display, mod_display],
+                        );
+                        diagnostics.push(Diagnostic::error(
+                            file_path,
+                            start,
+                            value_len,
+                            msg,
+                            diagnostic_codes::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // TS5095: moduleResolution: bundler can only be used when module is
+        // preserve, commonjs, or es2015+.
+        if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
+            let mr_normalized =
+                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+            if mr_normalized == "bundler" {
+                let module_ok = if let Some(serde_json::Value::String(mod_value)) =
+                    compiler_opts.get("module")
+                {
+                    let mod_normalized =
+                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    // bundler is incompatible with node16/nodenext module kinds
+                    !matches!(
+                        mod_normalized.as_str(),
+                        "node16" | "node18" | "node20" | "nodenext"
+                    )
+                } else {
+                    true // module not set → tsc defaults it, which is valid
+                };
+                if !module_ok {
+                    let start = find_value_offset_in_source(&stripped, "moduleResolution");
+                    let value_len = mr_value.len() as u32 + 2;
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_CAN_ONLY_BE_USED_WHEN_MODULE_IS_SET_TO_PRESERVE_COMMONJS_OR_ES2015_OR_LAT,
+                        &["bundler"],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        value_len,
+                        msg,
+                        diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULE_IS_SET_TO_PRESERVE_COMMONJS_OR_ES2015_OR_LAT,
+                    ));
+                }
+            }
+        }
+
         // TS6082: Only 'amd' and 'system' modules are supported alongside --outFile.
         // When outFile is set with a non-amd/system module, emit at both the module and outFile keys.
         if let Some(serde_json::Value::String(out_file_value)) = compiler_opts.get("outFile")
