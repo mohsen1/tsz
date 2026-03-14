@@ -71,7 +71,7 @@ impl ProcessPool {
         let mut compilation_counts = Vec::with_capacity(n);
 
         for i in 0..n {
-            let worker = Self::spawn_worker(tsz_binary)?;
+            let worker = Self::spawn_worker_with_mem_limit(tsz_binary, max_rss_bytes)?;
             workers.push(Mutex::new(Some(worker)));
             compilation_counts.push(AtomicUsize::new(0));
             tx.send(i).await.expect("channel should not be closed");
@@ -123,7 +123,10 @@ impl ProcessPool {
 
         // If worker is dead (crashed or recycled), respawn
         if guard.is_none() {
-            *guard = Some(Self::spawn_worker(&self.tsz_binary)?);
+            *guard = Some(Self::spawn_worker_with_mem_limit(
+                &self.tsz_binary,
+                self.max_rss_bytes,
+            )?);
             self.compilation_counts[idx].store(0, Ordering::Relaxed);
         }
 
@@ -224,17 +227,43 @@ impl ProcessPool {
         Ok(outcome)
     }
 
-    fn spawn_worker(tsz_binary: &str) -> anyhow::Result<BatchWorker> {
-        let mut child = Command::new(tsz_binary)
-            .arg("--batch")
+    fn spawn_worker_with_mem_limit(
+        tsz_binary: &str,
+        max_rss_bytes: usize,
+    ) -> anyhow::Result<BatchWorker> {
+        let mut cmd = Command::new(tsz_binary);
+        cmd.arg("--batch")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // stderr is intentionally discarded: batch mode routes all diagnostics
             // through stdout (via Reporter), and panics are detected via EOF on stdout
             // which triggers crash recovery with automatic worker respawn.
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+
+        // Limit the worker's virtual address space so runaway recursion
+        // (e.g., stack overflow in inferThis.ts) hits ENOMEM instead of
+        // consuming all RAM and triggering the OOM killer on the entire
+        // runner. The process crashes with SIGABRT, which the pool detects
+        // as a crash and respawns cleanly.
+        #[cfg(unix)]
+        if max_rss_bytes > 0 {
+            let limit = max_rss_bytes as u64;
+            unsafe {
+                cmd.pre_exec(move || {
+                    let rlim = libc::rlimit {
+                        rlim_cur: limit,
+                        rlim_max: limit,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_AS, &rlim) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        let mut child = cmd.spawn()?;
 
         // If the binary doesn't support batch mode, it can exit immediately.
         // Surface this as pool initialization failure so the runner falls back

@@ -51,6 +51,7 @@ indicatif = "0.17"
 
 # Temporary files for compilation
 tempfile = "3"
+libc = "0.2.183"
 
 [dev-dependencies]
 criterion = "0.5"
