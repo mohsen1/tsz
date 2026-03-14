@@ -1605,10 +1605,22 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // Optional methods are emitted as property signatures with function types
-        // and `| undefined` suffix. Computed methods use normal method syntax
-        // (matching tsc behavior: `[G.A](): void;` not `[G.A]: () => void;`).
-        if method.question_token {
+        // tsc emits computed methods with well-typed keys as method signatures
+        // (`[G.A](): void;`) but falls back to property signatures when the
+        // computed key type is `any` (e.g., from shorthand ambient modules).
+        // Optional methods always use property signature syntax with `| undefined`.
+        let is_computed_with_any_key = self
+            .arena
+            .get(method.name)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            && self
+                .arena
+                .get(method.name)
+                .and_then(|node| self.arena.get_computed_property(node))
+                .and_then(|cp| self.get_node_type_or_names(&[cp.expression, method.name]))
+                .is_some_and(|t| t == tsz_solver::types::TypeId::ANY);
+
+        if method.question_token || is_computed_with_any_key {
             self.write(": ");
             if method.question_token {
                 self.write("(");
