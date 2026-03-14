@@ -1481,6 +1481,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // TS5069: Option '{0}' cannot be specified without specifying option '{1}' or option '{2}'.
+        // Group 1: options that require 'declaration' or 'composite'
         let requires_decl_or_composite: &[&str] = &[
             "emitDeclarationOnly",
             "declarationMap",
@@ -1505,6 +1506,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
                 ));
             }
+        }
+
+        // Group 2: mapRoot requires 'sourceMap' or 'declarationMap'
+        if compiler_opts.contains_key("mapRoot")
+            && !option_is_truthy(compiler_opts.get("sourceMap"))
+            && !option_is_truthy(compiler_opts.get("declarationMap"))
+        {
+            let start = find_key_offset_in_source(&stripped, "mapRoot");
+            let key_len = "mapRoot".len() as u32 + 2;
+            let msg = format_message(
+                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
+                &["mapRoot", "sourceMap", "declarationMap"],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                key_len,
+                msg,
+                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
+            ));
         }
 
         // TS6304: Composite projects may not disable declaration emit.
@@ -1810,6 +1831,42 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             &mut diagnostics,
         );
         validate_lib_values(compiler_opts, &stripped, file_path, &mut diagnostics);
+    }
+
+    // TS5024 for top-level tsconfig properties with wrong types.
+    // `files` must be an array — if it's a string or other non-array value,
+    // emit TS5024 and null it out so serde deserialization succeeds.
+    if let Some(obj) = raw.as_object_mut() {
+        if let Some(files_val) = obj.get("files")
+            && !files_val.is_null()
+            && !files_val.is_array()
+        {
+            let search = "\"files\"";
+            let start = stripped.find(search).map_or(0, |p| p as u32);
+            let value_len = estimate_json_value_len(files_val);
+            let msg = format_message(
+                diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+                &["files", "Array"],
+            );
+            let value_start = {
+                if let Some(colon_pos) = stripped[start as usize..].find(':') {
+                    let after_colon = &stripped[(start as usize + colon_pos + 1)..];
+                    let whitespace_len = after_colon.len() - after_colon.trim_start().len();
+                    (start as usize + colon_pos + 1 + whitespace_len) as u32
+                } else {
+                    start
+                }
+            };
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                value_start,
+                value_len,
+                msg,
+                diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+            ));
+            // Null it out so serde can deserialize the rest of the config
+            obj.insert("files".to_string(), serde_json::Value::Null);
+        }
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
