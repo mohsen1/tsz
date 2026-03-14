@@ -331,7 +331,21 @@ impl<'a> Printer<'a> {
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
+            // Pass previously-evaluated enum member values for cross-enum
+            // reference resolution (e.g., `enum Bar { B = Foo.A }`)
+            transformer.set_prior_enum_values(&self.prior_enum_member_values);
             if let Some(mut ir) = transformer.transform_enum(idx) {
+                // Accumulate member values for cross-enum reference resolution
+                let enum_name_for_accum = transformer.current_enum_name_ref().to_string();
+                if !enum_name_for_accum.is_empty() {
+                    let entry = self
+                        .prior_enum_member_values
+                        .entry(enum_name_for_accum)
+                        .or_default();
+                    for (k, &v) in transformer.get_member_values() {
+                        entry.insert(k.clone(), v);
+                    }
+                }
                 let mut printer = IRPrinter::with_arena(self.arena);
                 printer.set_indent_level(self.writer.indent_level());
                 printer.set_target_es5(self.ctx.target_es5);

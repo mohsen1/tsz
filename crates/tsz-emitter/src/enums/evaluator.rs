@@ -91,6 +91,10 @@ pub struct EnumEvaluator<'a> {
     current_enum_name: Option<String>,
     /// The source file currently being evaluated, for resolving top-level const bindings.
     current_source_file: Option<NodeIndex>,
+    /// Accumulated enum values from all previously-evaluated enums.
+    /// Keyed by enum name → member name → value.
+    /// Used to resolve cross-enum references like `Foo.a` in `enum Bar { B = Foo.a }`.
+    all_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
 }
 
 impl<'a> EnumEvaluator<'a> {
@@ -101,6 +105,7 @@ impl<'a> EnumEvaluator<'a> {
             member_values: FxHashMap::default(),
             current_enum_name: None,
             current_source_file: None,
+            all_enum_values: FxHashMap::default(),
         }
     }
 
@@ -225,7 +230,15 @@ impl<'a> EnumEvaluator<'a> {
             self.register_member(&member_name, value);
         }
 
-        self.member_values.clone()
+        let result = self.member_values.clone();
+
+        // Accumulate values for cross-enum reference resolution
+        if let Some(ref name) = self.current_enum_name {
+            let entry = self.all_enum_values.entry(name.clone()).or_default();
+            entry.extend(result.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+
+        result
     }
 
     /// Evaluate an expression and return its compile-time value
@@ -256,8 +269,17 @@ impl<'a> EnumEvaluator<'a> {
             // Identifier - might be a reference to another enum member
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
-                    // Check if it's a reference to a known member
+                    // Check current enum members first
                     if let Some(value) = self.member_values.get(&ident.escaped_text) {
+                        return value.clone();
+                    }
+                    // Check prior blocks of the same merged enum (e.g.,
+                    // `enum Animals { CatDog = Cat | Dog }` where Cat/Dog
+                    // are from earlier `enum Animals` blocks)
+                    if let Some(ref enum_name) = self.current_enum_name
+                        && let Some(prior) = self.all_enum_values.get(enum_name)
+                        && let Some(value) = prior.get(&ident.escaped_text)
+                    {
                         return value.clone();
                     }
                     if let Some(value) = self.resolve_top_level_const(&ident.escaped_text) {
@@ -549,6 +571,13 @@ impl<'a> EnumEvaluator<'a> {
         if let Some(ref current_enum) = self.current_enum_name
             && &obj_name == current_enum
             && let Some(value) = self.member_values.get(&prop_name)
+        {
+            return value.clone();
+        }
+
+        // Check cross-enum references (Foo.A from within enum Bar)
+        if let Some(enum_members) = self.all_enum_values.get(&obj_name)
+            && let Some(value) = enum_members.get(&prop_name)
         {
             return value.clone();
         }

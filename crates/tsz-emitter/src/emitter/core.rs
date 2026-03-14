@@ -408,6 +408,12 @@ pub struct Printer<'a> {
     /// Populated during `emit_source_file` pre-pass; consumed during property/element access.
     pub(crate) const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
 
+    /// Accumulated enum member values across all processed enum declarations.
+    /// Used by `EnumES5Transformer` to resolve cross-enum references like
+    /// `Foo.a` in `enum Bar { B = Foo.a }`.
+    /// Keyed by `enum_name` → `member_name` → value.
+    pub(crate) prior_enum_member_values: FxHashMap<String, FxHashMap<String, i64>>,
+
     /// Private field `WeakMap` mapping for ES2015-ES2021 class private field lowering.
     /// Maps `field_name` (without `#`) → `_ClassName_fieldName` (`WeakMap` variable name).
     /// When non-empty, property accesses with private identifiers are lowered to
@@ -557,6 +563,7 @@ impl<'a> Printer<'a> {
             object_literal_accessor_depth: 0,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
+            prior_enum_member_values: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
             defer_class_static_blocks: false,
