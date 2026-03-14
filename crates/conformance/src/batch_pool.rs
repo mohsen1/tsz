@@ -229,7 +229,7 @@ impl ProcessPool {
 
     fn spawn_worker_with_mem_limit(
         tsz_binary: &str,
-        max_rss_bytes: usize,
+        #[allow(unused_variables)] max_rss_bytes: usize,
     ) -> anyhow::Result<BatchWorker> {
         let mut cmd = Command::new(tsz_binary);
         cmd.arg("--batch")
@@ -246,7 +246,7 @@ impl ProcessPool {
         // consuming all RAM and triggering the OOM killer on the entire
         // runner. The process crashes with SIGABRT, which the pool detects
         // as a crash and respawns cleanly.
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         if max_rss_bytes > 0 {
             let limit = max_rss_bytes as u64;
             unsafe {
