@@ -1232,6 +1232,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
+        // `[1,2,3] as const satisfies unknown[]` is accepted because `satisfies`
+        // checks structural shape, not mutability. If the source is Readonly<T>,
+        // try checking T against the target.
+        if let Some(inner) = tsz_solver::readonly_inner_type(self.ctx.types, source)
+            && self.is_assignable_to(inner, target) {
+                return true;
+            }
+
         // If excess property errors were already emitted, skip the general TS1360.
         // This matches tsc: when TS2353 is reported, the "does not satisfy" error
         // is suppressed to avoid redundant diagnostics.
