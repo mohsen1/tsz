@@ -443,13 +443,13 @@ fn export_default_class_duplicates_no_ts2300() {
     let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
     assert_eq!(
         ts2300, 0,
-        "export default class duplicates should NOT produce TS2300 (TS2528 handles it)"
+        "export default class duplicates should NOT produce TS2300 (TS2323 handles it)"
     );
-    // TS2528 should be emitted instead
-    let ts2528 = diagnostics.iter().filter(|d| d.code == 2528).count();
+    // tsc emits TS2323 "Cannot redeclare exported variable 'default'" for this case
+    let ts2323 = diagnostics.iter().filter(|d| d.code == 2323).count();
     assert!(
-        ts2528 > 0,
-        "Should emit TS2528 for multiple default exports"
+        ts2323 > 0,
+        "Should emit TS2323 for multiple default exports (matching tsc)"
     );
 }
 

@@ -1462,12 +1462,15 @@ impl<'a> CheckerState<'a> {
                 if has_function && has_class {
                     self.emit_function_class_default_merge_errors(&export_default_indices);
                 } else {
+                    // tsc emits TS2323 "Cannot redeclare exported variable 'default'"
+                    // for most duplicate default export cases. TS2528 is only used
+                    // for specific overload/merge conflicts.
                     for &export_idx in &export_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
                             anchor,
-                            "A module cannot have multiple default exports.",
-                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            "Cannot redeclare exported variable 'default'.",
+                            diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                         );
                     }
                 }
