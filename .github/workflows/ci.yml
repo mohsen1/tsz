@@ -125,43 +125,6 @@ jobs:
             target/architecture-reports/arch-guard.json
             target/architecture-reports/arch-guard.md
 
-  # ─── Build (needed for conformance + wasm tests) ──────────────────────────
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: changes
-    if: needs.changes.outputs.any_rust == 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-build
-          path: .target/release/
-          retention-days: 1
-
   # ─── Test: Foundation crates (common, scanner, parser) ─────────────────────
   # These are fast (~seconds) and run if any of them or their deps changed.
   test-foundation:
@@ -368,12 +331,12 @@ jobs:
       - name: Test tsz-lsp
         run: cargo nextest run --profile ci -p tsz-lsp || [ $? -eq 4 ]
 
-  # ─── Test: Root crate (wasm - integration tests) ──────────────────────────
+  # ─── Test: Root crate (integration tests) ─────────────────────────────────
   test-root:
-    name: "Test: Root (wasm)"
+    name: "Test: Root"
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [changes, build]
+    needs: [changes]
     if: >-
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.solver == 'true' ||
@@ -1135,7 +1098,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance-aggregate, emit-aggregate, fourslash-aggregate]
+    needs: [lint, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance-aggregate, emit-aggregate, fourslash-aggregate]
     if: always()
     steps:
       - name: Publish pass-rate summary
@@ -1192,7 +1155,6 @@ jobs:
             fi
           }
 
-          check_job "Build" "${{ needs.build.result }}"
           check_job "Lint" "${{ needs.lint.result }}"
           check_job "Foundation Tests" "${{ needs.test-foundation.result }}"
           check_job "Binder Tests" "${{ needs.test-binder.result }}"
