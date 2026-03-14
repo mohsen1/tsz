@@ -532,12 +532,12 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // TS1005: call signatures cannot be optional — emit "';' expected." at '?'
+        // Do NOT skip '?' — let the member parsing loop handle recovery so it emits TS1131
         if self.is_token(SyntaxKind::QuestionToken) {
             self.parse_error_at_current_token(
                 "';' expected.",
                 tsz_common::diagnostics::diagnostic_codes::EXPECTED,
             );
-            self.next_token(); // skip '?'
         }
 
         // Return type (supports type predicates: param is T)
@@ -577,12 +577,12 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // TS1005: construct signatures cannot be optional — emit "';' expected." at '?'
+        // Do NOT skip '?' — let the member parsing loop handle recovery so it emits TS1131
         if self.is_token(SyntaxKind::QuestionToken) {
             self.parse_error_at_current_token(
                 "';' expected.",
                 tsz_common::diagnostics::diagnostic_codes::EXPECTED,
             );
-            self.next_token(); // skip '?'
         }
 
         // Return type (supports type predicates)
@@ -823,10 +823,15 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
         // TS1005: index signatures cannot be optional — emit "';' expected." at '?'
-        if self.is_token(SyntaxKind::QuestionToken) {
+        // Skip '?' but abort type annotation parsing — leave `: any;` for the member loop
+        // to handle, so TS1131 is emitted at the right position (at `:`, not at `?`).
+        let saw_question_after_bracket = if self.is_token(SyntaxKind::QuestionToken) {
             self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             self.next_token(); // skip '?'
-        }
+            true
+        } else {
+            false
+        };
 
         // Detect non-valid index signature parameter types.
         // Valid types are: string, number, symbol, or template literal types.
@@ -849,7 +854,11 @@ impl ParserState {
             || has_multiple_params
             || has_trailing_comma
             || !param_modifiers.is_empty();
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+        let type_annotation = if saw_question_after_bracket {
+            // When `?` was after `]`, don't parse the type annotation.
+            // The remaining `: any;` will be handled by the member loop which emits TS1131.
+            NodeIndex::NONE
+        } else if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else if !has_invalid_param_type && !has_param_errors {
             // TSC emits grammarErrorOnNode(node, ...) spanning the whole index signature.
