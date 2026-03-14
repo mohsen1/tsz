@@ -1406,7 +1406,29 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
                         );
                     }
+                    // Clear contextual type for call-like spread expressions.
+                    // The outer contextual type (e.g., from a destructuring pattern)
+                    // should not propagate into call expression return types —
+                    // otherwise IIFEs in spreads get false contextual return types,
+                    // producing spurious TS2741/TS2322 errors.
+                    // But direct object literals in spreads (e.g., `{ ...{ a: "a" } }`)
+                    // SHOULD keep the contextual type so literals stay narrow.
+                    let unwrapped_spread = self
+                        .ctx
+                        .arena
+                        .skip_parenthesized_and_assertions(spread_expr);
+                    let spread_is_call_like =
+                        self.ctx.arena.get(unwrapped_spread).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                || node.kind == syntax_kind_ext::NEW_EXPRESSION
+                                || node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+                        });
+                    let prev_ctx_for_spread = self.ctx.contextual_type;
+                    if spread_is_call_like {
+                        self.ctx.contextual_type = None;
+                    }
                     let spread_type = self.get_type_of_node(spread_expr);
+                    self.ctx.contextual_type = prev_ctx_for_spread;
                     // TS2698: Spread types may only be created from object types
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
