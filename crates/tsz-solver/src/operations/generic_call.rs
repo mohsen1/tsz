@@ -1469,11 +1469,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && !contra_only
                     && infer_ctx.all_candidates_are_fresh_literals(var)
                 {
-                    // Only widen when all covariant candidates are fresh literals
-                    // (from expressions, not type annotations). Matches tsc's
-                    // getWidenedLiteralType which only widens types with
-                    // the FreshLiteral flag.
-                    crate::widen_literal_type(self.interner.as_type_database(), ty)
+                    // When the declared constraint is a primitive type (e.g.,
+                    // T extends string), tsc preserves literal types instead of
+                    // widening. Skip widening in that case.
+                    let constraint_preserves_literals = tp
+                        .constraint
+                        .is_some_and(|c| constraint_is_primitive_type(self.interner, c));
+                    if constraint_preserves_literals {
+                        ty
+                    } else {
+                        // Only widen when all covariant candidates are fresh literals
+                        // (from expressions, not type annotations). Matches tsc's
+                        // getWidenedLiteralType which only widens types with
+                        // the FreshLiteral flag.
+                        crate::widen_literal_type(self.interner.as_type_database(), ty)
+                    }
                 } else {
                     ty
                 }
