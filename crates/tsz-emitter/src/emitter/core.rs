@@ -414,6 +414,10 @@ pub struct Printer<'a> {
     /// Keyed by `enum_name` → `member_name` → value.
     pub(crate) prior_enum_member_values: FxHashMap<String, FxHashMap<String, i64>>,
 
+    /// String enum member names from previously-evaluated enums.
+    /// Used to detect cross-enum string member references in `is_syntactically_string`.
+    pub(crate) prior_enum_string_members: FxHashMap<String, FxHashSet<String>>,
+
     /// Private field `WeakMap` mapping for ES2015-ES2021 class private field lowering.
     /// Maps `field_name` (without `#`) → `_ClassName_fieldName` (`WeakMap` variable name).
     /// When non-empty, property accesses with private identifiers are lowered to
@@ -564,6 +568,7 @@ impl<'a> Printer<'a> {
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             prior_enum_member_values: FxHashMap::default(),
+            prior_enum_string_members: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
             defer_class_static_blocks: false,
