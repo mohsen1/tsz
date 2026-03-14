@@ -858,6 +858,7 @@ impl<'a> FlowAnalyzer<'a> {
                         //     the declared type instead of the assignment-narrowed type)
                         let ant_flow = self.binder.flow_nodes.get(ant);
                         let ant_flags = ant_flow.map(|f| f.flags).unwrap_or(0);
+                        // Check if the antecedent ASSIGNMENT targets our reference.
                         let ant_is_targeting_assignment = (ant_flags & flow_flags::ASSIGNMENT) != 0
                             && ant_flow.is_some_and(|f| {
                                 // Quick symbol check: does this assignment target our ref?
@@ -866,11 +867,32 @@ impl<'a> FlowAnalyzer<'a> {
                                     && symbol_id.is_some()
                                     && assignment_sym == symbol_id
                             });
+                        // Also defer to non-targeting ASSIGNMENT antecedents when
+                        // their own antecedent chain contains a deferrable node.
+                        // This covers the pattern: `x = 10; var b = x; typeof x`
+                        // where the non-targeting ASSIGNMENT (var b = x) passes
+                        // through to the targeting ASSIGNMENT (x = 10). Without
+                        // deferring, the CONDITION uses the stale initial_type.
+                        let ant_is_passthrough_assignment = !ant_is_targeting_assignment
+                            && (ant_flags & flow_flags::ASSIGNMENT) != 0
+                            && ant_flow.is_some_and(|f| {
+                                f.antecedent.first().is_some_and(|&grandparent| {
+                                    self.binder.flow_nodes.get(grandparent).is_some_and(|gp| {
+                                        gp.has_any_flags(
+                                            flow_flags::CONDITION
+                                                | flow_flags::CALL
+                                                | flow_flags::ASSIGNMENT
+                                                | flow_flags::LOOP_LABEL,
+                                        )
+                                    })
+                                })
+                            });
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
                             || (ant_flags & flow_flags::CALL) != 0
                             || (ant_flags & flow_flags::LOOP_LABEL) != 0
                             || (ant_flags & flow_flags::BRANCH_LABEL) != 0
-                            || ant_is_targeting_assignment;
+                            || ant_is_targeting_assignment
+                            || ant_is_passthrough_assignment;
                         if ant_needs_defer {
                             if !in_worklist.contains(&ant) {
                                 worklist.push_front((ant, current_type));
