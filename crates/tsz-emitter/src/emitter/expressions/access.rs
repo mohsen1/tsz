@@ -68,7 +68,11 @@ impl<'a> Printer<'a> {
         // preserves parens around `new` expressions: `(new a).b` vs `new a.b`.
         let prev = self.paren_in_access_position;
         self.paren_in_access_position = true;
-        self.emit(access.expression);
+        // When the base expression is ExpressionWithTypeArguments (e.g.,
+        // `List<number>.makeChild()`), unwrap it without parens since the
+        // property access already provides grouping: emit `List.makeChild()`
+        // not `(List).makeChild()`.
+        self.emit_unwrapping_type_args(access.expression);
         self.paren_in_access_position = prev;
 
         if needs_negative_parens {

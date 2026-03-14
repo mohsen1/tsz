@@ -106,6 +106,28 @@ impl<'a> Printer<'a> {
         self.write(name);
     }
 
+    /// Emit an expression, unwrapping `ExpressionWithTypeArguments` without parens.
+    ///
+    /// When a `PropertyAccessExpression` or `CallExpression` has an
+    /// `ExpressionWithTypeArguments` as its base expression (e.g.,
+    /// `List<number>.makeChild()`), the type arguments should be stripped
+    /// and the inner expression emitted WITHOUT wrapping parens, since the
+    /// parent's `.` or `()` already provides grouping.
+    ///
+    /// In other positions (assignment target, `instanceof`, decorator),
+    /// the standalone `EXPRESSION_WITH_TYPE_ARGUMENTS` handler in `emit_node`
+    /// adds parens, matching tsc behavior.
+    pub(super) fn emit_unwrapping_type_args(&mut self, idx: NodeIndex) {
+        if let Some(node) = self.arena.get(idx)
+            && node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(data) = self.arena.get_expr_type_args(node)
+        {
+            self.emit(data.expression);
+        } else {
+            self.emit(idx);
+        }
+    }
+
     /// Write a newline.
     pub(super) fn write_line(&mut self) {
         self.pending_block_comment_space = false;
