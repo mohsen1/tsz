@@ -91,19 +91,38 @@ impl<'a> Printer<'a> {
 
     /// Collect parameter decorators from a parameter list.
     /// Returns Vec of (`param_index`, `decorator_node_indices`) for parameters that have decorators.
+    /// The index accounts for `this` parameter stripping — `this` is TypeScript-only
+    /// and is not emitted, so decorator indices must be adjusted.
     fn collect_param_decorators(&self, parameters: &NodeList) -> Vec<(usize, Vec<NodeIndex>)> {
         let mut result = Vec::new();
-        for (i, &param_idx) in parameters.nodes.iter().enumerate() {
+        let mut runtime_index = 0usize;
+        for &param_idx in &parameters.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
                 continue;
             };
             let Some(param) = self.arena.get_parameter(param_node) else {
                 continue;
             };
+
+            // Skip `this` parameter — it's erased in JS output and shouldn't
+            // affect parameter decorator indices.
+            let is_this_param = self.arena.get(param.name).is_some_and(|name_node| {
+                name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                    || (name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && self
+                            .arena
+                            .get_identifier(name_node)
+                            .is_some_and(|id| id.escaped_text == "this"))
+            });
+            if is_this_param {
+                continue;
+            }
+
             let decorators = self.collect_class_decorators(&param.modifiers);
             if !decorators.is_empty() {
-                result.push((i, decorators));
+                result.push((runtime_index, decorators));
             }
+            runtime_index += 1;
         }
         result
     }
