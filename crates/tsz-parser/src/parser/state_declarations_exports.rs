@@ -1619,7 +1619,16 @@ impl ParserState {
         reported_duplicate_default: &mut bool,
     ) -> NodeIndex {
         let clause_start = self.token_pos();
-        if *seen_default && !*reported_duplicate_default {
+
+        // TS1260: Keywords cannot contain escape characters.
+        // tsc emits this when `default` is written with unicode escapes like `def\u0061ult`.
+        // The scanner resolves it to DefaultKeyword but sets UnicodeEscape flag.
+        if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+            self.parse_error_at_current_token(
+                diagnostic_messages::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,
+                diagnostic_codes::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,
+            );
+        } else if *seen_default && !*reported_duplicate_default {
             self.parse_error_at_current_token(
                 "A 'default' clause cannot appear more than once in a 'switch' statement.",
                 diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
