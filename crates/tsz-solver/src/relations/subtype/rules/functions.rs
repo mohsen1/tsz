@@ -971,28 +971,57 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
         if !source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty()
         {
-            if self.has_conflicting_contextual_param_candidates(
-                &source_instantiated,
-                &target_instantiated,
-            ) {
-                return SubtypeResult::False;
+            // When a generic callback is inferred as an argument (e.g., `fn(function<T>(a: Foo<T>) {})`),
+            // the outer function's type parameter (e.g., `Args`) gets inferred as a tuple containing
+            // the callback's own type parameter TypeIds (e.g., `[Foo<T>, T]`). The target signature
+            // is then instantiated with these inferred types, making it non-generic but containing
+            // the source's type parameter TypeIds. In this case, the source and target already share
+            // the same type parameter identity — no erasure or inference is needed; just clear the
+            // source type params so structural comparison proceeds with matching TypeIds.
+            let source_tp_ids: Vec<TypeId> = source_instantiated
+                .type_params
+                .iter()
+                .map(|tp| self.interner.type_param(tp.clone()))
+                .collect();
+            let target_refs_source_params = target_instantiated.params.iter().any(|p| {
+                source_tp_ids.contains(&p.type_id)
+                    || source_tp_ids.iter().any(|&tp_id| {
+                        crate::visitor::collect_all_types(self.interner, p.type_id).contains(&tp_id)
+                    })
+            }) || source_tp_ids.iter().any(|&tp_id| {
+                crate::visitor::collect_all_types(self.interner, target_instantiated.return_type)
+                    .contains(&tp_id)
+            });
+
+            if target_refs_source_params {
+                // Target references source's type params — they share identity.
+                // Just clear source type params; no instantiation needed.
+                source_instantiated.type_params.clear();
+            } else {
+                if self.has_conflicting_contextual_param_candidates(
+                    &source_instantiated,
+                    &target_instantiated,
+                ) {
+                    return SubtypeResult::False;
+                }
+                let substitution = match self.infer_source_type_param_substitution(
+                    &source_instantiated,
+                    &target_instantiated,
+                ) {
+                    Ok(sub) => {
+                        used_inference_for_generic_source = true;
+                        sub
+                    }
+                    Err(_) => {
+                        // Inference failed (e.g., bounds violation). Fall back to tsc's
+                        // `getErasedSignature` behavior: replace type params with their
+                        // constraints (or `unknown` if unconstrained).
+                        erase_type_params_to_constraints(&source_instantiated.type_params)
+                    }
+                };
+                source_instantiated =
+                    self.instantiate_function_shape(&source_instantiated, &substitution);
             }
-            let substitution = match self
-                .infer_source_type_param_substitution(&source_instantiated, &target_instantiated)
-            {
-                Ok(sub) => {
-                    used_inference_for_generic_source = true;
-                    sub
-                }
-                Err(_) => {
-                    // Inference failed (e.g., bounds violation). Fall back to tsc's
-                    // `getErasedSignature` behavior: replace type params with their
-                    // constraints (or `unknown` if unconstrained).
-                    erase_type_params_to_constraints(&source_instantiated.type_params)
-                }
-            };
-            source_instantiated =
-                self.instantiate_function_shape(&source_instantiated, &substitution);
         }
 
         // Non-generic source → generic target: check if the source references the same
