@@ -1819,12 +1819,28 @@ impl ParserState {
         self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ImportKeyword);
 
-        // Check for import "module" (no import clause)
+        // Check for import "module" (no import clause) or whether the next token
+        // can start an import clause. Matches tsc's tryParseImportClause:
+        //   - identifier (non-reserved): default import name
+        //   - `*`: namespace import
+        //   - `{`: named imports
+        //   - `type`/`defer`: phase modifiers
+        // Reserved words like `import`, `export`, `class` etc. do NOT start an
+        // import clause — they cause tsc to skip directly to module specifier
+        // parsing (which emits TS1109 "Expression expected" for non-string tokens).
         let diagnostics_before_import_clause = self.parse_diagnostics.len();
+        let can_start_import_clause = !self.is_token(SyntaxKind::StringLiteral)
+            && (self.is_identifier()
+                || self.is_token(SyntaxKind::AsteriskToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::TypeKeyword)
+                || self.is_token(SyntaxKind::DeferKeyword));
         let import_clause = if self.is_token(SyntaxKind::StringLiteral) {
             NodeIndex::NONE
-        } else {
+        } else if can_start_import_clause {
             self.parse_import_clause()
+        } else {
+            NodeIndex::NONE
         };
         let import_clause_had_errors =
             self.parse_diagnostics.len() > diagnostics_before_import_clause;
@@ -1851,6 +1867,18 @@ impl ParserState {
         }
 
         let module_specifier = if recovered_trailing_comma_before_from {
+            NodeIndex::NONE
+        } else if import_clause.is_none()
+            && !can_start_import_clause
+            && !self.is_token(SyntaxKind::StringLiteral)
+        {
+            // No import clause because the token after `import` is a reserved word
+            // (e.g., `import\nimport ...`). tsc emits TS1109 "Expression expected"
+            // at the reserved word position (via parseModuleSpecifier → parseExpression
+            // → parsePrimaryExpression → parseIdentifier(Expression_expected)).
+            // Don't consume the token so it can be parsed as the next statement.
+            // Note: StringLiteral is excluded — `import "mod"` is a valid bare import.
+            self.error_expression_expected();
             NodeIndex::NONE
         } else if import_clause.is_none() {
             self.parse_string_literal()

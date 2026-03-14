@@ -39,6 +39,9 @@ pub enum TokenFlags {
     ContainsLeadingZero = 8192,
     ContainsInvalidSeparator = 16384,
     PrecedingJSDocLeadingAsterisks = 32768,
+    /// String/template literal unterminated because EOF was reached (not newline).
+    /// Used to distinguish TS1126 "Unexpected end of text" from TS1002 "Unterminated string literal".
+    UnterminatedAtEof = 65536,
 }
 
 // =============================================================================
@@ -1012,8 +1015,9 @@ impl ScannerState {
             }
         }
 
-        // Unterminated string
-        self.token_flags |= TokenFlags::Unterminated as u32;
+        // Unterminated string — reached EOF without closing quote.
+        // Set UnterminatedAtEof to distinguish from newline-terminated (TS1002 vs TS1126).
+        self.token_flags |= TokenFlags::Unterminated as u32 | TokenFlags::UnterminatedAtEof as u32;
         self.token_value = result;
         self.token = SyntaxKind::StringLiteral;
     }
