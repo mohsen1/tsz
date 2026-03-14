@@ -531,6 +531,15 @@ impl ParserState {
         let parameters = self.parse_parameter_list();
         self.parse_expected(SyntaxKind::CloseParenToken);
 
+        // TS1005: call signatures cannot be optional — emit "';' expected." at '?'
+        if self.is_token(SyntaxKind::QuestionToken) {
+            self.parse_error_at_current_token(
+                "';' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token(); // skip '?'
+        }
+
         // Return type (supports type predicates: param is T)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
@@ -566,6 +575,15 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
         self.parse_expected(SyntaxKind::CloseParenToken);
+
+        // TS1005: construct signatures cannot be optional — emit "';' expected." at '?'
+        if self.is_token(SyntaxKind::QuestionToken) {
+            self.parse_error_at_current_token(
+                "';' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token(); // skip '?'
+        }
 
         // Return type (supports type predicates)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -803,6 +821,12 @@ impl ParserState {
         }
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
+
+        // TS1005: index signatures cannot be optional — emit "';' expected." at '?'
+        if self.is_token(SyntaxKind::QuestionToken) {
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token(); // skip '?'
+        }
 
         // Detect non-valid index signature parameter types.
         // Valid types are: string, number, symbol, or template literal types.
