@@ -387,6 +387,17 @@ impl ParserState {
         self.current_token as u16 >= SyntaxKind::Identifier as u16
     }
 
+    /// Check if current token is an identifier (excluding reserved words).
+    /// Matches tsc's `isIdentifier()`: returns true for plain identifiers and
+    /// contextual/future-reserved keywords, but false for reserved words like
+    /// `import`, `export`, `class`, `function`, etc.
+    #[inline]
+    pub(crate) const fn is_identifier(&self) -> bool {
+        self.current_token as u16 == SyntaxKind::Identifier as u16
+            || (self.current_token as u16 > SyntaxKind::WithKeyword as u16
+                && self.current_token as u16 <= SyntaxKind::DeferKeyword as u16)
+    }
+
     /// Check if current token can start a type member declaration
     #[inline]
     pub(crate) const fn is_type_member_start(&self) -> bool {
