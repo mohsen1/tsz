@@ -606,6 +606,45 @@ impl<'a> CheckerState<'a> {
             return (wrapped_type, Vec::new());
         }
 
+        // Import alias targeting a cross-file class+namespace merge.
+        //
+        // When `import { X } from "./m"` imports a symbol that has both CLASS and
+        // NAMESPACE_MODULE flags, the local import alias only carries
+        // ALIAS | NAMESPACE_MODULE (not CLASS).  Without this guard the
+        // NAMESPACE_MODULE branch below would return Lazy(DefId) — a type that
+        // only exposes namespace exports and misses class constructor properties
+        // like `prototype`.
+        //
+        // Resolve the import target to its original symbol and delegate to
+        // `get_type_of_symbol`, which sees the full CLASS | NAMESPACE_MODULE flags
+        // and produces the class constructor type merged with namespace exports.
+        if flags & symbol_flags::ALIAS != 0
+            && flags & symbol_flags::CLASS == 0
+            && flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+            && let Some(ref module_spec) = import_module
+        {
+            let target_name = import_name.as_deref().unwrap_or(&escaped_name);
+            let target_sym_id = self
+                .ctx
+                .binder
+                .resolve_import_with_reexports_type_only(module_spec, target_name)
+                .map(|(sym_id, _is_type_only)| sym_id);
+
+            if let Some(target_sym_id) = target_sym_id
+                && target_sym_id != sym_id
+                && let Some(target_symbol) = self.get_symbol_globally(target_sym_id)
+                && (target_symbol.flags & symbol_flags::CLASS) != 0
+            {
+                let target_type = self.get_type_of_symbol(target_sym_id);
+                // Also cache the instance type so type-position references
+                // (`let x: Observable<number>`) continue to work.
+                if let Some(&inst) = self.ctx.symbol_instance_types.get(&target_sym_id) {
+                    self.ctx.symbol_instance_types.insert(sym_id, inst);
+                }
+                return (target_type, Vec::new());
+            }
+        }
+
         // Class - return class constructor type (merging namespace exports when present)
         // Also compute and cache instance type for TYPE position resolution
         if flags & symbol_flags::CLASS != 0 {
