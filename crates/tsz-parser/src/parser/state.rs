@@ -588,9 +588,7 @@ impl ParserState {
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
             );
         } else {
-            let msg = format!(
-                "Identifier expected. '{word}' is a reserved word in strict mode."
-            );
+            let msg = format!("Identifier expected. '{word}' is a reserved word in strict mode.");
             self.parse_error_at_current_token(
                 &msg,
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
