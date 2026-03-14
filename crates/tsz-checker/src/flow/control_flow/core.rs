@@ -609,25 +609,41 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> TypeId {
         // Reusable buffers to avoid heap allocations in hot path.
         // Use try_borrow_mut to handle re-entrancy safely (e.g. during bidirectional narrowing).
-        let mut local_worklist = VecDeque::new();
-        let mut local_in_worklist = FxHashSet::default();
-        let mut local_visited = FxHashSet::default();
-        let mut local_results = FxHashMap::default();
-
-        // Borrow shared buffers if available and NOT already borrowed, otherwise fallback to local ones
+        // PERF: Only allocate local fallback buffers when shared buffers are unavailable.
         let mut worklist_borrow = self.flow_worklist.and_then(|b| b.try_borrow_mut().ok());
         let mut in_worklist_borrow = self.flow_in_worklist.and_then(|b| b.try_borrow_mut().ok());
         let mut visited_borrow = self.flow_visited.and_then(|b| b.try_borrow_mut().ok());
         let mut results_borrow = self.flow_results.and_then(|b| b.try_borrow_mut().ok());
 
-        let worklist = worklist_borrow
-            .as_deref_mut()
-            .unwrap_or(&mut local_worklist);
-        let in_worklist = in_worklist_borrow
-            .as_deref_mut()
-            .unwrap_or(&mut local_in_worklist);
-        let visited = visited_borrow.as_deref_mut().unwrap_or(&mut local_visited);
-        let results = results_borrow.as_deref_mut().unwrap_or(&mut local_results);
+        let mut local_worklist;
+        let mut local_in_worklist;
+        let mut local_visited;
+        let mut local_results;
+
+        let worklist = if let Some(ref mut b) = worklist_borrow {
+            &mut **b
+        } else {
+            local_worklist = VecDeque::new();
+            &mut local_worklist
+        };
+        let in_worklist = if let Some(ref mut b) = in_worklist_borrow {
+            &mut **b
+        } else {
+            local_in_worklist = FxHashSet::default();
+            &mut local_in_worklist
+        };
+        let visited = if let Some(ref mut b) = visited_borrow {
+            &mut **b
+        } else {
+            local_visited = FxHashSet::default();
+            &mut local_visited
+        };
+        let results = if let Some(ref mut b) = results_borrow {
+            &mut **b
+        } else {
+            local_results = FxHashMap::default();
+            &mut local_results
+        };
 
         // Clear buffers for reuse
         worklist.clear();
