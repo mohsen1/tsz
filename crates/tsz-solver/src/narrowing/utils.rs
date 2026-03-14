@@ -297,8 +297,11 @@ pub fn narrow_by_typeof(
 // Nullish Type Helpers
 // =============================================================================
 
-fn top_level_union_members(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
-    union_list_id(types, type_id).map(|list_id| types.type_list(list_id).to_vec())
+fn top_level_union_members(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<[TypeId]>> {
+    union_list_id(types, type_id).map(|list_id| types.type_list(list_id))
 }
 
 const fn is_undefined_intrinsic(type_id: TypeId) -> bool {
@@ -362,7 +365,7 @@ fn split_nullish_members(
     }
 
     if let Some(members) = top_level_union_members(types, type_id) {
-        for member in members {
+        for &member in members.iter() {
             split_nullish_members(types, member, non_nullish, nullish);
         }
         return;
