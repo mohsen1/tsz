@@ -1804,6 +1804,12 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         // 1) Named exports collected from file_locals.
         for (name, &sym_id) in result.file_locals.iter() {
+            // Skip lib/global symbols (e.g. `escape`, `unescape`) that were merged
+            // into file_locals from lib.d.ts. These are global builtins that should
+            // not appear in a user module's module_exports.
+            if result.lib_symbol_ids.contains(&sym_id) {
+                continue;
+            }
             if name == "export=" {
                 export_equals_old = Some(sym_id);
             }

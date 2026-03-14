@@ -802,17 +802,16 @@ impl BinderState {
 
         // Iterate through file_locals to find modules and their exports
         for (name, &sym_id) in self.file_locals.iter() {
+            // Skip lib/global symbols merged into file_locals from lib.d.ts.
+            // These are global builtins (e.g. `escape`, `unescape`) that should
+            // not appear in a user module's module_exports.
+            if self.lib_symbol_ids.contains(&sym_id) {
+                continue;
+            }
             if name == "export=" {
                 export_equals_target = Some(sym_id);
             }
             if let Some(symbol) = self.symbols.get(sym_id) {
-                // Skip lib/global symbols (identified by decl_file_idx == u32::MAX)
-                // merged into file_locals from lib.d.ts. These are global builtins
-                // that should not appear in a user module's module_exports.
-                if symbol.decl_file_idx == u32::MAX {
-                    continue;
-                }
-
                 // Check if this is a module/namespace symbol
                 if symbol.is_exported
                     && (symbol.flags
