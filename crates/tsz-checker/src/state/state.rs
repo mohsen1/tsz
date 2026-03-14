@@ -895,6 +895,35 @@ impl<'a> CheckerState<'a> {
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            // PERF FAST PATH: Check the flow_analysis_cache directly with a cheap key
+            // before doing the expensive should_apply_flow_narrowing_for_identifier check.
+            // If the flow cache already has a result for this (flow_node, symbol, type),
+            // we can return it immediately — skipping FlowAnalyzer creation, is_narrowable_identifier
+            // checks, parameter default checks, and all other setup (~300ns savings per call).
+            if !self.ctx.skip_flow_narrowing
+                && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
+                && let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(idx)
+                    .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+            {
+                let key = (flow_node, sym_id, cached);
+                let flow_cached = self.ctx.flow_analysis_cache.borrow().get(&key).copied();
+                if let Some(flow_cached) = flow_cached {
+                    // Apply the same widening check as the full path
+                    if flow_cached != cached && flow_cached != TypeId::ERROR {
+                        let evaluated_cached = self.evaluate_type_for_assignability(cached);
+                        let widened_cached =
+                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_cached);
+                        if widened_cached == flow_cached {
+                            return cached;
+                        }
+                    }
+                    return flow_cached;
+                }
+            }
+
             // CRITICAL FIX: For identifiers, apply flow narrowing to the cached type
             // Identifiers can have different types in different control flow branches.
             // Example: if (typeof x === "string") { x.toUpperCase(); }
