@@ -133,6 +133,84 @@ impl<'a> CheckerState<'a> {
         Vec::new()
     }
 
+    /// Push type parameters from enclosing generic functions/methods for a given
+    /// declaration node. Used when computing local type aliases that have no own
+    /// type parameters but reference type parameters from an enclosing function.
+    ///
+    /// For example: `function foo<T>() { type X = T extends string ? T : never; }`
+    /// When computing `X`, `T` must be in the type parameter scope.
+    pub(crate) fn push_enclosing_type_params_for_node(
+        &mut self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        node_idx: tsz_parser::parser::NodeIndex,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = arena
+            .get_extended(node_idx)
+            .map_or(tsz_parser::parser::NodeIndex::NONE, |ext| ext.parent);
+
+        let mut all_updates = Vec::new();
+        let mut depth = 0;
+        while current.is_some() && depth < 64 {
+            depth += 1;
+            let Some(parent) = arena.get(current) else {
+                break;
+            };
+
+            let maybe_type_params = match parent.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    arena
+                        .get_function(parent)
+                        .and_then(|func| func.type_parameters.clone())
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => arena
+                    .get_method_decl(parent)
+                    .and_then(|method| method.type_parameters.clone()),
+                k if k == syntax_kind_ext::METHOD_SIGNATURE
+                    || k == syntax_kind_ext::CALL_SIGNATURE
+                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                {
+                    arena
+                        .get_signature(parent)
+                        .and_then(|sig| sig.type_parameters.clone())
+                }
+                _ => None,
+            };
+
+            if let Some(type_params) = maybe_type_params {
+                // Only push if these type params are from the SAME arena as we're using
+                // and none of them are already in scope.
+                let all_missing = type_params.nodes.iter().all(|&param_idx| {
+                    arena
+                        .get(param_idx)
+                        .and_then(|n| arena.get_type_parameter(n))
+                        .and_then(|tp| arena.get(tp.name))
+                        .and_then(|n| arena.get_identifier(n))
+                        .is_none_or(|ident| {
+                            !self
+                                .ctx
+                                .type_parameter_scope
+                                .contains_key(ident.escaped_text.as_str())
+                        })
+                });
+                if all_missing && std::ptr::eq(arena, self.ctx.arena) {
+                    let (_, updates) = self.push_type_parameters(&Some(type_params));
+                    all_updates.extend(updates);
+                }
+            }
+
+            current = arena
+                .get_extended(current)
+                .map_or(tsz_parser::parser::NodeIndex::NONE, |ext| ext.parent);
+        }
+
+        all_updates
+    }
+
     /// Resolve a qualified name (A.B.C) to its type.
     ///
     /// This function handles qualified type names like `Namespace.SubType`, `Module.Interface`,
