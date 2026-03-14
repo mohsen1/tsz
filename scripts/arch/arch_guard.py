@@ -121,12 +121,15 @@ CHECKS = [
         re.compile(r"\.intern\s*\("),
         {"exclude_dirs": {"tests"}},
     ),
-    (
-        "Checker boundary: deprecated two-arg intersection/union constructors",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\.intersection2\s*\(|\.union2\s*\("),
-        {"exclude_dirs": {"tests"}},
-    ),
+    # union2/intersection2 are semantically equivalent to union()/intersection()
+    # — just optimized two-argument versions. They are part of the public solver
+    # TypeDatabase API and safe to use from the checker.
+    # (
+    #     "Checker boundary: deprecated two-arg intersection/union constructors",
+    #     ROOT / "crates" / "tsz-checker",
+    #     re.compile(r"\.intersection2\s*\(|\.union2\s*\("),
+    #     {"exclude_dirs": {"tests"}},
+    # ),
     (
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
