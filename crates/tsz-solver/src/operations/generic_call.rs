@@ -1468,22 +1468,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else if !tp.is_const
                     && !contra_only
                     && infer_ctx.all_candidates_are_fresh_literals(var)
-                {
-                    // When the declared constraint is a primitive type (e.g.,
-                    // T extends string), tsc preserves literal types instead of
-                    // widening. Skip widening in that case.
-                    let constraint_preserves_literals = tp
+                    && !tp
                         .constraint
-                        .is_some_and(|c| constraint_is_primitive_type(self.interner, c));
-                    if constraint_preserves_literals {
-                        ty
-                    } else {
-                        // Only widen when all covariant candidates are fresh literals
-                        // (from expressions, not type annotations). Matches tsc's
-                        // getWidenedLiteralType which only widens types with
-                        // the FreshLiteral flag.
-                        crate::widen_literal_type(self.interner.as_type_database(), ty)
-                    }
+                        .is_some_and(|c| constraint_is_primitive_type(self.interner, c))
+                {
+                    // Only widen when all covariant candidates are fresh literals
+                    // (from expressions, not type annotations) AND the type parameter
+                    // does NOT have a primitive constraint (string, number, bigint).
+                    // tsc preserves literal types when the constraint is a primitive:
+                    //   <T extends string>(a: T) => T  -- T="z" preserved
+                    //   <T>(a: T) => T                  -- T="z" widened to string
+                    crate::widen_literal_type(self.interner.as_type_database(), ty)
                 } else {
                     ty
                 }
@@ -2469,15 +2464,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 | TypeData::Tuple(_)
                 | TypeData::Function(_)
                 | TypeData::Callable(_)
-                | TypeData::Intersection(_)
-                | TypeData::Enum(..)
-                | TypeData::Lazy(_)
-                | TypeData::Application(_)
-                | TypeData::Conditional(_)
-                | TypeData::IndexAccess(..)
-                | TypeData::TemplateLiteral(_)
-                | TypeData::ReadonlyType(_)
-                | TypeData::KeyOf(_),
+                | TypeData::Intersection(_),
             ) => true,
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
