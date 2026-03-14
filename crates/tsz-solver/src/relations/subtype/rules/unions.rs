@@ -426,7 +426,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // ── Helper functions for discriminated union checking ──
 
 /// Get the constituents of a type. If it's a union, return all members.
-/// Otherwise return a singleton. Uses SmallVec to avoid heap allocation
+/// Otherwise return a singleton. Uses `SmallVec` to avoid heap allocation
 /// for the common singleton case.
 fn get_type_constituents(
     db: &dyn TypeDatabase,

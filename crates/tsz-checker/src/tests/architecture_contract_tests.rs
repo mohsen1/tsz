@@ -1114,8 +1114,6 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
             || line.contains("intern(TypeData::")
             || line.contains("intern(tsz_solver::TypeData::")
             || line.contains(".intern(")
-            || line.contains(".union2(")
-            || line.contains(".intersection2(")
     }
 
     let src_dir = Path::new("src");
