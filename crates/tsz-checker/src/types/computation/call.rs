@@ -717,6 +717,37 @@ impl<'a> CheckerState<'a> {
                             extracted_round1_partials[i] = true;
                         }
                     }
+                    // Intra-expression inference: for sensitive object literal args where
+                    // extract_non_sensitive_object_type found nothing (all properties are
+                    // lambdas), try to include lambda properties whose contextual param
+                    // types are concrete (don't depend on the type params being inferred).
+                    // This handles patterns like:
+                    //   callIt({ produce: _a => 0, consume: n => n.toFixed() })
+                    // where `produce`'s contextual param type is `number` (concrete),
+                    // so we can type `_a` and use the return type to infer T.
+                    let type_param_names: Vec<tsz_common::Atom> =
+                        shape.type_params.iter().map(|tp| tp.name).collect();
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if !sensitive_args[i] || extracted_round1_partials[i] {
+                            continue;
+                        }
+                        let Some(param_type) =
+                            shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                let last = shape.params.last()?;
+                                last.rest.then_some(last.type_id)
+                            })
+                        else {
+                            continue;
+                        };
+                        if let Some(partial) = self.extract_inference_contributing_object_type(
+                            arg_idx,
+                            param_type,
+                            &type_param_names,
+                        ) {
+                            round1_arg_types[i] = partial;
+                            extracted_round1_partials[i] = true;
+                        }
+                    }
                     for (i, arg_type) in round1_arg_types.iter_mut().enumerate() {
                         if !sensitive_args.get(i).copied().unwrap_or(false) {
                             continue;
