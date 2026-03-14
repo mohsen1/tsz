@@ -129,13 +129,21 @@ impl<'a> CheckerState<'a> {
                     // Must be callable with zero arguments
                     return Some(self.is_callable_with_no_required_args(prop.type_id));
                 }
-                // Non-method properties typed as `any` are callable, so treat them as valid.
-                // e.g., `class Foo { [Symbol.iterator]: any; }`
+                // Non-method properties: check if their type is callable.
+                // This handles `declare [Symbol.iterator]: this["entries"]`
+                // where the property type resolves to a callable function type.
+                // If the type is callable, return true. If not directly
+                // resolvable (e.g., complex type expression), return None
+                // to fall through to the full property access resolution.
                 if prop.type_id == TypeId::ANY {
                     return Some(true);
                 }
-                // Found the property but it's not a method and not `any` — not valid
-                return Some(false);
+                if self.is_callable_with_no_required_args(prop.type_id) {
+                    return Some(true);
+                }
+                // Can't determine callability from the shape alone — let
+                // the full property access resolution handle it.
+                return None;
             }
         }
 
