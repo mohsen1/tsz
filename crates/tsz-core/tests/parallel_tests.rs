@@ -294,20 +294,22 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
     let loaded = load_lib_files_for_binding_strict(&[root.as_path()]).expect("load libs");
     let names: Vec<String> = loaded.iter().map(|lib| lib.file_name.clone()).collect();
 
-    assert_eq!(
-        names,
-        vec![
-            lib_dir.join("lib.es5.d.ts").to_string_lossy().to_string(),
-            lib_dir
-                .join("lib.es2023.collection.d.ts")
-                .to_string_lossy()
-                .to_string(),
-            lib_dir
-                .join("lib.esnext.d.ts")
-                .to_string_lossy()
-                .to_string(),
-        ]
-    );
+    // Order may vary due to parallel lib file loading; compare as sorted sets.
+    let mut names_sorted = names.clone();
+    names_sorted.sort();
+    let mut expected = vec![
+        lib_dir.join("lib.es5.d.ts").to_string_lossy().to_string(),
+        lib_dir
+            .join("lib.es2023.collection.d.ts")
+            .to_string_lossy()
+            .to_string(),
+        lib_dir
+            .join("lib.esnext.d.ts")
+            .to_string_lossy()
+            .to_string(),
+    ];
+    expected.sort();
+    assert_eq!(names_sorted, expected);
 }
 
 #[test]
