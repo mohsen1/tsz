@@ -409,9 +409,17 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(module_decl) = self.arena.get_module(stmt_node)
                 {
-                    let module_name = self.get_identifier_text_idx(module_decl.name);
-                    if !module_name.is_empty() && seen.insert(module_name.clone()) {
-                        names.push(module_name);
+                    // Skip ambient/declare module declarations — they don't
+                    // produce runtime code and shouldn't be hoisted.
+                    // e.g., `declare global { interface ImportMeta {...} }`
+                    let is_ambient = self
+                        .arena
+                        .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
+                    if !is_ambient {
+                        let module_name = self.get_identifier_text_idx(module_decl.name);
+                        if !module_name.is_empty() && seen.insert(module_name.clone()) {
+                            names.push(module_name);
+                        }
                     }
                 }
                 if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
