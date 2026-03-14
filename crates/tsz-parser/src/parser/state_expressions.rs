@@ -2090,6 +2090,14 @@ impl ParserState {
                 }
 
                 if self.is_identifier_or_keyword() {
+                    // Check for future reserved words used as identifiers in strict mode.
+                    // tsc emits TS1212/1213/1214 when implements, interface, let, package,
+                    // private, protected, public, static, or yield appear as identifiers
+                    // in class bodies or modules (which are always strict mode).
+                    if self.is_future_reserved_word() && self.in_strict_mode_context() {
+                        let word = self.current_keyword_text().to_string();
+                        self.report_strict_mode_reserved_word_error(&word);
+                    }
                     self.parse_identifier_name()
                 } else {
                     // Unknown primary expression - create an error token
