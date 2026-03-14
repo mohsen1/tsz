@@ -427,16 +427,13 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
-            query::PropertyAccessResolutionKind::TypeParameter { constraint } => {
-                if let Some(constraint) = constraint {
-                    if constraint == type_id {
-                        type_id
-                    } else {
-                        self.resolve_type_for_property_access_inner(constraint, visited)
-                    }
-                } else {
-                    type_id
-                }
+            query::PropertyAccessResolutionKind::TypeParameter { constraint: _ } => {
+                // Don't resolve type parameters to their constraints here.
+                // The solver's PropertyAccessEvaluator handles TypeParameter
+                // by recursing into the constraint with skip_this_binding=true,
+                // preserving ThisType for the checker to substitute with the
+                // correct receiver (the type parameter, not the constraint).
+                type_id
             }
             query::PropertyAccessResolutionKind::NeedsEvaluation => {
                 let evaluated = self.evaluate_type_with_env(type_id);

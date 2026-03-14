@@ -5,7 +5,7 @@ use crate::caches::db::QueryDatabase;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TypeData, TypeId};
 use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
 
 // Re-export readonly helpers
@@ -157,6 +157,10 @@ pub struct PropertyAccessEvaluator<'a> {
     // We store both the str (for immediate use) and Atom (for interned comparisons)
     pub(crate) current_prop_name: RefCell<Option<String>>,
     pub(crate) current_prop_atom: RefCell<Option<Atom>>,
+    /// When true, `bind_object_receiver_this` is a no-op. Set when resolving
+    /// properties through a type parameter's constraint so that `this` is
+    /// preserved for the checker to substitute with the correct receiver type.
+    skip_this_binding: Cell<bool>,
 }
 
 struct PropertyAccessGuard<'a> {
@@ -180,6 +184,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             )),
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
+            skip_this_binding: Cell::new(false),
         }
     }
 
@@ -198,6 +203,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     pub(crate) fn bind_object_receiver_this(&self, receiver: TypeId, type_id: TypeId) -> TypeId {
+        if self.skip_this_binding.get() {
+            return type_id;
+        }
         let receiver = self.nominalize_object_receiver(receiver);
         if crate::contains_this_type(self.interner(), type_id) {
             crate::substitute_this_type(self.interner(), type_id, receiver)
@@ -628,8 +636,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(constraint) = info.constraint {
-                    // Recurse into the constraint to find the property
-                    self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom))
+                    // Skip `this` binding when resolving through a type parameter's
+                    // constraint. The checker substitutes `this` with the actual
+                    // receiver (the type parameter T, not the constraint A).
+                    let prev = self.skip_this_binding.get();
+                    self.skip_this_binding.set(true);
+                    let result =
+                        self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom));
+                    self.skip_this_binding.set(prev);
+                    result
                 } else {
                     // Unconstrained type parameters implicitly extend Object in tsc,
                     // so properties like toString/valueOf/hasOwnProperty are accessible.
