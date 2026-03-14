@@ -22,6 +22,8 @@ jobs:
           submodules: true
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
 
       - uses: Swatinem/rust-cache@v2
         with:
