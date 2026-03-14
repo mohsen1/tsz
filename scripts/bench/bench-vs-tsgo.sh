@@ -314,7 +314,44 @@ check_prerequisites() {
     if [ "$need_rebuild" = true ]; then
         echo -e "${CYAN}Building tsz with dist profile (LTO=fat, codegen-units=1)${NC}"
         echo -e "${CYAN}Target directory: $BENCH_TARGET_DIR${NC}"
-        (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" cargo build --profile dist -p tsz-cli)
+
+        # PGO (Profile-Guided Optimization): collect profile data then rebuild.
+        # This typically gives 5-15% speedup on hot paths by guiding LLVM's
+        # optimization decisions with real workload data.
+        local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
+        local pgo_merged="$pgo_dir/merged.profdata"
+        local llvm_profdata
+        llvm_profdata="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata 2>/dev/null | head -1)"
+
+        if [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
+            echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
+            rm -rf "$pgo_dir"
+            mkdir -p "$pgo_dir"
+            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
+                RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
+                cargo build --profile dist -p tsz-cli 2>/dev/null)
+
+            echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
+            # Run representative workloads
+            echo "const x: number = 1;" | TSZ_LIB_DIR="$TSZ_LIB_DIR" "$TSZ" --noEmit /dev/stdin 2>/dev/null || true
+            for _i in 1 2 3; do
+                if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
+                    TSZ_LIB_DIR="$TSZ_LIB_DIR" "$TSZ" --noEmit \
+                        "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" 2>/dev/null || true
+                fi
+            done
+
+            echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+            "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw 2>/dev/null
+            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
+                RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                cargo build --profile dist -p tsz-cli)
+        else
+            echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
+            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$BENCH_TARGET_DIR" \
+                RUSTFLAGS="-Ctarget-cpu=native" \
+                cargo build --profile dist -p tsz-cli)
+        fi
     fi
     
     echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
