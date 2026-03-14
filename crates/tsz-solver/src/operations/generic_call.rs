@@ -28,13 +28,26 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
     {
         return true;
     }
-    if let Some(TypeData::Union(list_id)) = interner.lookup(type_id) {
-        let members = interner.type_list(list_id);
-        return members
-            .iter()
-            .any(|&m| constraint_is_primitive_type(interner, m));
+    match interner.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| constraint_is_primitive_type(interner, m))
+        }
+        // `keyof T` constraints produce string literal unions at runtime,
+        // so literals should be preserved (not widened to `string`).
+        Some(TypeData::KeyOf(_)) => true,
+        // Intersections like `keyof T & string` — check if any member
+        // implies literal preservation.
+        Some(TypeData::Intersection(list_id)) => {
+            let members = interner.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| constraint_is_primitive_type(interner, m))
+        }
+        _ => false,
     }
-    false
 }
 
 fn instantiate_call_type(
