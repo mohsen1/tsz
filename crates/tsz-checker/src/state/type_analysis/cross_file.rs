@@ -445,6 +445,17 @@ impl<'a> CheckerState<'a> {
             let child_circular_aliases: Vec<SymbolId> =
                 checker.ctx.circular_type_aliases.iter().copied().collect();
 
+            // Propagate class instance types so that type-position references
+            // (e.g., `foo(): Cls`) can resolve the instance type without
+            // re-computing it from the class declaration (which lives in a
+            // different arena and would fail).
+            let child_instance_types: Vec<(SymbolId, TypeId)> = checker
+                .ctx
+                .symbol_instance_types
+                .iter()
+                .map(|(&k, &v)| (k, v))
+                .collect();
+
             // Drop child checker to release borrow on self.ctx.types.
             drop(checker);
 
@@ -482,6 +493,12 @@ impl<'a> CheckerState<'a> {
             }
             for sym in child_circular_aliases {
                 self.ctx.circular_type_aliases.insert(sym);
+            }
+            for (sym_id, inst_type) in child_instance_types {
+                self.ctx
+                    .symbol_instance_types
+                    .entry(sym_id)
+                    .or_insert(inst_type);
             }
 
             // Cache the result for lib delegations by SymbolId.
