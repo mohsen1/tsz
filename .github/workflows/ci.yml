@@ -970,7 +970,9 @@ jobs:
           CLEANOUT=$(mktemp)
           trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
-          ./scripts/fourslash/run-fourslash.sh --skip-cargo-build --offset=$OFFSET --max=$CHUNK 2>&1 | tee "$TMPOUT" || true
+          # 2 workers keeps peak memory within the 7GB CI runner limit.
+          # 512MB per-worker memory limit catches runaway tests.
+          ./scripts/fourslash/run-fourslash.sh --skip-cargo-build --offset=$OFFSET --max=$CHUNK --workers=2 --memory-limit=512 2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
           RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)
