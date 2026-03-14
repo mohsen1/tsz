@@ -805,6 +805,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         crate::utils::optional_property_type(self.interner(), prop)
     }
 
+    pub(crate) fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
+        crate::utils::optional_property_write_type(self.interner(), prop)
+    }
+
     fn resolve_apparent_property(
         &self,
         kind: IntrinsicKind,
