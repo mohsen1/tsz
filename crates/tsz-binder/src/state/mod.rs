@@ -274,6 +274,13 @@ pub struct BinderState {
     /// The module specifier being augmented (set when `in_module_augmentation` is true)
     pub(crate) current_augmented_module: Option<String>,
 
+    /// Maps symbols declared inside `declare module "..."` augmentation blocks to their
+    /// target module specifier. Used by the checker to redirect type resolution for
+    /// self-referential augmentation interfaces (e.g., `interface Foo { self: Foo }` inside
+    /// `declare module "./m"` should resolve Foo to the merged interface, not just the
+    /// augmentation-local one).
+    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
     pub lib_binders: Vec<Arc<Self>>,
@@ -392,6 +399,7 @@ pub struct BinderStateScopeInputs {
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
     pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
+    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
     pub module_exports: FxHashMap<String, SymbolTable>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     pub reexports: FileReexportsMap,

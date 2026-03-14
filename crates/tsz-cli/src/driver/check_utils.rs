@@ -1061,6 +1061,17 @@ pub(super) fn create_binder_from_bound_file(
         }
     }
 
+    // Merge augmentation target module mappings from all files
+    let mut merged_augmentation_target_modules: rustc_hash::FxHashMap<
+        tsz::binder::SymbolId,
+        String,
+    > = rustc_hash::FxHashMap::default();
+    for other_file in &program.files {
+        for (&sym_id, module_spec) in &other_file.augmentation_target_modules {
+            merged_augmentation_target_modules.insert(sym_id, module_spec.clone());
+        }
+    }
+
     // Merge global augmentations from all files
     // Each augmentation is tagged with its source arena for cross-file resolution.
     let mut merged_global_augmentations: rustc_hash::FxHashMap<
@@ -1092,6 +1103,7 @@ pub(super) fn create_binder_from_bound_file(
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: merged_global_augmentations,
             module_augmentations: merged_module_augmentations,
+            augmentation_target_modules: merged_augmentation_target_modules,
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),

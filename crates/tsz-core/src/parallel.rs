@@ -103,6 +103,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         shorthand_ambient_modules: binder.shorthand_ambient_modules,
         global_augmentations: binder.global_augmentations,
         module_augmentations: binder.module_augmentations,
+        augmentation_target_modules: binder.augmentation_target_modules,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
@@ -293,6 +294,8 @@ pub struct BindResult {
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     /// Maps module specifier -> [`ModuleAugmentation`]
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+    /// Maps symbols declared inside module augmentation blocks to their target module specifier
+    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     pub reexports: Reexports,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
@@ -376,6 +379,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 shorthand_ambient_modules: binder.shorthand_ambient_modules,
                 global_augmentations: binder.global_augmentations,
                 module_augmentations: binder.module_augmentations,
+                augmentation_target_modules: binder.augmentation_target_modules,
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
@@ -427,6 +431,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         shorthand_ambient_modules: binder.shorthand_ambient_modules,
         global_augmentations: binder.global_augmentations,
         module_augmentations: binder.module_augmentations,
+        augmentation_target_modules: binder.augmentation_target_modules,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
@@ -892,6 +897,7 @@ fn bind_file_with_libs(
         shorthand_ambient_modules: binder.shorthand_ambient_modules,
         global_augmentations: binder.global_augmentations,
         module_augmentations: binder.module_augmentations,
+        augmentation_target_modules: binder.augmentation_target_modules,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
@@ -934,6 +940,8 @@ pub struct BoundFile {
     pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+    /// Maps symbols declared inside module augmentation blocks to their target module specifier
+    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
@@ -2238,6 +2246,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             parse_diagnostics: result.parse_diagnostics.clone(),
             global_augmentations: result.global_augmentations.clone(),
             module_augmentations,
+            augmentation_target_modules: result
+                .augmentation_target_modules
+                .iter()
+                .map(|(&old_sym, name)| {
+                    let new_sym = id_remap.get(&old_sym).copied().unwrap_or(old_sym);
+                    (new_sym, name.clone())
+                })
+                .collect(),
             flow_nodes: result.flow_nodes.clone(),
             node_flow: result.node_flow.clone(),
             switch_clause_to_switch: result.switch_clause_to_switch.clone(),
@@ -2681,6 +2697,10 @@ pub fn create_binder_from_bound_file(
         String,
         Vec<crate::binder::ModuleAugmentation>,
     > = rustc_hash::FxHashMap::default();
+    let mut merged_augmentation_target_modules: rustc_hash::FxHashMap<
+        crate::binder::SymbolId,
+        String,
+    > = rustc_hash::FxHashMap::default();
 
     for other_file in &program.files {
         for (spec, augs) in &other_file.module_augmentations {
@@ -2694,6 +2714,9 @@ pub fn create_binder_from_bound_file(
                         Arc::clone(&other_file.arena),
                     )
                 }));
+        }
+        for (&sym_id, module_spec) in &other_file.augmentation_target_modules {
+            merged_augmentation_target_modules.insert(sym_id, module_spec.clone());
         }
     }
 
@@ -2731,6 +2754,7 @@ pub fn create_binder_from_bound_file(
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: merged_global_augmentations,
             module_augmentations: merged_module_augmentations,
+            augmentation_target_modules: merged_augmentation_target_modules,
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),

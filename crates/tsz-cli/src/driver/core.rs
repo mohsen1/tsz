@@ -1752,6 +1752,7 @@ fn build_program_with_cache(
                     shorthand_ambient_modules: Default::default(),
                     global_augmentations: Default::default(),
                     module_augmentations: Default::default(),
+                    augmentation_target_modules: Default::default(),
                     reexports: Default::default(),
                     wildcard_reexports: Default::default(),
                     wildcard_reexports_type_only: Default::default(),
