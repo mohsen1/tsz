@@ -2921,10 +2921,10 @@ pub const fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
         ScriptTarget::ES2020 => "es2020.full",
         ScriptTarget::ES2021 => "es2021.full",
         ScriptTarget::ES2022 => "es2022.full",
-        ScriptTarget::ES2023
-        | ScriptTarget::ES2024
-        | ScriptTarget::ES2025
-        | ScriptTarget::ESNext => "esnext.full",
+        ScriptTarget::ES2023 => "es2023.full",
+        ScriptTarget::ES2024 => "es2024.full",
+        // ES2025 and ESNext use esnext.full which includes experimental features
+        ScriptTarget::ES2025 | ScriptTarget::ESNext => "esnext.full",
     }
 }
 
