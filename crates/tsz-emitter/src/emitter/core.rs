@@ -109,7 +109,10 @@ impl Default for PrinterOptions {
     fn default() -> Self {
         Self {
             remove_comments: false,
-            target: ScriptTarget::ESNext,
+            // Default to ES2024 to match tsgo/tsc 7.x behavior.
+            // ESNext loads 12 additional esnext-specific lib files (87 vs 75)
+            // that add startup overhead without benefit for most users.
+            target: ScriptTarget::ES2024,
             single_quote: false,
             omit_trailing_semicolon: false,
             no_emit_helpers: false,
