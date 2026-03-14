@@ -241,7 +241,13 @@ echo "2/5 Formatting (cargo fmt)..."
 
 if ! cargo fmt -- --check >/dev/null 2>&1; then
     cargo fmt
-    echo "  Formatted files — auto-fixed."
+    # Re-stage formatted files so the commit includes the fixes
+    # (without this, cargo fmt modifies the working tree but the index
+    # still has the unformatted version, so the commit goes through dirty)
+    for f in $CHANGED_RS; do
+        [ -f "$f" ] && git add "$f"
+    done
+    echo "  Formatted and re-staged."
 else
     echo "  Already formatted."
 fi
@@ -270,6 +276,11 @@ if ! cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS --fix --allow-dirty --allow-stage
     cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1 | tail -50
     exit 1
 fi
+
+# Re-stage any files clippy auto-fixed
+for f in $CHANGED_RS; do
+    [ -f "$f" ] && git add "$f"
+done
 
 CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1) || {
     echo ""
