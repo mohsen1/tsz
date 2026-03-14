@@ -1961,40 +1961,64 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         );
         validate_lib_values(compiler_opts, &stripped, file_path, &mut diagnostics);
 
-        // TS5066: Substitutions for pattern '{0}' shouldn't be an empty array.
-        if let Some(serde_json::Value::Object(paths_obj)) = compiler_opts.get("paths") {
-            for (pattern, value) in paths_obj {
-                if let serde_json::Value::Array(arr) = value {
-                    if arr.is_empty() {
-                        // Find the empty array value position (tsc points at [])
-                        let search = format!("\"{pattern}\"");
-                        let paths_start = stripped.find("\"paths\"").unwrap_or(0);
-                        let key_pos = stripped[paths_start..]
-                            .find(&search)
-                            .map_or(0, |p| paths_start + p);
-                        // Skip past the key and colon to find the value
-                        let after_key = key_pos + search.len();
-                        let rest = &stripped[after_key..];
-                        let start = if let Some(colon_pos) = rest.find(':') {
-                            let after_colon = &rest[(colon_pos + 1)..];
-                            let ws = after_colon.len() - after_colon.trim_start().len();
-                            (after_key + colon_pos + 1 + ws) as u32
-                        } else {
-                            key_pos as u32
-                        };
-                        let value_len = 2u32; // "[]"
+        // TS5063/TS5066: Validate paths substitution values.
+        // TS5063: value should be an array (not string/number/etc.)
+        // TS5066: array shouldn't be empty
+        if let Some(serde_json::Value::Object(paths_obj)) = compiler_opts.get_mut("paths") {
+            let mut bad_patterns: Vec<String> = Vec::new();
+            for (pattern, value) in paths_obj.iter() {
+                let search = format!("\"{pattern}\"");
+                let paths_start = stripped.find("\"paths\"").unwrap_or(0);
+                let key_pos = stripped[paths_start..]
+                    .find(&search)
+                    .map_or(0, |p| paths_start + p);
+                let after_key = key_pos + search.len();
+                let rest = &stripped[after_key..];
+                let value_start = if let Some(colon_pos) = rest.find(':') {
+                    let after_colon = &rest[(colon_pos + 1)..];
+                    let ws = after_colon.len() - after_colon.trim_start().len();
+                    (after_key + colon_pos + 1 + ws) as u32
+                } else {
+                    key_pos as u32
+                };
+
+                match value {
+                    serde_json::Value::Array(arr) if arr.is_empty() => {
                         let msg = format_message(
                             diagnostic_messages::SUBSTITUTIONS_FOR_PATTERN_SHOULDNT_BE_AN_EMPTY_ARRAY,
                             &[pattern],
                         );
                         diagnostics.push(Diagnostic::error(
                             file_path,
-                            start,
-                            value_len,
+                            value_start,
+                            2, // "[]"
                             msg,
                             diagnostic_codes::SUBSTITUTIONS_FOR_PATTERN_SHOULDNT_BE_AN_EMPTY_ARRAY,
                         ));
                     }
+                    serde_json::Value::Array(_) => {} // valid non-empty array
+                    _ => {
+                        // TS5063: not an array
+                        let value_len = estimate_json_value_len(value);
+                        let msg = format_message(
+                            diagnostic_messages::SUBSTITUTIONS_FOR_PATTERN_SHOULD_BE_AN_ARRAY,
+                            &[pattern],
+                        );
+                        diagnostics.push(Diagnostic::error(
+                            file_path,
+                            value_start,
+                            value_len,
+                            msg,
+                            diagnostic_codes::SUBSTITUTIONS_FOR_PATTERN_SHOULD_BE_AN_ARRAY,
+                        ));
+                        bad_patterns.push(pattern.clone());
+                    }
+                }
+            }
+            // Fix invalid values so serde can deserialize
+            for pattern in &bad_patterns {
+                if let Some(v) = paths_obj.get_mut(pattern) {
+                    *v = serde_json::Value::Array(Vec::new());
                 }
             }
         }
