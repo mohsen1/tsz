@@ -713,6 +713,17 @@ impl BinderState {
 
             let sym_id = self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
 
+            // Track symbols declared inside module augmentation blocks so the checker
+            // can redirect self-referential type lookups (e.g., `self: Foo` inside
+            // `declare module "./m" { interface Foo { self: Foo } }`) to the merged type.
+            if self.in_module_augmentation
+                && sym_id.is_some()
+                && let Some(ref module_spec) = self.current_augmented_module
+            {
+                self.augmentation_target_modules
+                    .insert(sym_id, module_spec.clone());
+            }
+
             // Hoist global augmentation interfaces to file_locals for cross-file visibility.
             // Same rationale as namespace hoisting in bind_module_declaration.
             if self.in_global_augmentation && sym_id.is_some() {

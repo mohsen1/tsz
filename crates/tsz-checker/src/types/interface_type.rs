@@ -1647,12 +1647,80 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        // Update cached types for augmentation-local symbols so that
+        // self-referential type references (e.g., `self: Foo` inside
+        // `declare module "./m" { interface Foo { self: Foo } }`) resolve to
+        // the merged type instead of the augmentation-only type.
+        // Both symbol_types and type_env must be updated because resolve_lazy
+        // checks symbol_types first.
+        if result != base_type {
+            self.update_augmentation_local_symbol_types(module_spec, interface_name, result);
+        }
+
         self.ctx
             .module_augmentation_application_set
             .borrow_mut()
             .remove(&guard_key);
 
         result
+    }
+
+    /// Update symbol_types and type_env for augmentation-local interface symbols
+    /// so self-referential type references resolve to the merged type.
+    /// Searches both the current binder and all_binders since the augmentation
+    /// may be declared in a different file than the one being checked.
+    fn update_augmentation_local_symbol_types(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+        merged_type: tsz_solver::TypeId,
+    ) {
+        // Collect matching symbol IDs from all binders
+        let mut matching_sym_ids = Vec::new();
+
+        // Check current binder
+        for (&aug_sym_id, aug_module) in &self.ctx.binder.augmentation_target_modules {
+            if aug_module == module_spec {
+                if let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id) {
+                    if aug_sym.escaped_name == interface_name {
+                        matching_sym_ids.push(aug_sym_id);
+                    }
+                }
+            }
+        }
+
+        // Check all_binders (cross-file augmentations)
+        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                for (&aug_sym_id, aug_module) in &binder.augmentation_target_modules {
+                    if aug_module == module_spec {
+                        if let Some(aug_sym) = binder.get_symbol(aug_sym_id) {
+                            if aug_sym.escaped_name == interface_name
+                                && !matching_sym_ids.contains(&aug_sym_id)
+                            {
+                                matching_sym_ids.push(aug_sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update symbol_types and type_env for each matching symbol.
+        // Collect def IDs first (get_or_create_def_id borrows ctx mutably),
+        // then batch-insert into type_env with a single borrow.
+        let def_ids: Vec<_> = matching_sym_ids
+            .iter()
+            .map(|&aug_sym_id| {
+                self.ctx.symbol_types.insert(aug_sym_id, merged_type);
+                self.ctx.get_or_create_def_id(aug_sym_id)
+            })
+            .collect();
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            for aug_def_id in def_ids {
+                env.insert_def(aug_def_id, merged_type);
+            }
+        }
     }
 
     /// Get the interned Atom for a member name node, handling identifiers,
