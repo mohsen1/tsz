@@ -1057,33 +1057,45 @@ impl<'a> EnumES5Transformer<'a> {
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 let id = self.arena.get_identifier(node)?;
-                // Check string members first, then numeric members
+                // Check current enum members first
                 if let Some(s) = self.string_member_values.get(id.escaped_text.as_str()) {
-                    Some(s.clone())
-                } else if let Some(&n) = self.member_values.get(id.escaped_text.as_str()) {
-                    Some(n.to_string())
-                } else {
-                    None
+                    return Some(s.clone());
                 }
+                if let Some(&n) = self.member_values.get(id.escaped_text.as_str()) {
+                    return Some(n.to_string());
+                }
+                // Check prior blocks of the same merged enum
+                if let Some(prior) = self.prior_enum_values.get(&self.current_enum_name)
+                    && let Some(&n) = prior.get(id.escaped_text.as_str())
+                {
+                    return Some(n.to_string());
+                }
+                None
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;
                 let obj_node = self.arena.get(access.expression)?;
-                if obj_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(obj_id) = self.arena.get_identifier(obj_node)
-                    && obj_id.escaped_text == self.current_enum_name
-                {
-                    let prop_node = self.arena.get(access.name_or_argument)?;
-                    if let Some(prop_id) = self.arena.get_identifier(prop_node) {
-                        if let Some(s) =
-                            self.string_member_values.get(prop_id.escaped_text.as_str())
-                        {
-                            return Some(s.clone());
-                        }
-                        if let Some(&n) = self.member_values.get(prop_id.escaped_text.as_str()) {
-                            return Some(n.to_string());
-                        }
+                if obj_node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                let obj_id = self.arena.get_identifier(obj_node)?;
+                let prop_node = self.arena.get(access.name_or_argument)?;
+                let prop_id = self.arena.get_identifier(prop_node)?;
+
+                // Same enum self-reference
+                if obj_id.escaped_text == self.current_enum_name {
+                    if let Some(s) = self.string_member_values.get(prop_id.escaped_text.as_str()) {
+                        return Some(s.clone());
                     }
+                    if let Some(&n) = self.member_values.get(prop_id.escaped_text.as_str()) {
+                        return Some(n.to_string());
+                    }
+                }
+                // Cross-enum reference
+                if let Some(prior) = self.prior_enum_values.get(obj_id.escaped_text.as_str())
+                    && let Some(&n) = prior.get(prop_id.escaped_text.as_str())
+                {
+                    return Some(n.to_string());
                 }
                 None
             }
