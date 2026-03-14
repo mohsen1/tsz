@@ -1305,6 +1305,24 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // For non-optional continuation accesses within an optional chain
+        // (e.g., `.transport` in `options?.nested?.transport?.backoff?.base`),
+        // flow narrowing is also redundant. The base expression `options?.nested`
+        // already handles nullish propagation, and there's no new type narrowing
+        // information from the chain continuation itself.
+        if let Some(access_node) = self.ctx.arena.get(idx)
+            && let Some(access) = self.ctx.arena.get_access_expr(access_node)
+            && !access.question_dot_token
+            && super::computation::access::is_optional_chain(self.ctx.arena, access.expression)
+            && matches!(
+                parent_node.kind,
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
+        {
+            return true;
+        }
+
         if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return false;
         }
