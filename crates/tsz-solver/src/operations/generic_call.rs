@@ -686,13 +686,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &mut placeholder_probe_map,
                 &mut placeholder_visited,
             );
-            let return_seed_overlaps_round1 = return_seed_vars
-                .iter()
-                .any(|var| round1_direct_seed_vars.contains(var));
-            // CORRECT: return_type <: ctx_type
-            // In assignment `let x: Target = Source`, the relation is `Source <: Target`
-            // Therefore, the return value must be assignable to the expected type
-            if !return_seed_overlaps_round1 {
+            // Skip contextual return type seeding only when ALL return type vars
+            // are already covered by round-1 (direct argument) inference. When some
+            // return type vars have no argument source, they need contextual seeding.
+            // Example: `new Right<L, A>(value: A)` with return type `Either<L, B>` —
+            // A is seeded from the argument, but L has no argument source and must be
+            // seeded from the contextual type to avoid defaulting to `unknown`.
+            let all_return_vars_covered = !return_seed_vars.is_empty()
+                && return_seed_vars
+                    .iter()
+                    .all(|var| round1_direct_seed_vars.contains(var));
+            if !all_return_vars_covered {
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
@@ -2847,9 +2851,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &mut placeholder_probe_map,
                 &mut placeholder_visited,
             );
-            let _return_seed_overlaps_round1 = return_seed_vars
-                .iter()
-                .any(|var| round1_direct_seed_vars.contains(var));
             // Same logic as primary resolve path: skip only when ALL return vars
             // are covered by round-1 inference.
             let all_return_vars_covered = !return_seed_vars.is_empty()
