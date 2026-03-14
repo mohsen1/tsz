@@ -1388,14 +1388,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         "node16" | "node18" | "node20" | "nodenext"
                     )
                 } else {
-                    true // module not explicitly set → tsc defaults it based on moduleResolution
+                    false // module not explicitly set → tsc requires it to be set explicitly
                 };
                 if !module_ok {
-                    let start = find_value_offset_in_source(&stripped, "module");
-                    let value_len = compiler_opts
-                        .get("module")
-                        .and_then(|v| v.as_str())
-                        .map_or(0, |s| s.len() as u32 + 2);
+                    // When module is explicitly set to a wrong value, point at
+                    // its value; when module is not set at all, point at
+                    // "compilerOptions" key (matching tsc behavior).
+                    let (start, value_len) = if compiler_opts.contains_key("module") {
+                        let s = find_value_offset_in_source(&stripped, "module");
+                        let vl = compiler_opts
+                            .get("module")
+                            .and_then(|v| v.as_str())
+                            .map_or(0, |sv| sv.len() as u32 + 2);
+                        (s, vl)
+                    } else {
+                        // Point at "compilerOptions" key — search from start
+                        let search = "\"compilerOptions\"";
+                        let s = stripped.find(search).map_or(0, |p| p as u32);
+                        let vl = search.len() as u32;
+                        (s, vl)
+                    };
                     // tsc uses PascalCase for the option values in the message
                     let mr_display = match mr_normalized.as_str() {
                         "node16" => "Node16",
