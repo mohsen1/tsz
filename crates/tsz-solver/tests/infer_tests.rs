@@ -277,15 +277,16 @@ fn test_resolve_multiple_lower_bounds_union() {
     ctx.add_lower_bound(var, hello);
     ctx.add_lower_bound(var, forty_two);
 
-    // Resolve should return union of literal types: "hello" | 42
+    // After inference widening, fresh literals widen to base types:
+    // "hello" | 42 → string | number
     let result = ctx.resolve_with_constraints(var).unwrap();
     let result_data = interner.lookup(result).expect("result type should exist");
     match result_data {
         TypeData::Union(list_id) => {
             let members = interner.type_list(list_id);
             assert!(
-                members.contains(&hello) && members.contains(&forty_two),
-                "Expected union containing literal 'hello' and 42, got members: {members:?}"
+                members.contains(&TypeId::STRING) && members.contains(&TypeId::NUMBER),
+                "Expected union containing string and number, got members: {members:?}"
             );
         }
         _ => panic!("Expected union type, got {result_data:?}"),
@@ -11010,14 +11011,15 @@ fn test_constraint_satisfaction_multiple_candidates() {
     ctx.add_lower_bound(var_t, forty_two);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // Result should be a union of literal lower bounds: "hello" | 42
+    // After inference widening, fresh literals widen to their base types:
+    // "hello" | 42 → string | number
     let result_data = interner.lookup(result).expect("result type should exist");
     match result_data {
         TypeData::Union(list_id) => {
             let members = interner.type_list(list_id);
             assert!(
-                members.contains(&hello) && members.contains(&forty_two),
-                "Expected union containing literal 'hello' and 42, got members: {members:?}"
+                members.contains(&TypeId::STRING) && members.contains(&TypeId::NUMBER),
+                "Expected union containing string and number, got members: {members:?}"
             );
         }
         _ => panic!("Expected union type, got {result_data:?}"),

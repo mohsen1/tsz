@@ -581,7 +581,7 @@ impl<'a> CheckerState<'a> {
         // Check if a symbol is a pure namespace/enum (not merged with a class).
         // Class+namespace merges should be treated as class constructors, not namespaces,
         // so that property access (e.g., `.prototype`) goes through the solver path.
-        fn is_pure_namespace_or_enum(symbol: &tsz_binder::Symbol) -> bool {
+        const fn is_pure_namespace_or_enum(symbol: &tsz_binder::Symbol) -> bool {
             let is_namespace = (symbol.flags & symbol_flags::NAMESPACE) != 0;
             let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
             is_namespace && !is_class
