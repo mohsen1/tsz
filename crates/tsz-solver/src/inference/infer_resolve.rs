@@ -370,11 +370,16 @@ impl<'a> InferenceContext<'a> {
             filtered_no_never.iter().map(|c| c.type_id).collect()
         };
         let resolved = self.best_common_type(&candidate_types);
-        // Now widen the resolved type (only if literals should not be preserved).
+        // Widen the resolved type if literals should not be preserved.
         // After best_common_type, subtype reduction has already eliminated redundant
-        // fresh literals (e.g., `1` is absorbed by `0 | 1`), so widening the result
-        // only affects cases where the literal was the sole candidate.
-        let resolved = if !preserve_literals && !is_const {
+        // fresh literals (e.g., `1` is absorbed by `0 | 1`).
+        //
+        // We only widen when ALL candidates are fresh literals. This matches tsc's
+        // getWidenedLiteralType which only widens fresh literal types. When a
+        // non-fresh candidate (e.g., from a type annotation) survives BCT, its
+        // literal types should be preserved.
+        let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+        let resolved = if !preserve_literals && !is_const && !has_non_fresh {
             self.widen_resolved_inference(resolved)
         } else {
             resolved
@@ -552,10 +557,10 @@ impl<'a> InferenceContext<'a> {
     /// - If the union was formed from multiple candidates (e.g., `g2(1, 2)` →
     ///   `1 | 2`), tsc also preserves the literal union.
     fn widen_resolved_inference(&self, type_id: TypeId) -> TypeId {
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Literal(_)) => self.get_base_type(type_id).unwrap_or(type_id),
-            _ => type_id,
-        }
+        // Use the full widen_literal_type which handles both bare literals
+        // and unions of literals (e.g., "hello" | 42 → string | number).
+        // This matches tsc's getWidenedLiteralType called from getInferredType.
+        crate::operations::widening::widen_literal_type(self.interner, type_id)
     }
 
     // =========================================================================

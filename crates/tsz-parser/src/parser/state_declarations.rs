@@ -1841,9 +1841,18 @@ impl ParserState {
             // module specifier normally.
             self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
+        } else if import_clause_had_errors
+            && self.is_token(SyntaxKind::FromKeyword)
+            && self.last_named_imports_consumed_closing_brace
+        {
+            // The import clause had semantic errors (e.g., TS1003 for reserved word
+            // binding name like `import { default } from "mod"`) but was structurally
+            // parsed correctly — the named imports consumed their closing `}`.
+            // Parse `from` and module specifier normally.
+            self.parse_expected(SyntaxKind::FromKeyword);
+            self.parse_string_literal()
         } else if import_clause_had_errors {
-            if self.is_token(SyntaxKind::FromKeyword) || self.is_token(SyntaxKind::CloseBraceToken)
-            {
+            if self.is_token(SyntaxKind::CloseBraceToken) {
                 NodeIndex::NONE
             } else {
                 // The import clause had errors AND we're NOT at `from`.  This happens
@@ -2200,7 +2209,16 @@ impl ParserState {
             elements.push(spec);
             let spec_had_errors = self.parse_diagnostics.len() > diagnostics_before;
 
-            if spec_had_errors && self.is_token(SyntaxKind::CloseBraceToken) {
+            // Distinguish structural parse failures from semantic errors.
+            // A specifier like `{ default }` parses successfully (consuming `default`)
+            // and ends at `}` — it has semantic TS1003 but is structurally complete.
+            // A specifier like `{ foo as 0n }` consumes `foo as` but gets stuck at `0n` —
+            // it's not at a valid list terminator, so recovery is needed.
+            let spec_failed_to_parse = spec_had_errors
+                && !self.is_token(SyntaxKind::CommaToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken);
+
+            if spec_failed_to_parse && self.is_token(SyntaxKind::CloseBraceToken) {
                 // For malformed import specifiers like `{ 0n as foo }`, tsc
                 // ends the import clause before `}` and lets statement recovery
                 // surface the stray `}` / `from` follow-up diagnostics (TS1128/TS1434).
@@ -2208,7 +2226,7 @@ impl ParserState {
                 break;
             }
 
-            if spec_had_errors
+            if spec_failed_to_parse
                 && !self.is_token(SyntaxKind::CommaToken)
                 && !self.is_token(SyntaxKind::CloseBraceToken)
                 && !self.is_token(SyntaxKind::FromKeyword)
