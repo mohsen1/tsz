@@ -865,6 +865,61 @@ impl ParserState {
             );
         }
 
+        // Check for invalid import forms before expecting '('
+        if self.is_token(SyntaxKind::LessThanToken) {
+            // import<T>(...) — type arguments not allowed on import calls (TS1326)
+            self.parse_error_at(
+                start_pos,
+                6, // length of "import"
+                diagnostic_messages::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR,
+                diagnostic_codes::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR,
+            );
+            // Skip the type arguments for recovery, handling nested <...>
+            self.next_token(); // consume '<'
+            let mut depth: u32 = 1;
+            while depth > 0 {
+                if self.is_token(SyntaxKind::LessThanToken) {
+                    depth += 1;
+                } else if self.is_token(SyntaxKind::GreaterThanToken) {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.next_token(); // consume final '>'
+                        break;
+                    }
+                } else if self.is_token(SyntaxKind::GreaterThanGreaterThanToken) {
+                    // >> can close two levels
+                    if depth <= 2 {
+                        self.next_token();
+                        break;
+                    }
+                    depth -= 2;
+                } else if self.is_token(SyntaxKind::EndOfFileToken)
+                    || self.is_token(SyntaxKind::SemicolonToken)
+                {
+                    break;
+                }
+                self.next_token();
+            }
+        } else if !self.is_token(SyntaxKind::OpenParenToken) {
+            // import followed by something other than '(' or '.' — not a valid expression.
+            // Emit TS1109 "Expression expected" (matches tsc behavior for e.g. `import { ... } from`)
+            self.parse_error_at(
+                start_pos,
+                6, // length of "import"
+                diagnostic_messages::EXPRESSION_EXPECTED,
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            // Skip remaining tokens until statement boundary to prevent cascading errors
+            while !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+            {
+                self.next_token();
+            }
+            // Return a missing expression to recover
+            return self.create_missing_expression();
+        }
+
         // Dynamic import: import(...)
         self.parse_expected(SyntaxKind::OpenParenToken);
         let argument = self.parse_assignment_expression();

@@ -1821,6 +1821,18 @@ impl ParserState {
         // this checks if the expression is a misspelled keyword and emits TS1435/TS1434.
         if self.is_token(SyntaxKind::SemicolonToken) {
             self.next_token();
+        } else if self.is_token(SyntaxKind::Unknown) {
+            // Invalid character (e.g., standalone `\`). Emit TS1127 and skip it,
+            // then check for semicolon again. This matches tsc's scanError behavior
+            // where the scanner reports TS1127 and advances past the invalid char.
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+            if self.is_token(SyntaxKind::SemicolonToken) {
+                self.next_token();
+            }
         } else if !self.can_parse_semicolon() {
             self.parse_error_for_missing_semicolon_after(expression);
             // Recovery for malformed fragments like `this.x: any;`.

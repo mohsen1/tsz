@@ -1,6 +1,7 @@
 use super::*;
 use crate::TypeInterner;
 use crate::def::DefId;
+use crate::types::LiteralValue;
 use crate::{AssignabilityChecker, CompatChecker, ConditionalType, infer_generic_function};
 
 #[test]

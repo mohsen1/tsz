@@ -140,9 +140,13 @@ pub fn look_ahead_is_import_equals(
     false
 }
 
-/// Look ahead to check if we have `import (`/`import.` (dynamic import forms).
+/// Look ahead to check if we have `import (`/`import.`/`import<` (dynamic import forms).
+/// `import<` is included so it routes through the expression parser which emits TS1326.
 pub fn look_ahead_is_import_call(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
     look_ahead_is(scanner, current_token, |token| {
-        matches!(token, SyntaxKind::OpenParenToken | SyntaxKind::DotToken)
+        matches!(
+            token,
+            SyntaxKind::OpenParenToken | SyntaxKind::DotToken | SyntaxKind::LessThanToken
+        )
     })
 }
