@@ -38,7 +38,8 @@ fi
 
 echo "Resetting TypeScript submodule to pinned SHA: ${PINNED_SHA:0:12}..."
 cd "$ROOT_DIR"
-git submodule update --init --force -- TypeScript
+git config submodule.TypeScript.shallow true
+git submodule update --init --depth 1 --force -- TypeScript
 git -C TypeScript checkout "$PINNED_SHA" --quiet
 git -C TypeScript reset --hard --quiet
 git -C TypeScript checkout -- .
