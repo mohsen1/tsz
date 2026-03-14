@@ -365,7 +365,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   source: { kind: "a"|"b", value: number|undefined }
         //   target: { kind: "a"|"b", value: number } | { kind: "a", value: undefined } | ...
         // Narrowing by only `kind` leaves `value` too wide; we must narrow both.
-        let disc_values: Vec<Vec<TypeId>> = disc_props
+        let disc_values: Vec<smallvec::SmallVec<[TypeId; 4]>> = disc_props
             .iter()
             .map(|&(_, source_prop_type)| get_discriminant_values(self.interner, source_prop_type))
             .collect();
@@ -426,12 +426,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // ── Helper functions for discriminated union checking ──
 
 /// Get the constituents of a type. If it's a union, return all members.
-/// Otherwise return a singleton slice.
-fn get_type_constituents(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+/// Otherwise return a singleton. Uses SmallVec to avoid heap allocation
+/// for the common singleton case.
+fn get_type_constituents(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> smallvec::SmallVec<[TypeId; 4]> {
     if let Some(list_id) = union_list_id(db, type_id) {
-        db.type_list(list_id).to_vec()
+        let members = db.type_list(list_id);
+        members.iter().copied().collect()
     } else {
-        vec![type_id]
+        smallvec::smallvec![type_id]
     }
 }
 
@@ -444,10 +449,13 @@ fn get_type_constituents(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> 
 /// like `{ k: T }` would fail the per-value discriminant check against `{ k: "a" } | { k: "b" }`.
 /// Unions containing type parameters (e.g., `T | E.A`) are flattened by resolving each
 /// type parameter member to its constraint values.
-fn get_discriminant_values(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+fn get_discriminant_values(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> smallvec::SmallVec<[TypeId; 4]> {
     // Special case: boolean is equivalent to true | false for discriminated union matching
     if type_id == TypeId::BOOLEAN {
-        return vec![TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE];
+        return smallvec::smallvec![TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE];
     }
 
     // Resolve type parameters to their constraints for discriminant matching.
@@ -475,7 +483,7 @@ fn get_discriminant_values(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId
             .iter()
             .any(|c| type_param_info(db, *c).is_some())
     {
-        let mut result = Vec::new();
+        let mut result = smallvec::SmallVec::new();
         for &c in &constituents {
             result.extend(get_discriminant_values(db, c));
         }
@@ -589,7 +597,7 @@ fn narrow_object_properties(
     db: &dyn TypeDatabase,
     shape_id: ObjectShapeId,
     disc_props: &[(Atom, TypeId)],
-    disc_values: &[Vec<TypeId>],
+    disc_values: &[smallvec::SmallVec<[TypeId; 4]>],
     combo_indices: &[usize],
 ) -> TypeId {
     let shape = db.object_shape(shape_id);
