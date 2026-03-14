@@ -533,7 +533,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx
                                 .types
                                 .factory()
-                                .union(vec![inferred_type, TypeId::UNDEFINED])
+                                .union2(inferred_type, TypeId::UNDEFINED)
                         } else {
                             inferred_type
                         }
@@ -805,10 +805,7 @@ impl<'a> CheckerState<'a> {
                     && type_id != TypeId::ERROR
                     && type_id != TypeId::UNDEFINED
                 {
-                    self.ctx
-                        .types
-                        .factory()
-                        .union(vec![type_id, TypeId::UNDEFINED])
+                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
                 } else {
                     type_id
                 };

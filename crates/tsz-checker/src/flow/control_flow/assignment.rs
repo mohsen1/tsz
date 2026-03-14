@@ -421,7 +421,7 @@ impl<'a> FlowAnalyzer<'a> {
             let consequent_type = self.literal_type_from_node(cond.when_true);
             let alternate_type = self.literal_type_from_node(cond.when_false);
             return match (consequent_type, alternate_type) {
-                (Some(t), Some(f)) => Some(self.interner.union(vec![t, f])),
+                (Some(t), Some(f)) => Some(self.interner.union2(t, f)),
                 (Some(t), None) | (None, Some(t)) => Some(t),
                 _ => None,
             };
@@ -1067,9 +1067,7 @@ impl<'a> FlowAnalyzer<'a> {
 
                 if index == position {
                     if element.optional {
-                        return self
-                            .interner
-                            .union(vec![element.type_id, TypeId::UNDEFINED]);
+                        return self.interner.union2(element.type_id, TypeId::UNDEFINED);
                     }
                     return element.type_id;
                 }
@@ -1079,7 +1077,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         if let Some(element_type) = get_array_element_type(db, source_ty) {
             return if self.interner.no_unchecked_indexed_access() {
-                self.interner.union(vec![element_type, TypeId::UNDEFINED])
+                self.interner.union2(element_type, TypeId::UNDEFINED)
             } else {
                 element_type
             };
@@ -1102,7 +1100,7 @@ impl<'a> FlowAnalyzer<'a> {
         let ty = if non_undefined == TypeId::NEVER {
             default_ty
         } else {
-            self.interner.union(vec![non_undefined, default_ty])
+            self.interner.union2(non_undefined, default_ty)
         };
 
         let node = source_node;
