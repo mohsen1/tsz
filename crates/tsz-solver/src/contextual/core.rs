@@ -1408,8 +1408,7 @@ impl<'a> ContextualTypeContext<'a> {
         cond: &crate::types::ConditionalType,
     ) -> TypeId {
         if param_type == cond.check_type {
-            self.interner
-                .intersection(vec![param_type, cond.extends_type])
+            self.interner.intersection2(param_type, cond.extends_type)
         } else {
             param_type
         }

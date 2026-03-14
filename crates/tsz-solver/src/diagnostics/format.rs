@@ -1843,7 +1843,7 @@ mod tests {
             default: None,
             is_const: false,
         });
-        let inter = db.intersection(vec![t, u]);
+        let inter = db.intersection2(t, u);
         let result = fmt.format(inter);
         assert!(result.contains("T"));
         assert!(result.contains("U"));
@@ -2754,7 +2754,7 @@ mod tests {
             default: None,
             is_const: false,
         });
-        let intersection = db.intersection(vec![t, u]);
+        let intersection = db.intersection2(t, u);
         let keyof = db.keyof(intersection);
 
         assert_eq!(fmt.format(keyof), "keyof (T & U)");

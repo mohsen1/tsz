@@ -830,11 +830,8 @@ impl<'a> CheckerState<'a> {
                                 if !augmentation_members.is_empty() {
                                     let aug_object =
                                         self.ctx.types.factory().object(augmentation_members);
-                                    result = self
-                                        .ctx
-                                        .types
-                                        .factory()
-                                        .intersection(vec![result, aug_object]);
+                                    result =
+                                        self.ctx.types.factory().intersection2(result, aug_object);
                                 }
                             } else {
                                 result = self.apply_module_augmentations(

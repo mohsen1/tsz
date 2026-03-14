@@ -1228,7 +1228,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .factory()
-            .intersection(vec![instance_type, prototype_type])
+            .intersection2(instance_type, prototype_type)
     }
     /// Register a DefId for a JSDoc `@typedef` so the type formatter can find the alias name.
     fn register_jsdoc_typedef_def(&mut self, name: &str, body_type: TypeId) {
@@ -1955,7 +1955,7 @@ impl<'a> CheckerState<'a> {
             None
         };
         match (object_type, base_type) {
-            (Some(obj), Some(base)) => Some(factory.intersection(vec![obj, base])),
+            (Some(obj), Some(base)) => Some(factory.intersection2(obj, base)),
             (Some(obj), None) => Some(obj),
             (None, Some(base)) => Some(base),
             (None, None) => None,

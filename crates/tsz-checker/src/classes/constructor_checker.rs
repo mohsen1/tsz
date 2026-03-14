@@ -102,7 +102,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-        let mut refined_return = factory.intersection(vec![return_type, base_arg_type]);
+        let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
         if let Some(base_instance_type) = self.instance_type_from_constructor_type(base_arg_type) {
             refined_return = self
@@ -420,7 +420,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .types
                             .factory()
-                            .intersection(vec![updated.return_type, base_instance_type]);
+                            .intersection2(updated.return_type, base_instance_type);
                         updated
                     })
                     .collect();
@@ -436,7 +436,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .types
                     .factory()
-                    .intersection(vec![new_shape.return_type, base_instance_type]);
+                    .intersection2(new_shape.return_type, base_instance_type);
                 self.ctx.types.factory().function(new_shape)
             }
             ConstructorReturnMergeKind::Intersection(members) => {

@@ -2304,7 +2304,7 @@ mod tests {
         let ctor1 = make_callable_with_construct_sig(&interner, TypeId::STRING, vec![]);
         let ctor2 = make_callable_with_construct_sig(&interner, TypeId::NUMBER, vec![]);
         // Create intersection: ctor1 & ctor2
-        let intersection = interner.intersection(vec![ctor1, ctor2]);
+        let intersection = interner.intersection2(ctor1, ctor2);
         let sigs = get_construct_signatures(&interner, intersection);
         assert!(sigs.is_some());
         let sigs = sigs.unwrap();
@@ -2321,7 +2321,7 @@ mod tests {
         // Create intersection: Constructor & { prop: string }
         let ctor = make_callable_with_construct_sig(&interner, TypeId::STRING, vec![]);
         let obj = interner.object(vec![]); // plain object, no construct sigs
-        let intersection = interner.intersection(vec![ctor, obj]);
+        let intersection = interner.intersection2(ctor, obj);
         let sigs = get_construct_signatures(&interner, intersection);
         assert!(sigs.is_some());
         assert_eq!(
@@ -2335,7 +2335,7 @@ mod tests {
     fn get_construct_signatures_intersection_no_construct_sigs() {
         let interner = TypeInterner::new();
         // Intersection of non-callable types
-        let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+        let intersection = interner.intersection2(TypeId::STRING, TypeId::NUMBER);
         let sigs = get_construct_signatures(&interner, intersection);
         assert!(sigs.is_none());
     }
@@ -2345,7 +2345,7 @@ mod tests {
         let interner = TypeInterner::new();
         let fn1 = make_callable_with_call_sig(&interner, TypeId::STRING);
         let fn2 = make_callable_with_call_sig(&interner, TypeId::NUMBER);
-        let intersection = interner.intersection(vec![fn1, fn2]);
+        let intersection = interner.intersection2(fn1, fn2);
         let sigs = get_call_signatures(&interner, intersection);
         assert!(sigs.is_some());
         let sigs = sigs.unwrap();
@@ -2355,7 +2355,7 @@ mod tests {
     #[test]
     fn get_call_signatures_intersection_no_call_sigs() {
         let interner = TypeInterner::new();
-        let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+        let intersection = interner.intersection2(TypeId::STRING, TypeId::NUMBER);
         let sigs = get_call_signatures(&interner, intersection);
         assert!(sigs.is_none());
     }

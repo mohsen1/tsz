@@ -794,10 +794,7 @@ impl<'a> CheckerState<'a> {
                     // Check if this augments an existing export
                     if let Some(existing) = props.iter_mut().find(|p| p.name == name_atom) {
                         // Merge types - for interfaces, this creates an intersection
-                        existing.type_id = self
-                            .ctx
-                            .types
-                            .intersection(vec![existing.type_id, aug_type]);
+                        existing.type_id = self.ctx.types.intersection2(existing.type_id, aug_type);
                         existing.write_type = existing.type_id;
                     } else {
                         // New export from augmentation

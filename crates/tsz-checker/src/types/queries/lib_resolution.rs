@@ -670,7 +670,7 @@ impl<'a> CheckerState<'a> {
         } else if lib_types.len() > 1 {
             let mut merged = lib_types[0];
             for &ty in &lib_types[1..] {
-                merged = factory.intersection(vec![merged, ty]);
+                merged = factory.intersection2(merged, ty);
             }
             lib_type_id = Some(merged);
         }
@@ -825,7 +825,7 @@ impl<'a> CheckerState<'a> {
                 );
                 let aug_type = lowering.lower_interface_declarations(decls);
                 lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(factory.intersection(vec![lib_type, aug_type]))
+                    Some(factory.intersection2(lib_type, aug_type))
                 } else {
                     Some(aug_type)
                 };

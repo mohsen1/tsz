@@ -1472,7 +1472,7 @@ impl<'a> CheckerState<'a> {
         // to T. This makes `T & ConstructorType <: T` succeed via the
         // intersection rule in the subtype checker.
         if let Some(base_tp) = base_type_param {
-            return factory.intersection(vec![base_tp, constructor_type]);
+            return factory.intersection2(base_tp, constructor_type);
         }
 
         constructor_type
