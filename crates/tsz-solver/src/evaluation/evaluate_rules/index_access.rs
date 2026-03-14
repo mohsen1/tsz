@@ -126,23 +126,22 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     /// types: `keyof { [P in keyof T]: V }` = `keyof T`, but the unevaluated form
     /// `keyof Application(...)` has a different TypeId than `keyof T`.
     fn intersection_contains_mapped_constraint(&mut self, constraint: TypeId) -> bool {
-        let (has_direct, members_vec) = {
+        let members_arc = {
             let interner = self.evaluator.interner();
             let Some(list_id) = intersection_list_id(interner, self.index_type) else {
                 return false;
             };
-            let members = interner.type_list(list_id);
-            (members.contains(&constraint), members.to_vec())
+            interner.type_list(list_id)
         };
 
-        if has_direct {
+        if members_arc.contains(&constraint) {
             return true;
         }
 
         // Evaluate each intersection member and check if any evaluates to the constraint.
         // This handles `keyof Boxified<T>` matching `keyof T` when Boxified<T> is a
         // homomorphic mapped type `{ [P in keyof T]: ... }`.
-        for &member in &members_vec {
+        for &member in members_arc.iter() {
             let evaluated = self.evaluator.evaluate(member);
             if evaluated == constraint {
                 return true;
@@ -211,11 +210,11 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
 
         let members = union_list_id(interner, constraint)
             .or_else(|| intersection_list_id(interner, constraint))
-            .map(|list_id| interner.type_list(list_id).to_vec());
+            .map(|list_id| interner.type_list(list_id));
         members.is_some_and(|members| {
             members
-                .into_iter()
-                .any(|member| self.mapped_constraint_contains_index_type(member))
+                .iter()
+                .any(|&member| self.mapped_constraint_contains_index_type(member))
         })
     }
 
