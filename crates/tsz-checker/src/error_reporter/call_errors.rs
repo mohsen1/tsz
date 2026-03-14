@@ -1050,11 +1050,37 @@ impl<'a> CheckerState<'a> {
 
             let elem_type = self.elaboration_source_expression_type(elem_idx);
 
+            // For object/array literal elements, use the contextually-typed type
+            // (get_type_of_node) to decide whether to elaborate. Without contextual
+            // typing, `{ kind: "bluray" }` widens to `{ kind: string }` and fails
+            // the check even though the contextually-typed version IS assignable.
+            // Skip entirely if the contextual type IS assignable.
             if matches!(
                 elem_node.kind,
                 syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
+            ) {
+                let contextual_elem_type = self.get_type_of_node(elem_idx);
+                if contextual_elem_type != TypeId::ERROR
+                    && contextual_elem_type != TypeId::ANY
+                    && target_element_type != TypeId::ERROR
+                    && target_element_type != TypeId::ANY
+                    && self.is_assignable_to(contextual_elem_type, target_element_type)
+                {
+                    // Element is contextually assignable — no error needed.
+                    continue;
+                }
+                if self.try_elaborate_assignment_source_error(elem_idx, target_element_type) {
+                    elaborated = true;
+                    continue;
+                }
+                // Fall through to the non-object element check below.
+            }
+
+            // For function/conditional elements, try to elaborate without a guard.
+            if matches!(
+                elem_node.kind,
+                syntax_kind_ext::ARROW_FUNCTION
                     | syntax_kind_ext::FUNCTION_EXPRESSION
                     | syntax_kind_ext::CONDITIONAL_EXPRESSION
             ) && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
