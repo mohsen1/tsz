@@ -133,7 +133,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
-            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_write_type(prop));
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: read_type,
@@ -202,7 +203,8 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
-            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_write_type(prop));
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: read_type,
@@ -363,7 +365,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
-            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_write_type(prop));
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: read_type,
@@ -433,7 +436,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
-            let write_type = self.bind_object_receiver_this(obj_type, prop.write_type);
+            let write_type =
+                self.bind_object_receiver_this(obj_type, self.optional_property_write_type(prop));
             let write = (write_type != read_type).then_some(write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: read_type,
