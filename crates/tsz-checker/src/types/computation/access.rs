@@ -885,7 +885,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .factory()
-                .union(vec![result_type, TypeId::UNDEFINED]);
+                .union2(result_type, TypeId::UNDEFINED);
         }
 
         if result_type == TypeId::ERROR
@@ -1078,7 +1078,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .types
                     .factory()
-                    .union(vec![result_type, TypeId::UNDEFINED]);
+                    .union2(result_type, TypeId::UNDEFINED);
             } else if !report_no_index {
                 self.report_possibly_nullish_object(access.expression, cause);
             }
