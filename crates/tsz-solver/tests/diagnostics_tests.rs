@@ -594,8 +594,8 @@ fn test_optional_function_param_shows_undefined() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x: number, y?: number | undefined) => number",
-        "Optional params should show '| undefined' to match tsc error messages"
+        formatted, "(x: number, y?: number) => number",
+        "Optional params strip '| undefined' — '?' implies it"
     );
 }
 
@@ -623,8 +623,8 @@ fn test_optional_param_already_has_undefined_no_duplicate() {
 
     let formatted = formatter.format(func);
     assert_eq!(
-        formatted, "(x?: number | undefined) => void",
-        "Optional param should show '| undefined' to match tsc error messages"
+        formatted, "(x?: number) => void",
+        "Optional param strips '| undefined' — '?' implies it"
     );
 }
 
