@@ -1324,6 +1324,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         declaring_type: TypeId,
+        private_name: &str,
     ) -> bool {
         if object_type == declaring_type {
             return true;
@@ -1340,8 +1341,34 @@ impl<'a> CheckerState<'a> {
                 object_class == declaring_class
             }
             // When we can't resolve the class declaration for the object type
-            // (e.g. it's the return type of a function like `getClass(): typeof A`),
-            // fall back to assignability instead of strict TypeId equality.
+            // (e.g. property typed as `typeof A` or function returning the class),
+            // check cached constructor identity, then assignability, then whether
+            // the object type structurally has the same private member.
+            (None, Some((declaring_class, _))) => {
+                let cached_ctor = self
+                    .ctx
+                    .class_constructor_type_cache
+                    .get(&declaring_class)
+                    .copied();
+                if let Some(ctor_type) = cached_ctor
+                    && object_type == ctor_type
+                {
+                    return true;
+                }
+                if self.is_assignable_to(object_type, declaring_type) {
+                    return true;
+                }
+                // Last resort: check if the object type has the private property
+                // in its shape. Private names are lexically scoped and unique per
+                // class, so if the object type has `#field`, it must be from the
+                // same class declaration. This handles cases where `typeof A` gets
+                // a fresh TypeId (e.g. from property inference) that isn't
+                // assignable due to private member nominality.
+                self.ctx
+                    .types
+                    .property_access_type(object_type, private_name)
+                    .is_success()
+            }
             _ => self.is_assignable_to(object_type, declaring_type),
         }
     }
@@ -1697,7 +1724,11 @@ impl<'a> CheckerState<'a> {
         // If both types have the same private brand, they're from the same class
         // declaration and the access should be allowed.
         let types_compatible = if member_is_static {
-            self.static_private_member_access_compatible(object_type_for_check, declaring_type)
+            self.static_private_member_access_compatible(
+                object_type_for_check,
+                declaring_type,
+                &property_name,
+            )
         } else if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
             true
         } else {
@@ -1709,7 +1740,11 @@ impl<'a> CheckerState<'a> {
                 self.private_member_declaring_type(*sym_id)
                     .is_some_and(|ty| {
                         if member_is_static {
-                            self.static_private_member_access_compatible(object_type_for_check, ty)
+                            self.static_private_member_access_compatible(
+                                object_type_for_check,
+                                ty,
+                                &property_name,
+                            )
                         } else if self.types_have_same_private_brand(object_type_for_check, ty) {
                             true
                         } else {

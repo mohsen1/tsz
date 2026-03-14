@@ -916,6 +916,20 @@ impl<'a> CheckerState<'a> {
             return Some((class_idx, true));
         }
 
+        // Check symbol_types: if a class symbol's resolved type matches this type_id,
+        // the type represents that class's constructor. This handles inferred return types
+        // like `getClass() { return C; }` where the return type is a fresh TypeId that
+        // differs from the cached constructor type.
+        for (&sym_id, &sym_type) in self.ctx.symbol_types.iter() {
+            if sym_type == type_id
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.flags & tsz_binder::symbol_flags::CLASS != 0
+                && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+            {
+                return Some((class_idx, true));
+            }
+        }
+
         let sigs = crate::query_boundaries::common::construct_signatures_for_type(
             self.ctx.types,
             type_id,
