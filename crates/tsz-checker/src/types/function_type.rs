@@ -1579,9 +1579,22 @@ impl<'a> CheckerState<'a> {
                     } else {
                         actual_return
                     };
+                    // Suppress the inner return type check when the expected type has
+                    // unresolved inference holes, OR when the actual return is callable
+                    // but expected is not (function-to-non-function shape mismatch).
+                    // tsc reports shape mismatches as TS2345 on the argument, not TS2322
+                    // on the body. Example: `foo(() => g)` where g is a function but
+                    // foo expects string return — tsc emits TS2345 only.
                     let suppress_contextual_return_check = !has_type_annotation
                         && jsdoc_return_context.is_none()
-                        && self.type_has_unresolved_inference_holes(expected_return_type);
+                        && (self.type_has_unresolved_inference_holes(expected_return_type)
+                            || (tsz_solver::type_queries::is_callable_type(
+                                self.ctx.types,
+                                actual_return,
+                            ) && !tsz_solver::type_queries::is_callable_type(
+                                self.ctx.types,
+                                expected_return_type,
+                            )));
                     let use_generic_return_mismatch = !has_type_annotation
                         && jsdoc_return_context.is_none()
                         && self.ctx.arena.get(body).is_some_and(|body_node| {
