@@ -578,22 +578,44 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_namespace_value_type(&self, object_type: TypeId) -> bool {
         use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
-        match classify_namespace_member(self.ctx.types, object_type) {
+        // Check if a symbol is a pure namespace/enum (not merged with a class).
+        // Class+namespace merges should be treated as class constructors, not namespaces,
+        // so that property access (e.g., `.prototype`) goes through the solver path.
+        fn is_pure_namespace_or_enum(symbol: &tsz_binder::Symbol) -> bool {
+            let is_namespace = (symbol.flags & symbol_flags::NAMESPACE) != 0;
+            let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
+            is_namespace && !is_class
+        }
+
+        let kind = classify_namespace_member(self.ctx.types, object_type);
+        match kind {
             NamespaceMemberKind::Lazy(def_id) => {
                 let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
                     return false;
                 };
-                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                // Resolve through alias chain to get the original symbol's flags.
+                // Import aliases (e.g., `import { Foo }`) carry MODULE flags but not CLASS,
+                // even when the original symbol is a class+namespace merge.
+                let mut visited = Vec::new();
+                let resolved_id = self
+                    .resolve_alias_symbol(sym_id, &mut visited)
+                    .unwrap_or(sym_id);
+                let Some(symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol(resolved_id)
+                    .or_else(|| self.get_cross_file_symbol(resolved_id))
+                else {
                     return false;
                 };
-                (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                is_pure_namespace_or_enum(symbol)
             }
             NamespaceMemberKind::ModuleNamespace(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
                 let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
                     return false;
                 };
-                (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                is_pure_namespace_or_enum(symbol)
             }
             NamespaceMemberKind::Enum(_) => true,
             NamespaceMemberKind::TypeQuery(sym_ref) => {
@@ -602,7 +624,7 @@ impl<'a> CheckerState<'a> {
                 let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                     return false;
                 };
-                (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                is_pure_namespace_or_enum(symbol)
             }
             NamespaceMemberKind::Callable(_) | NamespaceMemberKind::Other => false,
         }
