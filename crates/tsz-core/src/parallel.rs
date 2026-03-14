@@ -595,7 +595,7 @@ pub fn load_lib_files_for_binding_strict(
     // Sort largest files first so rayon's work-stealing starts them early.
     // dom.d.ts (40K lines, 2MB) dominates parse time — without this sort it's
     // file #81 of 87 and becomes the critical-path bottleneck.
-    file_contents.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    file_contents.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
     // Parse and bind all lib files in parallel using the global rayon pool.
     // The global pool threads are already warm (no thread creation overhead).
