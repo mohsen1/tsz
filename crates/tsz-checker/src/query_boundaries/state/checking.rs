@@ -41,16 +41,6 @@ pub(crate) fn find_property_in_object_by_str(
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, property)
 }
 
-/// Strict check matching tsc's `isValidIndexType` for computed property names
-/// in destructuring. Rejects `any`, `symbol`, `unique symbol` unlike the
-/// permissive element-access variant.
-pub(crate) fn invalid_index_type_member_strict(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::get_invalid_index_type_member_strict(db, type_id)
-}
-
 pub(crate) fn has_type_query_for_symbol<F>(
     db: &dyn TypeDatabase,
     type_id: TypeId,

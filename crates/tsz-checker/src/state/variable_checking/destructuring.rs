@@ -742,8 +742,9 @@ impl<'a> CheckerState<'a> {
 
         // Unique symbol keys (e.g. `const s = Symbol(); { [s]: v }`) resolve to
         // `__unique_N` via `get_property_name_resolved`, but they should be treated
-        // as dynamic keys for index type checking — tsc emits TS2538 ("Type 'unique
-        // symbol' cannot be used as an index type") rather than TS2339.
+        // as dynamic keys for index signature resolution — NOT for TS2538 rejection.
+        // tsc's `isValidIndexType` accepts `symbol` and `unique symbol` as valid
+        // computed property name types in destructuring patterns.
         let is_unique_symbol_key = property_name
             .as_ref()
             .is_some_and(|n| n.starts_with("__unique_"));
@@ -768,10 +769,10 @@ impl<'a> CheckerState<'a> {
                 let key_is_number = key_type == TypeId::NUMBER;
 
                 // TS2538: Type cannot be used as an index type.
-                // Use the strict validity check matching tsc's `isValidIndexType`:
-                // only `string`, `number`, `bigint`, and their literal subtypes plus
-                // template literals / string mappings are valid. `any`, `symbol`,
-                // `unique symbol`, `unknown`, and structural types are rejected.
+                // Use tsc's `isValidIndexType` semantics: accepts `string`, `number`,
+                // `bigint`, `symbol`, `unique symbol`, `any`, `never`, type parameters,
+                // literals, template literals, and string mappings. Rejects `void`,
+                // `null`, `undefined`, `boolean`, `object`, `function`, and structural types.
                 // Note: ERROR types from failed expressions are treated as `any`
                 // for this check — tsc cascades TS2538 after prior expression errors.
                 if !key_is_string && !key_is_number && key_type != TypeId::NEVER {
@@ -781,7 +782,7 @@ impl<'a> CheckerState<'a> {
                         self.resolve_lazy_type(key_type)
                     };
                     if let Some(invalid_member) =
-                        query::invalid_index_type_member_strict(self.ctx.types, check_key)
+                        crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member(self.ctx.types, check_key)
                     {
                         let key_type_str = self.format_type(invalid_member);
                         let message = crate::diagnostics::format_message(
