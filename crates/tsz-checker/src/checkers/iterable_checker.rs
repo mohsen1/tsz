@@ -293,9 +293,19 @@ impl<'a> CheckerState<'a> {
             {
                 return info.yield_type;
             }
-            // Fall back to sync iterator protocol + Promise unwrapping
+            // Fall back to sync iterator protocol + Promise unwrapping.
             let elem_type = self.for_of_element_type_classified(iterable_type, 0);
-            self.unwrap_promise_type(elem_type).unwrap_or(elem_type)
+            if let Some(unwrapped) = self.unwrap_promise_type(elem_type) {
+                return unwrapped;
+            }
+            // unwrap_promise_type can fail when the element type has been resolved to
+            // an Object shape (e.g. Promise<number> from lib files).  Fall back to the
+            // tsc approach: if the element is promise-like (has a callable `then`),
+            // extract the fulfillment type from `then`'s onfulfilled callback parameter.
+            if let Some(awaited) = self.get_awaited_type_of_promise_like(elem_type) {
+                return awaited;
+            }
+            elem_type
         } else {
             self.for_of_element_type_classified(iterable_type, 0)
         }
@@ -348,6 +358,65 @@ impl<'a> CheckerState<'a> {
                 self.resolve_iterator_element_type(type_id)
             }
         }
+    }
+
+    /// Extract the fulfillment type from a promise-like type by following the
+    /// `then` method's onfulfilled callback parameter.
+    ///
+    /// For `Promise<T>` (resolved to an Object shape from lib files), the `then`
+    /// method signature is: `then(onfulfilled: (value: T) => ...) => ...`
+    /// This extracts `T` by reading the first parameter type of the first
+    /// call signature's first parameter.
+    fn get_awaited_type_of_promise_like(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use tsz_solver::operations::property::PropertyAccessEvaluator;
+        use tsz_solver::type_queries::data::get_call_signatures;
+
+        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
+        let then_type = evaluator
+            .resolve_property_access(type_id, "then")
+            .success_type()?;
+
+        // Get call signatures of `then`
+        let sigs = get_call_signatures(self.ctx.types, then_type)?;
+        let first_sig = sigs.first()?;
+
+        // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
+        // It may be a union — extract the callable member from it.
+        let onfulfilled_type = first_sig.params.first().map(|p| p.type_id)?;
+
+        // Extract the first parameter of the onfulfilled callback.
+        // The callback may be:
+        //   - Callable type (has call_signatures)
+        //   - Function type (has params directly)
+        //   - Union member (fn | null | undefined)
+        self.extract_first_param_type(onfulfilled_type)
+    }
+
+    /// Extract the first parameter type from a callable/function type,
+    /// handling unions of `(fn | null | undefined)`.
+    fn extract_first_param_type(&self, type_id: TypeId) -> Option<TypeId> {
+        use tsz_solver::type_queries::data::{get_call_signatures, get_function_shape};
+
+        // Direct Callable
+        if let Some(sigs) = get_call_signatures(self.ctx.types, type_id) {
+            return sigs.first()?.params.first().map(|p| p.type_id);
+        }
+        // Direct Function
+        if let Some(shape) = get_function_shape(self.ctx.types, type_id) {
+            return shape.params.first().map(|p| p.type_id);
+        }
+        // Union: find first callable/function member
+        let members = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)?;
+        for member in &members {
+            if let Some(sigs) = get_call_signatures(self.ctx.types, *member)
+                && let Some(first) = sigs.first() {
+                    return first.params.first().map(|p| p.type_id);
+                }
+            if let Some(shape) = get_function_shape(self.ctx.types, *member) {
+                return shape.params.first().map(|p| p.type_id);
+            }
+        }
+        None
     }
 
     /// Resolve the element type of an iterable via the iterator protocol.
