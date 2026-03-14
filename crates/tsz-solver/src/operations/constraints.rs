@@ -114,8 +114,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::NoInfer(s_inner)), _) => {
                 self.constrain_types(ctx, var_map, s_inner, target, priority);
             }
-            (_, Some(TypeData::NoInfer(t_inner))) => {
-                self.constrain_types(ctx, var_map, source, t_inner, priority);
+            (_, Some(TypeData::NoInfer(_t_inner))) => {
+                // NoInfer<T> blocks inference: do NOT recurse into the wrapped type.
+                // This prevents the source from contributing candidates for type
+                // parameters inside the NoInfer wrapper, matching tsc's behavior.
             }
             (
                 Some(TypeData::IndexAccess(s_obj, s_idx)),
