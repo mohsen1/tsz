@@ -541,9 +541,26 @@ impl<'a> CheckerState<'a> {
                     let is_type_alias = (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
 
                     if !is_type_alias {
+                        // Deduplicate declaration entries: the lib merger can produce
+                        // duplicate NodeIndex values when the same lib file is loaded
+                        // from multiple lib contexts.  Keep only ONE (decl_idx, arena)
+                        // pair per unique NodeIndex.  Duplicate entries cause the same
+                        // interface body to be lowered N times, producing N copies of
+                        // call signatures (the PromiseConstructor → Date<T> bug).
+                        let deduped: Vec<(NodeIndex, &NodeArena)> = {
+                            let mut seen_idx = Vec::with_capacity(decls_with_arenas.len());
+                            let mut out = Vec::with_capacity(decls_with_arenas.len());
+                            for &(idx, arena) in &decls_with_arenas {
+                                if !seen_idx.contains(&idx) {
+                                    seen_idx.push(idx);
+                                    out.push((idx, arena));
+                                }
+                            }
+                            out
+                        };
+
                         // Use lower_merged_interface_declarations for proper multi-arena support
-                        let (ty, params) =
-                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                        let (ty, params) = lowering.lower_merged_interface_declarations(&deduped);
 
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
