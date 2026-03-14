@@ -2834,10 +2834,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &mut placeholder_probe_map,
                 &mut placeholder_visited,
             );
-            let return_seed_overlaps_round1 = return_seed_vars
+            let _return_seed_overlaps_round1 = return_seed_vars
                 .iter()
                 .any(|var| round1_direct_seed_vars.contains(var));
-            if !return_seed_overlaps_round1 {
+            // Same logic as primary resolve path: skip only when ALL return vars
+            // are covered by round-1 inference.
+            let all_return_vars_covered = !return_seed_vars.is_empty()
+                && return_seed_vars
+                    .iter()
+                    .all(|var| round1_direct_seed_vars.contains(var));
+            if !all_return_vars_covered {
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,

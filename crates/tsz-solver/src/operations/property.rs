@@ -490,7 +490,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 for prop in &shape.properties {
                     if prop.name == prop_atom {
-                        return PropertyAccessResult::simple(self.optional_property_type(prop));
+                        let read_type = self.optional_property_type(prop);
+                        let write_type = self.optional_property_write_type(prop);
+                        let write = (write_type != read_type).then_some(write_type);
+                        return PropertyAccessResult::Success {
+                            type_id: read_type,
+                            write_type: write,
+                            from_index_signature: false,
+                        };
                     }
                 }
                 // Check numeric index signature first for numeric property names
