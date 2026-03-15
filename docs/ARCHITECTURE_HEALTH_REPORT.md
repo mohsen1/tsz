@@ -167,6 +167,13 @@ in PRs. Splitting by logical category would improve all three.
   inference types, unused re-exports)
 - [x] Remove dead code: unused `ConditionalResult`, `MAX_VISITING_SET_SIZE`,
   dead `InferenceContext` re-export from lib.rs
+- [x] Add `is_class_constructor()` helper to `DefinitionInfo` — eliminates
+  `DefKind::ClassConstructor` pattern matching in checker code
+- [x] Eliminate `ObjectFlags` imports from checker production code (8 files) —
+  added `mark_fresh_literal()`, `mark_has_late_bound_members()` builder methods
+  to `ObjectShape`, and `object_with_symbol()` factory to `TypeFactory`.
+  Removed `ObjectFlags` from architecture contract safe imports list.
+- [x] Eliminate `ObjectFlags` import from `tsz-lowering` crate
 
 ### Tier 2: Near-term (maintainability)
 - [ ] Split `evaluate_tests.rs` (42K lines) into category files
