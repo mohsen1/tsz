@@ -189,6 +189,8 @@ build_typescript_harness() {
 
     # Check if harness is already built
     if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
+        # Re-apply patches even if already built (idempotent)
+        "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
         log_success "TypeScript harness already built"
         return
     fi
@@ -229,6 +231,9 @@ build_typescript_harness() {
     else
         die "TypeScript harness build failed: built/local/harness/fourslashImpl.js not found"
     fi
+
+    # Apply tsz-specific patches to the compiled harness
+    "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
 }
 
 build_tsz_server() {
