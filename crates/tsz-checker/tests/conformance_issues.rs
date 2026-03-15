@@ -15245,3 +15245,89 @@ interface StringTreeArray extends Array<StringTree> { }
         "Expected TS2454 'Variable x is used before being assigned', got: {diagnostics:?}"
     );
 }
+
+// =========================================================================
+// TS2356 — string enum types are not valid arithmetic operands
+// =========================================================================
+// TypeScript only considers *numeric* enum types as valid arithmetic operands.
+// String enums should trigger TS2356 ("An arithmetic operand must be of type
+// 'any', 'number', 'bigint' or an enum type."), not fall through to TS2357
+// or TS2540 checks. This matches tsc behavior where the solver's
+// `NumberLikeVisitor::visit_enum` checks the enum's member type to distinguish
+// numeric enums (valid) from string enums (invalid for arithmetic).
+
+#[test]
+fn test_ts2356_string_enum_member_prefix_increment() {
+    // ++E.A where E is a string enum should emit TS2356 (not TS2540).
+    // String enum members are NOT valid arithmetic operands.
+    let diagnostics = compile_and_get_diagnostics(r#"enum E { A = "a" } var x = ++E.A;"#);
+    assert!(
+        has_error(&diagnostics, 2356),
+        "Expected TS2356 for ++StringEnum.A (string not arithmetic). Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2540),
+        "TS2540 (readonly) should not fire when TS2356 (not arithmetic) fires first. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2356_string_enum_member_postfix_increment() {
+    // E.A++ where E is a string enum should emit TS2356.
+    let diagnostics = compile_and_get_diagnostics(r#"enum E { A = "a" } E.A++;"#);
+    assert!(
+        has_error(&diagnostics, 2356),
+        "Expected TS2356 for StringEnum.A++ (string not arithmetic). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2356_string_enum_variable() {
+    // ++x where x: StringEnum should emit TS2356.
+    let diagnostics =
+        compile_and_get_diagnostics(r#"enum SE { A = "a", B = "b" } var x: SE = SE.A; ++x;"#);
+    assert!(
+        has_error(&diagnostics, 2356),
+        "Expected TS2356 for ++x where x: StringEnum. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2356_numeric_enum_variable() {
+    // ++x where x: NumericEnum should NOT emit TS2356 (numeric enums are arithmetic).
+    let diagnostics = compile_and_get_diagnostics("enum NE { A, B, C } var x: NE = NE.A; ++x;");
+    assert!(
+        !has_error(&diagnostics, 2356),
+        "Should not get TS2356 for ++x where x: NumericEnum. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2540_numeric_enum_member_prefix_increment() {
+    // ++E.A where E is a numeric enum: type is arithmetic (number),
+    // but the property is readonly → TS2540, not TS2356.
+    let diagnostics = compile_and_get_diagnostics("enum E { A, B, C } var x = ++E.A;");
+    assert!(
+        has_error(&diagnostics, 2540),
+        "Expected TS2540 for ++NumericEnum.A (readonly). Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2356),
+        "Should not get TS2356 for numeric enum member. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2356_supersedes_ts2357_for_boolean_literal() {
+    // ++true: boolean is not arithmetic → TS2356.
+    // TSC checks arithmetic type BEFORE lvalue, so TS2357 is skipped.
+    let diagnostics = compile_and_get_diagnostics("var x = ++true;");
+    assert!(
+        has_error(&diagnostics, 2356),
+        "Expected TS2356 for ++true (boolean not arithmetic). Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2357),
+        "TS2357 should not fire when TS2356 fires. Got: {diagnostics:?}"
+    );
+}
