@@ -25,7 +25,9 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
 
     // Try to get from cache
     {
-        let cache = LIB_FILE_CACHE.lock().unwrap();
+        let cache = LIB_FILE_CACHE
+            .lock()
+            .expect("LIB_FILE_CACHE mutex poisoned");
         if let Some(cached) = cache.get(&cache_key) {
             return Arc::clone(cached);
         }
@@ -45,7 +47,9 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
 
     // Store in cache
     {
-        let mut cache = LIB_FILE_CACHE.lock().unwrap();
+        let mut cache = LIB_FILE_CACHE
+            .lock()
+            .expect("LIB_FILE_CACHE mutex poisoned");
         cache.insert(cache_key, Arc::clone(&lib_file));
     }
 
