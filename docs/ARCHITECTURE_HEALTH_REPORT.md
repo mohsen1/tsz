@@ -15,27 +15,23 @@ concrete improvements that can make the repo healthier, easier to maintain, and 
 
 ## 1. Architecture Boundary Compliance
 
-### Status: GOOD (1 active violation)
+### Status: EXCELLENT (0 active violations)
 
 The codebase correctly enforces:
 - **Binder isolation**: Zero solver imports in binder. CLEAN.
 - **Emitter isolation**: Zero checker imports in emitter. CLEAN.
 - **TypeKey encapsulation**: Zero TypeKey usage in checker (outside tests). CLEAN.
 - **Solver API tiers**: Well-organized 4-tier export structure (type_handles → query → computation → construction).
+- **ObjectFlags encapsulation**: Zero ObjectFlags imports in checker production code. CLEAN.
+- **TypeData encapsulation**: Zero TypeData pattern matches in checker production code. CLEAN.
+- **DefKind encapsulation**: Zero DefKind pattern matches in checker (uses helper methods). CLEAN.
 
-### Active Violation
+### Resolved Violations
 
-**`crates/tsz-checker/src/error_reporter/core.rs:1703`** — Direct access to
-`tsz_solver::types::ObjectFlags::FRESH_LITERAL`, a solver-internal type constant.
-
-```rust
-.contains(tsz_solver::types::ObjectFlags::FRESH_LITERAL)
-```
-
-**Fix**: Add `is_fresh_literal_object(type_id)` query to `query_boundaries` and call it instead.
-
-**`crates/tsz-checker/src/error_reporter/core.rs:83`** — Direct pattern match on
-`tsz_solver::def::DefKind::ClassConstructor`. Lower severity but still a boundary leak.
+- ~~`ObjectFlags::FRESH_LITERAL` in checker~~ — Resolved via `ObjectShape::mark_fresh_literal()` builder method
+- ~~`DefKind::ClassConstructor` pattern match~~ — Resolved via `DefinitionInfo::is_class_constructor()` helper
+- ~~`TypeData::TypeParameter` pattern match in helpers.rs~~ — Resolved via `visitor::is_type_parameter()` query
+- ~~`tsz_solver::types::PropertyInfo` path in call_inference.rs~~ — Resolved via re-exported `tsz_solver::PropertyInfo`
 
 ---
 
@@ -126,7 +122,7 @@ in PRs. Splitting by logical category would improve all three.
 ### Status: EXCELLENT
 
 - **No circular dependencies** — clean DAG from common → scanner → parser → binder → solver → checker → emitter
-- **No forbidden cross-layer imports** (except the 1 violation noted above)
+- **No forbidden cross-layer imports** — all violations resolved
 - **External dependencies are minimal and well-chosen**: rustc-hash, smallvec, dashmap, indexmap, bitflags, ena
 
 ---
@@ -192,9 +188,14 @@ in PRs. Splitting by logical category would improve all three.
 
 ## 8. What's Working Well
 
-- **Clean architecture boundaries** — the solver-first principle is well-enforced
+- **Clean architecture boundaries** — the solver-first principle is well-enforced, zero violations
 - **Zero quick hacks** — no FIXME/HACK/WORKAROUND comments
 - **Strong test infrastructure** — 13,529 tests with conformance harness
 - **Well-documented architecture** — NORTH_STAR.md, BOUNDARIES.md, HOW_TO_CODE.md
 - **Tiered solver API** — clean 4-tier export structure prevents accidental coupling
 - **Architecture contract tests** — automated enforcement of boundary rules
+- **Architecture guard script** — `scripts/arch/arch_guard.py` with 20+ boundary checks
+  and tightened exclusion lists (11 stale exclusions removed, ObjectFlags guard added)
+- **Builder pattern for ObjectShape** — `mark_fresh_literal()`, `mark_has_late_bound_members()`
+  eliminate need for checker to import solver-internal flags
+- **Zero bare unwrap() in production** — all production code uses `expect("reason")`

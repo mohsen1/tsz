@@ -465,6 +465,7 @@ impl TypeInterner {
         self.string_interner.resolve(atom)
     }
 
+    #[inline]
     pub fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
         self.type_lists
             .get(id.0)
@@ -483,6 +484,7 @@ impl TypeInterner {
             .unwrap_or_else(|| self.template_lists.empty())
     }
 
+    #[inline]
     pub fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
         self.object_shapes.get(id.0).unwrap_or_else(|| {
             Arc::new(ObjectShape {
@@ -671,6 +673,7 @@ impl TypeInterner {
     /// Look up the `TypeData` for a given `TypeId`.
     ///
     /// This uses lock-free `DashMap` access with lazy shard initialization.
+    #[inline]
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);

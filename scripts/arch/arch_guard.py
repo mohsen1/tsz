@@ -28,15 +28,9 @@ CHECKS = [
         {
             "exclude_dirs": {"query_boundaries", "tests"},
             "exclude_files": {
-                # TODO: refactor these to use solver query helpers
-                "crates/tsz-checker/src/types/computation/helpers.rs",
+                # These files use .lookup() in tracing::trace! macros for debug output only
                 "crates/tsz-checker/src/types/computation/call.rs",
                 "crates/tsz-checker/src/types/computation/complex.rs",
-                "crates/tsz-checker/src/types/computation/object_literal.rs",
-                "crates/tsz-checker/src/error_reporter/operator_errors.rs",
-                "crates/tsz-checker/src/error_reporter/core.rs",
-                "crates/tsz-checker/src/error_reporter/properties.rs",
-                "crates/tsz-checker/src/checkers/generic_checker.rs",
             },
         },
     ),
@@ -86,10 +80,7 @@ CHECKS = [
         re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
         {
             "exclude_dirs": {"query_boundaries", "tests"},
-            "exclude_files": {
-                # TODO: refactor to use query boundary helpers
-                "crates/tsz-checker/src/types/computation/object_literal.rs",
-            },
+            "exclude_files": set(),
             "ignore_comment_lines": True,
         },
     ),
@@ -137,6 +128,16 @@ CHECKS = [
     #     re.compile(r"\.intersection2\s*\(|\.union2\s*\("),
     #     {"exclude_dirs": {"tests"}},
     # ),
+    (
+        "Code quality: no bare .unwrap() in checker production code (use .expect())",
+        ROOT / "crates" / "tsz-checker" / "src",
+        re.compile(r"\.unwrap\(\)"),
+        {
+            "exclude_dirs": {"tests"},
+            "ignore_comment_lines": True,
+            "exclude_test_files": True,  # Skip *_tests.rs files
+        },
+    ),
     (
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
@@ -210,15 +211,7 @@ CHECKS = [
         re.compile(r"\buse\s+tsz_solver::.*TypeData\b|\bTypeData::"),
         {
             "exclude_dirs": {"tsz-solver", "tsz-lowering", "tsz-core", "tests"},
-            "exclude_files": {
-                # TODO: refactor these to use solver query helpers
-                "crates/tsz-checker/src/types/computation/complex.rs",
-                "crates/tsz-checker/src/types/computation/object_literal.rs",
-                "crates/tsz-checker/src/error_reporter/operator_errors.rs",
-                "crates/tsz-checker/src/error_reporter/core.rs",
-                "crates/tsz-checker/src/error_reporter/properties.rs",
-                "crates/tsz-checker/src/checkers/generic_checker.rs",
-            },
+            "exclude_files": set(),
             "ignore_comment_lines": True,
         },
     ),
@@ -283,15 +276,9 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/type_node.rs",
             "crates/tsz-checker/src/types/property_access_type.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
-            "crates/tsz-checker/src/types/computation/binary.rs",
             "crates/tsz-checker/src/types/computation/call.rs",
-            "crates/tsz-checker/src/types/computation/object_literal.rs",
-            "crates/tsz-checker/src/types/utilities/jsdoc_params.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
-            "crates/tsz-checker/src/assignability/assignment_checker.rs",
-            "crates/tsz-checker/src/classes/class_implements_checker.rs",
             "crates/tsz-checker/src/error_reporter/core.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors.rs",
             "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
             "crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs",
             "crates/tsz-checker/src/types/type_checking/core.rs",
@@ -329,6 +316,9 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
     if exclude_dirs and exclude_dirs.intersection(part_set):
         return matches
 
+    if excludes.get("exclude_test_files") and is_test_file(rel):
+        return matches
+
     for i, line in enumerate(file_text.splitlines(), start=1):
         if excludes.get("ignore_comment_lines", False):
             if line.lstrip().startswith("//"):
@@ -336,6 +326,13 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
         if pattern.search(line):
             matches.append(i)
     return matches
+
+
+def is_test_file(rel: str) -> bool:
+    """Check if a file path looks like a test file."""
+    parts = rel.split("/")
+    filename = parts[-1] if parts else ""
+    return filename.endswith("_tests.rs") or filename.startswith("test_")
 
 
 def scan(base, pattern, excludes):
