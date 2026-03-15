@@ -211,7 +211,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     (false, false) | (true, true) => {
                         match (source_pred.type_id, target_pred.type_id) {
                             (Some(source_type), Some(target_type)) => {
-                                self.check_subtype(source_type, target_type).is_true()
+                                if source_type == target_type {
+                                    return true;
+                                }
+                                // Evaluate to normalize Application/Intersection
+                                // representations before comparison.
+                                let se = self.evaluate_type(source_type);
+                                let te = self.evaluate_type(target_type);
+                                se == te || self.check_subtype(se, te).is_true()
                             }
                             (None, Some(_)) => false,
                             (Some(_), None) | (None, None) => true,

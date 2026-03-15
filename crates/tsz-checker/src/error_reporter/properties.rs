@@ -142,8 +142,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
-        
-
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
         // This prevents cascading errors when accessing properties on error types.
         // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).

@@ -317,6 +317,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let key_opt = self.interner().lookup(obj_type);
         if let Some(key) = key_opt {
             let result = match key {
+                TypeData::Error => {
+                    // Error types propagate silently (like any) — property access
+                    // succeeds with ERROR to prevent cascading diagnostics.
+                    Some(PropertyAccessResult::simple(TypeId::ERROR))
+                }
                 TypeData::Intrinsic(kind) => {
                     // Inline visitor logic for intrinsics
                     match kind {

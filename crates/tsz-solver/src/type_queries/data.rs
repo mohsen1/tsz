@@ -310,10 +310,10 @@ pub fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
-/// Check if a union type has a direct TypeParameter or Infer member (not nested).
+/// Check if a union type has a direct `TypeParameter` or Infer member (not nested).
 ///
 /// Returns true for `string | T` or `number | infer U`, false for
-/// `string | MyInterface` even if MyInterface contains type parameters internally.
+/// `string | MyInterface` even if `MyInterface` contains type parameters internally.
 /// Used to suppress diagnostics when generic type parameters are directly present.
 pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {

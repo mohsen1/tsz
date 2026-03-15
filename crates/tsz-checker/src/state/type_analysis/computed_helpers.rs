@@ -523,7 +523,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(ident_node)
             {
                 let name = self.ctx.arena.resolve_identifier_text(ident);
-                if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(&name) {
+                if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
                     if ref_sym_id == target_sym {
                         return true;
                     }
@@ -539,16 +539,15 @@ impl<'a> CheckerState<'a> {
                                 && decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                 && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
                                 && type_alias.type_parameters.is_none()
-                            {
-                                if self.ast_contains_circular_type_ref(
+                                && self.ast_contains_circular_type_ref(
                                     type_alias.type_node,
                                     target_sym,
                                     visited,
-                                ) {
-                                    // Mark the intermediate alias as circular too
-                                    self.ctx.circular_type_aliases.insert(ref_sym_id);
-                                    return true;
-                                }
+                                )
+                            {
+                                // Mark the intermediate alias as circular too
+                                self.ctx.circular_type_aliases.insert(ref_sym_id);
+                                return true;
                             }
                         }
                     }

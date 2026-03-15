@@ -544,47 +544,49 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check type references
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                // Check if the type name matches
-                if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && self.ctx.arena.resolve_identifier_text(ident) == name
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            // Check if the type name matches
+            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && self.ctx.arena.resolve_identifier_text(ident) == name
+            {
+                // Check if type args are identity (same as param names)
+                if let Some(args) = &type_ref.type_arguments
+                    && args.nodes.len() == param_names.len()
                 {
-                    // Check if type args are identity (same as param names)
-                    if let Some(args) = &type_ref.type_arguments {
-                        if args.nodes.len() == param_names.len() {
-                            let is_identity = args.nodes.iter().zip(param_names.iter()).all(
-                                |(&arg_idx, param_name)| {
-                                    self.ctx
-                                        .arena
-                                        .get(arg_idx)
-                                        .and_then(|n| {
-                                            if n.kind == syntax_kind_ext::TYPE_REFERENCE {
-                                                let tr = self.ctx.arena.get_type_ref(n)?;
-                                                let name_n = self.ctx.arena.get(tr.type_name)?;
-                                                let id = self.ctx.arena.get_identifier(name_n)?;
-                                                Some(
-                                                    self.ctx.arena.resolve_identifier_text(id)
-                                                        == *param_name,
-                                                )
-                                            } else if n.kind == SyntaxKind::Identifier as u16 {
-                                                let id = self.ctx.arena.get_identifier(n)?;
-                                                Some(
-                                                    self.ctx.arena.resolve_identifier_text(id)
-                                                        == *param_name,
-                                                )
-                                            } else {
-                                                Some(false)
-                                            }
-                                        })
-                                        .unwrap_or(false)
-                                },
-                            );
-                            if is_identity {
-                                return true;
-                            }
-                        }
+                    let is_identity =
+                        args.nodes
+                            .iter()
+                            .zip(param_names.iter())
+                            .all(|(&arg_idx, param_name)| {
+                                self.ctx
+                                    .arena
+                                    .get(arg_idx)
+                                    .and_then(|n| {
+                                        if n.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                            let tr = self.ctx.arena.get_type_ref(n)?;
+                                            let name_n = self.ctx.arena.get(tr.type_name)?;
+                                            let id = self.ctx.arena.get_identifier(name_n)?;
+                                            Some(
+                                                self.ctx.arena.resolve_identifier_text(id)
+                                                    == *param_name,
+                                            )
+                                        } else if n.kind == SyntaxKind::Identifier as u16 {
+                                            let id = self.ctx.arena.get_identifier(n)?;
+                                            Some(
+                                                self.ctx.arena.resolve_identifier_text(id)
+                                                    == *param_name,
+                                            )
+                                        } else {
+                                            Some(false)
+                                        }
+                                    })
+                                    .unwrap_or(false)
+                            });
+                    if is_identity {
+                        return true;
                     }
                 }
             }
