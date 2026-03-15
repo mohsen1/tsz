@@ -1655,6 +1655,29 @@ impl<'a> CheckerState<'a> {
                             expected_return_type,
                             body,
                         );
+                        // Store the TS2322 diagnostic from the return type check.
+                        // The arg collection filter will prune it (as a callback body
+                        // diagnostic), but we need to restore it later and suppress
+                        // the outer TS2345.
+                        if !assignability_ok {
+                            // Find and store any new TS2322 diagnostics from this check
+                            for diag in self.ctx.diagnostics.iter().rev() {
+                                if diag.code
+                                    == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                {
+                                    if let Some(body_node) = self.ctx.arena.get(body) {
+                                        if diag.start >= body_node.pos
+                                            && diag.start < body_node.end
+                                        {
+                                            self.ctx
+                                                .callback_return_type_errors
+                                                .push(diag.clone());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if assignability_ok
                             && let Some(body_node) = self.ctx.arena.get(body)
                             && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
