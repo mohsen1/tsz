@@ -2,7 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~91.5% on 3000-test sample (2026-03-15, post fix #13). All contextual-typing commits merged.
+**Conformance**: 10814/12581 (86.0%) full suite, ~91.5% on 3000-test sample (2026-03-15, post fix #13). All contextual-typing commits merged.
+
+**Campaign plateau**: After 13 fixes, remaining failures require deep type system work, multi-file compilation, JSDoc support, or individual fingerprint investigation. No more bulk-fixable patterns available.
 
 **What was fixed** (13 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
