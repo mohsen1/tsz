@@ -210,46 +210,15 @@ impl<'a> CheckerState<'a> {
 
         // Get the type parameters from the callee type. For callables with overloads,
         // prefer a signature whose type parameter arity matches the provided type args.
-        let type_params =
-            match query::classify_for_type_argument_extraction(self.ctx.types, callee_type) {
-                query::TypeArgumentExtractionKind::Function(shape_id) => {
-                    let shape = self.ctx.types.function_shape(shape_id);
-                    shape.type_params.clone()
-                }
-                query::TypeArgumentExtractionKind::Callable(shape_id) => {
-                    let shape = self.ctx.types.callable_shape(shape_id);
-                    let matching: Vec<_> = shape
-                        .call_signatures
-                        .iter()
-                        .filter(|sig| {
-                            let max = sig.type_params.len();
-                            let min = sig
-                                .type_params
-                                .iter()
-                                .filter(|tp| tp.default.is_none())
-                                .count();
-                            got >= min && got <= max
-                        })
-                        .collect();
-                    // When multiple overloads match the arity, skip eager TS2344 validation.
-                    // TSC only emits TS2344 when NO overload's constraints are satisfied;
-                    // the overload resolution loop handles per-signature constraint checking.
-                    if matching.len() > 1 {
-                        return;
-                    }
-                    if let Some(sig) = matching.first() {
-                        sig.type_params.clone()
-                    } else {
-                        // Fall back to first signature for diagnostics when no arity match exists.
-                        shape
-                            .call_signatures
-                            .first()
-                            .map(|sig| sig.type_params.clone())
-                            .unwrap_or_default()
-                    }
-                }
-                query::TypeArgumentExtractionKind::Other => return,
-            };
+        // Delegates to solver query which handles Function/Callable/overload matching.
+        let Some(type_params) = tsz_solver::type_queries::data::extract_type_params_for_call(
+            self.ctx.types,
+            callee_type,
+            got,
+        ) else {
+            // None = multiple overloads match or not a callable type; skip validation.
+            return;
+        };
 
         let max_expected = type_params.len();
         let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
