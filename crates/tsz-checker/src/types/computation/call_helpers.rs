@@ -798,15 +798,12 @@ impl<'a> CheckerState<'a> {
                 if tsz_solver::type_queries::get_object_shape(self.ctx.types, target_prop_type)
                     .is_some()
                 {
-                    if let Some(nested_partial) = self
-                        .extract_inference_contributing_object_type(
-                            prop.initializer,
-                            target_prop_type,
-                            type_param_names,
-                        )
-                    {
-                        properties
-                            .push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                    if let Some(nested_partial) = self.extract_inference_contributing_object_type(
+                        prop.initializer,
+                        target_prop_type,
+                        type_param_names,
+                    ) {
+                        properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
                         continue;
                     }
                 }

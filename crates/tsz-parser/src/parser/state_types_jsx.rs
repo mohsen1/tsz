@@ -295,7 +295,10 @@ impl ParserState {
     }
 
     /// Parse a keyword as an identifier (for type keywords like string, number, etc.)
-    pub(crate) fn parse_keyword_as_identifier_with_check(&mut self, check_yield_reserved: bool) -> NodeIndex {
+    pub(crate) fn parse_keyword_as_identifier_with_check(
+        &mut self,
+        check_yield_reserved: bool,
+    ) -> NodeIndex {
         // `yield` is reserved in generator contexts and class bodies.
         if self.is_token(SyntaxKind::YieldKeyword) {
             let start_pos = self.token_pos();
