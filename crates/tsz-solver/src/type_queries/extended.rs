@@ -146,7 +146,8 @@ fn is_invalid_index_type_inner(
         // valid index types like `string`. They fall through to the default
         // `false` case below.
         Some(
-            TypeData::Array(_)
+            TypeData::UniqueSymbol(_)
+            | TypeData::Array(_)
             | TypeData::Tuple(_)
             | TypeData::Object(_)
             | TypeData::ObjectWithIndex(_)

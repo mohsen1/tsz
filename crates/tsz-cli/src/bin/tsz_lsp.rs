@@ -466,27 +466,26 @@ impl LspServer {
         })
     }
 
-    fn completion_kind_to_lsp(kind: CompletionItemKind) -> u32 {
+    const fn completion_kind_to_lsp(kind: CompletionItemKind) -> u32 {
         match kind {
-            CompletionItemKind::Variable | CompletionItemKind::Let => 6, // Variable
-            CompletionItemKind::Const => 21,                             // Constant
+            CompletionItemKind::Variable
+            | CompletionItemKind::Let
+            | CompletionItemKind::Parameter => 6, // Variable
+            CompletionItemKind::Const => 21, // Constant
             CompletionItemKind::Function => 3,
             CompletionItemKind::Class => 7,
             CompletionItemKind::Method => 2,
-            CompletionItemKind::Parameter => 6, // Variable
             CompletionItemKind::Property => 10,
             CompletionItemKind::Keyword => 14,
-            CompletionItemKind::Interface => 8,
+            CompletionItemKind::Interface | CompletionItemKind::TypeAlias => 8, // Interface
             CompletionItemKind::Enum => 13,
-            CompletionItemKind::TypeAlias => 8, // Interface (closest)
-            CompletionItemKind::Module => 9,
+            CompletionItemKind::Module | CompletionItemKind::Alias => 9, // Module
             CompletionItemKind::TypeParameter => 25,
             CompletionItemKind::Constructor => 4,
-            CompletionItemKind::Alias => 9, // Module
         }
     }
 
-    fn symbol_kind_to_lsp(kind: tsz::lsp::SymbolKind) -> u32 {
+    const fn symbol_kind_to_lsp(kind: tsz::lsp::SymbolKind) -> u32 {
         kind as u32
     }
 
@@ -774,10 +773,8 @@ impl LspServer {
 
         match self.project.get_document_symbols(&file_name) {
             Some(symbols) => {
-                let lsp_syms: Vec<Value> = symbols
-                    .iter()
-                    .map(|s| Self::document_symbol_to_json(s))
-                    .collect();
+                let lsp_syms: Vec<Value> =
+                    symbols.iter().map(Self::document_symbol_to_json).collect();
                 Ok(Value::Array(lsp_syms))
             }
             None => Ok(Value::Array(vec![])),
@@ -888,7 +885,7 @@ impl LspServer {
             }
             Err(msg) => {
                 // Return error response for rename failures
-                Err(anyhow::anyhow!("{}", msg))
+                Err(anyhow::anyhow!("{msg}"))
             }
         }
     }
