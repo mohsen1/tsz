@@ -28,7 +28,25 @@ impl<'a> CheckerState<'a> {
             }
 
             for &type_idx in &heritage.types.nodes {
-                let interface_type = self.get_type_from_type_node(type_idx);
+                // Heritage clause types are ExpressionWithTypeArguments nodes.
+                // Resolve the symbol from the expression, then get its instance type
+                // via type_reference_symbol_type (which returns the instance type for
+                // classes, not the constructor type).
+                let expr_idx = if let Some(type_node) = self.ctx.arena.get(type_idx)
+                    && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+
+                let Some(sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                    continue;
+                };
+                let interface_type = self.type_reference_symbol_type(sym_id);
+                if interface_type == TypeId::ERROR {
+                    continue;
+                }
                 let interface_type = self.evaluate_application_type(interface_type);
                 match self.resolve_property_access_with_env(interface_type, property_name) {
                     PropertyAccessResult::Success { type_id, .. }
@@ -304,20 +322,20 @@ impl<'a> CheckerState<'a> {
         // `type P = Proxy<string>; const ps: P`) or mapped types with Application
         // templates (e.g., `Proxify<Shape>`) have not been fully evaluated when
         // the first property access occurs.
-        if object_type == TypeId::UNKNOWN {
-            if let Some(expr_node) = self.ctx.arena.get(access.expression) {
-                if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                    if let Some(sym_id) = self.resolve_identifier_symbol(access.expression) {
-                        let sym_type = self.get_type_of_symbol(sym_id);
-                        if sym_type != TypeId::UNKNOWN && sym_type != TypeId::ERROR {
-                            object_type = self.evaluate_application_type(sym_type);
-                        }
+        if object_type == TypeId::UNKNOWN
+            && let Some(expr_node) = self.ctx.arena.get(access.expression)
+        {
+            if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                if let Some(sym_id) = self.resolve_identifier_symbol(access.expression) {
+                    let sym_type = self.get_type_of_symbol(sym_id);
+                    if sym_type != TypeId::UNKNOWN && sym_type != TypeId::ERROR {
+                        object_type = self.evaluate_application_type(sym_type);
                     }
-                } else if self.ctx.arena.get_access_expr(expr_node).is_some() {
-                    let inner_type = self.get_type_of_property_access(access.expression);
-                    if inner_type != TypeId::UNKNOWN && inner_type != TypeId::ERROR {
-                        object_type = self.evaluate_application_type(inner_type);
-                    }
+                }
+            } else if self.ctx.arena.get_access_expr(expr_node).is_some() {
+                let inner_type = self.get_type_of_property_access(access.expression);
+                if inner_type != TypeId::UNKNOWN && inner_type != TypeId::ERROR {
+                    object_type = self.evaluate_application_type(inner_type);
                 }
             }
         }

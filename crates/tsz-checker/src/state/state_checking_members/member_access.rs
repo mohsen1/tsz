@@ -2013,7 +2013,7 @@ impl<'a> CheckerState<'a> {
                 .get(sig.name)
                 .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::StringLiteral as u16);
         let prop_name = if is_string_lit {
-            format!("\"{}\"", raw_name)
+            format!("\"{raw_name}\"")
         } else {
             raw_name
         };
