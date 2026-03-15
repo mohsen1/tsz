@@ -1822,3 +1822,420 @@ fn test_solver_imports_go_through_query_boundaries() {
         violations.join("\n  ")
     );
 }
+
+// =============================================================================
+// Prompt 4.1 — Architecture Invariant Coverage Checklist
+// =============================================================================
+//
+// CLAUDE.md Rule -> Test Coverage mapping:
+//
+// SECTION 3: Responsibility Split
+// - [x] Scanner: no downstream imports                    -> test_scanner_must_not_import_downstream_crates
+// - [x] Parser: no binder/checker/solver imports          -> test_parser_must_not_import_binder_checker_solver
+// - [x] Binder: no solver imports                         -> test_binder_must_not_import_solver
+// - [x] Emitter: no checker internal imports              -> test_emitter_must_not_import_checker_internals
+// - [x] Solver: no parser/checker imports                 -> test_solver_sources_forbid_parser_checker_imports (existing)
+//
+// SECTION 4: Hard Architecture Rules
+// - [x] No TypeKey in checker                             -> test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning (existing)
+// - [x] No raw interner access in checker                 -> test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning (existing)
+// - [x] No TypeData construction in checker               -> test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning (existing)
+// - [x] CallEvaluator quarantined to query_boundaries     -> test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries (existing)
+// - [x] No SubtypeChecker construction outside boundaries -> test_no_direct_subtype_checker_construction_outside_query_boundaries
+// - [x] No CompatChecker::with_resolver outside boundaries-> assignability/call boundary guards (existing)
+// - [x] Solver imports go through query_boundaries        -> test_solver_imports_go_through_query_boundaries (existing)
+//
+// SECTION 5: Judge/Lawyer Model
+// - [x] No direct CompatChecker for TS2322 paths          -> test_assignment_and_binding_default_assignability_use_central_gateway_helpers (existing)
+// - [x] Assignability mismatch quarantined                -> test_direct_assignability_mismatch_decision_usage_is_quarantined (existing)
+//
+// SECTION 6: DefId-First Semantic Type Resolution
+// - [x] No ad-hoc TypeData::Lazy interning                -> test_array_helpers_avoid_direct_typekey_interning (existing)
+// - [x] ensure_relation_input_ready used before relations  -> test_subtype_path_establishes_preconditions_before_subtype_cache_lookup (existing)
+//
+// SECTION 11: Solver Contracts
+// - [x] No solver cache types in checker                  -> test_no_solver_cache_types_in_checker
+// - [x] TypeCache excludes eval caches                    -> test_type_cache_surface_excludes_application_and_mapped_eval_caches (existing)
+//
+// SECTION 12: Checker Contracts
+// - [x] Checker files under 2000 LOC                      -> checker_files_stay_under_loc_limit (existing)
+// - [x] All diagnostics through error_reporter            -> test_no_push_diagnostic_outside_error_reporter (existing)
+// - [x] query_boundaries coverage ratio tracking          -> test_query_boundaries_coverage_ratio
+//
+// SECTION 15: Dependency Policy
+// - [x] Dependency direction enforcement                  -> tests in Prompt 4.2 below
+// - [x] No checker access to solver internals             -> test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning (existing)
+//
+// SECTION 22: TS2322 Priority Rules
+// - [x] TS2322 paths through query_boundaries             -> test_assignment_and_binding_default_assignability_use_central_gateway_helpers (existing)
+// - [x] No direct CompatChecker for TS2322                -> call boundary guard (existing)
+// - [x] Centralized assignability gateways                -> multiple existing tests
+//
+
+// =============================================================================
+// Prompt 4.2 — Dependency Direction Tests
+// =============================================================================
+
+/// Helper: recursively walk a directory collecting .rs files (skipping tests/).
+fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if name == "tests" {
+                continue;
+            }
+            walk_rs_files_recursive(&path, files);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+/// CLAUDE.md §4: Binder must not import Solver.
+/// The binder produces symbols, scopes, and flow graphs without type computation.
+#[test]
+fn test_binder_must_not_import_solver() {
+    let binder_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-binder/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&binder_src, &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("use tsz_solver") || line.contains("tsz_solver::") {
+                violations.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Binder must not import Solver (CLAUDE.md §4). Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// CLAUDE.md §4: Emitter must not import Checker internals.
+/// The emitter prints/transforms output; no on-the-fly semantic type validation.
+#[test]
+fn test_emitter_must_not_import_checker_internals() {
+    let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-emitter/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&emitter_src, &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("use tsz_checker") || line.contains("tsz_checker::") {
+                violations.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Emitter must not import Checker internals (CLAUDE.md §4/§13). Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
+/// The scanner is the leaf of the pipeline; it only does lexing and string interning.
+#[test]
+fn test_scanner_must_not_import_downstream_crates() {
+    let scanner_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-scanner/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&scanner_src, &mut files);
+
+    let downstream_crates = [
+        "tsz_parser",
+        "tsz_binder",
+        "tsz_checker",
+        "tsz_solver",
+        "tsz_emitter",
+    ];
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for crate_name in &downstream_crates {
+                if line.contains(&format!("use {crate_name}"))
+                    || line.contains(&format!("{crate_name}::"))
+                {
+                    violations.push(format!(
+                        "{}:{}: imports {}",
+                        path.display(),
+                        line_num + 1,
+                        crate_name
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Scanner must not import downstream crates (CLAUDE.md §4/§8). Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// CLAUDE.md §4: Parser must not import Binder/Checker/Solver.
+/// The parser produces syntax-only AST; no semantic awareness.
+#[test]
+fn test_parser_must_not_import_binder_checker_solver() {
+    let parser_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-parser/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&parser_src, &mut files);
+
+    let downstream_crates = ["tsz_binder", "tsz_checker", "tsz_solver", "tsz_emitter"];
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for crate_name in &downstream_crates {
+                if line.contains(&format!("use {crate_name}"))
+                    || line.contains(&format!("{crate_name}::"))
+                {
+                    violations.push(format!(
+                        "{}:{}: imports {}",
+                        path.display(),
+                        line_num + 1,
+                        crate_name
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Parser must not import Binder/Checker/Solver (CLAUDE.md §4/§9). Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+// =============================================================================
+// Prompt 4.3 — Solver Encapsulation Tests
+// =============================================================================
+
+/// CLAUDE.md §4/§6: No TypeKey usage in checker code.
+/// TypeKey is solver-internal (crate-private); checker must use TypeId/TypeData.
+#[test]
+fn test_no_typekey_in_checker_code() {
+    let src_dir = Path::new("src");
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(src_dir, &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+        if rel.contains("/tests/") {
+            continue;
+        }
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            // Check for TypeKey as a distinct identifier (not part of another word)
+            if line
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .any(|token| token == "TypeKey")
+            {
+                violations.push(format!("{}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "TypeKey is solver-internal and must not appear in checker code (CLAUDE.md §4/§6). Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// CLAUDE.md §11: No solver cache access types (RelationCacheProbe, etc.) in checker code.
+/// Solver owns algorithmic caches; checker must not access them directly.
+#[test]
+fn test_no_solver_cache_types_in_checker() {
+    let src_dir = Path::new("src");
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(src_dir, &mut files);
+
+    let cache_types = [
+        "RelationCacheProbe",
+        "EvaluationCache",
+        "InstantiationCache",
+    ];
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+        if rel.contains("/tests/") || rel.contains("/query_boundaries/") {
+            continue;
+        }
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("*") {
+                continue;
+            }
+            for cache_type in &cache_types {
+                if line
+                    .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                    .any(|token| token == *cache_type)
+                {
+                    violations.push(format!("{}:{}: uses {}", rel, line_num + 1, cache_type));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Solver cache types must not appear in checker code (CLAUDE.md §11). Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+/// CLAUDE.md §4/§22: No direct SubtypeChecker construction outside query_boundaries.
+/// Relation checks should go through boundary helpers.
+#[test]
+fn test_no_direct_subtype_checker_construction_outside_query_boundaries() {
+    let src_dir = Path::new("src");
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(src_dir, &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+        if rel.contains("/tests/") || rel.contains("/query_boundaries/") {
+            continue;
+        }
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if line.contains("SubtypeChecker::new(") || line.contains("SubtypeChecker {") {
+                violations.push(format!("{}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "SubtypeChecker must not be constructed outside query_boundaries (CLAUDE.md §4/§22). \
+         Route relation checks through boundary helpers instead. Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+// =============================================================================
+// Prompt 4.4 — Structural Health Tests
+// =============================================================================
+
+/// CLAUDE.md §12: Track query_boundaries coverage ratio.
+/// This is a directional metric -- warns if the ratio of direct solver imports
+/// to query_boundaries usage is too high.
+#[test]
+fn test_query_boundaries_coverage_ratio() {
+    let src_dir = Path::new("src");
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(src_dir, &mut files);
+
+    let mut direct_solver_importers = 0u32;
+    let mut boundary_users = 0u32;
+
+    for path in &files {
+        let rel = path.display().to_string();
+        if rel.contains("/tests/") || rel.contains("/query_boundaries/") {
+            continue;
+        }
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+
+        let has_direct = src.lines().any(|line| {
+            let t = line.trim_start();
+            !t.starts_with("//")
+                && (line.contains("use tsz_solver::") || line.contains("tsz_solver::"))
+        });
+        let has_boundary = src.lines().any(|line| {
+            let t = line.trim_start();
+            !t.starts_with("//") && line.contains("query_boundaries::")
+        });
+
+        if has_direct {
+            direct_solver_importers += 1;
+        }
+        if has_boundary {
+            boundary_users += 1;
+        }
+    }
+
+    // This is a directional metric. We want the ratio to decrease over time.
+    // Current target: direct importers should be < 4x boundary users.
+    let ratio = if boundary_users == 0 {
+        f64::INFINITY
+    } else {
+        direct_solver_importers as f64 / boundary_users as f64
+    };
+
+    // Warn but don't fail -- this is a tracking metric
+    if ratio > 4.0 {
+        eprintln!(
+            "WARNING: query_boundaries coverage ratio is {:.1}:1 \
+             ({} direct solver importers vs {} boundary users). Target: < 4:1",
+            ratio, direct_solver_importers, boundary_users
+        );
+    }
+
+    // Hard fail if the ratio degrades catastrophically
+    assert!(
+        ratio < 10.0,
+        "query_boundaries coverage ratio has degraded to {:.1}:1 \
+         ({} direct solver importers vs {} boundary users). \
+         This indicates systematic boundary bypass. Target: < 4:1",
+        ratio,
+        direct_solver_importers,
+        boundary_users
+    );
+}
