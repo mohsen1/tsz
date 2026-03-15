@@ -4,5 +4,3 @@
 //! Production checker code should prefer purpose-specific helpers here
 //! over direct `TypeInterner` access. Test code may use the re-exported
 //! `TypeInterner` type for scaffolding.
-
-pub use tsz_solver::TypeInterner;

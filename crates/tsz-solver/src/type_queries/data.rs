@@ -534,6 +534,49 @@ pub fn get_raw_property_type(
         .map(|p| p.type_id)
 }
 
+/// Intersect all constructor return types with a base instance type.
+///
+/// For Callable types: intersects each construct signature's return type
+/// with `base_type`. For Function constructors: intersects the return type.
+/// Returns the original type unchanged if it has no construct signatures.
+///
+/// Used during class inheritance to merge derived constructor return types
+/// with the base class instance type.
+pub fn intersect_constructor_returns(
+    db: &dyn crate::caches::db::QueryDatabase,
+    ctor_type: TypeId,
+    base_type: TypeId,
+) -> TypeId {
+    let factory = db.factory();
+    if let Some(shape_id) = crate::visitor::callable_shape_id(db, ctor_type) {
+        let shape = db.callable_shape(shape_id);
+        if shape.construct_signatures.is_empty() {
+            return ctor_type;
+        }
+        let mut new_shape = (*shape).clone();
+        new_shape.construct_signatures = shape
+            .construct_signatures
+            .iter()
+            .map(|sig| {
+                let mut updated = sig.clone();
+                updated.return_type = factory.intersection2(updated.return_type, base_type);
+                updated
+            })
+            .collect();
+        return factory.callable(new_shape);
+    }
+    if let Some(shape_id) = crate::visitor::function_shape_id(db, ctor_type) {
+        let shape = db.function_shape(shape_id);
+        if !shape.is_constructor {
+            return ctor_type;
+        }
+        let mut new_shape = (*shape).clone();
+        new_shape.return_type = factory.intersection2(new_shape.return_type, base_type);
+        return factory.function(new_shape);
+    }
+    ctor_type
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2579,6 +2622,55 @@ mod tests {
         assert_eq!(
             super::get_raw_property_type(&interner, TypeId::STRING, name_x),
             None
+        );
+    }
+
+    #[test]
+    fn test_intersect_constructor_returns() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::FunctionShape;
+
+        // Function constructor — return type gets intersected
+        let fn_ctor = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::OBJECT,
+            type_predicate: None,
+            is_constructor: true,
+            is_method: false,
+        });
+        let result = super::intersect_constructor_returns(&interner, fn_ctor, TypeId::STRING);
+        assert_ne!(result, fn_ctor); // Should produce a new type
+        // The result should be a Function with intersected return type
+        if let Some(shape_id) = crate::visitor::function_shape_id(&interner, result) {
+            let shape = interner.function_shape(shape_id);
+            assert!(shape.is_constructor);
+            // return type should be object & string (intersection)
+            assert_ne!(shape.return_type, TypeId::OBJECT);
+        } else {
+            panic!("Expected Function type");
+        }
+
+        // Non-constructor function — unchanged
+        let fn_regular = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        assert_eq!(
+            super::intersect_constructor_returns(&interner, fn_regular, TypeId::STRING),
+            fn_regular
+        );
+
+        // Non-callable — unchanged
+        assert_eq!(
+            super::intersect_constructor_returns(&interner, TypeId::STRING, TypeId::NUMBER),
+            TypeId::STRING
         );
     }
 }

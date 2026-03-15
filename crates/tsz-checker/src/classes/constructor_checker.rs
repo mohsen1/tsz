@@ -407,39 +407,18 @@ impl<'a> CheckerState<'a> {
             }
         };
         match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
-            ConstructorReturnMergeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.construct_signatures.is_empty() {
-                    return ctor_type;
+            ConstructorReturnMergeKind::Callable(_) | ConstructorReturnMergeKind::Function(_) => {
+                // Delegate to solver: intersect construct/function return types
+                // with the base instance type.
+                let result = tsz_solver::type_queries::data::intersect_constructor_returns(
+                    self.ctx.types,
+                    ctor_type,
+                    base_instance_type,
+                );
+                if result != ctor_type {
+                    return result;
                 }
-                let mut new_shape = (*shape).clone();
-                new_shape.construct_signatures = shape
-                    .construct_signatures
-                    .iter()
-                    .map(|sig| {
-                        let mut updated = sig.clone();
-                        updated.return_type = self
-                            .ctx
-                            .types
-                            .factory()
-                            .intersection2(updated.return_type, base_instance_type);
-                        updated
-                    })
-                    .collect();
-                self.ctx.types.factory().callable(new_shape)
-            }
-            ConstructorReturnMergeKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                if !shape.is_constructor {
-                    return ctor_type;
-                }
-                let mut new_shape = (*shape).clone();
-                new_shape.return_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .intersection2(new_shape.return_type, base_instance_type);
-                self.ctx.types.factory().function(new_shape)
+                ctor_type
             }
             ConstructorReturnMergeKind::Intersection(members) => {
                 let mut updated_members = Vec::with_capacity(members.len());
