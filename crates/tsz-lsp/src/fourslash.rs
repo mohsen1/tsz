@@ -795,6 +795,15 @@ pub struct WorkspaceSymbolsResult {
 }
 
 impl WorkspaceSymbolsResult {
+    /// Assert no symbols were found.
+    pub fn expect_none(&self) {
+        assert!(
+            self.symbols.is_empty(),
+            "Expected no workspace symbols, but found {}",
+            self.symbols.len()
+        );
+    }
+
     /// Assert symbols were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
@@ -860,6 +869,493 @@ impl InlayHintsResult {
             found,
             "Expected hint containing '{label}', labels: {:?}",
             self.hints.iter().map(|h| &h.label).collect::<Vec<_>>()
+        );
+        self
+    }
+}
+
+/// Result of a type definition query, for fluent assertions.
+pub struct TypeDefinitionResult {
+    pub locations: Option<Vec<Location>>,
+    markers: FxHashMap<String, Marker>,
+}
+
+impl TypeDefinitionResult {
+    /// Assert that type definition(s) were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            self.locations.is_some() && !self.locations.as_ref().unwrap().is_empty(),
+            "Expected type definition to be found, but got none"
+        );
+        self
+    }
+
+    /// Assert that no type definitions were found.
+    pub fn expect_none(&self) {
+        assert!(
+            self.locations.is_none() || self.locations.as_ref().unwrap().is_empty(),
+            "Expected no type definition, but found {:?}",
+            self.locations
+        );
+    }
+
+    /// Assert that at least one type definition contains the given marker position.
+    pub fn expect_at_marker(&self, marker_name: &str) -> &Self {
+        self.expect_found();
+        let marker = self
+            .markers
+            .get(marker_name)
+            .unwrap_or_else(|| panic!("Unknown marker: {marker_name}"));
+        let locs = self.locations.as_ref().unwrap();
+
+        let found = locs.iter().any(|loc| {
+            if loc.file_path != marker.file {
+                return false;
+            }
+            if loc.range.start.line == marker.line && loc.range.start.character == marker.character
+            {
+                return true;
+            }
+            let marker_pos = (marker.line, marker.character);
+            let start = (loc.range.start.line, loc.range.start.character);
+            let end = (loc.range.end.line, loc.range.end.character);
+            marker_pos >= start && marker_pos <= end
+        });
+        assert!(
+            found,
+            "Expected type definition containing marker '{marker_name}' ({}:{},{}), but got: {locs:?}",
+            marker.file, marker.line, marker.character
+        );
+        self
+    }
+
+    /// Assert that at least one type definition is in the given file.
+    pub fn expect_in_file(&self, file: &str) -> &Self {
+        self.expect_found();
+        let locs = self.locations.as_ref().unwrap();
+        let found = locs.iter().any(|loc| loc.file_path == file);
+        assert!(
+            found,
+            "Expected type definition in file '{file}', but got: {locs:?}"
+        );
+        self
+    }
+}
+
+/// Result of a go-to-implementation query, for fluent assertions.
+pub struct ImplementationResult {
+    pub locations: Option<Vec<Location>>,
+    markers: FxHashMap<String, Marker>,
+}
+
+impl ImplementationResult {
+    /// Assert that implementation(s) were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            self.locations.is_some() && !self.locations.as_ref().unwrap().is_empty(),
+            "Expected implementations to be found, but got none"
+        );
+        self
+    }
+
+    /// Assert that no implementations were found.
+    pub fn expect_none(&self) {
+        assert!(
+            self.locations.is_none() || self.locations.as_ref().unwrap().is_empty(),
+            "Expected no implementations, but found {:?}",
+            self.locations
+        );
+    }
+
+    /// Assert that at least one implementation contains the given marker position.
+    pub fn expect_at_marker(&self, marker_name: &str) -> &Self {
+        self.expect_found();
+        let marker = self
+            .markers
+            .get(marker_name)
+            .unwrap_or_else(|| panic!("Unknown marker: {marker_name}"));
+        let locs = self.locations.as_ref().unwrap();
+
+        let found = locs.iter().any(|loc| {
+            if loc.file_path != marker.file {
+                return false;
+            }
+            if loc.range.start.line == marker.line && loc.range.start.character == marker.character
+            {
+                return true;
+            }
+            let marker_pos = (marker.line, marker.character);
+            let start = (loc.range.start.line, loc.range.start.character);
+            let end = (loc.range.end.line, loc.range.end.character);
+            marker_pos >= start && marker_pos <= end
+        });
+        assert!(
+            found,
+            "Expected implementation containing marker '{marker_name}' ({}:{},{}), but got: {locs:?}",
+            marker.file, marker.line, marker.character
+        );
+        self
+    }
+
+    /// Assert there are exactly N implementations.
+    pub fn expect_count(&self, n: usize) -> &Self {
+        let count = self.locations.as_ref().map(|l| l.len()).unwrap_or(0);
+        assert_eq!(count, n, "Expected {n} implementations, got {count}");
+        self
+    }
+}
+
+/// Result of a call hierarchy prepare query, for fluent assertions.
+pub struct CallHierarchyPrepareResult {
+    pub item: Option<crate::hierarchy::call_hierarchy::CallHierarchyItem>,
+}
+
+impl CallHierarchyPrepareResult {
+    /// Assert a call hierarchy item was found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            self.item.is_some(),
+            "Expected call hierarchy item, but got none"
+        );
+        self
+    }
+
+    /// Assert no call hierarchy item was found.
+    pub fn expect_none(&self) {
+        assert!(
+            self.item.is_none(),
+            "Expected no call hierarchy item, but got: {:?}",
+            self.item.as_ref().unwrap().name
+        );
+    }
+
+    /// Assert the item name matches.
+    pub fn expect_name(&self, expected: &str) -> &Self {
+        self.expect_found();
+        let item = self.item.as_ref().unwrap();
+        assert_eq!(
+            item.name, expected,
+            "Expected call hierarchy name '{expected}', got '{}'",
+            item.name
+        );
+        self
+    }
+
+    /// Assert the item name contains a substring.
+    pub fn expect_name_contains(&self, needle: &str) -> &Self {
+        self.expect_found();
+        let item = self.item.as_ref().unwrap();
+        assert!(
+            item.name.contains(needle),
+            "Expected call hierarchy name containing '{needle}', got '{}'",
+            item.name
+        );
+        self
+    }
+}
+
+/// Result of an incoming calls query, for fluent assertions.
+pub struct IncomingCallsResult {
+    pub calls: Vec<crate::hierarchy::call_hierarchy::CallHierarchyIncomingCall>,
+}
+
+impl IncomingCallsResult {
+    /// Assert incoming calls were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            !self.calls.is_empty(),
+            "Expected incoming calls, but found none"
+        );
+        self
+    }
+
+    /// Assert no incoming calls.
+    pub fn expect_none(&self) {
+        assert!(
+            self.calls.is_empty(),
+            "Expected no incoming calls, but found {}",
+            self.calls.len()
+        );
+    }
+
+    /// Assert exactly N incoming calls.
+    pub fn expect_count(&self, n: usize) -> &Self {
+        assert_eq!(
+            self.calls.len(),
+            n,
+            "Expected {n} incoming calls, got {}",
+            self.calls.len()
+        );
+        self
+    }
+
+    /// Assert an incoming call from a function with the given name.
+    pub fn expect_caller(&self, name: &str) -> &Self {
+        let found = self.calls.iter().any(|c| c.from.name == name);
+        assert!(
+            found,
+            "Expected incoming call from '{name}', callers: {:?}",
+            self.calls.iter().map(|c| &c.from.name).collect::<Vec<_>>()
+        );
+        self
+    }
+}
+
+/// Result of an outgoing calls query, for fluent assertions.
+pub struct OutgoingCallsResult {
+    pub calls: Vec<crate::hierarchy::call_hierarchy::CallHierarchyOutgoingCall>,
+}
+
+impl OutgoingCallsResult {
+    /// Assert outgoing calls were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            !self.calls.is_empty(),
+            "Expected outgoing calls, but found none"
+        );
+        self
+    }
+
+    /// Assert no outgoing calls.
+    pub fn expect_none(&self) {
+        assert!(
+            self.calls.is_empty(),
+            "Expected no outgoing calls, but found {}",
+            self.calls.len()
+        );
+    }
+
+    /// Assert exactly N outgoing calls.
+    pub fn expect_count(&self, n: usize) -> &Self {
+        assert_eq!(
+            self.calls.len(),
+            n,
+            "Expected {n} outgoing calls, got {}",
+            self.calls.len()
+        );
+        self
+    }
+
+    /// Assert an outgoing call to a function with the given name.
+    pub fn expect_callee(&self, name: &str) -> &Self {
+        let found = self.calls.iter().any(|c| c.to.name == name);
+        assert!(
+            found,
+            "Expected outgoing call to '{name}', callees: {:?}",
+            self.calls.iter().map(|c| &c.to.name).collect::<Vec<_>>()
+        );
+        self
+    }
+}
+
+/// Result of a type hierarchy prepare query, for fluent assertions.
+pub struct TypeHierarchyPrepareResult {
+    pub item: Option<crate::hierarchy::type_hierarchy::TypeHierarchyItem>,
+}
+
+impl TypeHierarchyPrepareResult {
+    /// Assert a type hierarchy item was found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            self.item.is_some(),
+            "Expected type hierarchy item, but got none"
+        );
+        self
+    }
+
+    /// Assert no type hierarchy item was found.
+    pub fn expect_none(&self) {
+        assert!(self.item.is_none(), "Expected no type hierarchy item");
+    }
+
+    /// Assert the item name matches.
+    pub fn expect_name(&self, expected: &str) -> &Self {
+        self.expect_found();
+        let item = self.item.as_ref().unwrap();
+        assert_eq!(
+            item.name, expected,
+            "Expected type hierarchy name '{expected}', got '{}'",
+            item.name
+        );
+        self
+    }
+}
+
+/// Result of a supertypes/subtypes query, for fluent assertions.
+pub struct TypeHierarchyItemsResult {
+    pub items: Vec<crate::hierarchy::type_hierarchy::TypeHierarchyItem>,
+}
+
+impl TypeHierarchyItemsResult {
+    /// Assert items were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            !self.items.is_empty(),
+            "Expected type hierarchy items, but found none"
+        );
+        self
+    }
+
+    /// Assert no items found.
+    pub fn expect_none(&self) {
+        assert!(
+            self.items.is_empty(),
+            "Expected no type hierarchy items, but found {}",
+            self.items.len()
+        );
+    }
+
+    /// Assert exactly N items.
+    pub fn expect_count(&self, n: usize) -> &Self {
+        assert_eq!(
+            self.items.len(),
+            n,
+            "Expected {n} type hierarchy items, got {}",
+            self.items.len()
+        );
+        self
+    }
+
+    /// Assert an item with the given name exists.
+    pub fn expect_name(&self, name: &str) -> &Self {
+        let found = self.items.iter().any(|i| i.name == name);
+        assert!(
+            found,
+            "Expected type hierarchy item '{name}', available: {:?}",
+            self.items.iter().map(|i| &i.name).collect::<Vec<_>>()
+        );
+        self
+    }
+}
+
+/// Result of a code lenses query, for fluent assertions.
+pub struct CodeLensesResult {
+    pub lenses: Vec<crate::editor_decorations::code_lens::CodeLens>,
+}
+
+impl CodeLensesResult {
+    /// Assert code lenses were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            !self.lenses.is_empty(),
+            "Expected code lenses, but found none"
+        );
+        self
+    }
+
+    /// Assert no code lenses.
+    pub fn expect_none(&self) {
+        assert!(
+            self.lenses.is_empty(),
+            "Expected no code lenses, but found {}",
+            self.lenses.len()
+        );
+    }
+
+    /// Assert exactly N code lenses.
+    pub fn expect_count(&self, n: usize) -> &Self {
+        assert_eq!(
+            self.lenses.len(),
+            n,
+            "Expected {n} code lenses, got {}",
+            self.lenses.len()
+        );
+        self
+    }
+
+    /// Assert at least N code lenses.
+    pub fn expect_min_count(&self, n: usize) -> &Self {
+        assert!(
+            self.lenses.len() >= n,
+            "Expected at least {n} code lenses, got {}",
+            self.lenses.len()
+        );
+        self
+    }
+}
+
+/// Result of a document links query, for fluent assertions.
+pub struct DocumentLinksResult {
+    pub links: Vec<crate::document_links::DocumentLink>,
+}
+
+impl DocumentLinksResult {
+    /// Assert document links were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            !self.links.is_empty(),
+            "Expected document links, but found none"
+        );
+        self
+    }
+
+    /// Assert no document links.
+    pub fn expect_none(&self) {
+        assert!(
+            self.links.is_empty(),
+            "Expected no document links, but found {}",
+            self.links.len()
+        );
+    }
+
+    /// Assert exactly N document links.
+    pub fn expect_count(&self, n: usize) -> &Self {
+        assert_eq!(
+            self.links.len(),
+            n,
+            "Expected {n} document links, got {}",
+            self.links.len()
+        );
+        self
+    }
+
+    /// Assert a link with the given target exists.
+    pub fn expect_target(&self, target: &str) -> &Self {
+        let found = self
+            .links
+            .iter()
+            .any(|l| l.target.as_deref() == Some(target));
+        assert!(
+            found,
+            "Expected document link with target '{target}', targets: {:?}",
+            self.links
+                .iter()
+                .filter_map(|l| l.target.as_deref())
+                .collect::<Vec<_>>()
+        );
+        self
+    }
+}
+
+/// Result of a linked editing ranges query, for fluent assertions.
+pub struct LinkedEditingResult {
+    pub ranges: Option<crate::rename::linked_editing::LinkedEditingRanges>,
+}
+
+impl LinkedEditingResult {
+    /// Assert linked editing ranges were found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            self.ranges.is_some(),
+            "Expected linked editing ranges, but got none"
+        );
+        self
+    }
+
+    /// Assert no linked editing ranges.
+    pub fn expect_none(&self) {
+        assert!(self.ranges.is_none(), "Expected no linked editing ranges");
+    }
+
+    /// Assert the number of linked ranges.
+    pub fn expect_range_count(&self, n: usize) -> &Self {
+        self.expect_found();
+        let ranges = &self.ranges.as_ref().unwrap().ranges;
+        assert_eq!(
+            ranges.len(),
+            n,
+            "Expected {n} linked editing ranges, got {}",
+            ranges.len()
         );
         self
     }
@@ -1268,6 +1764,125 @@ impl FourslashTest {
         InlayHintsResult { hints }
     }
 
+    /// Go to type definition at a marker.
+    pub fn go_to_type_definition(&self, marker_name: &str) -> TypeDefinitionResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let locations = self.project.get_type_definition(&m.file, pos);
+        TypeDefinitionResult {
+            locations,
+            markers: self.markers.clone(),
+        }
+    }
+
+    /// Go to implementation at a marker.
+    pub fn go_to_implementation(&mut self, marker_name: &str) -> ImplementationResult {
+        let m = self.marker(marker_name).clone();
+        let pos = Position::new(m.line, m.character);
+        let locations = self.project.get_implementations(&m.file, pos);
+        ImplementationResult {
+            locations,
+            markers: self.markers.clone(),
+        }
+    }
+
+    /// Prepare call hierarchy at a marker.
+    pub fn prepare_call_hierarchy(&self, marker_name: &str) -> CallHierarchyPrepareResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let item = self.project.prepare_call_hierarchy(&m.file, pos);
+        CallHierarchyPrepareResult { item }
+    }
+
+    /// Get incoming calls at a marker.
+    pub fn incoming_calls(&self, marker_name: &str) -> IncomingCallsResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let calls = self.project.get_incoming_calls(&m.file, pos);
+        IncomingCallsResult { calls }
+    }
+
+    /// Get outgoing calls at a marker.
+    pub fn outgoing_calls(&self, marker_name: &str) -> OutgoingCallsResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let calls = self.project.get_outgoing_calls(&m.file, pos);
+        OutgoingCallsResult { calls }
+    }
+
+    /// Prepare type hierarchy at a marker.
+    pub fn prepare_type_hierarchy(&self, marker_name: &str) -> TypeHierarchyPrepareResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let item = self.project.prepare_type_hierarchy(&m.file, pos);
+        TypeHierarchyPrepareResult { item }
+    }
+
+    /// Get supertypes at a marker.
+    pub fn supertypes(&self, marker_name: &str) -> TypeHierarchyItemsResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let items = self.project.supertypes(&m.file, pos);
+        TypeHierarchyItemsResult { items }
+    }
+
+    /// Get subtypes at a marker.
+    pub fn subtypes(&self, marker_name: &str) -> TypeHierarchyItemsResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let items = self.project.subtypes(&m.file, pos);
+        TypeHierarchyItemsResult { items }
+    }
+
+    /// Get code lenses for a file.
+    pub fn code_lenses(&self, file: &str) -> CodeLensesResult {
+        let lenses = self.project.get_code_lenses(file).unwrap_or_default();
+        CodeLensesResult { lenses }
+    }
+
+    /// Get document links for a file.
+    pub fn document_links(&self, file: &str) -> DocumentLinksResult {
+        let links = self.project.get_document_links(file).unwrap_or_default();
+        DocumentLinksResult { links }
+    }
+
+    /// Get linked editing ranges at a marker.
+    pub fn linked_editing_ranges(&self, marker_name: &str) -> LinkedEditingResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let pos = Position::new(m.line, m.character);
+        let ranges = self.project.get_linked_editing_ranges(&m.file, pos);
+        LinkedEditingResult { ranges }
+    }
+
+    /// Get code actions at a marker position (with range from marker to end of line).
+    pub fn code_actions_at(&self, marker_name: &str) -> CodeActionsResult {
+        let m = self.markers.get(marker_name).unwrap_or_else(|| {
+            panic!("Marker '{marker_name}' not found");
+        });
+        let range = Range {
+            start: Position::new(m.line, m.character),
+            end: Position::new(m.line, u32::MAX),
+        };
+        let actions = self.project.get_code_actions(&m.file, range, vec![], None);
+        CodeActionsResult { actions }
+    }
+
     /// Edit a file's content (for testing edit-related features).
     pub fn edit_file(&mut self, file: &str, new_source: &str) {
         let (cleaned, new_markers) = parse_markers(file, new_source);
@@ -1301,6 +1916,45 @@ impl FourslashTest {
     /// Verify completions at a marker include the expected labels.
     pub fn verify_completions_include(&mut self, marker: &str, expected: &[&str]) {
         self.completions(marker).expect_contains_all(expected);
+    }
+
+    /// Verify type definition at one marker leads to another marker.
+    pub fn verify_type_definition(&self, from: &str, to: &str) {
+        self.go_to_type_definition(from).expect_at_marker(to);
+    }
+
+    /// Verify that a diagnostic with a specific code exists.
+    pub fn verify_diagnostic_code(&mut self, file: &str, code: u32) {
+        self.diagnostics(file).expect_code(code);
+    }
+
+    /// Verify that diagnostics at a file are empty (no errors).
+    pub fn verify_no_errors(&mut self, file: &str) {
+        self.diagnostics(file).expect_none();
+    }
+
+    /// Verify references count at a marker.
+    pub fn verify_references_count(&mut self, marker: &str, count: usize) {
+        self.references(marker).expect_count(count);
+    }
+
+    /// Get the file count in the project.
+    pub fn file_count(&self) -> usize {
+        self.file_sources.len()
+    }
+
+    /// Remove a file from the project.
+    pub fn remove_file(&mut self, file: &str) {
+        self.project.remove_file(file);
+        self.file_sources.remove(file);
+        // Remove markers from the removed file
+        self.markers.retain(|_, m| m.file != file);
+        self.marker_list.retain(|m| m.file != file);
+    }
+
+    /// Set strict mode for the project.
+    pub fn set_strict(&mut self, strict: bool) {
+        self.project.set_strict(strict);
     }
 }
 
@@ -1486,7 +2140,8 @@ mod tests {
         let result = t.completions("");
         // Completions may or may not include myVariable depending on implementation
         // This just verifies the framework works
-        assert!(result.items.len() >= 0); // Framework test - completions work
+        // Framework test - completions query should work without panic
+        let _ = result.items.len();
     }
 
     #[test]
