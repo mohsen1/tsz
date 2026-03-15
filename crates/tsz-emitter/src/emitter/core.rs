@@ -286,6 +286,9 @@ pub struct Printer<'a> {
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(crate) current_namespace_name: Option<String>,
+    /// Parent namespace name for scope-qualified `namespace_prior_exports` keys.
+    /// Used to distinguish same-named nested namespaces (e.g., `m1.m2` vs `m4.m2`).
+    pub(crate) parent_namespace_name: Option<String>,
 
     /// Override name for anonymous default exports (e.g., "`default_1`").
     /// When set, class/function emitters use this instead of leaving the name blank.
@@ -566,6 +569,7 @@ impl<'a> Printer<'a> {
             namespace_export_inner: false,
             emitting_function_body_block: false,
             current_namespace_name: None,
+            parent_namespace_name: None,
             anonymous_default_export_name: None,
             next_disposable_env_id: 1,
             block_using_env: None,
