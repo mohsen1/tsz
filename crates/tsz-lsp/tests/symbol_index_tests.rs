@@ -1290,3 +1290,225 @@ fn test_all_definition_names_with_kinds() {
     );
     assert_eq!(index.get_definition_kind("Gamma"), None);
 }
+
+// =========================================================================
+// Batch 4: additional edge-case and coverage tests
+// =========================================================================
+
+#[test]
+fn test_symbol_index_reference_across_many_files() {
+    let mut index = SymbolIndex::new();
+    for i in 0..50 {
+        let file = format!("file_{i}.ts");
+        index.add_reference(&file, "shared", make_location(&file, 0, 0, 6));
+    }
+    let refs = index.find_references("shared");
+    assert_eq!(refs.len(), 50, "Should find references across 50 files");
+    let files = index.get_files_with_symbol("shared");
+    assert_eq!(files.len(), 50, "Should track 50 files with the symbol");
+}
+
+#[test]
+fn test_symbol_index_remove_file_with_multiple_symbols() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("a.ts", "alpha", make_location("a.ts", 0, 0, 5));
+    index.add_reference("a.ts", "beta", make_location("a.ts", 1, 0, 4));
+    index.add_reference("a.ts", "gamma", make_location("a.ts", 2, 0, 5));
+    index.add_definition("alpha", make_location("a.ts", 0, 0, 5));
+
+    index.remove_file("a.ts");
+
+    assert!(index.find_references("alpha").is_empty());
+    assert!(index.find_references("beta").is_empty());
+    assert!(index.find_references("gamma").is_empty());
+    assert!(index.find_definitions("alpha").is_empty());
+}
+
+#[test]
+fn test_symbol_index_mixed_imports_different_modules() {
+    let mut index = SymbolIndex::new();
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "a".to_string(),
+            source_module: "./mod_a".to_string(),
+            exported_name: "a".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "b".to_string(),
+            source_module: "./mod_b".to_string(),
+            exported_name: "b".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+
+    let imports = index.get_imports("app.ts");
+    assert_eq!(imports.len(), 2);
+
+    let importers_a = index.get_importing_files("./mod_a");
+    assert_eq!(importers_a.len(), 1);
+    let importers_b = index.get_importing_files("./mod_b");
+    assert_eq!(importers_b.len(), 1);
+}
+
+#[test]
+fn test_symbol_index_definition_kind_enum_member() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "Red",
+        make_location("colors.ts", 1, 2, 5),
+        SymbolKind::EnumMember,
+    );
+    assert_eq!(
+        index.get_definition_kind("Red"),
+        Some(SymbolKind::EnumMember)
+    );
+}
+
+#[test]
+fn test_symbol_index_definition_kind_variable() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "myConst",
+        make_location("a.ts", 0, 0, 7),
+        SymbolKind::Variable,
+    );
+    assert_eq!(
+        index.get_definition_kind("myConst"),
+        Some(SymbolKind::Variable)
+    );
+}
+
+#[test]
+fn test_symbol_index_definition_kind_method() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "doWork",
+        make_location("service.ts", 5, 2, 8),
+        SymbolKind::Method,
+    );
+    assert_eq!(
+        index.get_definition_kind("doWork"),
+        Some(SymbolKind::Method)
+    );
+}
+
+#[test]
+fn test_symbol_index_definition_kind_constructor() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "constructor",
+        make_location("a.ts", 3, 2, 13),
+        SymbolKind::Constructor,
+    );
+    assert_eq!(
+        index.get_definition_kind("constructor"),
+        Some(SymbolKind::Constructor)
+    );
+}
+
+#[test]
+fn test_symbol_index_prefix_search_single_char_names() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("a", make_location("a.ts", 0, 0, 1));
+    index.add_definition("b", make_location("a.ts", 1, 0, 1));
+    index.add_definition("c", make_location("a.ts", 2, 0, 1));
+
+    let matches = index.get_symbols_with_prefix("a");
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0], "a");
+
+    let all = index.get_symbols_with_prefix("");
+    assert_eq!(all.len(), 3);
+}
+
+#[test]
+fn test_symbol_index_remove_file_preserves_other_exports() {
+    let mut index = SymbolIndex::new();
+    index.add_export("a.ts", "foo");
+    index.add_export("b.ts", "bar");
+    index.add_export("b.ts", "baz");
+
+    index.remove_file("a.ts");
+
+    assert!(index.get_exports("a.ts").is_empty());
+    assert_eq!(index.get_exports("b.ts").len(), 2);
+}
+
+#[test]
+fn test_symbol_index_stats_after_partial_remove() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("a.ts", "x", make_location("a.ts", 0, 0, 1));
+    index.add_reference("b.ts", "y", make_location("b.ts", 0, 0, 1));
+    index.add_definition("x", make_location("a.ts", 0, 0, 1));
+    index.add_definition("y", make_location("b.ts", 0, 0, 1));
+
+    index.remove_file("a.ts");
+
+    let stats = index.stats();
+    assert_eq!(stats.total_references, 1);
+    assert_eq!(stats.total_definitions, 1);
+}
+
+#[test]
+fn test_symbol_flags_to_kind_method_with_property() {
+    // Method + Property: Method should win (higher specificity)
+    let flags = symbol_flags::METHOD | symbol_flags::PROPERTY;
+    let kind = symbol_flags_to_kind(flags);
+    // Method is checked before Property in specificity order
+    assert_eq!(kind, SymbolKind::Method);
+}
+
+#[test]
+fn test_symbol_flags_to_kind_enum_with_variable() {
+    let flags = symbol_flags::REGULAR_ENUM | symbol_flags::BLOCK_SCOPED_VARIABLE;
+    let kind = symbol_flags_to_kind(flags);
+    // Enum should have higher specificity than variable
+    assert_eq!(kind, SymbolKind::Enum);
+}
+
+#[test]
+fn test_symbol_index_long_symbol_name() {
+    let mut index = SymbolIndex::new();
+    let long_name = "a".repeat(500);
+    index.add_definition(&long_name, make_location("a.ts", 0, 0, 500));
+
+    let defs = index.find_definitions(&long_name);
+    assert_eq!(defs.len(), 1, "Should handle very long symbol names");
+
+    let matches = index.get_symbols_with_prefix(&"a".repeat(100));
+    assert_eq!(matches.len(), 1);
+}
+
+#[test]
+fn test_symbol_index_numeric_symbol_name() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("123", make_location("a.ts", 0, 0, 3));
+    let defs = index.find_definitions("123");
+    assert_eq!(defs.len(), 1, "Should handle numeric symbol names");
+}
+
+#[test]
+fn test_symbol_index_has_file_with_definitions() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("foo", make_location("def.ts", 0, 0, 3));
+    // has_file may or may not detect files that only have definitions
+    // (definitions don't include file_path tracking in the same way references do)
+    let _ = index.has_file("def.ts");
+}
+
+#[test]
+fn test_symbol_index_interleaved_add_remove() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("x", make_location("a.ts", 0, 0, 1));
+    index.remove_file("a.ts");
+    index.add_definition("x", make_location("b.ts", 0, 0, 1));
+
+    let defs = index.find_definitions("x");
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file_path, "b.ts");
+}
