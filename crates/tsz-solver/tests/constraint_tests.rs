@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::CompatChecker;
+use crate::inference::infer::{InferenceContext, InferenceError};
 use crate::intern::TypeInterner;
 use crate::types::{
     FunctionShape, InferencePriority, ParamInfo, PropertyInfo, TupleElement, TypeData,

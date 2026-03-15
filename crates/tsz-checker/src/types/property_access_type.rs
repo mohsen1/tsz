@@ -723,7 +723,12 @@ impl<'a> CheckerState<'a> {
             let hidden_qualified_namespace_member =
                 hidden_qualified_namespace_member_apparent_type.is_some();
 
-            if !enum_instance_like_access
+            // In write context (skip_flow_narrowing), skip this shortcut:
+            // resolve_namespace_value_member returns the symbol's read type, which
+            // doesn't account for divergent getter/setter types. The full property
+            // access path below correctly uses write_type for setter parameters.
+            if !self.ctx.skip_flow_narrowing
+                && !enum_instance_like_access
                 && !hidden_qualified_namespace_member
                 && let Some(member_type) =
                     self.resolve_namespace_value_member(object_type, property_name)
