@@ -510,7 +510,21 @@ impl<'a> CheckerState<'a> {
                 } else if let Some(t_elem) =
                     tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
                 {
-                    return factory.array(t_elem);
+                    // Skip uninformative element types (unknown, type parameters) for empty
+                    // arrays. These typically come from unresolved inference placeholders
+                    // (e.g., T[] where T is being inferred). In tsc, empty arrays contribute
+                    // `never` as the element type during inference, allowing contra-candidates
+                    // from other arguments to drive resolution. Using `unknown` here would
+                    // create a spurious covariant candidate that overwrites contravariant
+                    // inference (e.g., from callback parameters).
+                    let is_uninformative = matches!(t_elem, TypeId::UNKNOWN)
+                        || matches!(
+                            self.ctx.types.lookup(t_elem),
+                            Some(tsz_solver::types::TypeData::TypeParameter(_))
+                        );
+                    if !is_uninformative {
+                        return factory.array(t_elem);
+                    }
                 }
             }
 

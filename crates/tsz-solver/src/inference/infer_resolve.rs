@@ -1246,15 +1246,38 @@ impl<'a> InferenceContext<'a> {
                 continue;
             }
 
-            // Compute the current best type from existing candidates
-            // This uses the same logic as compute_constraint_result but doesn't
-            // validate against upper bounds yet (that happens in final resolution)
+            // Compute the current best type from existing candidates.
+            // Mirror the unknown/error candidate filtering from compute_constraint_result:
+            // when informative upper bounds exist, discard unknown/error covariant candidates
+            // so that contra-candidates (from contravariant positions like function params)
+            // can drive inference instead.
             let is_const = self.is_var_const(root);
             let dc = self.declared_constraints.get(&root).copied();
-            let result = if !info.candidates.is_empty() {
-                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds, dc)
-            } else {
+            let mut candidates = info.candidates.clone();
+            if !info.upper_bounds.is_empty() {
+                let has_informative_upper_bound = info
+                    .upper_bounds
+                    .iter()
+                    .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                candidates.retain(|candidate| match candidate.type_id {
+                    TypeId::UNKNOWN | TypeId::ERROR => false,
+                    TypeId::ANY => !has_informative_upper_bound,
+                    _ => true,
+                });
+            }
+            let result = if !candidates.is_empty() {
+                self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc)
+            } else if !info.contra_candidates.is_empty() {
                 self.resolve_from_contra_candidates(&info.contra_candidates)
+            } else {
+                // All covariant candidates were filtered; fall back to upper bounds
+                if info.upper_bounds.len() == 1 {
+                    info.upper_bounds[0]
+                } else if !info.upper_bounds.is_empty() {
+                    self.interner.intersection(info.upper_bounds.clone())
+                } else {
+                    TypeId::UNKNOWN
+                }
             };
 
             // Check for occurs (recursive type)
