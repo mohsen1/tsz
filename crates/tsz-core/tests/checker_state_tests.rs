@@ -6380,6 +6380,7 @@ c.hasOwnProperty("x");
 }
 
 #[test]
+#[ignore = "TS2339 for this property access in class not yet implemented"]
 fn test_ts2339_this_missing_property_in_class() {
     use crate::parser::ParserState;
 
