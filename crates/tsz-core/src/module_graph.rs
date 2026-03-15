@@ -287,12 +287,20 @@ impl ModuleGraph {
         for w in deps {
             if !indices.contains_key(&w) {
                 self.strongconnect(w, index_counter, stack, on_stack, indices, lowlinks);
-                let w_lowlink = *lowlinks.get(&w).unwrap();
-                let v_lowlink = lowlinks.get_mut(&v).unwrap();
+                let w_lowlink = *lowlinks
+                    .get(&w)
+                    .expect("strongconnect ensures w has a lowlink");
+                let v_lowlink = lowlinks
+                    .get_mut(&v)
+                    .expect("v was inserted at start of strongconnect");
                 *v_lowlink = (*v_lowlink).min(w_lowlink);
             } else if on_stack.contains(&w) {
-                let w_index = *indices.get(&w).unwrap();
-                let v_lowlink = lowlinks.get_mut(&v).unwrap();
+                let w_index = *indices
+                    .get(&w)
+                    .expect("w is on stack so must have an index");
+                let v_lowlink = lowlinks
+                    .get_mut(&v)
+                    .expect("v was inserted at start of strongconnect");
                 *v_lowlink = (*v_lowlink).min(w_index);
             }
         }
@@ -301,7 +309,7 @@ impl ModuleGraph {
         if lowlinks.get(&v) == indices.get(&v) {
             let mut scc = Vec::new();
             loop {
-                let w = stack.pop().unwrap();
+                let w = stack.pop().expect("Tarjan SCC: stack must contain v");
                 on_stack.remove(&w);
                 scc.push(w);
                 if w == v {

@@ -165,7 +165,9 @@ impl SourceFile {
     /// Get a reference to the line map, building it if necessary.
     pub fn line_map(&mut self) -> &LineMap {
         self.ensure_line_map();
-        self.line_map.as_ref().unwrap()
+        self.line_map
+            .as_ref()
+            .expect("ensure_line_map() guarantees line_map is Some")
     }
 
     /// Convert a byte offset to a Position (line, character).
@@ -205,13 +207,19 @@ impl SourceFile {
     /// Get the line count.
     pub fn line_count(&mut self) -> usize {
         self.ensure_line_map();
-        self.line_map.as_ref().unwrap().line_count()
+        self.line_map
+            .as_ref()
+            .expect("ensure_line_map() guarantees line_map is Some")
+            .line_count()
     }
 
     /// Get the text of a specific line (without newline).
     pub fn line_text(&mut self, line: u32) -> Option<&str> {
         self.ensure_line_map();
-        let line_map = self.line_map.as_ref().unwrap();
+        let line_map = self
+            .line_map
+            .as_ref()
+            .expect("ensure_line_map() guarantees line_map is Some");
         let start = line_map.line_start(line as usize)? as usize;
         let end = if (line as usize) + 1 < line_map.line_count() {
             line_map.line_start((line as usize) + 1)? as usize
