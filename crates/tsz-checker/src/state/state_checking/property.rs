@@ -1402,7 +1402,6 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        let can_cache = !self.contains_type_parameters_cached(mapped_type);
         let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
         if let Some(property_type) =
@@ -1412,13 +1411,11 @@ impl<'a> CheckerState<'a> {
                 prop_name,
             )
         {
-            if can_cache {
-                self.ctx
-                    .narrowing_cache
-                    .property_cache
-                    .borrow_mut()
-                    .insert(cache_key, Some(property_type));
-            }
+            self.ctx
+                .narrowing_cache
+                .property_cache
+                .borrow_mut()
+                .insert(cache_key, Some(property_type));
             return Some(
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id: property_type,
@@ -1434,7 +1431,7 @@ impl<'a> CheckerState<'a> {
                 mapped_id,
             )
         {
-            if can_cache && !names.contains(&prop_atom) {
+            if !names.contains(&prop_atom) {
                 self.ctx
                     .narrowing_cache
                     .property_cache
@@ -1465,13 +1462,11 @@ impl<'a> CheckerState<'a> {
                 matching_source_keys.push(prop_atom);
             }
             if !keys.is_empty() && matching_source_keys.is_empty() {
-                if can_cache {
-                    self.ctx
-                        .narrowing_cache
-                        .property_cache
-                        .borrow_mut()
-                        .insert(cache_key, None);
-                }
+                self.ctx
+                    .narrowing_cache
+                    .property_cache
+                    .borrow_mut()
+                    .insert(cache_key, None);
                 return Some(
                     tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                         type_id: mapped_type,
@@ -1492,13 +1487,11 @@ impl<'a> CheckerState<'a> {
                         // reducible to string literals. Keep going and instantiate
                         // the template for the requested property.
                     } else {
-                        if can_cache {
-                            self.ctx
-                                .narrowing_cache
-                                .property_cache
-                                .borrow_mut()
-                                .insert(cache_key, None);
-                        }
+                        self.ctx
+                            .narrowing_cache
+                            .property_cache
+                            .borrow_mut()
+                            .insert(cache_key, None);
                         return Some(
                             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                                 type_id: mapped_type,
@@ -1507,13 +1500,11 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 } else {
-                    if can_cache {
-                        self.ctx
-                            .narrowing_cache
-                            .property_cache
-                            .borrow_mut()
-                            .insert(cache_key, None);
-                    }
+                    self.ctx
+                        .narrowing_cache
+                        .property_cache
+                        .borrow_mut()
+                        .insert(cache_key, None);
                     return Some(
                         tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                             type_id: mapped_type,
@@ -1556,13 +1547,11 @@ impl<'a> CheckerState<'a> {
             _ => self.ctx.types.factory().union(property_types),
         };
 
-        if can_cache {
-            self.ctx
-                .narrowing_cache
-                .property_cache
-                .borrow_mut()
-                .insert(cache_key, Some(property_type));
-        }
+        self.ctx
+            .narrowing_cache
+            .property_cache
+            .borrow_mut()
+            .insert(cache_key, Some(property_type));
 
         Some(
             tsz_solver::operations::property::PropertyAccessResult::Success {
