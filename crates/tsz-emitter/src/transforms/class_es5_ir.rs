@@ -1740,6 +1740,7 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Extract parameters from a parameter list
     fn extract_parameters(&self, params: &NodeList) -> Vec<IRParam> {
         let mut result = Vec::new();
+        let mut temp_counter: u8 = b'a';
 
         for &param_idx in &params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
@@ -1749,9 +1750,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            let name = get_identifier_text(self.arena, param.name).unwrap_or_default();
+            let mut name = get_identifier_text(self.arena, param.name).unwrap_or_default();
+            // For destructured parameters (binding patterns), generate a temp name
             if name.is_empty() {
-                continue;
+                let name_node = self.arena.get(param.name);
+                let is_binding_pattern = name_node.is_some_and(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                });
+                if is_binding_pattern {
+                    name = format!("_{}", temp_counter as char);
+                    temp_counter = temp_counter.wrapping_add(1);
+                } else {
+                    continue;
+                }
             }
 
             let is_rest = param.dot_dot_dot_token;
@@ -1770,6 +1782,80 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         result
+    }
+
+    /// Generate destructuring prologue IR nodes for binding-pattern parameters.
+    /// For `({ a, b })` with temp name `_a`, generates: `var a = _a.a, b = _a.b;`
+    fn generate_destructuring_prologue(
+        &self,
+        ast_params: &tsz_parser::parser::NodeList,
+        ir_params: &[IRParam],
+    ) -> Vec<IRNode> {
+        use std::borrow::Cow;
+        let mut prologue = Vec::new();
+        let mut ir_idx = 0;
+
+        for &param_idx in &ast_params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                ir_idx += 1;
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                ir_idx += 1;
+                continue;
+            };
+
+            let name_node = self.arena.get(param.name);
+            let is_binding_pattern = name_node.is_some_and(|n| {
+                n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            });
+
+            if !is_binding_pattern {
+                ir_idx += 1;
+                continue;
+            }
+
+            // Get the temp name from the corresponding IR param
+            let temp_name = if ir_idx < ir_params.len() {
+                ir_params[ir_idx].name.to_string()
+            } else {
+                ir_idx += 1;
+                continue;
+            };
+
+            // Generate destructuring: `var a = _a.a, b = _a.b;`
+            if let Some(name_n) = name_node
+                && name_n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && let Some(pattern) = self.arena.get_binding_pattern(name_n)
+            {
+                let mut parts = Vec::new();
+                for &elem_idx in &pattern.elements.nodes {
+                    if let Some(elem_node) = self.arena.get(elem_idx)
+                        && let Some(elem) = self.arena.get_binding_element(elem_node)
+                    {
+                        let elem_name =
+                            get_identifier_text(self.arena, elem.name).unwrap_or_default();
+                        if !elem_name.is_empty() {
+                            let prop_name = if elem.property_name.is_some() {
+                                get_identifier_text(self.arena, elem.property_name)
+                                    .unwrap_or_else(|| elem_name.clone())
+                            } else {
+                                elem_name.clone()
+                            };
+                            parts.push(format!("{elem_name} = {temp_name}.{prop_name}"));
+                        }
+                    }
+                }
+                if !parts.is_empty() {
+                    prologue.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
+                        Cow::Owned(format!("var {}", parts.join(", "))),
+                    ))));
+                }
+            }
+            ir_idx += 1;
+        }
+        prologue
     }
 
     /// Get the extends clause base class
