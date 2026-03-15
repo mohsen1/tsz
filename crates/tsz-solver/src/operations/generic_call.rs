@@ -1728,12 +1728,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             instantiated_params
                 .into_iter()
-                .map(|param| ParamInfo {
-                    name: param.name,
-                    type_id: self
-                        .normalize_inferred_placeholder_type(param.type_id, &final_arg_subst),
-                    optional: param.optional,
-                    rest: param.rest,
+                .map(|param| {
+                    let normalized =
+                        self.normalize_inferred_placeholder_type(param.type_id, &final_arg_subst);
+                    // Evaluate Application types (conditional types) to resolve them
+                    // after instantiation, but skip plain type parameters to avoid
+                    // infinite loops in self-referential generic inference.
+                    let evaluated = if matches!(
+                        self.interner.lookup(normalized),
+                        Some(TypeData::Application(_))
+                    ) {
+                        self.interner.evaluate_type(normalized)
+                    } else {
+                        normalized
+                    };
+                    ParamInfo {
+                        name: param.name,
+                        type_id: evaluated,
+                        optional: param.optional,
+                        rest: param.rest,
+                    }
                 })
                 .collect()
         };
