@@ -168,10 +168,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // Instance/static extra initializer arrays
-        if has_any_instance {
+        // Only emit when there are method/getter/setter members that need them
+        // (field/accessor members use per-field extra initializers instead)
+        let has_instance_method = decorated_members
+            .iter()
+            .any(|m| !m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
+        let has_static_method = decorated_members
+            .iter()
+            .any(|m| m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
+        if has_instance_method {
             out.push_str(&format!("{i1}let _instanceExtraInitializers = [];\n"));
         }
-        if has_any_static {
+        if has_static_method {
             out.push_str(&format!("{i1}let _staticExtraInitializers = [];\n"));
         }
 
@@ -232,7 +240,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if has_class_decorators {
                 out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
             }
+
+            // ES2022: emit decorator assignments in a separate static block
+            // ONLY when there are no computed method/getter/setter members to serve
+            // as assignment sinks (field-only decorators need a static block).
+            let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
+                decorated_members.get(*mi).is_some_and(|m| {
+                    matches!(
+                        m.kind,
+                        MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+                    )
+                })
+            });
             // ES2022: emit static block with decorator application
+            // For field-only decorators without computed method sinks,
+            // assignments go at the top of this block
             out.push_str(&format!("{i2}static {{\n"));
             self.emit_decorator_application(
                 &decorated_members,
@@ -366,6 +388,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         } else {
             out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+        }
+
+        // In ES2022 static block mode for field-only decorators (no computed method sinks),
+        // emit assignment expressions before __esDecorate calls
+        if self.use_static_blocks {
+            let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
+                decorated_members.get(*mi).is_some_and(|m| {
+                    matches!(
+                        m.kind,
+                        MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+                    )
+                })
+            });
+            if !has_computed_method_sink {
+                for (i, member) in decorated_members.iter().enumerate() {
+                    let var_info = &member_vars[i];
+                    let dec_exprs = member.decorator_exprs.join(", ");
+                    out.push_str(&format!(
+                        "{indent}{} = [{}];\n",
+                        var_info.decorators_var, dec_exprs
+                    ));
+                }
+            }
         }
 
         // __esDecorate calls for each member
@@ -531,8 +576,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         }
 
-        // Emit synthetic sink for any remaining assignments not injected into computed members
-        if !remaining_assignments.is_empty() {
+        // Emit synthetic sink for any remaining assignments not injected into computed members.
+        // In ES2022 mode without computed method sinks, assignments went to the static block.
+        let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
+            decorated_members.get(*mi).is_some_and(|m| {
+                matches!(
+                    m.kind,
+                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+                )
+            })
+        });
+        let skip_sink =
+            self.use_static_blocks && !has_computed_method_sink && !decorated_members.is_empty();
+        if !remaining_assignments.is_empty() && !skip_sink {
             let sink_expr = remaining_assignments.join(", ");
             let sink_is_static = decorated_members.iter().any(|m| m.is_static);
             let static_prefix = if sink_is_static { "static " } else { "" };
@@ -541,7 +597,27 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         // Emit constructor only if source has one or we need instance initializers
         let source_ctor = self.get_constructor_info(class_data);
-        if source_ctor.is_some() || has_any_instance {
+        let needs_ctor_init = has_any_instance;
+        if source_ctor.is_some() || needs_ctor_init {
+            // Build the list of __runInitializers calls for the constructor
+            let mut ctor_init_calls: Vec<String> = Vec::new();
+            let has_instance_method = decorated_members.iter().any(|m| {
+                !m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor)
+            });
+            if has_instance_method {
+                ctor_init_calls.push(format!(
+                    "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
+                ));
+            } else {
+                // For field-only decorators, call __runInitializers for each field's extra init
+                for var_info in member_vars {
+                    if let Some(ref extra_var) = var_info.extra_initializers_var {
+                        ctor_init_calls
+                            .push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+                    }
+                }
+            }
+
             out.push_str(&format!("{indent}constructor("));
             if let Some(ctor) = source_ctor {
                 out.push_str(&ctor.params);
@@ -549,18 +625,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 for line in &ctor.body_lines {
                     out.push_str(&format!("{inner_indent}{}\n", line.trim()));
                 }
-                if has_any_instance {
-                    out.push_str(&format!(
-                        "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
-                    ));
+                for call in &ctor_init_calls {
+                    out.push_str(call);
                 }
                 out.push_str(&format!("{indent}}}\n"));
             } else {
                 out.push_str(") {\n");
-                if has_any_instance {
-                    out.push_str(&format!(
-                        "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
-                    ));
+                for call in &ctor_init_calls {
+                    out.push_str(call);
                 }
                 out.push_str(&format!("{indent}}}\n"));
             }
@@ -1094,21 +1166,34 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let name_str = self.member_name_for_context(member, computed_key_vars, member_index);
         let access_str = self.member_access_for_context(member, computed_key_vars, member_index);
 
-        let ctor_arg = if member.is_private {
+        let is_field_like = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
+
+        // For methods/getters/setters, first arg is the class reference.
+        // For fields/accessors, first arg is always null.
+        let ctor_arg = if is_field_like || member.is_private {
             "null".to_string()
         } else {
             class_alias.to_string()
         };
 
-        let extra_init_arg = if member.is_static {
-            "_staticExtraInitializers"
+        // For fields/accessors, pass per-field initializer and extra-initializer arrays.
+        // For methods/getters/setters, pass null + instance/static extra initializers.
+        let (init_arg, extra_init_arg) = if is_field_like {
+            let init = var_info.initializers_var.as_deref().unwrap_or("null");
+            let extra = var_info.extra_initializers_var.as_deref().unwrap_or("null");
+            (init.to_string(), extra.to_string())
         } else {
-            "_instanceExtraInitializers"
+            let extra = if member.is_static {
+                "_staticExtraInitializers"
+            } else {
+                "_instanceExtraInitializers"
+            };
+            ("null".to_string(), extra.to_string())
         };
 
         let es_decorate = self.helper("__esDecorate");
         out.push_str(&format!(
-            "{indent}{es_decorate}({ctor_arg}, null, {}, {{ kind: \"{kind_str}\", name: {name_str}, static: {}, private: {}, access: {{ {access_str} }}, metadata: _metadata }}, null, {extra_init_arg});\n",
+            "{indent}{es_decorate}({ctor_arg}, null, {}, {{ kind: \"{kind_str}\", name: {name_str}, static: {}, private: {}, access: {{ {access_str} }}, metadata: _metadata }}, {init_arg}, {extra_init_arg});\n",
             var_info.decorators_var,
             member.is_static,
             member.is_private,
