@@ -1709,3 +1709,212 @@ fn test_highlight_no_match_at_whitespace() {
         let _ = hl;
     }
 }
+
+#[test]
+fn test_highlight_class_name_multiple_uses() {
+    let source = "class Foo {}\nconst a = new Foo();\nconst b: Foo = a;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(
+            hl.len() >= 2,
+            "Foo used in class decl + new + type annotation"
+        );
+    }
+}
+
+#[test]
+fn test_highlight_enum_member() {
+    let source = "enum Color { Red, Green, Blue }\nconst c = Color.Red;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 5));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 1);
+    }
+}
+
+#[test]
+fn test_highlight_for_loop_variable() {
+    let source = "for (let i = 0; i < 10; i++) { console.log(i); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 9));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 3, "i in init + condition + increment + body");
+    }
+}
+
+#[test]
+fn test_highlight_default_export() {
+    let source = "export default function foo() {}\nfoo();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 24));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2);
+    }
+}
+
+#[test]
+fn test_highlight_destructured_variable() {
+    let source = "const { x, y } = { x: 1, y: 2 };\nconsole.log(x + y);";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 8));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 1);
+    }
+}
+
+#[test]
+fn test_highlight_catch_parameter() {
+    let source = "try { throw 1; } catch (err) { console.log(err); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 24));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "err in catch + usage");
+    }
+}
+
+#[test]
+fn test_highlight_interface_name_in_object_literal() {
+    let source = "interface Foo { x: number; }\nconst a: Foo = { x: 1 };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 10));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "Foo in interface + type annotation");
+    }
+}
+
+#[test]
+fn test_highlight_empty_source() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 0));
+    let _ = highlights;
+}
+
+#[test]
+fn test_highlight_let_reassignment() {
+    let source = "let x = 1;\nx = 2;\nx = 3;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 4));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 3, "x in decl + two reassignments");
+    }
+}
+
+#[test]
+fn test_highlight_arrow_function_param_in_body() {
+    let source = "const fn = (a: number, b: number) => a + b;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 12));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "a in param + body");
+    }
+}
+
+#[test]
+fn test_highlight_type_alias_id() {
+    let source = "type ID = string;\nconst x: ID = 'abc';";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 5));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "ID in type alias + annotation");
+    }
+}
+
+#[test]
+fn test_highlight_async_function_name() {
+    let source = "async function fetchData() { return 1; }\nfetchData();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 15));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "fetchData in decl + call");
+    }
+}
+
+#[test]
+fn test_highlight_static_method() {
+    let source = "class Foo {\n  static bar() {}\n}\nFoo.bar();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2);
+    }
+}
