@@ -2,11 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~93% on 2000-test sample, ~91.4% on 3000-test sample, ~87.5% on 5000-test sample (2026-03-15). All contextual-typing commits merged.
+**Conformance**: ~91.5% on 3000-test sample (2026-03-15, post fix #13). All contextual-typing commits merged.
 
-**Campaign plateau reached**: After 12 fixes, remaining failures are dominated by deep type system issues, multi-file tests, JSDoc/Salsa, and complex generic inference. No more 1-3 line fixes available in the contextual-typing area. Further gains require work in other campaigns (narrowing, mapped types, JSDoc, parser recovery).
-
-**What was fixed** (12 commits, all merged):
+**What was fixed** (13 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
 2. Literal type preservation with primitive constraints (`<T extends string>`)
 3. Contextual return type for zero-arg generic calls (`from<T>(): T[]`)
@@ -19,6 +17,7 @@
 10. Preserve callback return-type TS2322 through arg collection filter (circularResolvedSignature)
 11. Fix `recover_property_from_implemented_interfaces` — was using `get_type_from_type_node` on ExpressionWithTypeArguments (returns ERROR → ANY via solver default), now uses `resolve_heritage_symbol` + `type_reference_symbol_type` for correct instance type resolution. Also added `TypeData::Error` handling in solver property access to return ERROR instead of ANY.
 12. Fix TS7018 false positives — was emitting "implicitly has 'any' type" for object literal properties when initializer evaluates to explicit `any` (from `any` variable). tsc only emits TS7018 when `any` comes from null/undefined widening. Fixes ~15 tests (+6 net on 3000-sample).
+13. Fix literal display properties leaking into assignability error messages — `format_type_for_assignability_message` was using `with_display_properties()` which showed pre-widened literal types (e.g., `{ two: 1; }` instead of `{ two: number; }`). Changed to regular formatter. Fixes ~13 fingerprint-only failures (+13 net on 3000-sample).
 
 **Tests newly passing** (confirmed on latest main):
 - `contextualPropertyOfGenericMappedType.ts` — now passes (fixed by recent main changes)
