@@ -521,6 +521,23 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS2820: "Type '{0}' is not assignable to type '{1}'. Did you mean '{2}'?"
+        // When the source is a string literal and the target contains string literal
+        // union members, check for a close Levenshtein match and emit TS2820 instead
+        // of the generic TS2322.
+        if let Some(loc) = self.get_source_location(anchor_idx) {
+            if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
+                source,
+                target,
+                anchor_idx,
+                loc.start,
+                loc.length(),
+            ) {
+                self.ctx.push_diagnostic(diag);
+                return;
+            }
+        }
+
         // Use one solver-boundary analysis path for TS2322 metadata.
         let analysis = self.analyze_assignability_failure(source, target);
         let reason = analysis.failure_reason;
@@ -606,6 +623,18 @@ impl<'a> CheckerState<'a> {
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
             if self.has_more_specific_diagnostic_at_span(loc.start, loc.length()) {
+                return;
+            }
+
+            // TS2820: string literal "did you mean" suggestion
+            if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
+                source,
+                target,
+                anchor_idx,
+                loc.start,
+                loc.length(),
+            ) {
+                self.ctx.push_diagnostic(diag);
                 return;
             }
 
@@ -1644,6 +1673,16 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
+                // TS2820: check for string literal "did you mean" suggestion
+                if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
+                    *source_type,
+                    target,
+                    idx,
+                    start,
+                    length,
+                ) {
+                    return diag;
+                }
                 let (source_str, target_str) = if depth == 0 {
                     let use_structural_source_display =
                         tsz_solver::type_queries::get_enum_def_id(self.ctx.types, source).is_none();
@@ -1702,6 +1741,12 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
+                // TS2820: check for string literal "did you mean" suggestion
+                if let Some(diag) = self
+                    .try_string_literal_suggestion_diagnostic(source, target, idx, start, length)
+                {
+                    return diag;
+                }
                 let source_str = if depth == 0 {
                     self.format_assignment_source_type_for_diagnostic(source, target, idx)
                 } else {
@@ -1918,6 +1963,84 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
+        }
+    }
+
+    /// TS2820: Try to build a "Did you mean" diagnostic for string literal mismatches.
+    ///
+    /// When the source is a string literal and the target is (or contains) a union of
+    /// string literals with a close Levenshtein match, returns a TS2820 diagnostic
+    /// instead of the generic TS2322.
+    ///
+    /// `anchor_idx` is used to recover the literal value from the AST when the source
+    /// TypeId has been widened (e.g., from `"hdpvd"` to `string`).
+    fn try_string_literal_suggestion_diagnostic(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+        start: u32,
+        length: u32,
+    ) -> Option<Diagnostic> {
+        // Try to get the string literal value from the TypeId first
+        let source_str = if let Some(source_atom) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
+        {
+            self.ctx.types.resolve_atom_ref(source_atom).to_string()
+        } else {
+            // Fallback: if the TypeId is widened (e.g., `string`), check the AST node
+            // for a string literal expression value.
+            self.get_string_literal_from_ast(anchor_idx)?
+        };
+        let suggestion = self.find_string_literal_suggestion(&source_str, target)?;
+        let src_display = format!("\"{}\"", source_str);
+        let tgt_display = self.format_type_diagnostic(target);
+        let suggestion_quoted = format!("\"{}\"", suggestion);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+            &[&src_display, &tgt_display, &suggestion_quoted],
+        );
+        Some(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            length,
+            message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+        ))
+    }
+
+    /// Extract a string literal value from an AST node, if it is a string literal
+    /// or contains one as a direct initializer.
+    fn get_string_literal_from_ast(&self, idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(lit.text.clone())
+            }
+            // PropertyAssignment: the anchor is the property name, look at the initializer
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.ctx.arena.get_property_assignment(node)?;
+                self.get_string_literal_from_ast(prop.initializer)
+            }
+            // Identifier used as property name: look for its initializer in context
+            k if k == tsz_scanner::SyntaxKind::Identifier as u16 => {
+                // Try to look at the parent for PropertyAssignment
+                if let Some(ext) = self.ctx.arena.get_extended(idx) {
+                    if let Some(parent) = self.ctx.arena.get(ext.parent) {
+                        if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                            if let Some(prop) = self.ctx.arena.get_property_assignment(parent) {
+                                return self.get_string_literal_from_ast(prop.initializer);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 }
