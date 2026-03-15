@@ -979,6 +979,17 @@ impl<'a> Printer<'a> {
 
         self.write("get ");
         self.emit(accessor.name);
+
+        // Emit type parameters for error recovery (e.g., `get foo<T>() {}`)
+        // Getters cannot legally have type parameters, but tsc preserves them in JS output.
+        if let Some(ref type_params) = accessor.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
+
         self.write("(");
         self.emit_function_parameters_js(&accessor.parameters.nodes);
         self.write(")");
@@ -999,6 +1010,17 @@ impl<'a> Printer<'a> {
 
         self.write("set ");
         self.emit(accessor.name);
+
+        // Emit type parameters for error recovery (e.g., `set foo<T>(v) {}`)
+        // Setters cannot legally have type parameters, but tsc preserves them in JS output.
+        if let Some(ref type_params) = accessor.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
+
         self.write("(");
         let open_paren_pos = {
             self.map_token_after(
@@ -1030,6 +1052,13 @@ impl<'a> Printer<'a> {
             self.emit_function_parameters_js(&accessor.parameters.nodes);
         }
         self.write(")");
+
+        // Emit return type annotation for error recovery (e.g., `set foo(v): number {}`)
+        // Setters cannot legally have return type annotations, but tsc preserves them in JS output.
+        if accessor.type_annotation.is_some() {
+            self.write(": ");
+            self.emit(accessor.type_annotation);
+        }
 
         let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
         self.emit_accessor_body(accessor.body, compact_body);
