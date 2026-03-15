@@ -2,7 +2,7 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~10786/12581 (85.7%) on latest main (fluctuates as other agents merge). All contextual-typing commits merged.
+**Conformance**: ~1856/2000 sample (92.8%) on latest main (2026-03-15). All contextual-typing commits merged.
 
 **What was fixed** (11 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
@@ -32,6 +32,11 @@
 | Deep type system issues | ~620 | Hard | Subtype checking, narrowing, mapped types, generics |
 
 ## Highest-Impact Next Steps
+
+### 0. TS2323↔TS2528 Duplicate Default Export (investigated, complex)
+**Status**: Investigated. tsc emits TS2323 for SOME duplicate default exports and TS2528 for others, and sometimes both. The current code always emits TS2528 which is wrong for many tests. Changing to TS2323 helps some tests but hurts others (+1 net). Need to understand tsc's exact logic for when to emit each code. The `is_conflict` detection also misses interface+function (only interface+class should be allowed to merge).
+**Key tests**: `exportDefaultClassAndValue.ts` (expects TS2323), `exportDefaultTypeClassAndValue.ts` (expects both TS2323+TS2528), `exportDefaultInterfaceAndTwoFunctions.ts` (expects TS2323+TS2393).
+**Dead end**: Emitting BOTH TS2323 and TS2528 adds false positive TS2528 to tests expecting only TS2323. Emitting only TS2323 misses TS2528 for tests expecting both.
 
 ### 1. TS2322↔TS2345 Diagnostic Elaboration (3 remaining tests)
 **Status**: FIXED for `circularResolvedSignature.ts` (commit `52b3a14f6`). The inner TS2322 is pruned by `collect_call_argument_types_with_context` (call_checker.rs:987-1022, filter at line 1009-1016). The fix stores the return-type TS2322 in `callback_return_type_errors` and restores it in `call_result.rs` when processing `ArgumentTypeMismatch`.
