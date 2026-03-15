@@ -298,9 +298,12 @@ impl<'a> CheckerState<'a> {
                         && property_context_type.is_none()
                         && prop.initializer != prop.name
                     {
-                        let is_implicit_any = value_type == TypeId::ANY
-                            || (!self.ctx.strict_null_checks()
-                                && (value_type == TypeId::NULL || value_type == TypeId::UNDEFINED));
+                        // TS7018 only fires for IMPLICIT any — when null/undefined
+                        // widens to any without strictNullChecks. When the initializer
+                        // expression evaluates to explicit `any` (from an `any` variable,
+                        // function returning `any`, etc.), tsc does NOT emit TS7018.
+                        let is_implicit_any = !self.ctx.strict_null_checks()
+                            && (value_type == TypeId::NULL || value_type == TypeId::UNDEFINED);
                         if is_implicit_any {
                             use crate::diagnostics::diagnostic_codes;
                             self.error_at_node_msg(
