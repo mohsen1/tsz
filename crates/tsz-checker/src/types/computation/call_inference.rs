@@ -526,6 +526,33 @@ impl<'a> CheckerState<'a> {
                     visited,
                 );
             }
+            return;
+        }
+
+        // Structural Object matching: when source is an Application (e.g., GenericClass<T>)
+        // and target is an already-evaluated Object (e.g., GenericClass<[string, boolean]>
+        // resolved to { from: ..., __schema: ... }), evaluate the source Application to get
+        // its expanded object form and match property types structurally.
+        // This handles the common pattern where the return context type from an outer call
+        // has been evaluated while the generic return type is still an Application.
+        if let (Some(source_shape), Some(target_shape)) = (
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, source_eval),
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_eval),
+        ) {
+            for source_prop in &source_shape.properties {
+                if let Some(target_prop) = tsz_solver::types::PropertyInfo::find_in_slice(
+                    &target_shape.properties,
+                    source_prop.name,
+                ) {
+                    self.collect_return_context_substitution(
+                        source_prop.type_id,
+                        target_prop.type_id,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+            }
         }
     }
 

@@ -157,12 +157,16 @@ where
     }
 
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
-        // For id 0 (empty), we can return without initializing
-        if id == 0 {
-            return Some(Arc::from(Vec::new()));
-        }
-        self.inner
-            .get()?
+        // For id 0, return from the initialized inner (which has the pre-allocated
+        // empty Arc) instead of creating a new Arc::from(Vec::new()) on every call.
+        let inner = if id == 0 {
+            // If inner isn't initialized yet, the only valid id is 0 (empty).
+            // Initialize lazily so we reuse the pre-allocated empty Arc.
+            self.get_inner()
+        } else {
+            self.inner.get()?
+        };
+        inner
             .items
             .get(&id)
             .map(|e| std::sync::Arc::clone(e.value()))
@@ -692,6 +696,12 @@ impl TypeInterner {
         TypeListId(self.type_lists.intern(&members))
     }
 
+    /// Intern a type list from a slice, avoiding Vec conversion when the caller
+    /// already has a SmallVec or slice reference.
+    pub(super) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
+        TypeListId(self.type_lists.intern(members))
+    }
+
     fn intern_tuple_list(&self, elements: Vec<TupleElement>) -> TupleListId {
         TupleListId(self.tuple_lists.intern(&elements))
     }
@@ -1001,7 +1011,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1359,7 +1369,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1427,7 +1437,7 @@ impl TypeInterner {
         // NOTE: No subtype reduction here — this is the key difference from normalize_union.
         // tsc's UnionReduction.Literal only absorbs literals into primitives.
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1506,7 +1516,7 @@ impl TypeInterner {
         }
 
         // Create the intersection directly without calling normalize_intersection
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Intersection(list_id))
     }
 
