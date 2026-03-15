@@ -101,6 +101,18 @@ impl<'db> TypeFactory<'db> {
         self.db.object_fresh(properties)
     }
 
+    /// Create a fresh object type with display properties for error messages.
+    /// See `TypeInterner::object_fresh_with_display` for details.
+    #[inline]
+    pub fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        self.db
+            .object_fresh_with_display(widened_properties, display_properties)
+    }
+
     #[inline]
     pub fn object_with_index(&self, shape: ObjectShape) -> TypeId {
         self.db.object_with_index(shape)

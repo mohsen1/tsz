@@ -289,6 +289,17 @@ pub struct TypeInterner {
     alloc_order: DashMap<TypeId, u32, FxBuildHasher>,
     /// Effective value for `noUncheckedIndexedAccess` used by query-boundary helpers.
     no_unchecked_indexed_access: AtomicBool,
+    /// Display properties for fresh object literal types.
+    ///
+    /// When object literal properties are widened (e.g., `"hello"` → `string`),
+    /// the pre-widened types are stored here for display in error messages.
+    /// This implements tsc's "freshness" model where error messages show
+    /// literal types (`{ x: "hello" }`) even though the type system uses
+    /// widened types (`{ x: string }`).
+    ///
+    /// Key: ObjectShapeId of the widened (interned) shape.
+    /// Value: Vec of PropertyInfo with original (non-widened) type_ids.
+    display_properties: DashMap<ObjectShapeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -329,6 +340,7 @@ impl TypeInterner {
             alloc_counter: AtomicU32::new(0),
             alloc_order: DashMap::with_hasher(FxBuildHasher),
             no_unchecked_indexed_access: AtomicBool::new(false),
+            display_properties: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
@@ -675,6 +687,26 @@ impl TypeInterner {
 
     pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
         ObjectShapeId(self.object_shapes.intern(shape))
+    }
+
+    /// Store display-only properties for a fresh object literal.
+    ///
+    /// These are the pre-widened property types shown in error messages.
+    /// The `shape_id` is the widened (interned) shape; `props` contains
+    /// the original literal types from the source code.
+    pub fn store_display_properties(&self, shape_id: ObjectShapeId, props: Vec<PropertyInfo>) {
+        self.display_properties.insert(shape_id, Arc::new(props));
+    }
+
+    /// Retrieve display-only properties for a fresh object literal.
+    ///
+    /// Returns `None` if no display properties were stored (i.e., the
+    /// object type was not a fresh literal or had no widened properties).
+    pub fn get_display_properties(
+        &self,
+        shape_id: ObjectShapeId,
+    ) -> Option<Arc<Vec<PropertyInfo>>> {
+        self.display_properties.get(&shape_id).map(|r| r.clone())
     }
 
     fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
@@ -1594,6 +1626,39 @@ impl TypeInterner {
     /// Intern a fresh object type with properties.
     pub fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
+    }
+
+    /// Intern a fresh object type with both widened properties (for type checking)
+    /// and display properties (for error messages).
+    ///
+    /// This implements tsc's "freshness" model where object literal types
+    /// preserve literal types for error display but use widened types for
+    /// assignability checking.
+    pub fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        // Capture display property declaration order before interning
+        let mut display_props = display_properties;
+        for (i, prop) in display_props.iter_mut().enumerate() {
+            if prop.declaration_order == 0 {
+                prop.declaration_order = (i + 1) as u32;
+            }
+        }
+        display_props.sort_by_key(|a| a.name);
+
+        // Intern the widened properties as the canonical type
+        let type_id = self.object_with_flags(widened_properties, ObjectFlags::FRESH_LITERAL);
+
+        // Extract the ObjectShapeId to store display properties against
+        if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+            self.lookup(type_id)
+        {
+            self.store_display_properties(shape_id, display_props);
+        }
+
+        type_id
     }
 
     /// Intern an object type with properties and custom flags.
