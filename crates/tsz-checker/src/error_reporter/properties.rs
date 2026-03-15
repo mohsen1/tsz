@@ -176,8 +176,7 @@ impl<'a> CheckerState<'a> {
                     matches!(
                         self.ctx.types.lookup(m),
                         Some(
-                            tsz_solver::TypeData::TypeParameter(_)
-                                | tsz_solver::TypeData::Infer(_)
+                            tsz_solver::TypeData::TypeParameter(_) | tsz_solver::TypeData::Infer(_)
                         )
                     )
                 })
