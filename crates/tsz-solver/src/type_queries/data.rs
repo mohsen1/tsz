@@ -651,15 +651,28 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
 /// This is the type-computation portion of `keyof T` when T is an object.
 pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     let shape = get_object_shape(db, type_id)?;
-    let key_types: Vec<TypeId> = shape
-        .properties
-        .iter()
-        .filter(|p| {
-            p.visibility == crate::Visibility::Public
-                && !db.resolve_atom_ref(p.name).starts_with("__private_brand_")
-        })
-        .map(|p| db.literal_string_atom(p.name))
-        .collect();
+    let mut key_types: Vec<TypeId> = Vec::new();
+    let mut has_symbol_key = false;
+    for p in &shape.properties {
+        if p.visibility != crate::Visibility::Public {
+            continue;
+        }
+        let name = db.resolve_atom_ref(p.name);
+        if name.starts_with("__private_brand_") {
+            continue;
+        }
+        // Computed symbol properties (e.g., [Symbol.iterator]) contribute
+        // `symbol` to keyof, not a string literal key.
+        if name.starts_with('[') {
+            has_symbol_key = true;
+            continue;
+        }
+        key_types.push(db.literal_string_atom(p.name));
+    }
+    // Include `symbol` in keyof when the object has computed symbol properties.
+    if has_symbol_key {
+        key_types.push(TypeId::SYMBOL);
+    }
     if key_types.is_empty() {
         return Some(TypeId::NEVER);
     }
