@@ -938,11 +938,6 @@ impl<'a> CheckerState<'a> {
             self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
-        // TS1186: Check for rest elements with initializers in destructuring assignments.
-        if is_destructuring {
-            self.check_rest_element_initializer(left_idx);
-        }
-
         // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
         // the assignability check from running. TypeScript emits both readonly
         // errors AND type mismatch errors (e.g., TS2542 + TS2322).
