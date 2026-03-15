@@ -9,6 +9,43 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+/// Strip TypeScript type annotations from function/setter parameters in source text.
+/// Handles `(value: number)` → `(value)`.
+fn strip_param_types(text: &str) -> String {
+    let brace_pos = text.find('{').unwrap_or(text.len());
+    let param_region = &text[..brace_pos];
+    let Some(paren_open) = param_region.rfind('(') else {
+        return text.to_string();
+    };
+    let rest = &text[paren_open + 1..];
+    let Some(paren_close_rel) = rest.find(')') else {
+        return text.to_string();
+    };
+    let params_str = &rest[..paren_close_rel];
+    if !params_str.contains(':') {
+        return text.to_string();
+    }
+    let mut cleaned = Vec::new();
+    for param in params_str.split(',') {
+        let param = param.trim();
+        if param.is_empty() {
+            continue;
+        }
+        if let Some(colon) = param.find(':') {
+            cleaned.push(param[..colon].trim().to_string());
+        } else {
+            cleaned.push(param.to_string());
+        }
+    }
+    let paren_close = paren_open + 1 + paren_close_rel;
+    format!(
+        "{}({}){}",
+        &text[..paren_open],
+        cleaned.join(", "),
+        &text[paren_close + 1..]
+    )
+}
+
 /// Information about a decorated member
 #[derive(Debug, Clone)]
 struct DecoratedMember {
@@ -823,6 +860,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     text = trimmed;
                 }
             }
+            // Strip TS type annotations from setter/method params: `(v: number)` → `(v)`
+            let text = strip_param_types(text);
+            let text = text.as_str();
             // Normalize empty method bodies: `{}` -> `{ }`
             if let Some(stripped) = text.strip_suffix("{}") {
                 format!("{stripped}{{ }}")
