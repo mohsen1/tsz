@@ -284,12 +284,16 @@ check_prerequisites() {
     fi
     
     # Check for lib assets directory used by tsz
-    if [ -n "${TSZ_LIB_DIR:-}" ] && [ ! -d "$TSZ_LIB_DIR" ]; then
-        echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
-        echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
-        exit 1
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        if [ ! -d "$TSZ_LIB_DIR" ]; then
+            echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
+            echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
+            exit 1
+        fi
+        echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"
+    else
+        echo -e "${GREEN}✓${NC} tsz lib assets: embedded (built-in)"
     fi
-    echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"
 
     # Check/build tsz with dedicated benchmark target directory
     # Using isolated target dir prevents other cargo builds from affecting benchmark binary
