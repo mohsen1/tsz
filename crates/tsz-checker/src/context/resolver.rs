@@ -316,7 +316,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         interner: &dyn tsz_solver::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use tsz_solver::type_queries;
-        use tsz_solver::visitor::{callable_shape_id, object_shape_id, object_with_index_shape_id};
+        use tsz_solver::visitor::callable_shape_id;
 
         // 1. First try Lazy types (type aliases, class/interface references)
         if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
@@ -342,22 +342,17 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             return None;
         }
 
-        // 2. For class instance types (ObjectWithIndex types), check the ObjectShape symbol
-        if let Some(shape_id) = object_shape_id(interner, type_id)
-            .or_else(|| object_with_index_shape_id(interner, type_id))
-        {
-            let shape = interner.object_shape(shape_id);
-            if let Some(sym_id) = shape.symbol {
-                // Use InheritanceGraph to get parent
-                let parents = self.inheritance_graph.get_parents(sym_id);
-                if let Some(&parent_sym_id) = parents.first() {
-                    // For classes, try instance_types first; for interfaces, use symbol_types
-                    if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id) {
-                        return Some(*instance_type);
-                    }
-                    // Fallback to symbol_types (for interfaces)
-                    return self.symbol_types.get(&parent_sym_id).copied();
+        // 2. For class instance types (Object/ObjectWithIndex), check the shape symbol
+        if let Some(sym_id) = tsz_solver::type_queries::data::get_object_symbol(interner, type_id) {
+            // Use InheritanceGraph to get parent
+            let parents = self.inheritance_graph.get_parents(sym_id);
+            if let Some(&parent_sym_id) = parents.first() {
+                // For classes, try instance_types first; for interfaces, use symbol_types
+                if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id) {
+                    return Some(*instance_type);
                 }
+                // Fallback to symbol_types (for interfaces)
+                return self.symbol_types.get(&parent_sym_id).copied();
             }
         }
 
