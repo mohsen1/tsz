@@ -697,8 +697,14 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
                 self.write("});");
             } else {
-                self.write("this.");
-                self.write(name);
+                // Bracket names (e.g., `["constructor"]`) are encoded with `[` prefix
+                if name.starts_with('[') {
+                    self.write("this");
+                    self.write(name);
+                } else {
+                    self.write("this.");
+                    self.write(name);
+                }
                 self.write(" = ");
                 self.emit_expression(*init_idx);
                 self.write(";");
