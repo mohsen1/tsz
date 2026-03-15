@@ -92,6 +92,7 @@ impl<'a> IRPrinter<'a> {
         // Single statement with no defaults: emit as single-line if source was single-line,
         // unless caller forced multiline style (used for class constructors in ES5 class IIFEs).
         if !has_defaults
+            && !has_rest
             && body.len() == 1
             && is_body_source_single_line
             && !force_multiline_empty_body
