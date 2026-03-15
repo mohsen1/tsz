@@ -4,7 +4,7 @@
 
 **Conformance**: ~10786/12581 (85.7%) on latest main (fluctuates as other agents merge). All contextual-typing commits merged.
 
-**What was fixed** (10 commits, all merged):
+**What was fixed** (11 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
 2. Literal type preservation with primitive constraints (`<T extends string>`)
 3. Contextual return type for zero-arg generic calls (`from<T>(): T[]`)
@@ -15,6 +15,7 @@
 8. TS2528 instead of TS2323 for duplicate default exports (+19 tests)
 9. Bare type param targets + nested object recursion in intra-expression inference
 10. Preserve callback return-type TS2322 through arg collection filter (circularResolvedSignature)
+11. Fix `recover_property_from_implemented_interfaces` — was using `get_type_from_type_node` on ExpressionWithTypeArguments (returns ERROR → ANY via solver default), now uses `resolve_heritage_symbol` + `type_reference_symbol_type` for correct instance type resolution. Also added `TypeData::Error` handling in solver property access to return ERROR instead of ANY.
 
 **Tests newly passing** (confirmed on latest main):
 - `contextualPropertyOfGenericMappedType.ts` — now passes (fixed by recent main changes)
@@ -51,6 +52,16 @@
 
 ### 5. Mapped Type Inference for Structured Types
 **Status**: Primitives fixed (#5), objects/functions still fail. `isomorphicMappedTypeInference.ts` has only 1 lower bound for T in the solver despite multiple properties contributing.
+
+## Root Cause Analysis: `recover_property_from_implemented_interfaces` Bug
+
+**Bug chain**: `get_type_from_type_node(ExpressionWithTypeArguments)` → TypeNodeChecker doesn't handle → falls to `lower_type()` → `_ => TypeId::ERROR` → solver property access on ERROR → default `_ =>` branch returns `PropertyAccessResult::simple(TypeId::ANY)` → recovery function returns `Some(ANY)` → ALL property accesses silently accepted on classes with `implements`.
+
+**Impact**: Every class with an `implements` clause had its property access recovery function returning ANY for any property name, suppressing TS2339 errors. This affected `classImplementsClass6.ts` and potentially many other tests where property access on classes with implements clauses should have errored.
+
+**Fix applied**: Two changes:
+1. `recover_property_from_implemented_interfaces` now uses `resolve_heritage_symbol` + `type_reference_symbol_type` to get the correct instance type (not ERROR)
+2. Solver property access evaluator now handles `TypeData::Error` explicitly, returning ERROR instead of falling to the ANY-returning default
 
 ## Dead Ends (don't re-investigate)
 
