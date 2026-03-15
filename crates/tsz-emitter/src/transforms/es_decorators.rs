@@ -122,13 +122,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let class_name = self
             .get_identifier_text(class_data.name)
             .unwrap_or_default();
-        // For anonymous class expressions, generate a temp name
-        let class_name = if class_name.is_empty() {
+        let class_decorators = self.collect_class_decorator_exprs(&class_data.modifiers);
+        // For anonymous class expressions WITH class decorators, generate a temp name
+        // (needed for the var assignment pattern). Without class decorators, keep anonymous.
+        let class_name = if class_name.is_empty() && !class_decorators.is_empty() {
             "class_1".to_string()
         } else {
             class_name
         };
-        let class_decorators = self.collect_class_decorator_exprs(&class_data.modifiers);
         let decorated_members = self.collect_decorated_members(&class_data.members);
         let has_extends = self.has_extends_clause(&class_data.heritage_clauses);
 
@@ -261,9 +262,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 out.push_str(&format!("{i1}var {class_name} = _classThis = class"));
             }
         } else if self.use_static_blocks {
-            out.push_str(&format!("{i1}return class {class_name}"));
+            if class_name.is_empty() {
+                out.push_str(&format!("{i1}return class"));
+            } else {
+                out.push_str(&format!("{i1}return class {class_name}"));
+            }
         } else {
-            out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
+            if class_name.is_empty() {
+                out.push_str(&format!("{i1}return {class_alias} = class"));
+            } else {
+                out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
+            }
         }
         if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
             out.push_str(&format!(" extends {extends_text}"));
@@ -277,17 +286,24 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 // For class expressions, emit __setFunctionName with the class name
                 // or the externally-provided function name (from assignment context)
                 if self.expression_mode {
-                    let name = self
-                        .get_identifier_text(class_data.name)
-                        .filter(|n| !n.is_empty())
-                        .or_else(|| self.function_name.clone());
-                    if let Some(fn_name) = name {
+                    // Use ONLY the externally-provided function name for __setFunctionName.
+                    // The class's own name (e.g., `class C {}`) is NOT used — it's a
+                    // self-reference, not the named evaluation target.
+                    if let Some(fn_name) = self.function_name.clone() {
                         let set_fn = self.helper("__setFunctionName");
                         out.push_str(&format!(
                             "{i2}static {{ {set_fn}(_classThis, \"{fn_name}\"); }}\n"
                         ));
                     }
                 }
+            } else if self.expression_mode && self.function_name.is_some() {
+                // Member-only decorators on class expression with a context name:
+                // emit __setFunctionName(this, "name") in a static block
+                let fn_name = self.function_name.as_ref().unwrap();
+                let set_fn = self.helper("__setFunctionName");
+                out.push_str(&format!(
+                    "{i2}static {{ {set_fn}(this, \"{fn_name}\"); }}\n"
+                ));
             }
 
             // ES2022: emit decorator assignments in a separate static block
