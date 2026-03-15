@@ -45,6 +45,8 @@ pub struct ClassDecoratorInfo {
     pub class_decorators: Vec<NodeIndex>,
     /// Whether to emit member decorator __decorate calls inside the IIFE
     pub has_member_decorators: bool,
+    /// Whether to emit `__metadata` calls in `__decorate` arrays
+    pub emit_decorator_metadata: bool,
 }
 
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
@@ -148,6 +150,8 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_class_decorators(info.class_decorators);
         self.transformer
             .set_legacy_decorators(info.has_member_decorators);
+        self.transformer
+            .set_emit_decorator_metadata(info.emit_decorator_metadata);
     }
 
     /// Emit a class declaration to ES5
