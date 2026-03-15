@@ -412,7 +412,7 @@ impl<'a> Printer<'a> {
         &mut self,
         _node: &Node,
         loop_stmt: &tsz_parser::parser::node::LoopData,
-        capture_info: &LoopCaptureInfo,
+        _capture_info: &LoopCaptureInfo,
         body_info: &LoopBodyVarInfo,
     ) {
         let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
