@@ -119,16 +119,21 @@ impl<'a> CheckerState<'a> {
                     let decorator_type = self.compute_type_of_node(decorator.expression);
 
                     // TS1238: Validate class decorator call signature.
-                    // For experimental decorators, the decorator is called as
-                    // decoratorExpr(classConstructor). If no call signature exists
-                    // or call resolution fails, emit TS1238.
                     if self.ctx.compiler_options.experimental_decorators {
+                        // For experimental decorators, the decorator is called as
+                        // decoratorExpr(classConstructor). If no call signature exists
+                        // or call resolution fails, emit TS1238.
                         self.check_class_decorator_call_signature(
                             decorator.expression,
                             decorator_type,
                             stmt_idx,
                             class,
                         );
+                    } else {
+                        // For ES decorators, decorators are called as
+                        // decoratorExpr(value, context). If the decorator function
+                        // requires more than 2 parameters, emit TS1238.
+                        self.check_es_class_decorator_arity(decorator.expression, decorator_type);
                     }
                 }
             }
@@ -1267,6 +1272,50 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
+        }
+    }
+
+    /// TS1238 for ES decorators: check that a class decorator doesn't require
+    /// more than 2 parameters.
+    ///
+    /// ES decorators receive `(value, context)` — at most 2 arguments.
+    /// If the decorator function's call signature has more than 2 required
+    /// parameters, the call will fail. Emit TS1238.
+    fn check_es_class_decorator_arity(
+        &mut self,
+        decorator_node: NodeIndex,
+        decorator_type: TypeId,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if decorator_type == TypeId::ERROR
+            || decorator_type == TypeId::ANY
+            || decorator_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        let resolved = self.evaluate_type_for_assignability(decorator_type);
+        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+            return;
+        }
+
+        // Check the function shape for required parameter count
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, resolved)
+        {
+            let required_params = shape
+                .params
+                .iter()
+                .filter(|p| !p.optional && !p.rest)
+                .count();
+            // ES decorators receive (value, context) — max 2 args
+            if required_params > 2 {
+                self.error_at_node(
+                    decorator_node,
+                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                );
+            }
         }
     }
 
