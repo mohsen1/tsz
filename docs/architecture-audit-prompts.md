@@ -87,7 +87,7 @@ After migration, run `cargo check -p tsz-checker` and
 migration separately for easy review.
 ```
 
-### Prompt 1.5 — Add Lint Enforcement for Boundary Policy
+### Prompt 1.5 — Add Lint Enforcement for Boundary Policy ✅ DONE (2026-03-15)
 
 ```
 Add a new architecture contract test in

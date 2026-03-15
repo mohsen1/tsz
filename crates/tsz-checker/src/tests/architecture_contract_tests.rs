@@ -1490,3 +1490,335 @@ fn checker_files_stay_under_loc_limit() {
         violations.join("\n")
     );
 }
+
+/// Enforce the query_boundaries policy: checker files outside query_boundaries/ and tests/
+/// should only import "SAFE" items (type handles, structural shapes, visitors) from tsz_solver.
+/// All computation/construction imports should go through query_boundaries wrappers.
+///
+/// The allowlist below enumerates items that are read-only type handles, structural shapes,
+/// or visitor functions that don't perform computation. Everything else must be wrapped.
+#[test]
+fn test_solver_imports_go_through_query_boundaries() {
+    // ── SAFE imports: type handles, structural shapes, visitor functions ──
+    // These are read-only identity types or inspection functions that don't
+    // perform computation. They may be imported directly by any checker file.
+    //
+    // Maintain this list alphabetically for easy auditing.
+    const SAFE_IMPORTS: &[&str] = &[
+        // Type identity handles
+        "TypeId",
+        "MappedTypeId",
+        // Structural shape types (read-only data)
+        "CallSignature",
+        "CallableShape",
+        "FunctionShape",
+        "IndexKind",
+        "IndexSignature",
+        "ObjectFlags",
+        "ObjectShape",
+        "ParamInfo",
+        "PropertyInfo",
+        "TupleElement",
+        "TypeParamInfo",
+        "TypePredicate",
+        "TypePredicateTarget",
+        "Visibility",
+        // Narrowing/flow data types
+        "GuardSense",
+        "NarrowingContext",
+        "SymbolRef",
+        "TypeGuard",
+        "TypeofKind",
+        // Definition system types
+        "def::DefId",
+        "def::DefinitionInfo",
+        "def::DefinitionStore",
+        // Recursion control
+        "recursion::DepthCounter",
+        "recursion::RecursionGuard",
+        "recursion::RecursionProfile",
+        "recursion::RecursionResult",
+        // Visitor functions (read-only type inspection)
+        "visitor",
+        "visitor::application_id",
+        "visitor::callable_shape_id",
+        "visitor::collect_lazy_def_ids",
+        "visitor::collect_type_queries",
+        "visitor::is_function_type",
+        "visitor::is_template_literal_type",
+        "visitor::lazy_def_id",
+        "visitor::object_shape_id",
+        "visitor::object_with_index_shape_id",
+        // Read-only type query/classification functions
+        "is_compiler_managed_type",
+        "is_type_parameter",
+        "type_contains_undefined",
+        "type_queries",
+        "type_queries::ArrayLikeKind",
+        "type_queries::AugmentationTargetKind",
+        "type_queries::ContextualLiteralAllowKind",
+        "type_queries::IndexKeyKind",
+        "type_queries::InterfaceMergeKind",
+        "type_queries::LiteralTypeKind",
+        "type_queries::LiteralValueKind",
+        "type_queries::NamespaceMemberKind",
+        "type_queries::TypeResolutionKind",
+        "type_queries::classify_for_augmentation",
+        "type_queries::classify_for_contextual_literal",
+        "type_queries::classify_for_interface_merge",
+        "type_queries::classify_for_literal_value",
+        "type_queries::classify_for_type_resolution",
+        "type_queries::classify_literal_type",
+        "type_queries::classify_namespace_member",
+        "type_queries::data::get_call_signatures",
+        "type_queries::data::get_function_shape",
+        "type_queries::get_enum_member_type",
+        "type_queries::get_function_shape",
+        "type_queries::get_object_shape_id",
+        "type_queries::is_unit_type",
+        "type_queries::self",
+    ];
+
+    // ── TODO: These imports bypass query_boundaries but wrappers don't exist yet. ──
+    // Each entry is (item, list of files using it). When a wrapper is created,
+    // remove the entry and let the test enforce the boundary.
+    const TEMPORARILY_ALLOWED: &[&str] = &[
+        // TODO: Computation APIs — need query_boundaries wrappers
+        "ApplicationEvaluator",
+        "AssignabilityChecker",
+        "BinaryOpEvaluator",
+        "CallResult",
+        "ContextualTypeContext",
+        "IndexSignatureResolver",
+        "IntrinsicKind",
+        "MappedType",
+        "PendingDiagnostic",
+        "PendingDiagnosticBuilder",
+        "QueryDatabase",
+        "RelationCacheKey",
+        "SourceLocation",
+        "SubtypeFailureReason",
+        "TypeEnvironment",
+        "TypeEvaluator",
+        "TypeFormatter",
+        "TypeInstantiator",
+        "TypeResolver",
+        "TypeSubstitution",
+        "def::resolver::TypeResolver",
+        "expression_ops",
+        "instantiate_generic",
+        "instantiate_type",
+        "instantiate_type_with_depth_status",
+        "judge::DefaultJudge",
+        "judge::Judge",
+        "judge::JudgeConfig",
+        "keyof_inner_type",
+        "lazy_def_id",
+        "objects::index_signatures::IndexKind",
+        "objects::index_signatures::IndexSignatureResolver",
+        "operations::CallResult",
+        "operations::property::PropertyAccessEvaluator",
+        "operations::property::PropertyAccessResult",
+        "operations::property::is_mapped_type_with_readonly_modifier",
+        "operations::property::is_readonly_tuple_fixed_element",
+        "relations::freshness",
+        "relations::freshness::is_fresh_object_type",
+        "relations::freshness::widen_freshness",
+        "substitute_this_type",
+        "type_param_info",
+        "type_queries::EvaluationNeeded",
+        "type_queries::PredicateSignatureKind",
+        "type_queries::classify_for_evaluation",
+        "type_queries::classify_for_predicate_signature",
+        "type_queries::get_callable_shape",
+        "type_queries::get_intersection_members",
+        "type_queries::get_lazy_def_id",
+        "type_queries::get_type_application",
+        "type_queries::is_narrowing_literal",
+        "type_queries::stringify_literal_type",
+        "types::ParamInfo",
+        "visitor::collect_enum_def_ids",
+        "visitor::collect_referenced_types",
+        "widening::apply_const_assertion",
+    ];
+
+    fn walk_rs(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_rs(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs(&checker_src, &mut files);
+
+    /// Recursively expand a `use tsz_solver::...` import statement into
+    /// individual canonical item paths. Handles nested brace groups like:
+    ///   `{TypeId, type_queries::{Foo, Bar}}` -> ["TypeId", "type_queries::Foo", "type_queries::Bar"]
+    /// Also strips `as Alias` suffixes so `CallSignature as SolverCallSignature`
+    /// is checked as just `CallSignature`.
+    fn expand_import(raw: &str) -> Vec<String> {
+        let raw = raw.trim().trim_end_matches(';').trim();
+
+        // Split a top-level comma-separated list respecting brace nesting.
+        fn split_top_level(s: &str) -> Vec<String> {
+            let mut items = Vec::new();
+            let mut depth = 0;
+            let mut start = 0;
+            for (i, c) in s.char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    ',' if depth == 0 => {
+                        let item = s[start..i].trim();
+                        if !item.is_empty() {
+                            items.push(item.to_string());
+                        }
+                        start = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            let last = s[start..].trim();
+            if !last.is_empty() {
+                items.push(last.to_string());
+            }
+            items
+        }
+
+        fn expand_with_prefix(prefix: &str, body: &str) -> Vec<String> {
+            let body = body.trim();
+            if body.starts_with('{') && body.ends_with('}') {
+                let inner = &body[1..body.len() - 1];
+                let parts = split_top_level(inner);
+                let mut result = Vec::new();
+                for part in parts {
+                    result.extend(expand_with_prefix(prefix, &part));
+                }
+                return result;
+            }
+
+            // Check for nested module path: `mod::{A, B}` or `mod::Item`
+            if let Some(brace_start) = body.find('{') {
+                // Find the `::` before the brace
+                let before_brace = body[..brace_start].trim_end_matches(':');
+                let sub_prefix = if prefix.is_empty() {
+                    before_brace.trim_end_matches(':').to_string()
+                } else {
+                    format!("{}::{}", prefix, before_brace.trim_end_matches(':'))
+                };
+                let rest = &body[brace_start..];
+                return expand_with_prefix(&sub_prefix, rest);
+            }
+
+            // Strip `as Alias` suffix
+            let item = if let Some(as_pos) = body.find(" as ") {
+                body[..as_pos].trim()
+            } else {
+                body.trim()
+            };
+
+            if item.is_empty() {
+                return vec![];
+            }
+
+            if prefix.is_empty() {
+                vec![item.to_string()]
+            } else {
+                vec![format!("{}::{}", prefix, item)]
+            }
+        }
+
+        expand_with_prefix("", raw)
+    }
+
+    fn is_allowed(item: &str, safe: &[&str], temp: &[&str]) -> bool {
+        safe.iter().any(|s| *s == item) || temp.iter().any(|t| *t == item)
+    }
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Skip excluded directories
+        if rel.starts_with("tests/") || rel.starts_with("query_boundaries/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        // Find all `use tsz_solver::...;` imports (handles multi-line with braces)
+        // We scan for lines starting with `use tsz_solver::` and collect until `;`
+        let mut in_use = false;
+        let mut use_buf = String::new();
+
+        for line in src.lines() {
+            let trimmed = line.trim();
+            // Skip comments
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+
+            if !in_use {
+                if let Some(rest) = trimmed.strip_prefix("use tsz_solver::") {
+                    use_buf.clear();
+                    use_buf.push_str(rest);
+                    if rest.contains(';') {
+                        in_use = false;
+                        let stmt = use_buf.trim_end_matches(';').to_string();
+                        for item in expand_import(&stmt) {
+                            if !is_allowed(&item, SAFE_IMPORTS, TEMPORARILY_ALLOWED) {
+                                violations.push(format!(
+                                    "File {} imports tsz_solver::{} directly. \
+                                     Add a wrapper in query_boundaries/ and use that instead.",
+                                    rel, item
+                                ));
+                            }
+                        }
+                    } else {
+                        in_use = true;
+                    }
+                }
+            } else {
+                use_buf.push(' ');
+                use_buf.push_str(trimmed);
+                if trimmed.contains(';') {
+                    in_use = false;
+                    let stmt = use_buf.trim_end_matches(';').to_string();
+                    for item in expand_import(&stmt) {
+                        if !is_allowed(&item, SAFE_IMPORTS, TEMPORARILY_ALLOWED) {
+                            violations.push(format!(
+                                "File {} imports tsz_solver::{} directly. \
+                                 Add a wrapper in query_boundaries/ and use that instead.",
+                                rel, item
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "query_boundaries policy violations found. Non-allowlisted tsz_solver \
+         imports detected outside query_boundaries/:\n  {}",
+        violations.join("\n  ")
+    );
+}
