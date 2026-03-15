@@ -1301,7 +1301,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check the function shape for required parameter count
-        if let Some(shape) = crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved)
+        if let Some(shape) =
+            crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved)
         {
             let required_params = shape
                 .params
