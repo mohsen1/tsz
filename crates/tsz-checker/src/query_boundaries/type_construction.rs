@@ -11,4 +11,5 @@
 /// Instead, use the purpose-specific construction helpers in this module
 /// or the `TypeDatabase` trait methods. This re-export exists so that
 /// checker test code can construct an interner without a direct solver import.
+#[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;

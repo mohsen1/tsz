@@ -1329,11 +1329,11 @@ fn test_class_inheritance_paths_use_shared_class_declaration_lookup_helper() {
     );
 }
 
-/// Architecture guard: all push_diagnostic calls must live in error_reporter/ or context/core.rs.
+/// Architecture guard: all `push_diagnostic` calls must live in `error_reporter`/ or context/core.rs.
 ///
-/// Direct push_diagnostic calls in feature modules bypass diagnostic centralization,
+/// Direct `push_diagnostic` calls in feature modules bypass diagnostic centralization,
 /// creating ad-hoc diagnostic paths that are harder to maintain and audit.
-/// All diagnostic emission should route through error_reporter methods instead.
+/// All diagnostic emission should route through `error_reporter` methods instead.
 #[test]
 fn test_no_push_diagnostic_outside_error_reporter() {
     fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
@@ -1478,8 +1478,7 @@ fn checker_files_stay_under_loc_limit() {
 
         if loc > ceiling {
             violations.push(format!(
-                "File {} has {} lines (limit: {}). Split into submodules.",
-                relative, loc, ceiling
+                "File {relative} has {loc} lines (limit: {ceiling}). Split into submodules."
             ));
         }
     }
@@ -1491,9 +1490,9 @@ fn checker_files_stay_under_loc_limit() {
     );
 }
 
-/// Enforce the query_boundaries policy: checker files outside query_boundaries/ and tests/
-/// should only import "SAFE" items (type handles, structural shapes, visitors) from tsz_solver.
-/// All computation/construction imports should go through query_boundaries wrappers.
+/// Enforce the `query_boundaries` policy: checker files outside `query_boundaries`/ and tests/
+/// should only import "SAFE" items (type handles, structural shapes, visitors) from `tsz_solver`.
+/// All computation/construction imports should go through `query_boundaries` wrappers.
 ///
 /// The allowlist below enumerates items that are read-only type handles, structural shapes,
 /// or visitor functions that don't perform computation. Everything else must be wrapped.
@@ -1662,7 +1661,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 
     /// Recursively expand a `use tsz_solver::...` import statement into
     /// individual canonical item paths. Handles nested brace groups like:
-    ///   `{TypeId, type_queries::{Foo, Bar}}` -> ["TypeId", "type_queries::Foo", "type_queries::Bar"]
+    ///   `{TypeId, type_queries::{Foo, Bar}}` -> ["TypeId", "`type_queries::Foo`", "`type_queries::Bar`"]
     /// Also strips `as Alias` suffixes so `CallSignature as SolverCallSignature`
     /// is checked as just `CallSignature`.
     fn expand_import(raw: &str) -> Vec<String> {
@@ -1741,7 +1740,7 @@ fn test_solver_imports_go_through_query_boundaries() {
     }
 
     fn is_allowed(item: &str, safe: &[&str], temp: &[&str]) -> bool {
-        safe.iter().any(|s| *s == item) || temp.iter().any(|t| *t == item)
+        safe.contains(&item) || temp.contains(&item)
     }
 
     let mut violations = Vec::new();
@@ -1785,9 +1784,8 @@ fn test_solver_imports_go_through_query_boundaries() {
                         for item in expand_import(&stmt) {
                             if !is_allowed(&item, SAFE_IMPORTS, TEMPORARILY_ALLOWED) {
                                 violations.push(format!(
-                                    "File {} imports tsz_solver::{} directly. \
-                                     Add a wrapper in query_boundaries/ and use that instead.",
-                                    rel, item
+                                    "File {rel} imports tsz_solver::{item} directly. \
+                                     Add a wrapper in query_boundaries/ and use that instead."
                                 ));
                             }
                         }
@@ -1804,9 +1802,8 @@ fn test_solver_imports_go_through_query_boundaries() {
                     for item in expand_import(&stmt) {
                         if !is_allowed(&item, SAFE_IMPORTS, TEMPORARILY_ALLOWED) {
                             violations.push(format!(
-                                "File {} imports tsz_solver::{} directly. \
-                                 Add a wrapper in query_boundaries/ and use that instead.",
-                                rel, item
+                                "File {rel} imports tsz_solver::{item} directly. \
+                                 Add a wrapper in query_boundaries/ and use that instead."
                             ));
                         }
                     }
@@ -2051,8 +2048,8 @@ fn test_parser_must_not_import_binder_checker_solver() {
 // Prompt 4.3 — Solver Encapsulation Tests
 // =============================================================================
 
-/// CLAUDE.md §4/§6: No TypeKey usage in checker code.
-/// TypeKey is solver-internal (crate-private); checker must use TypeId/TypeData.
+/// CLAUDE.md §4/§6: No `TypeKey` usage in checker code.
+/// `TypeKey` is solver-internal (crate-private); checker must use TypeId/TypeData.
 #[test]
 fn test_no_typekey_in_checker_code() {
     let src_dir = Path::new("src");
@@ -2089,7 +2086,7 @@ fn test_no_typekey_in_checker_code() {
     );
 }
 
-/// CLAUDE.md §11: No solver cache access types (RelationCacheProbe, etc.) in checker code.
+/// CLAUDE.md §11: No solver cache access types (`RelationCacheProbe`, etc.) in checker code.
 /// Solver owns algorithmic caches; checker must not access them directly.
 #[test]
 fn test_no_solver_cache_types_in_checker() {
@@ -2134,7 +2131,7 @@ fn test_no_solver_cache_types_in_checker() {
     );
 }
 
-/// CLAUDE.md §4/§22: No direct SubtypeChecker construction outside query_boundaries.
+/// CLAUDE.md §4/§22: No direct `SubtypeChecker` construction outside `query_boundaries`.
 /// Relation checks should go through boundary helpers.
 #[test]
 fn test_no_direct_subtype_checker_construction_outside_query_boundaries() {
@@ -2173,9 +2170,9 @@ fn test_no_direct_subtype_checker_construction_outside_query_boundaries() {
 // Prompt 4.4 — Structural Health Tests
 // =============================================================================
 
-/// CLAUDE.md §12: Track query_boundaries coverage ratio.
+/// CLAUDE.md §12: Track `query_boundaries` coverage ratio.
 /// This is a directional metric -- warns if the ratio of direct solver imports
-/// to query_boundaries usage is too high.
+/// to `query_boundaries` usage is too high.
 #[test]
 fn test_query_boundaries_coverage_ratio() {
     let src_dir = Path::new("src");
@@ -2220,22 +2217,19 @@ fn test_query_boundaries_coverage_ratio() {
     };
 
     // Warn but don't fail -- this is a tracking metric
+    #[allow(clippy::print_stderr)]
     if ratio > 4.0 {
         eprintln!(
-            "WARNING: query_boundaries coverage ratio is {:.1}:1 \
-             ({} direct solver importers vs {} boundary users). Target: < 4:1",
-            ratio, direct_solver_importers, boundary_users
+            "WARNING: query_boundaries coverage ratio is {ratio:.1}:1 \
+             ({direct_solver_importers} direct solver importers vs {boundary_users} boundary users). Target: < 4:1"
         );
     }
 
     // Hard fail if the ratio degrades catastrophically
     assert!(
         ratio < 10.0,
-        "query_boundaries coverage ratio has degraded to {:.1}:1 \
-         ({} direct solver importers vs {} boundary users). \
-         This indicates systematic boundary bypass. Target: < 4:1",
-        ratio,
-        direct_solver_importers,
-        boundary_users
+        "query_boundaries coverage ratio has degraded to {ratio:.1}:1 \
+         ({direct_solver_importers} direct solver importers vs {boundary_users} boundary users). \
+         This indicates systematic boundary bypass. Target: < 4:1"
     );
 }

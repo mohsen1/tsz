@@ -1075,12 +1075,12 @@ impl<'a> CheckerState<'a> {
                 // tsc's behavior where `const` type parameter context flows down into
                 // callback returns during inference.
                 let prev_const_assertion = self.ctx.in_const_assertion;
-                if !self.ctx.in_const_assertion {
-                    if let Some(ret_ctx) = return_context {
-                        let has_const_tp = self.return_context_has_const_type_param(ret_ctx);
-                        if has_const_tp {
-                            self.ctx.in_const_assertion = true;
-                        }
+                if !self.ctx.in_const_assertion
+                    && let Some(ret_ctx) = return_context
+                {
+                    let has_const_tp = self.return_context_has_const_type_param(ret_ctx);
+                    if has_const_tp {
+                        self.ctx.in_const_assertion = true;
                     }
                 }
                 let inferred = self.infer_return_type_from_body(idx, body, return_context);
@@ -1968,10 +1968,10 @@ impl<'a> CheckerState<'a> {
     /// Used to propagate const context into callback bodies during generic inference.
     fn return_context_has_const_type_param(&self, ret_ctx: TypeId) -> bool {
         // Direct check: is the return context itself a const type parameter?
-        if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, ret_ctx) {
-            if tp_info.is_const {
-                return true;
-            }
+        if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, ret_ctx)
+            && tp_info.is_const
+        {
+            return true;
         }
 
         // General check: does the return context reference any const type parameter?

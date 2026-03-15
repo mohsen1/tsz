@@ -747,7 +747,7 @@ impl<'a> CheckerState<'a> {
         // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
         // here to avoid duplicate TS2488 errors.
 
-        let pattern_kind = pattern_node.kind;
+        let _pattern_kind = pattern_node.kind;
 
         let is_declarative_pattern = self
             .ctx

@@ -980,7 +980,7 @@ pub(super) fn filtered_parse_diagnostics(
 /// These should be suppressed when the file has parse errors, matching tsc behavior.
 /// Only includes codes confirmed to be checker-side grammar checks in tsc that
 /// our parser emits instead.
-fn is_parser_grammar_code(code: u32) -> bool {
+const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
         1014 // A rest parameter must be last in a parameter list

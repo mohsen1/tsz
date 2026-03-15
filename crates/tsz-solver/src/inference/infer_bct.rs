@@ -158,10 +158,10 @@ impl<'a> InferenceContext<'a> {
 
         // Step 2: Try common base type (literal widening)
         let common_base = crate::utils::find_common_base_type(&unique, |ty| self.get_base_type(ty));
-        if let Some(base) = common_base {
-            if unique.len() > 1 {
-                return base;
-            }
+        if let Some(base) = common_base
+            && unique.len() > 1
+        {
+            return base;
         }
 
         // Step 3: Tournament reduction with strict subtype

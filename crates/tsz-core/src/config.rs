@@ -2389,6 +2389,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "strictnullchecks" => Some("strictNullChecks"),
         "strictpropertyinitialization" => Some("strictPropertyInitialization"),
         "stripinternal" => Some("stripInternal"),
+        "stabletypeordering" => Some("stableTypeOrdering"),
         "suppressexcesspropertyerrors" => Some("suppressExcessPropertyErrors"),
         "suppressimplicitanyindexerrors" => Some("suppressImplicitAnyIndexErrors"),
         "target" => Some("target"),
