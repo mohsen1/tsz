@@ -766,6 +766,7 @@ impl<'a> Printer<'a> {
                                 self.write_line();
                                 self.write("}");
                             }
+                            self.pop_temp_scope();
                             return;
                         }
                         if !needs_param_prologue
@@ -964,7 +965,8 @@ impl<'a> Printer<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         this_expr: &str,
     ) {
-        self.push_temp_scope();
+        // Note: emit_function_parameters_es5 calls push_temp_scope() internally,
+        // so we don't push here — the pop at the end of this function balances it.
         self.write("function (");
         // ES5: apply destructuring/default transforms
         let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
