@@ -627,3 +627,606 @@ fn test_class_implements_interface_supertypes() {
         supertypes.iter().map(|s| &s.name).collect::<Vec<_>>()
     );
 }
+
+// =========================================================================
+// Additional tests for improved coverage
+// =========================================================================
+
+#[test]
+fn test_prepare_on_empty_source() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 0);
+    let item = provider.prepare(root, pos);
+    assert!(item.is_none(), "Empty source should return None");
+}
+
+#[test]
+fn test_prepare_on_function_declaration() {
+    let source = "function doStuff() {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "doStuff" - function declarations are not classes/interfaces
+    let pos = Position::new(0, 9);
+    let item = provider.prepare(root, pos);
+    assert!(
+        item.is_none(),
+        "Function declarations should not produce type hierarchy items"
+    );
+}
+
+#[test]
+fn test_prepare_on_type_alias() {
+    let source = "type MyType = string | number;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "MyType" - type aliases are not classes/interfaces
+    let pos = Position::new(0, 5);
+    let item = provider.prepare(root, pos);
+    // Type aliases may or may not be supported; just ensure no panic
+    let _ = item;
+}
+
+#[test]
+fn test_prepare_on_enum_declaration() {
+    let source = "enum Color { Red, Green, Blue }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Color" - enums are not classes/interfaces
+    let pos = Position::new(0, 5);
+    let item = provider.prepare(root, pos);
+    // Enum may or may not be supported; just ensure no panic
+    let _ = item;
+}
+
+#[test]
+fn test_subtypes_abstract_class_extended() {
+    let source = "abstract class Shape {\n  abstract area(): number;\n}\nclass Circle extends Shape {\n  area() { return 0; }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Shape" (line 0, col 15)
+    let pos = Position::new(0, 15);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert_eq!(
+        subtypes.len(),
+        1,
+        "Abstract class Shape should have one subtype (Circle)"
+    );
+    assert_eq!(subtypes[0].name, "Circle");
+}
+
+#[test]
+fn test_interface_extends_multiple_interfaces() {
+    let source = "interface A { a(): void; }\ninterface B { b(): void; }\ninterface C extends A, B { c(): void; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "C" (line 2, col 10)
+    let pos = Position::new(2, 10);
+    let supertypes = provider.supertypes(root, pos);
+
+    assert_eq!(
+        supertypes.len(),
+        2,
+        "Interface C should have two supertypes (A and B)"
+    );
+    let names: Vec<&str> = supertypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"A"), "Should contain A");
+    assert!(names.contains(&"B"), "Should contain B");
+}
+
+#[test]
+fn test_prepare_position_past_end_of_source() {
+    let source = "class X {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position way past end of source
+    let pos = Position::new(100, 100);
+    let item = provider.prepare(root, pos);
+    // Should not panic, may return None
+    let _ = item;
+}
+
+#[test]
+fn test_subtypes_interface_with_both_class_and_interface_subtypes() {
+    let source = "interface Base { id: number; }\nclass Impl implements Base { id = 0; }\ninterface Extended extends Base { name: string; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Base" (line 0, col 10)
+    let pos = Position::new(0, 10);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert_eq!(
+        subtypes.len(),
+        2,
+        "Base should have two subtypes (Impl and Extended)"
+    );
+    let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"Impl"), "Should contain Impl");
+    assert!(names.contains(&"Extended"), "Should contain Extended");
+}
+
+#[test]
+fn test_prepare_on_class_with_generic_params() {
+    let source = "class Container<T> {\n  value: T;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Container" (line 0, col 6)
+    let pos = Position::new(0, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find hierarchy item for generic class"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "Container");
+    assert_eq!(item.kind, SymbolKind::Class);
+}
+
+#[test]
+fn test_supertypes_on_class_not_in_file() {
+    // Class with no heritage, querying supertypes should return empty
+    let source = "interface ISerializable { serialize(): string; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "ISerializable" (line 0, col 10)
+    let pos = Position::new(0, 10);
+    let supertypes = provider.supertypes(root, pos);
+
+    assert!(
+        supertypes.is_empty(),
+        "Interface with no extends should have no supertypes"
+    );
+}
+
+#[test]
+fn test_subtypes_multiple_levels_only_direct() {
+    let source =
+        "interface Root {}\ninterface Mid extends Root {}\ninterface Leaf extends Mid {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Root" (line 0, col 10) - should find only direct subtype Mid, not Leaf
+    let pos = Position::new(0, 10);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert_eq!(
+        subtypes.len(),
+        1,
+        "Root should have only one direct subtype (Mid)"
+    );
+    assert_eq!(subtypes[0].name, "Mid");
+}
+
+#[test]
+fn test_prepare_on_interface_with_generic_params() {
+    let source = "interface Comparable<T> {\n  compareTo(other: T): number;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Comparable" (line 0, col 10)
+    let pos = Position::new(0, 10);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find hierarchy item for generic interface"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "Comparable");
+    assert_eq!(item.kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_prepare_on_class_with_static_members() {
+    let source = "class Registry {\n  static instance: Registry;\n  static create() { return new Registry(); }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find hierarchy item for class with static members"
+    );
+    assert_eq!(item.unwrap().name, "Registry");
+}
+
+#[test]
+fn test_subtypes_deep_class_chain_middle() {
+    let source = "class A {}\nclass B extends A {}\nclass C extends B {}\nclass D extends C {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // B should have only one direct subtype: C
+    let pos = Position::new(1, 6);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert_eq!(subtypes.len(), 1, "B should have one direct subtype (C)");
+    assert_eq!(subtypes[0].name, "C");
+}
+
+#[test]
+fn test_supertypes_deep_class_chain_middle() {
+    let source = "class A {}\nclass B extends A {}\nclass C extends B {}\nclass D extends C {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // D should have only one direct supertype: C
+    let pos = Position::new(3, 6);
+    let supertypes = provider.supertypes(root, pos);
+
+    assert_eq!(
+        supertypes.len(),
+        1,
+        "D should have one direct supertype (C)"
+    );
+    assert_eq!(supertypes[0].name, "C");
+}
+
+#[test]
+fn test_prepare_on_interface_with_methods() {
+    let source = "interface Repository {\n  find(id: number): void;\n  save(item: any): void;\n  delete(id: number): void;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 10);
+    let item = provider.prepare(root, pos);
+
+    assert!(item.is_some());
+    let item = item.unwrap();
+    assert_eq!(item.name, "Repository");
+    assert_eq!(item.kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_class_implements_multiple_interfaces() {
+    let source = "interface Readable { read(): void; }\ninterface Writable { write(): void; }\ninterface Closeable { close(): void; }\nclass Stream implements Readable, Writable, Closeable {\n  read() {}\n  write() {}\n  close() {}\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Stream" (line 3, col 6)
+    let pos = Position::new(3, 6);
+    let supertypes = provider.supertypes(root, pos);
+
+    assert_eq!(supertypes.len(), 3, "Stream should have three supertypes");
+    let names: Vec<&str> = supertypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"Readable"));
+    assert!(names.contains(&"Writable"));
+    assert!(names.contains(&"Closeable"));
+}
+
+#[test]
+fn test_subtypes_interface_with_no_implementors() {
+    let source = "interface Orphan {\n  method(): void;\n}\nclass Unrelated {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 10);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert!(
+        subtypes.is_empty(),
+        "Interface with no implementors should have no subtypes"
+    );
+}
+
+#[test]
+fn test_prepare_on_whitespace_only_source() {
+    let source = "   \n   \n   ";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 1);
+    let item = provider.prepare(root, pos);
+    assert!(item.is_none(), "Whitespace-only source should return None");
+}
+
+#[test]
+fn test_abstract_class_subtypes_with_concrete() {
+    let source = "abstract class EventEmitter {\n  abstract emit(event: string): void;\n}\nclass NodeEmitter extends EventEmitter {\n  emit(event: string) {}\n}\nclass BrowserEmitter extends EventEmitter {\n  emit(event: string) {}\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 15);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert_eq!(subtypes.len(), 2, "EventEmitter should have two subtypes");
+    let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"NodeEmitter"));
+    assert!(names.contains(&"BrowserEmitter"));
+}
+
+#[test]
+fn test_class_extends_and_implements_multiple() {
+    let source = "interface Serializable { serialize(): string; }\ninterface Cloneable { clone(): any; }\nclass Base { id: number; }\nclass Entity extends Base implements Serializable, Cloneable {\n  serialize() { return ''; }\n  clone() { return this; }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Entity" (line 3, col 6)
+    let pos = Position::new(3, 6);
+    let supertypes = provider.supertypes(root, pos);
+
+    assert_eq!(
+        supertypes.len(),
+        3,
+        "Entity should have three supertypes (Base, Serializable, Cloneable)"
+    );
+    let names: Vec<&str> = supertypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"Base"));
+    assert!(names.contains(&"Serializable"));
+    assert!(names.contains(&"Cloneable"));
+}
+
+#[test]
+fn test_prepare_on_class_inside_body() {
+    let source = "class Outer {\n  method() {}\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position inside the class body (at 'method'), not on the class name
+    let pos = Position::new(1, 2);
+    let item = provider.prepare(root, pos);
+    // May or may not find the enclosing class; just ensure no panic
+    let _ = item;
+}
+
+#[test]
+fn test_interface_subtypes_both_class_and_interface() {
+    let source = "interface Iterable { next(): any; }\nclass ArrayIter implements Iterable { next() { return null; } }\ninterface AsyncIterable extends Iterable { nextAsync(): any; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 10);
+    let subtypes = provider.subtypes(root, pos);
+
+    assert_eq!(
+        subtypes.len(),
+        2,
+        "Iterable should have two subtypes (ArrayIter and AsyncIterable)"
+    );
+    let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"ArrayIter"));
+    assert!(names.contains(&"AsyncIterable"));
+}
+
+#[test]
+fn test_prepare_detail_for_class() {
+    let source = "class Widget {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(item.is_some());
+    let item = item.unwrap();
+    assert_eq!(item.detail, Some("class".to_string()));
+}
+
+#[test]
+fn test_prepare_detail_for_interface() {
+    let source = "interface Handler {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 10);
+    let item = provider.prepare(root, pos);
+
+    assert!(item.is_some());
+    let item = item.unwrap();
+    assert_eq!(item.detail, Some("interface".to_string()));
+}

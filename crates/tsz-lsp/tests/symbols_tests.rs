@@ -928,3 +928,193 @@ fn test_symbols_api_var_declarations() {
     assert_eq!(tree[1].name, "y");
     assert_eq!(tree[1].kind, SymbolKind::Variable);
 }
+
+#[test]
+fn test_symbols_api_generator_function() {
+    let source = "function* gen() { yield 1; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(
+        !tree.is_empty(),
+        "Should have symbol for generator function"
+    );
+    assert_eq!(tree[0].name, "gen");
+}
+
+#[test]
+fn test_symbols_api_class_with_static_members() {
+    let source = r#"
+class Config {
+    static readonly VERSION = "1.0";
+    static getInstance() { return new Config(); }
+    name: string;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Config");
+    assert!(
+        tree[0].children.len() >= 2,
+        "Should have at least static members"
+    );
+}
+
+#[test]
+fn test_symbols_api_interface_with_index_signature() {
+    let source = r#"
+interface Dictionary {
+    [key: string]: any;
+    length: number;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Dictionary");
+    assert_eq!(tree[0].kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_symbols_api_multiple_declarations() {
+    let source = "let a = 1, b = 2, c = 3;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(
+        tree.len() >= 1,
+        "Should have at least one symbol for multi-declaration"
+    );
+}
+
+#[test]
+fn test_symbols_api_enum_with_string_values() {
+    let source = r#"
+enum Direction {
+    Up = "UP",
+    Down = "DOWN",
+    Left = "LEFT",
+    Right = "RIGHT"
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Direction");
+    assert_eq!(tree[0].kind, SymbolKind::Enum);
+    assert_eq!(tree[0].children.len(), 4);
+}
+
+#[test]
+fn test_symbols_api_type_alias_union_generic() {
+    let source = "type Result<T, E = Error> = { ok: T } | { err: E };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(!tree.is_empty());
+    // Type alias may show as TypeParameter or other kind
+    let _ = &tree[0].kind;
+}
+
+#[test]
+fn test_symbols_api_class_with_constructor() {
+    let source = r#"
+class Point {
+    constructor(public x: number, public y: number) {}
+    toString() { return `(${this.x}, ${this.y})`; }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Point");
+    assert!(
+        tree[0].children.len() >= 1,
+        "Should have constructor and/or method children"
+    );
+}
+
+#[test]
+fn test_symbols_api_nested_namespaces() {
+    let source = r#"
+namespace A {
+    export namespace B {
+        export function inner() {}
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "A");
+    // Nested namespace children depend on implementation
+    let _ = &tree[0].children;
+}
+
+#[test]
+fn test_symbols_api_empty_source() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 0);
+}
+
+#[test]
+fn test_symbols_api_only_block_and_line_comments() {
+    let source = "// comment\n/* block comment */";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 0);
+}
+
+#[test]
+fn test_symbols_api_class_getter_setter() {
+    let source = r#"
+class Person {
+    private _name: string = "";
+    get name(): string { return this._name; }
+    set name(value: string) { this._name = value; }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Person");
+    assert!(
+        tree[0].children.len() >= 2,
+        "Should have getter/setter children"
+    );
+}
+
+#[test]
+fn test_symbols_api_declare_module() {
+    let source = r#"declare module "my-module" {
+    export function doStuff(): void;
+    export const VERSION: string;
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(!tree.is_empty(), "Declare module should produce symbols");
+}

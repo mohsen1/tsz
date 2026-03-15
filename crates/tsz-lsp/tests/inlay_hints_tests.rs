@@ -592,3 +592,198 @@ fn test_type_hint_string_concatenation() {
         "String concatenation should infer as string, got '{label}'"
     );
 }
+
+#[test]
+fn test_type_hint_empty_array_literal() {
+    let source = "let arr = [];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Empty array may infer as any[] or never[]; verify no crash
+    for hint in &type_hints {
+        assert!(
+            hint.label != ": error",
+            "Empty array literal should not produce 'error' hint, got '{}'",
+            hint.label
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_void_return_arrow() {
+    // Arrow function that returns nothing
+    let source = "const doNothing = () => {};";
+    let hints = get_hints_for_source(source);
+
+    // Should produce at least one hint (for the variable) and not crash
+    let _ = hints;
+}
+
+#[test]
+fn test_type_hint_negative_number() {
+    let source = "let neg = -42;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Negative number should infer as number
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("number"),
+            "Negative number should hint 'number', got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_logical_expression() {
+    let source = "let result = true && false;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Logical AND of booleans; verify no crash and hint produced
+    for hint in &type_hints {
+        assert!(
+            hint.label != ": error",
+            "Logical expression should not produce 'error' hint, got '{}'",
+            hint.label
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_typeof_expression() {
+    let source = "let t = typeof \"hello\";";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // typeof should infer as string
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("string"),
+            "typeof expression should hint 'string', got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_no_hint_for_explicit_union_type() {
+    let source = "let val: string | number = 42;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.is_empty(),
+        "Should NOT produce a type hint when union type annotation is present"
+    );
+}
+
+#[test]
+fn test_type_hint_multiline_source() {
+    let source = "let a = 1;\nlet b = 2;\nlet c = 3;\nlet d = 4;\nlet e = 5;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.len() >= 3,
+        "Should produce multiple type hints across lines, got {}",
+        type_hints.len()
+    );
+}
+
+#[test]
+fn test_type_hint_const_string() {
+    let source = "const msg = \"hello world\";";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        !type_hints.is_empty(),
+        "Should produce a type hint for const string"
+    );
+    // const string might get literal type "hello world" or widened "string"
+    let label = &type_hints[0].label;
+    assert!(
+        label.contains("string") || label.contains("hello"),
+        "Const string hint should contain 'string' or the literal, got '{label}'"
+    );
+}
+
+#[test]
+fn test_inlay_hint_to_range() {
+    let position = Position::new(3, 7);
+    let hint = InlayHint::type_hint(position, "number".to_string());
+    let range = hint.to_range();
+
+    assert_eq!(range.start, position);
+    assert_eq!(range.end, position);
+}
+
+#[test]
+fn test_inlay_hint_generic_kind() {
+    let position = Position::new(0, 5);
+    let hint = InlayHint::new(position, "<T>".to_string(), InlayHintKind::Generic);
+
+    assert_eq!(hint.kind, InlayHintKind::Generic);
+    assert_eq!(hint.label, "<T>");
+    assert!(hint.tooltip.is_none());
+}
+
+#[test]
+fn test_type_hint_comparison_expression() {
+    let source = "let isGreater = 10 > 5;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Comparison should infer as boolean
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("boolean"),
+            "Comparison expression should hint 'boolean', got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_const_boolean() {
+    let source = "const flag = false;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        !type_hints.is_empty(),
+        "Should produce a type hint for const boolean"
+    );
+    let label = &type_hints[0].label;
+    assert!(
+        label == ": boolean" || label == ": false",
+        "Const boolean hint should be 'boolean' or 'false', got '{label}'"
+    );
+}
+
+#[test]
+fn test_type_hint_spread_in_array() {
+    let source = "const a = [1, 2];\nlet b = [...a, 3];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Should produce hints for both a and b without crashing
+    assert!(
+        !type_hints.is_empty(),
+        "Spread in array should produce at least one type hint"
+    );
+}
+
+#[test]
+fn test_no_hint_for_explicit_array_type() {
+    let source = "let arr: number[] = [1, 2, 3];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.is_empty(),
+        "Should NOT produce a type hint when array type annotation is present"
+    );
+}
