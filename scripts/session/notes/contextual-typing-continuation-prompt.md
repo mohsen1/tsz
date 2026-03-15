@@ -2,9 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: 10811/12581 (85.9%) on latest main. All contextual-typing commits merged.
+**Conformance**: ~10786/12581 (85.7%) on latest main (fluctuates as other agents merge). All contextual-typing commits merged.
 
-**What was fixed** (9 commits, all merged):
+**What was fixed** (10 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
 2. Literal type preservation with primitive constraints (`<T extends string>`)
 3. Contextual return type for zero-arg generic calls (`from<T>(): T[]`)
@@ -13,6 +13,8 @@
 6. Intra-expression inference for tuple/array literals
 7. Method declaration handling (top-level sensitivity, partial extraction via `get_type_of_function`, bare type param targets, nested object recursion)
 8. TS2528 instead of TS2323 for duplicate default exports (+19 tests)
+9. Bare type param targets + nested object recursion in intra-expression inference
+10. Preserve callback return-type TS2322 through arg collection filter (circularResolvedSignature)
 
 **Tests newly passing** (confirmed on latest main):
 - `contextualPropertyOfGenericMappedType.ts` — now passes (fixed by recent main changes)
