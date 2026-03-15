@@ -4824,7 +4824,19 @@ impl<'a> DeclarationEmitter<'a> {
                 k if k == SyntaxKind::Identifier as u16
                     || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
                 {
-                    return self.get_source_slice(node.pos, node.end);
+                    // Use the COMPUTED_PROPERTY_NAME node's source slice.
+                    // The node.end may extend past `]` into trailing `:`
+                    // (the property colon), so trim it to avoid `::`.
+                    if let Some(mut s) = self.get_source_slice(node.pos, node.end) {
+                        while s.ends_with(':') {
+                            s.pop();
+                            s = s.trim_end().to_string();
+                        }
+                        if !s.is_empty() {
+                            return Some(s);
+                        }
+                    }
+                    return None;
                 }
                 _ => return None,
             }
