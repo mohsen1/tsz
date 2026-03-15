@@ -5,6 +5,13 @@ pub(crate) use super::common::{
     intersection_members, is_generic_mapped_type, is_generic_type, object_shape_for_type,
 };
 
+pub(crate) fn function_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::FunctionShape>> {
+    tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
 pub(crate) fn type_includes_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::type_includes_undefined(db, type_id)
 }
