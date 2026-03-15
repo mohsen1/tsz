@@ -128,8 +128,6 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
                     "symbol" => "Symbol".to_string(),
                     "bigint" => "BigInt".to_string(),
                     "void" | "undefined" | "null" | "never" => "void 0".to_string(),
-                    "any" | "unknown" | "object" => "Object".to_string(),
-                    "" => "Object".to_string(),
                     _ => name,
                 }
             } else {

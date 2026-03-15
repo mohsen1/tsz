@@ -1649,22 +1649,18 @@ impl<'a> Printer<'a> {
                         if let Some(inner_node) = self.arena.get(inner_idx)
                             && let Some(decl) = self.arena.get_variable_declaration(inner_node)
                             && decl.initializer.is_some()
+                            && let Some(name_node) = self.arena.get(decl.name)
+                            && let Some(ident) = self.arena.get_identifier(name_node)
                         {
-                            if let Some(name_node) = self.arena.get(decl.name)
-                                && let Some(ident) = self.arena.get_identifier(name_node)
-                            {
-                                names.push(ident.escaped_text.clone());
-                            }
+                            names.push(ident.escaped_text.clone());
                         }
                     }
                 } else if let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     && decl.initializer.is_some()
+                    && let Some(name_node) = self.arena.get(decl.name)
+                    && let Some(ident) = self.arena.get_identifier(name_node)
                 {
-                    if let Some(name_node) = self.arena.get(decl.name)
-                        && let Some(ident) = self.arena.get_identifier(name_node)
-                    {
-                        names.push(ident.escaped_text.clone());
-                    }
+                    names.push(ident.escaped_text.clone());
                 }
             }
         }

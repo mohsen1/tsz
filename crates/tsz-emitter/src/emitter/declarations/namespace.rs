@@ -491,10 +491,10 @@ impl<'a> Printer<'a> {
                     .map(|e| self.get_identifier_text_idx(e.name)),
                 _ => None,
             };
-            if let Some(n) = name {
-                if !n.is_empty() {
-                    names.push(n);
-                }
+            if let Some(n) = name
+                && !n.is_empty()
+            {
+                names.push(n);
             }
         }
         names
