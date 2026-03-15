@@ -43,28 +43,19 @@ mod visit_children;
 
 pub use self::core::LoweringPass;
 
-// Re-exports for submodule access (used by sibling modules via `use super::*`)
-#[allow(unused_imports)]
+// Re-exports consumed by submodules via `use super::*`
 use self::core::{MAX_AST_DEPTH, MAX_BINDING_PATTERN_DEPTH, MAX_QUALIFIED_NAME_DEPTH};
-#[allow(unused_imports)]
-use crate::context::emit::EmitContext;
-#[allow(unused_imports)]
-use crate::context::transform::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
-#[allow(unused_imports)]
-use crate::transforms::emit_utils;
-#[allow(unused_imports)]
-use std::sync::Arc;
-#[allow(unused_imports)]
-use tsz_common::common::ModuleKind;
-#[allow(unused_imports)]
-use tsz_parser::parser::node::{Node, NodeArena};
-#[allow(unused_imports)]
-use tsz_parser::parser::syntax_kind_ext;
-#[allow(unused_imports)]
-use tsz_parser::parser::{NodeIndex, NodeList};
-#[allow(unused_imports)]
-use tsz_parser::syntax::transform_utils::{
+pub(super) use crate::context::emit::EmitContext;
+pub(super) use crate::context::transform::{
+    IdentifierId, ModuleFormat, TransformContext, TransformDirective,
+};
+pub(super) use crate::transforms::emit_utils;
+pub(super) use std::sync::Arc;
+pub(super) use tsz_common::common::ModuleKind;
+pub(super) use tsz_parser::parser::node::{Node, NodeArena};
+pub(super) use tsz_parser::parser::syntax_kind_ext;
+pub(super) use tsz_parser::parser::{NodeIndex, NodeList};
+pub(super) use tsz_parser::syntax::transform_utils::{
     contains_arguments_reference, contains_this_reference, is_private_identifier,
 };
-#[allow(unused_imports)]
-use tsz_scanner::SyntaxKind;
+pub(super) use tsz_scanner::SyntaxKind;
