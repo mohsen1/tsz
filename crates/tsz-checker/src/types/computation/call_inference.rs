@@ -536,8 +536,8 @@ impl<'a> CheckerState<'a> {
         // This handles the common pattern where the return context type from an outer call
         // has been evaluated while the generic return type is still an Application.
         if let (Some(source_shape), Some(target_shape)) = (
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, source_eval),
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_eval),
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval),
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval),
         ) {
             for source_prop in &source_shape.properties {
                 if let Some(target_prop) = tsz_solver::PropertyInfo::find_in_slice(
