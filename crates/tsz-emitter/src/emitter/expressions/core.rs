@@ -122,11 +122,11 @@ impl<'a> Printer<'a> {
                     self.write(", \"");
                     self.write(kind);
                     self.write("\"");
-                    if let Some(ref i) = info {
-                        if let Some(ref fn_ref) = i.fn_ref {
-                            self.write(", ");
-                            self.write(fn_ref);
-                        }
+                    if let Some(ref i) = info
+                        && let Some(ref fn_ref) = i.fn_ref
+                    {
+                        self.write(", ");
+                        self.write(fn_ref);
                     }
                     self.write(") ");
                     self.write(&base_op);

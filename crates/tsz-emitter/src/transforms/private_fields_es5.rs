@@ -298,7 +298,7 @@ pub fn collect_private_accessors(
 pub struct PrivateMethodInfo {
     /// The private method name without # (e.g., "method" for "#method")
     pub name: String,
-    /// The function variable name (e.g., "_C_method")
+    /// The function variable name (e.g., "_`C_method`")
     pub fn_var_name: String,
     /// The node index of the method body
     pub body: Option<NodeIndex>,

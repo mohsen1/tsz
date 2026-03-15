@@ -129,3 +129,4 @@ editors/
 crates/tsz-website/dist/
 crates/tsz-website/data/
 .worktrees
+.local-target

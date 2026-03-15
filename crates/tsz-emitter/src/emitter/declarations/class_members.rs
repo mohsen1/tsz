@@ -384,12 +384,12 @@ impl<'a> Printer<'a> {
         }
         self.write("constructor");
         // Emit type parameters for error recovery (e.g., `constructor<T>() {}`)
-        if let Some(ref type_params) = ctor.type_parameters {
-            if !type_params.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_params.nodes);
-                self.write(">");
-            }
+        if let Some(ref type_params) = ctor.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
         }
         // Map opening `(` to its source position
         let open_paren_pos = {
