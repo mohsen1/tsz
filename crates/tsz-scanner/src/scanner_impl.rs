@@ -3,8 +3,8 @@
 //! This module implements the core Scanner struct that tokenizes TypeScript source code.
 //! It's designed to produce the same token stream as TypeScript's scanner.ts.
 //!
-//! IMPORTANT: All positions are character-based (like JavaScript's string indexing),
-//! NOT byte-based. This ensures compatibility with TypeScript's scanner positions.
+//! IMPORTANT: All positions are byte-based internally for UTF-8 performance.
+//! For ASCII-only files (99% of TypeScript), byte position == character position.
 use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
