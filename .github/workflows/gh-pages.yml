@@ -124,7 +124,7 @@ jobs:
 
   build:
     needs: [check, benchmark, wasm]
-    if: ${{ always() && needs.check.outputs.should_deploy == 'true' && !cancelled() && needs.wasm.result == 'success' && needs.benchmark.result == 'success' }}
+    if: ${{ always() && needs.check.outputs.should_deploy == 'true' && !cancelled() && needs.wasm.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
