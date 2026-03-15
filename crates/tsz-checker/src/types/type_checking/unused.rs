@@ -12,7 +12,6 @@ impl<'a> CheckerState<'a> {
     /// Reports variables, functions, classes, and other declarations that are never referenced.
     /// Also reports import declarations where ALL imports are unused (TS6192).
     pub(crate) fn check_unused_declarations(&mut self) {
-        use crate::diagnostics::Diagnostic;
         use std::collections::{HashMap, HashSet};
         use tsz_binder::ContainerKind;
         use tsz_binder::symbol_flags;
@@ -84,8 +83,6 @@ impl<'a> CheckerState<'a> {
                 symbols_to_check.push((sym_id, name.clone()));
             }
         }
-
-        let file_name = self.ctx.file_name.clone();
 
         // Track import declarations for TS6192.
         // Map from import declaration NodeIndex to (total_count, unused_count).
@@ -471,14 +468,6 @@ impl<'a> CheckerState<'a> {
                             || (flags & symbol_flags::TYPE_ALIAS) != 0
                             || (flags & symbol_flags::REGULAR_ENUM) != 0
                             || (flags & symbol_flags::CONST_ENUM) != 0;
-                        let (msg, code) = if is_type_only {
-                            (format!("'{name}' is declared but never used."), 6196)
-                        } else {
-                            (
-                                format!("'{name}' is declared but its value is never read."),
-                                6133,
-                            )
-                        };
                         let report_node = if let Some(spec_name_node) =
                             self.find_named_import_specifier_name_node(decl_idx, &name)
                         {
@@ -501,13 +490,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             (decl_node.pos, decl_node.end.saturating_sub(decl_node.pos))
                         };
-                        self.ctx.push_diagnostic(Diagnostic::error(
-                            file_name.clone(),
-                            start,
-                            length,
-                            msg,
-                            code,
-                        ));
+                        if is_type_only {
+                            self.error_declared_but_never_used(&name, start, length);
+                        } else {
+                            self.error_declared_but_never_read(&name, start, length);
+                        }
                     }
                 }
             }
@@ -533,20 +520,13 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let msg = format!("'{name}' is declared but its value is never read.");
                     let report_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                     let (start, length) = if let Some(node) = self.ctx.arena.get(report_node) {
                         (node.pos, node.end.saturating_sub(node.pos))
                     } else {
                         (decl_node.pos, decl_node.end.saturating_sub(decl_node.pos))
                     };
-                    self.ctx.push_diagnostic(Diagnostic::error(
-                        file_name.clone(),
-                        start,
-                        length,
-                        msg,
-                        6133,
-                    ));
+                    self.error_declared_but_never_read(&name, start, length);
                 }
             }
         }

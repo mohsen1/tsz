@@ -290,7 +290,7 @@ Run `cargo check -p tsz-checker` after each method. Commit with message
 "feat(checker): add error_reporter methods for uncentralized diagnostics".
 ```
 
-### Prompt 3.4 — Migrate Bypass Callers to error_reporter
+### Prompt 3.4 — Migrate Bypass Callers to error_reporter ✅ DONE
 
 ```
 For each of the 13 direct push_diagnostic calls outside error_reporter/,

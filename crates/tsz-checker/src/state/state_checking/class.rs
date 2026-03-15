@@ -1186,10 +1186,9 @@ impl<'a> CheckerState<'a> {
 
         // TypedPropertyDescriptor is not available - emit TS2318
         // TSC emits this error twice for method decorators
-        use tsz_binder::lib_loader::emit_error_global_type_missing;
-        let diag = emit_error_global_type_missing(type_name, self.ctx.file_name.clone(), 0, 0);
-        self.ctx.push_diagnostic(diag.clone());
-        self.ctx.push_diagnostic(diag);
+        let file_name = self.ctx.file_name.clone();
+        self.error_global_type_missing_at_position(type_name, file_name.clone(), 0, 0);
+        self.error_global_type_missing_at_position(type_name, file_name, 0, 0);
     }
 
     /// TS1238: Check that a class decorator expression has a compatible call signature.

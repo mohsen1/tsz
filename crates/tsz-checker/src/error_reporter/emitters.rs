@@ -106,9 +106,9 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS6133: '{name}' is declared but its value is never read.
     ///
-    /// Used for unused variables, parameters, and type parameters. Accepts raw
-    /// position data since callers compute spans from declaration nodes directly.
-    /// Routes through `push_diagnostic` for consistent deduplication.
+    /// Used for unused variables, parameters, imports, and type parameters.
+    /// Accepts raw position data since callers compute spans from declaration
+    /// nodes directly. Routes through `push_diagnostic` for consistent dedup.
     pub(crate) fn error_declared_but_never_read(&mut self, name: &str, start: u32, length: u32) {
         use crate::diagnostics::diagnostic_codes;
         let message = format!("'{name}' is declared but its value is never read.");
@@ -118,6 +118,21 @@ impl<'a> CheckerState<'a> {
             length,
             message,
             diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+        ));
+    }
+
+    /// Report TS6196: '{name}' is declared but never used.
+    ///
+    /// Used for unused type-only declarations (classes, interfaces, type aliases,
+    /// enums). Routes through `push_diagnostic` for consistent deduplication.
+    pub(crate) fn error_declared_but_never_used(&mut self, name: &str, start: u32, length: u32) {
+        let message = format!("'{name}' is declared but never used.");
+        self.ctx.push_diagnostic(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            length,
+            message,
+            6196,
         ));
     }
 
