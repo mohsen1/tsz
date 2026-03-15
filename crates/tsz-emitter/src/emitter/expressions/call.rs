@@ -40,6 +40,7 @@ impl<'a> Printer<'a> {
 
         // Private field call lowering:
         // `this.#fn(args)` → `__classPrivateFieldGet(this, _C_fn, "f").call(this, args)`
+        // `this.#method(args)` → `__classPrivateFieldGet(this, _C_instances, "m", _C_method).call(this, args)`
         if !self.private_field_weakmaps.is_empty()
             && let Some(expr_node) = self.arena.get(call.expression)
             && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -54,8 +55,24 @@ impl<'a> Printer<'a> {
                 self.write("(");
                 self.emit(access.expression);
                 self.write(", ");
-                self.write(&weakmap_name);
-                self.write(", \"f\").call(");
+                if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                    if let Some(ref state_var) = info.state_var {
+                        self.write(state_var);
+                    } else {
+                        self.write(&weakmap_name);
+                    }
+                    self.write(", \"");
+                    self.write(info.kind);
+                    self.write("\"");
+                    if let Some(ref fn_ref) = info.fn_ref {
+                        self.write(", ");
+                        self.write(fn_ref);
+                    }
+                } else {
+                    self.write(&weakmap_name);
+                    self.write(", \"f\"");
+                }
+                self.write(").call(");
                 self.emit(access.expression);
                 if let Some(ref args) = call.arguments {
                     for &arg_idx in &args.nodes {

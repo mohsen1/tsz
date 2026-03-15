@@ -25,8 +25,25 @@ impl<'a> Printer<'a> {
                 self.write("(");
                 self.emit(access.expression);
                 self.write(", ");
-                self.write(&weakmap_name);
-                self.write(", \"f\")");
+                // For methods/accessors/static fields, use the state_var instead of weakmap_name
+                if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                    if let Some(ref state_var) = info.state_var {
+                        self.write(state_var);
+                    } else {
+                        self.write(&weakmap_name);
+                    }
+                    self.write(", \"");
+                    self.write(info.kind);
+                    self.write("\"");
+                    if let Some(ref fn_ref) = info.fn_ref {
+                        self.write(", ");
+                        self.write(fn_ref);
+                    }
+                } else {
+                    self.write(&weakmap_name);
+                    self.write(", \"f\"");
+                }
+                self.write(")");
                 return;
             }
         }
