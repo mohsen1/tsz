@@ -23,6 +23,41 @@ type StaticFieldInit = (
 );
 type AutoAccessorInfo = (NodeIndex, String, Option<NodeIndex>, bool);
 
+/// Replace all occurrences of an identifier with a replacement, respecting word boundaries.
+pub(crate) fn replace_identifier(text: &str, name: &str, replacement: &str) -> String {
+    let bytes = text.as_bytes();
+    let name_bytes = name.as_bytes();
+    let name_len = name_bytes.len();
+    let mut result = String::with_capacity(text.len());
+    let mut i = 0;
+    while i + name_len <= bytes.len() {
+        if let Some(pos) = text[i..].find(name) {
+            let abs = i + pos;
+            let before_ok = abs == 0
+                || !(bytes[abs - 1].is_ascii_alphanumeric()
+                    || bytes[abs - 1] == b'_'
+                    || bytes[abs - 1] == b'$');
+            let after_end = abs + name_len;
+            let after_ok = after_end >= bytes.len()
+                || !(bytes[after_end].is_ascii_alphanumeric()
+                    || bytes[after_end] == b'_'
+                    || bytes[after_end] == b'$');
+            result.push_str(&text[i..abs]);
+            if before_ok && after_ok {
+                result.push_str(replacement);
+            } else {
+                result.push_str(name);
+            }
+            i = after_end;
+        } else {
+            result.push_str(&text[i..]);
+            return result;
+        }
+    }
+    result.push_str(&text[i..]);
+    result
+}
+
 /// Check if a class body contains self-references to the class name.
 /// This is needed for the `C_1` alias pattern in legacy decorator lowering.
 /// When a decorated class references itself (e.g. `static x() { return C.y; }`),
@@ -2552,8 +2587,15 @@ impl<'a> Printer<'a> {
         self.pending_auto_accessor_inits = prev_auto_accessor_inits;
 
         self.decrease_indent();
-        self.write("}");
-        if assignment_prefix.is_some() {
+        if class_expr_static_temp.is_some() {
+            // Indent the closing brace inside the comma-expression context
+            self.increase_indent();
+            self.write("}");
+            self.decrease_indent();
+        } else {
+            self.write("}");
+        }
+        if assignment_prefix.is_some() && class_expr_static_temp.is_none() {
             self.write(";");
         }
 
@@ -2612,7 +2654,19 @@ impl<'a> Printer<'a> {
                     }
                 }
                 self.write(" = ");
+                // Emit the initializer, then substitute class name with temp var
+                let before = self.writer.len();
                 self.emit_expression(*init_idx);
+                let after = self.writer.len();
+                if !class_name.is_empty() && class_name != *temp {
+                    let full = self.writer.get_output().to_string();
+                    let segment = &full[before..after];
+                    let replaced = replace_identifier(segment, &class_name, temp);
+                    if replaced != segment {
+                        self.writer.truncate(before);
+                        self.write(&replaced);
+                    }
+                }
                 self.decrease_indent();
             }
             self.write(",");
