@@ -672,7 +672,22 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
-            // Methods and accessors are always context-sensitive — skip them
+            // Methods with all params annotated are not context-sensitive
+            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && !is_contextually_sensitive(self, elem_idx)
+                && let Some(method) = self.ctx.arena.get_method_decl(elem_node)
+                    && let Some(name) = self.property_name_for_error(method.name)
+                {
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    // Use get_type_of_function for methods — get_type_of_node
+                    // doesn't handle METHOD_DECLARATION as expression nodes.
+                    let value_type = self.get_type_of_function(elem_idx);
+                    self.ctx.contextual_type = prev_context;
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                }
+            // Accessors are always context-sensitive — skip them
         }
 
         if properties.is_empty() {
@@ -833,7 +848,7 @@ impl<'a> CheckerState<'a> {
                 let prev_context = self.ctx.contextual_type;
                 self.ctx.contextual_type = Some(target_prop_type);
                 let diag_len = self.ctx.diagnostics.len();
-                let value_type = self.get_type_of_node(elem_idx);
+                let value_type = self.get_type_of_function(elem_idx);
                 self.ctx.diagnostics.truncate(diag_len);
                 self.ctx.contextual_type = prev_context;
 
@@ -846,6 +861,100 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(self.ctx.types.factory().object_fresh(properties))
+    }
+
+    /// Like `extract_inference_contributing_object_type` but for array/tuple literals.
+    ///
+    /// Handles patterns like:
+    /// ```ts
+    /// declare function callItT<T>(obj: [(n: number) => T, (x: T) => void]): void;
+    /// callItT([_a => 0, n => n.toFixed()]);
+    /// ```
+    /// The first element `_a => 0` has concrete contextual param type `(n: number)`,
+    /// so we can type it in Round 1 and use its return type to infer T.
+    pub(crate) fn extract_inference_contributing_array_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        target_param_type: TypeId,
+        type_param_names: &[tsz_common::Atom],
+    ) -> Option<TypeId> {
+        use super::complex::is_contextually_sensitive;
+
+        let node = self.ctx.arena.get(arg_idx)?;
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let arr = self.ctx.arena.get_literal_expr(node)?;
+
+        // Get the target tuple type
+        let target_type = self.evaluate_type_with_env(target_param_type);
+        let target_elements =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, target_type)?;
+
+        let mut elements = Vec::new();
+        let mut any_contributed = false;
+
+        for (idx, &elem_idx) in arr.elements.nodes.iter().enumerate() {
+            let target_elem_type = target_elements
+                .get(idx)
+                .map(|e| e.type_id)
+                .unwrap_or(TypeId::ANY);
+
+            if !is_contextually_sensitive(self, elem_idx) {
+                // Non-sensitive: compute type without context
+                let prev_context = self.ctx.contextual_type;
+                self.ctx.contextual_type = None;
+                let value_type = self.get_type_of_node(elem_idx);
+                self.ctx.contextual_type = prev_context;
+                elements.push(tsz_solver::TupleElement {
+                    type_id: value_type,
+                    optional: false,
+                    rest: false,
+                    name: None,
+                });
+                any_contributed = true;
+                continue;
+            }
+
+            // Sensitive element: check if contextual function params are concrete
+            let target_fn =
+                tsz_solver::type_queries::get_function_shape(self.ctx.types, target_elem_type)?;
+
+            let params_are_concrete = target_fn
+                .params
+                .iter()
+                .all(|param| !self.type_contains_any_type_param(param.type_id, type_param_names));
+
+            if params_are_concrete {
+                let prev_context = self.ctx.contextual_type;
+                self.ctx.contextual_type = Some(target_elem_type);
+                let diag_len = self.ctx.diagnostics.len();
+                let value_type = self.get_type_of_node(elem_idx);
+                self.ctx.diagnostics.truncate(diag_len);
+                self.ctx.contextual_type = prev_context;
+                elements.push(tsz_solver::TupleElement {
+                    type_id: value_type,
+                    optional: false,
+                    rest: false,
+                    name: None,
+                });
+                any_contributed = true;
+            } else {
+                // Can't contribute — use ANY as placeholder
+                elements.push(tsz_solver::TupleElement {
+                    type_id: TypeId::ANY,
+                    optional: false,
+                    rest: false,
+                    name: None,
+                });
+            }
+        }
+
+        if !any_contributed {
+            return None;
+        }
+
+        Some(self.ctx.types.factory().tuple(elements))
     }
 
     /// Check if a type contains any of the specified type parameter names.
