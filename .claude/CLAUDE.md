@@ -159,6 +159,7 @@ Skill usage rules:
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
 ## 20.25) Multi-Session Work (Campaign System)
+- **Always use `ultrathink` at the start of every agent prompt.**
 - **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
 - Each agent owns a **mission** (diagnostic/semantic goal). See `scripts/session/campaigns.yaml`.
 - **Follow root causes across crate boundaries.** Campaigns define goals, not file ownership.
