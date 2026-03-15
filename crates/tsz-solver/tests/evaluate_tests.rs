@@ -5091,7 +5091,6 @@ fn test_conditional_infer_function_param_distributive() {
 }
 
 #[test]
-#[ignore = "TODO: pre-existing issue from merge - strip_nullish_optionals parameter removed"]
 fn test_conditional_infer_function_optional_param_distributive() {
     let interner = TypeInterner::new();
 
@@ -5170,12 +5169,11 @@ fn test_conditional_infer_function_optional_param_distributive() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
 
 #[test]
-#[ignore = "TODO: pre-existing issue from merge - strip_nullish_optionals parameter removed"]
 fn test_conditional_infer_function_optional_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
@@ -5264,7 +5262,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
 
@@ -6738,7 +6736,6 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
 }
 
 #[test]
-#[ignore = "TODO: pre-existing issue from merge - strip_nullish_optionals parameter removed"]
 fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     let interner = TypeInterner::new();
 
@@ -6841,12 +6838,11 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
 
 #[test]
-#[ignore = "TODO: pre-existing issue from merge - strip_nullish_optionals parameter removed"]
 fn test_conditional_infer_object_call_signature_optional_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
@@ -6959,7 +6955,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
 
