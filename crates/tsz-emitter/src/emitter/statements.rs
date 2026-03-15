@@ -1309,13 +1309,12 @@ impl<'a> Printer<'a> {
 
         // ES5: Check if closures capture loop variables (let/const) —
         // if so, emit the _loop_N IIFE pattern instead of a plain for-loop.
+        // Capture can happen with let/const from the initializer OR the body.
         if self.ctx.target_es5 {
             let init_vars = self.collect_for_initializer_let_const_vars(loop_stmt.initializer);
-            if !init_vars.is_empty() {
-                let body_info = super::es5::loop_capture::collect_loop_body_vars(
-                    self.arena,
-                    loop_stmt.statement,
-                );
+            let body_info =
+                super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
+            if !init_vars.is_empty() || !body_info.block_scoped_vars.is_empty() {
                 if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
                     self.arena,
                     loop_stmt.statement,
