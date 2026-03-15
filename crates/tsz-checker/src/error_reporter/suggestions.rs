@@ -362,6 +362,70 @@ impl<'a> CheckerState<'a> {
         a.to_lowercase().eq(b.to_lowercase())
     }
 
+    // =========================================================================
+    // String Literal Suggestion Helpers (TS2820)
+    // =========================================================================
+
+    /// Find the best string literal suggestion from a union of string literals.
+    /// Used by TS2820: "Type '{0}' is not assignable to type '{1}'. Did you mean '{2}'?"
+    ///
+    /// Returns the suggested string literal (without quotes) if a close match is found.
+    pub(crate) fn find_string_literal_suggestion(
+        &self,
+        source_value: &str,
+        target: TypeId,
+    ) -> Option<String> {
+        // Collect string literal members from the target type.
+        // Target may be a union of string literals, or a single string literal.
+        let candidates: Vec<tsz_common::interner::Atom> = if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, target)
+        {
+            members
+                .iter()
+                .filter_map(|&m| {
+                    tsz_solver::type_queries::get_string_literal_value(self.ctx.types, m)
+                })
+                .collect()
+        } else if let Some(atom) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, target)
+        {
+            vec![atom]
+        } else {
+            return None;
+        };
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        let name_len = source_value.len();
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
+        let mut best_candidate: Option<String> = None;
+
+        for atom in &candidates {
+            let candidate_str = self.ctx.types.resolve_atom_ref(*atom);
+            Self::consider_identifier_suggestion(
+                source_value,
+                &candidate_str,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
+
+        best_candidate
+    }
+
+    // =========================================================================
+    // Levenshtein Distance
+    // =========================================================================
+
     /// Levenshtein distance with threshold pruning, matching tsc's behavior.
     /// Case-only substitutions are cheaper than other substitutions.
     fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
