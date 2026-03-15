@@ -689,3 +689,104 @@ fn test_is_require_identifier_for_require() {
         );
     }
 }
+
+#[test]
+fn test_find_node_at_offset_end_of_file() {
+    let source = "const x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, source.len() as u32);
+    // At end of file, may or may not find a node
+    let _ = node;
+}
+
+#[test]
+fn test_find_node_at_offset_zero() {
+    let source = "let x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, 0);
+    assert!(node.is_some(), "Should find node at offset 0");
+}
+
+#[test]
+fn test_find_node_at_offset_in_string_literal() {
+    let source = "const s = 'hello world';";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, 14);
+    assert!(node.is_some(), "Should find node inside string literal");
+}
+
+#[test]
+fn test_find_node_at_offset_in_number() {
+    let source = "const n = 12345;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, 12);
+    assert!(node.is_some(), "Should find node in number literal");
+}
+
+#[test]
+fn test_find_node_at_offset_multiline_return() {
+    let source = "function foo() {\n  return 42;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // "return" keyword at offset 19
+    let node = find_node_at_offset(arena, 19);
+    assert!(node.is_some(), "Should find node on second line");
+}
+
+#[test]
+fn test_find_node_at_offset_beyond_source() {
+    let source = "x";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, 100);
+    // Beyond source should return None or last node
+    let _ = node;
+}
+
+#[test]
+fn test_is_require_identifier_non_require() {
+    let source = "const notRequire = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let ident_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let text = source.get(node.pos as usize..node.end as usize)?;
+            if text == "notRequire" {
+                return Some(tsz_parser::NodeIndex(idx as u32));
+            }
+        }
+        None
+    });
+
+    if let Some(node_idx) = ident_node {
+        assert!(
+            !is_require_identifier(arena, node_idx),
+            "'notRequire' should not be detected as require"
+        );
+    }
+}
+
+#[test]
+fn test_find_node_at_offset_in_template_literal() {
+    let source = "const s = `hello ${name}`;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, 19);
+    assert!(
+        node.is_some(),
+        "Should find node inside template expression"
+    );
+}

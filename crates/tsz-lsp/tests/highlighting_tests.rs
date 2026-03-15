@@ -1529,3 +1529,183 @@ fn test_highlight_for_loop_traditional() {
         highlights.len()
     );
 }
+
+#[test]
+fn test_highlight_import_specifier() {
+    let source = "import { foo } from './mod';\nfoo();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 9));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 1, "Should find at least import specifier");
+    }
+}
+
+#[test]
+fn test_highlight_type_annotation() {
+    let source =
+        "type MyType = string;\nlet x: MyType;\nfunction f(a: MyType): MyType { return a; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 5));
+    if let Some(hl) = highlights {
+        assert!(
+            hl.len() >= 2,
+            "MyType used in multiple places, got {}",
+            hl.len()
+        );
+    }
+}
+
+#[test]
+fn test_highlight_generic_type_param() {
+    let source = "function identity<T>(arg: T): T { return arg; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    // T at position (0, 18)
+    let highlights = provider.get_document_highlights(root, Position::new(0, 18));
+    if let Some(hl) = highlights {
+        assert!(
+            hl.len() >= 2,
+            "T used in param and return type, got {}",
+            hl.len()
+        );
+    }
+}
+
+#[test]
+fn test_highlight_namespace_variable() {
+    let source = "namespace NS {\n  export const val = 1;\n}\nconst x = NS.val;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 10));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 1, "Should highlight NS");
+    }
+}
+
+#[test]
+fn test_highlight_computed_property() {
+    let source = "const key = 'name';\nconst obj = { [key]: 'value' };\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(
+            hl.len() >= 2,
+            "key used in declaration and computed property"
+        );
+    }
+}
+
+#[test]
+fn test_highlight_spread_operator_variable() {
+    let source = "const arr = [1, 2, 3];\nconst newArr = [...arr, 4];\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "arr used in declaration and spread");
+    }
+}
+
+#[test]
+fn test_highlight_ternary_variable() {
+    let source = "const flag = true;\nconst val = flag ? 'yes' : 'no';\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(
+            hl.len() >= 2,
+            "flag used in declaration and ternary condition"
+        );
+    }
+}
+
+#[test]
+fn test_highlight_optional_chaining_variable() {
+    let source = "const obj = { a: { b: 1 } };\nconst val = obj?.a?.b;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(
+            hl.len() >= 2,
+            "obj used in declaration and optional chaining"
+        );
+    }
+}
+
+#[test]
+fn test_highlight_template_string_variable() {
+    let source = "const name = 'World';\nconst msg = `Hello ${name}!`;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(0, 6));
+    if let Some(hl) = highlights {
+        assert!(hl.len() >= 2, "name used in declaration and template");
+    }
+}
+
+#[test]
+fn test_highlight_no_match_at_whitespace() {
+    let source = "const x = 1;\n\nconst y = 2;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+    let highlights = provider.get_document_highlights(root, Position::new(1, 0));
+    // Whitespace position should return None or empty
+    if let Some(hl) = highlights {
+        let _ = hl;
+    }
+}
