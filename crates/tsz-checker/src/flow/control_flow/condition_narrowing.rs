@@ -1553,10 +1553,9 @@ impl<'a> FlowAnalyzer<'a> {
                 let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                 let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
                 return Some(narrowed);
-            } else {
-                // x holds the falsy result → keep only falsy types
-                return Some(narrowing.narrow_to_falsy(type_id));
             }
+            // x holds the falsy result → keep only falsy types
+            return Some(narrowing.narrow_to_falsy(type_id));
         }
         // For non-matching references, fall through to || handling below
 
