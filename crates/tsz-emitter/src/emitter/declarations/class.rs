@@ -707,6 +707,11 @@ impl<'a> Printer<'a> {
                     let Some(method) = self.arena.get_method_decl(member_node) else {
                         continue;
                     };
+                    // Skip overload signatures (no body) — decorators on overloads
+                    // are not emitted as __decorate targets
+                    if !method.body.is_some() {
+                        continue;
+                    }
                     let meta = MemberMetadata::Method {
                         parameters: method.parameters.clone(),
                         return_type: method.type_annotation,
