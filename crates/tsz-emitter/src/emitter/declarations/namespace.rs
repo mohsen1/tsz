@@ -443,6 +443,60 @@ impl<'a> Printer<'a> {
         names
     }
 
+    /// Collect names of exported classes, functions, and enums from a namespace.
+    /// These names need qualification in REOPENED blocks of the same namespace
+    /// but NOT in their own declaration block (since they're locally in scope).
+    fn collect_namespace_class_fn_enum_names(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let Some(body_node) = self.arena.get(module.body) else {
+            return names;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            let Some(inner_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            let name = match inner_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(inner_node)
+                    .map(|c| self.get_identifier_text_idx(c.name)),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(inner_node)
+                    .map(|f| self.get_identifier_text_idx(f.name)),
+                k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                    .arena
+                    .get_enum(inner_node)
+                    .map(|e| self.get_identifier_text_idx(e.name)),
+                _ => None,
+            };
+            if let Some(n) = name {
+                if !n.is_empty() {
+                    names.push(n);
+                }
+            }
+        }
+        names
+    }
+
     /// Collect non-exported variable names declared in a namespace body.
     /// These shadow any same-named exports from prior blocks.
     fn collect_namespace_local_var_names(
@@ -502,17 +556,24 @@ impl<'a> Printer<'a> {
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
             let mut local_exports = self.collect_namespace_exported_names(module);
+            // Collect class/function/enum names for future reopenings (before mutable borrow)
+            let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
             // Merge in exports from prior blocks of the same namespace (cross-block sharing)
             {
                 let root_name = self.get_identifier_text_idx(module.name);
                 if !root_name.is_empty() {
                     let entry = self.namespace_prior_exports.entry(root_name).or_default();
-                    // Add this block's exports to the accumulated map
-                    entry.extend(local_exports.iter().cloned());
-                    // Merge prior exports into local set for qualification
+                    // Merge PRIOR exports into local set BEFORE adding this block's names.
+                    // This ensures names from earlier blocks are qualified in this block,
+                    // but this block's own declarations are NOT qualified here.
                     for name in entry.iter() {
                         local_exports.insert(name.clone());
                     }
+                    // Add this block's variable exports for future reopenings
+                    entry.extend(local_exports.iter().cloned());
+                    // Register class/function/enum names for qualification in
+                    // subsequent reopenings only (not in this block's local_exports).
+                    entry.extend(class_fn_enum_names);
                 }
             }
             // Remove locally-declared non-exported names — they shadow prior exports
