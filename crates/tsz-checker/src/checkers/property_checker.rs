@@ -37,6 +37,7 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
     ) -> bool {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::state::MemberAccessLevel;
 
         let is_property_identifier = self
             .ctx
@@ -56,10 +57,22 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let Some((class_idx, is_static)) = self.resolve_class_for_access(object_expr, object_type)
-        else {
-            return true;
-        };
+        let class_result = self.resolve_class_for_access(object_expr, object_type);
+
+        // Fallback: when the object type is an interface extending multiple
+        // unrelated classes, `resolve_class_for_access` returns None because
+        // `get_class_decl_from_type` can't pick a single most-derived class.
+        // Check each candidate class for the property's access restriction.
+        if class_result.is_none() {
+            return self.check_property_accessibility_via_brands(
+                object_expr,
+                property_name,
+                error_node,
+                object_type,
+            );
+        }
+
+        let (class_idx, is_static) = class_result.unwrap();
 
         // Mark the class member symbol as referenced for unused-variable tracking.
         // Property accesses like `this.x` go through the solver's property resolution
@@ -106,8 +119,34 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(access_info) = self.find_member_access_info(class_idx, property_name, is_static)
-        else {
+        // For accessor properties with divergent visibility (e.g., public get /
+        // private set), determine which accessor to check based on whether the
+        // property access is in a write context (assignment LHS).
+        let access_info = if let Some((getter_level, setter_level, decl_class_idx)) =
+            self.find_accessor_levels_in_hierarchy(class_idx, property_name, is_static)
+        {
+            // Only apply context-aware checking when the accessor levels diverge.
+            if getter_level != setter_level {
+                let is_write = self.is_property_access_write_context(error_node);
+                let level = if is_write { setter_level } else { getter_level };
+                match level {
+                    Some(lvl) => Some(crate::state::MemberAccessInfo {
+                        level: lvl,
+                        declaring_class_idx: decl_class_idx,
+                        declaring_class_name: self
+                            .get_class_name_with_type_params_from_decl(decl_class_idx),
+                    }),
+                    None => None, // Public accessor in this context — no restriction.
+                }
+            } else {
+                // Same level on both accessors — use the normal lookup.
+                self.find_member_access_info(class_idx, property_name, is_static)
+            }
+        } else {
+            self.find_member_access_info(class_idx, property_name, is_static)
+        };
+
+        let Some(access_info) = access_info else {
             return true;
         };
 
@@ -206,6 +245,193 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Check property accessibility by examining brand properties on the type.
+    ///
+    /// Used as a fallback when `resolve_class_for_access` returns `None` because
+    /// the object type has multiple unrelated base classes (e.g., an interface
+    /// extending two unrelated classes). We check each candidate class for the
+    /// property's access restriction.
+    fn check_property_accessibility_via_brands(
+        &mut self,
+        _object_expr: NodeIndex,
+        property_name: &str,
+        error_node: NodeIndex,
+        object_type: tsz_solver::TypeId,
+    ) -> bool {
+        use crate::diagnostics::diagnostic_codes;
+        use crate::query_boundaries::checkers::property as query;
+
+        // Collect all candidate classes from brand properties.
+        let candidates = self.collect_brand_class_candidates(object_type);
+        if candidates.is_empty() {
+            return true;
+        }
+
+        let is_static = self.is_constructor_type(object_type);
+        let current_class_idx = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
+
+        // Check each candidate class for the property. If the property is found
+        // as restricted in any candidate, check accessibility against that class.
+        for class_idx in &candidates {
+            let Some(access_info) =
+                self.find_member_access_info(*class_idx, property_name, is_static)
+            else {
+                continue;
+            };
+
+            let allowed = match access_info.level {
+                MemberAccessLevel::Private => {
+                    current_class_idx == Some(access_info.declaring_class_idx)
+                }
+                MemberAccessLevel::Protected => match current_class_idx {
+                    None => false,
+                    Some(cur) => {
+                        cur == access_info.declaring_class_idx
+                            || self
+                                .is_class_derived_from(cur, access_info.declaring_class_idx)
+                    }
+                },
+            };
+
+            if !allowed {
+                match access_info.level {
+                    MemberAccessLevel::Private => {
+                        let message = format!(
+                            "Property '{}' is private and only accessible within class '{}'.",
+                            property_name, access_info.declaring_class_name
+                        );
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
+                        );
+                    }
+                    MemberAccessLevel::Protected => {
+                        let message = format!(
+                            "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
+                            property_name, access_info.declaring_class_name
+                        );
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
+                        );
+                    }
+                }
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Collect all class declaration candidates from brand properties on a type.
+    fn collect_brand_class_candidates(
+        &self,
+        object_type: tsz_solver::TypeId,
+    ) -> Vec<NodeIndex> {
+        use crate::query_boundaries::checkers::property as query;
+
+        let mut candidates = Vec::new();
+
+        fn parse_brand_name(name: &str) -> Option<Result<tsz_binder::SymbolId, NodeIndex>> {
+            const NODE_PREFIX: &str = "__private_brand_node_";
+            const PREFIX: &str = "__private_brand_";
+
+            if let Some(rest) = name.strip_prefix(NODE_PREFIX) {
+                let node_id: u32 = rest.parse().ok()?;
+                return Some(Err(NodeIndex(node_id)));
+            }
+            if let Some(rest) = name.strip_prefix(PREFIX) {
+                let sym_id: u32 = rest.parse().ok()?;
+                return Some(Ok(tsz_binder::SymbolId(sym_id)));
+            }
+            None
+        }
+
+        fn collect<'a>(
+            checker: &CheckerState<'a>,
+            type_id: tsz_solver::TypeId,
+            out: &mut Vec<NodeIndex>,
+        ) {
+            match query::classify_for_class_decl(checker.ctx.types, type_id) {
+                query::ClassDeclTypeKind::Object(shape_id) => {
+                    let shape = checker.ctx.types.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        let name = checker.ctx.types.resolve_atom_ref(prop.name);
+                        if let Some(parsed) = parse_brand_name(&name) {
+                            let class_idx = match parsed {
+                                Ok(sym_id) => checker.get_class_declaration_from_symbol(sym_id),
+                                Err(node_idx) => Some(node_idx),
+                            };
+                            if let Some(class_idx) = class_idx {
+                                out.push(class_idx);
+                            }
+                        }
+                    }
+                }
+                query::ClassDeclTypeKind::Members(members) => {
+                    for member in members {
+                        collect(checker, member, out);
+                    }
+                }
+                query::ClassDeclTypeKind::NotObject => {}
+            }
+        }
+
+        collect(self, object_type, &mut candidates);
+        candidates
+    }
+
+    /// Determine if a property access is in a write context (LHS of assignment).
+    fn is_property_access_write_context(&self, error_node: NodeIndex) -> bool {
+        // error_node is the property name (identifier). Walk up to the property
+        // access expression, then check if its parent is an assignment.
+        let Some(ext) = self.ctx.arena.get_extended(error_node) else {
+            return false;
+        };
+        // Parent should be the property access expression.
+        let prop_access_idx = ext.parent;
+        let Some(prop_ext) = self.ctx.arena.get_extended(prop_access_idx) else {
+            return false;
+        };
+        // Grandparent should be the binary expression (assignment).
+        let grandparent_idx = prop_ext.parent;
+        let Some(grandparent_node) = self.ctx.arena.get(grandparent_idx) else {
+            return false;
+        };
+        if grandparent_node.kind
+            != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
+        {
+            // Also check for prefix/postfix increment/decrement.
+            if grandparent_node.kind
+                == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || grandparent_node.kind
+                    == tsz_parser::parser::syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+            {
+                if let Some(unary) = self.ctx.arena.get_prefix_unary(grandparent_node) {
+                    return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
+                        || unary.operator
+                            == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
+                }
+                if let Some(unary) = self.ctx.arena.get_postfix_unary(grandparent_node) {
+                    return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
+                        || unary.operator
+                            == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
+                }
+            }
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(grandparent_node) else {
+            return false;
+        };
+        // Check if the property access is on the LHS and the operator is assignment.
+        if binary.left != prop_access_idx {
+            return false;
+        }
+        self.is_assignment_operator(binary.operator_token)
     }
 
     /// Check if a union type has a property that should be treated as "not existing"
