@@ -569,23 +569,56 @@ impl<'a> RenameProvider<'a> {
     fn full_display_name(&self, symbol: &tsz_binder::Symbol, simple_name: &str) -> String {
         let mut parts = vec![simple_name.to_string()];
         let mut current_parent = symbol.parent;
+        let mut is_top_level = false;
 
         for _ in 0..10 {
             if current_parent.is_none() {
+                is_top_level = true;
                 break;
             }
             if let Some(parent_sym) = self.binder.symbols.get(current_parent) {
-                if !parent_sym.escaped_name.is_empty() && parent_sym.escaped_name != "__global" {
-                    parts.push(parent_sym.escaped_name.clone());
+                let name = &parent_sym.escaped_name;
+                if name == "__global" || name == "__export" {
+                    is_top_level = true;
+                    break;
+                }
+                // Source file symbols have the file path as name
+                if name.starts_with('/') || name.starts_with("\\\\") {
+                    is_top_level = true;
+                    break;
+                }
+                if !name.is_empty() {
+                    parts.push(name.clone());
                 }
                 current_parent = parent_sym.parent;
             } else {
+                is_top_level = true;
                 break;
             }
         }
 
         parts.reverse();
+
+        // For top-level symbols that are exported, prefix with the quoted
+        // module path: '"/path/to/module".SymbolName'
+        if is_top_level && symbol.is_exported {
+            let module_name = self
+                .file_name
+                .strip_suffix(".d.ts")
+                .or_else(|| self.file_name.strip_suffix(".ts"))
+                .or_else(|| self.file_name.strip_suffix(".tsx"))
+                .or_else(|| self.file_name.strip_suffix(".js"))
+                .or_else(|| self.file_name.strip_suffix(".jsx"))
+                .unwrap_or(&self.file_name);
+            return format!("\"{}\".{}", module_name, parts.join("."));
+        }
+
         parts.join(".")
+    }
+
+    /// Check if a symbol is a default export.
+    fn is_default_export(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol.escaped_name == "default" || symbol.flags & symbol_flags::EXPORT_VALUE != 0
     }
 
     // -----------------------------------------------------------------------
