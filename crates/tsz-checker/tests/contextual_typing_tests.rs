@@ -373,7 +373,6 @@ h(v => v ? (abc) => { } : Promise.reject());
 }
 
 #[test]
-#[ignore = "TODO: excess-property checking now emits 3 TS2353 instead of 1 after behavior change"]
 fn test_deferred_mapped_intersection_preserves_contextual_property_types() {
     let source = r#"
 type Action<TEvent extends { type: string }> = (ev: TEvent) => void;
@@ -455,7 +454,6 @@ createMachine2({
 }
 
 #[test]
-#[ignore = "TODO: excess-property checking now emits 3 TS2353 instead of 1 after behavior change"]
 fn test_contextual_function_object_property_intersection_sequence() {
     let source = r#"
 type Action<TEvent extends { type: string }> = (ev: TEvent) => void;

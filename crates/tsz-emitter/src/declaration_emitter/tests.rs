@@ -640,7 +640,6 @@ fn test_ts_const_await_literal_uses_initializer() {
 }
 
 #[test]
-#[ignore = "pre-existing failure: @callback synthesis regressed in recent dts-emit refactors"]
 fn test_js_variable_preserves_name_like_jsdoc_type_reference() {
     let source = r#"
 /**

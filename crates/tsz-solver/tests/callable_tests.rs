@@ -47,7 +47,6 @@ fn test_callable_same_signature() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_callable_more_overloads() {
     let interner = TypeInterner::new();
 
@@ -424,7 +423,6 @@ fn test_callable_missing_property() {
 // =============================================================================
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_signature_exact_match() {
     // Test: Selecting exact matching overload from multiple signatures
     let interner = TypeInterner::new();
@@ -479,7 +477,6 @@ fn test_overload_signature_exact_match() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_signature_order_priority() {
     // Test: Earlier overload takes priority for matching
     let interner = TypeInterner::new();
@@ -537,7 +534,6 @@ fn test_overload_signature_order_priority() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_multiple_arities() {
     // Test: Overloads with different parameter counts
     let interner = TypeInterner::new();
@@ -837,7 +833,6 @@ fn test_generic_overload_multiple_type_params() {
 // =============================================================================
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_optional_param_overload_matching() {
     // Test: fn(x: string): number; fn(x: string, y?: number): string;
     let interner = TypeInterner::new();
