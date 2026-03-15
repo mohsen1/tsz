@@ -162,14 +162,52 @@ fn widen_type_cached(
             }
 
             if changed {
-                // If we have index signatures, we must preserve them using object_with_index
-                if shape.string_index.is_some() || shape.number_index.is_some() {
-                    let mut new_shape = (*shape).clone();
-                    new_shape.properties = new_props;
-                    db.object_with_index(new_shape)
-                } else {
-                    db.object(new_props)
+                eprintln!(
+                    "@@@ widen_type_cached: widening object shape_id={}, {} props changed",
+                    shape_id.0,
+                    new_props.len()
+                );
+                for (old, new) in shape.properties.iter().zip(new_props.iter()) {
+                    if old.type_id != new.type_id {
+                        eprintln!(
+                            "@@@   prop changed: old_type={} new_type={}",
+                            old.type_id.0, new.type_id.0
+                        );
+                    }
                 }
+                let widened_type_id =
+                    // If we have index signatures, we must preserve them using object_with_index
+                    if shape.string_index.is_some() || shape.number_index.is_some() {
+                        let mut new_shape = (*shape).clone();
+                        new_shape.properties = new_props;
+                        db.object_with_index(new_shape)
+                    } else {
+                        db.object(new_props)
+                    };
+
+                // Carry forward display properties from the original fresh object.
+                // When widening creates a new ObjectShapeId, preserve the
+                // pre-widened literal types for error messages.
+                if let Some(
+                    crate::TypeData::Object(new_shape_id)
+                    | crate::TypeData::ObjectWithIndex(new_shape_id),
+                ) = db.lookup(widened_type_id)
+                {
+                    // Use existing display properties if available, otherwise
+                    // use the original (pre-widened) properties as display properties.
+                    let display_props = db
+                        .get_display_properties(shape_id)
+                        .map(|p| p.as_ref().clone())
+                        .unwrap_or_else(|| shape.properties.clone());
+                    eprintln!(
+                        "@@@ store_display_properties: new_shape_id={}, {} props",
+                        new_shape_id.0,
+                        display_props.len()
+                    );
+                    db.store_display_properties(new_shape_id, display_props);
+                }
+
+                widened_type_id
             } else {
                 type_id
             }
