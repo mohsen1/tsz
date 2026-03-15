@@ -1382,11 +1382,10 @@ fn test_union_with_error_returns_any() {
     let obj = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
     let union = interner.union(vec![obj, TypeId::ERROR]);
 
-    // ERROR acts like any to prevent cascading errors.
-    // When the union is normalized, ERROR becomes ANY in the union members.
-    // Since any member is ANY, property access returns ANY.
+    // ERROR in a union preserves the ERROR type through property access
+    // to prevent cascading diagnostics from the resolved type.
     let result = evaluator.resolve_property_access(union, "x");
-    assert_property_success(&result, TypeId::ANY);
+    assert_property_success(&result, TypeId::ERROR);
 }
 
 // =============================================================================
