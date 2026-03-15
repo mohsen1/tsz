@@ -1832,6 +1832,9 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             let start = std::cmp::min(pos1 as usize, text.len());
             let end = std::cmp::min(pos2 as usize, text.len());
+            if start > end {
+                return false;
+            }
             !text[start..end].contains('\n')
         } else {
             false
