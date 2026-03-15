@@ -391,6 +391,59 @@ pub fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     false
 }
 
+/// Extract type parameters from a callable/function type for type argument checking.
+///
+/// For Function types: returns the function's type parameters directly.
+/// For Callable types: finds the call signature whose type parameter arity
+/// matches `type_arg_count`, or falls back to the first signature.
+/// Returns empty if the type has no type parameters or if multiple overloads
+/// match the arity (overload resolution handles those cases).
+pub fn extract_type_params_for_call(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    type_arg_count: usize,
+) -> Option<Vec<crate::types::TypeParamInfo>> {
+    match db.lookup(type_id) {
+        Some(TypeData::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            Some(shape.type_params.clone())
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            let matching: Vec<_> = shape
+                .call_signatures
+                .iter()
+                .filter(|sig| {
+                    let max = sig.type_params.len();
+                    let min = sig
+                        .type_params
+                        .iter()
+                        .filter(|tp| tp.default.is_none())
+                        .count();
+                    type_arg_count >= min && type_arg_count <= max
+                })
+                .collect();
+            // Multiple overloads match → skip (overload resolution handles it)
+            if matching.len() > 1 {
+                return None;
+            }
+            if let Some(sig) = matching.first() {
+                Some(sig.type_params.clone())
+            } else {
+                // Fall back to first signature for diagnostics
+                Some(
+                    shape
+                        .call_signatures
+                        .first()
+                        .map(|sig| sig.type_params.clone())
+                        .unwrap_or_default(),
+                )
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2236,5 +2289,35 @@ mod tests {
 
         // Plain type — not constructor-like
         assert!(!super::is_constructor_like_type(&interner, TypeId::STRING));
+    }
+
+    #[test]
+    fn test_extract_type_params_for_call() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{FunctionShape, TypeParamInfo};
+
+        let tp_t = TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        };
+
+        // Function with 1 type param
+        let fn_generic = interner.function(FunctionShape {
+            type_params: vec![tp_t.clone()],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let result = super::extract_type_params_for_call(&interner, fn_generic, 1);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 1);
+
+        // Non-callable type → None
+        assert!(super::extract_type_params_for_call(&interner, TypeId::STRING, 0).is_none());
     }
 }
