@@ -2,18 +2,25 @@
 # TSZ Campaign Definitions
 # =============================================================================
 #
-# Each campaign owns a specific MECHANISM area of the compiler.
-# An agent claims a campaign by creating branch: campaign/<name>
-# One agent per campaign at a time (checked by start-campaign.sh).
+# Each campaign defines a MISSION — a diagnostic/semantic goal to achieve.
+# Agents follow the root cause wherever it leads, across crate boundaries.
 #
-# Campaigns are designed so agents modify different files — minimizing
-# merge conflicts and semantic interference between concurrent sessions.
+# File ownership is NOT enforced. Campaigns are organized by WHAT you're
+# fixing, not WHERE the code lives. A false-positives fix might need solver
+# changes. A narrowing fix might need checker changes. That's fine.
+#
+# The `entry_files` field suggests where to START looking, not where you
+# must stay. The `coordinate_on` field lists files where another campaign
+# is likely working — check git log before making large changes there.
 #
 # To see which campaigns are available vs claimed:
 #   scripts/session/check-status.sh
 #
 # To start working on a campaign:
 #   scripts/session/start-campaign.sh <campaign-name>
+#
+# To check/record session progress:
+#   scripts/session/campaign-checkpoint.sh <campaign-name> [--status|--init]
 #
 # =============================================================================
 
@@ -24,8 +31,8 @@ campaigns:
   # ---------------------------------------------------------------------------
 
   generic-inference:
-    description: >
-      Generic function call type parameter inference and instantiation.
+    mission: >
+      Fix generic function call type parameter inference and instantiation.
       When tsc infers type params for generic calls and we get it wrong.
     focus_codes: [TS2345, TS2322, TS2769, TS7006]
     research_command: |
@@ -33,16 +40,18 @@ campaigns:
       python3 scripts/conformance/query-conformance.py --code TS2769
       ./scripts/conformance/conformance.sh run --filter "generic" --verbose --max 20
     test_filter: "generic|typeArgument|callSignature|overload|infer"
-    primary_files:
+    entry_files:
       - crates/tsz-solver/src/infer.rs
       - crates/tsz-solver/src/operations/generic_call.rs
       - crates/tsz-checker/src/types/function_type.rs
+    coordinate_on:
+      - crates/tsz-solver/src/subtype.rs  # subtype-relations campaign likely active
     estimated_impact: 120 tests
     difficulty: hard
 
   subtype-relations:
-    description: >
-      Core subtype and assignability checks for unions, intersections,
+    mission: >
+      Fix core subtype and assignability checks for unions, intersections,
       and structural object compatibility. The heart of TS2322.
     focus_codes: [TS2322, TS2345, TS2416]
     research_command: |
@@ -50,23 +59,25 @@ campaigns:
       python3 scripts/conformance/query-conformance.py --code TS2322
       ./scripts/conformance/conformance.sh run --filter "assignability|subtype" --verbose --max 20
     test_filter: "assignab|subtype|compat|union.*assign|intersection.*assign"
-    primary_files:
+    entry_files:
       - crates/tsz-solver/src/subtype.rs
       - crates/tsz-solver/src/relations/
       - crates/tsz-checker/src/assignability/
+    coordinate_on:
+      - crates/tsz-solver/src/infer.rs  # generic-inference campaign likely active
     estimated_impact: 150 tests
     difficulty: hard
 
   computed-types:
-    description: >
-      Mapped type evaluation, conditional type distribution, template
+    mission: >
+      Fix mapped type evaluation, conditional type distribution, template
       literal types, and keyof computation.
     focus_codes: [TS2322, TS2344, TS2536, TS2339]
     research_command: |
       python3 scripts/conformance/query-conformance.py --code TS2344
       ./scripts/conformance/conformance.sh run --filter "mapped|conditional|templateLiteral" --verbose --max 20
     test_filter: "mapped|conditional|templateLiteral|keyof"
-    primary_files:
+    entry_files:
       - crates/tsz-solver/src/evaluate.rs
       - crates/tsz-solver/src/operations/mapped.rs
       - crates/tsz-solver/src/operations/conditional.rs
@@ -78,16 +89,17 @@ campaigns:
   # ---------------------------------------------------------------------------
 
   contextual-typing:
-    description: >
-      Contextual type inference: how expression types are inferred from
+    mission: >
+      Fix contextual type inference: how expression types are inferred from
       surrounding context (callback params, object literals, rest params).
+      Root cause often in solver's contextual type propagation, not just checker.
     focus_codes: [TS7006, TS2322, TS2345, TS2769]
     research_command: |
       python3 scripts/conformance/query-conformance.py --campaign contextual-typing
       python3 scripts/conformance/query-conformance.py --code TS7006
       ./scripts/conformance/conformance.sh run --filter "contextual|callback" --verbose --max 20
     test_filter: "contextual|callback|objectLiteral|restParam|spreadArg"
-    primary_files:
+    entry_files:
       - crates/tsz-checker/src/types/contextual_type.rs
       - crates/tsz-checker/src/types/computation/
       - crates/tsz-checker/src/state/type_analysis/
@@ -95,16 +107,17 @@ campaigns:
     difficulty: hard
 
   narrowing:
-    description: >
-      Control flow analysis and type narrowing: typeof guards, instanceof,
+    mission: >
+      Fix control flow analysis and type narrowing: typeof guards, instanceof,
       discriminated unions, truthiness, nullish checks, type predicates.
+      May require solver, checker, or binder changes depending on root cause.
     focus_codes: [TS2322, TS2339, TS18048, TS2741, TS2532]
     research_command: |
       python3 scripts/conformance/query-conformance.py --campaign narrowing-flow
       python3 scripts/conformance/query-conformance.py --code TS18048
       ./scripts/conformance/conformance.sh run --filter "narrow|typeGuard|controlFlow" --verbose --max 20
     test_filter: "narrow|typeGuard|controlFlow|discriminat|assert"
-    primary_files:
+    entry_files:
       - crates/tsz-solver/src/narrowing.rs
       - crates/tsz-checker/src/flow_analysis.rs
       - crates/tsz-checker/src/state/flow/
@@ -112,8 +125,8 @@ campaigns:
     difficulty: hard
 
   property-resolution:
-    description: >
-      Property access, index access, keyof resolution, and bracket
+    mission: >
+      Fix property access, index access, keyof resolution, and bracket
       notation on unions, intersections, and merged declaration shapes.
     focus_codes: [TS2339, TS7053, TS2536, TS2538]
     research_command: |
@@ -121,7 +134,7 @@ campaigns:
       python3 scripts/conformance/query-conformance.py --code TS2339
       ./scripts/conformance/conformance.sh run --filter "property|indexAccess|elementAccess" --verbose --max 20
     test_filter: "property|indexAccess|keyof|elementAccess|bracketNotation"
-    primary_files:
+    entry_files:
       - crates/tsz-solver/src/operations/property.rs
       - crates/tsz-solver/src/operations/index.rs
       - crates/tsz-checker/src/types/property_access_type.rs
@@ -133,33 +146,36 @@ campaigns:
   # ---------------------------------------------------------------------------
 
   parser-diagnostics:
-    description: >
-      Parser error recovery and TS1xxx diagnostic accuracy.
-      Parser-only work — no solver or checker changes.
+    mission: >
+      Fix parser error recovery and TS1xxx diagnostic accuracy.
+      Primarily parser work, but may touch scanner for tokenization edge cases.
     focus_codes: [TS1005, TS1109, TS1128, TS1003, TS1002]
     research_command: |
       python3 scripts/conformance/query-conformance.py --campaign parser-recovery
       ./scripts/conformance/conformance.sh run --filter "parser" --verbose --max 20
     test_filter: "parser|syntax|expected.*token"
-    primary_files:
+    entry_files:
       - crates/tsz-parser/src/
     estimated_impact: 80 tests
     difficulty: medium
 
   false-positives:
-    description: >
-      Eliminate extra diagnostics we emit that tsc doesn't.
-      193 tests where tsc expects 0 errors but we emit some.
-      Focus on suppression logic, error gating, and diagnostic conditions.
+    mission: >
+      Eliminate extra diagnostics we emit that tsc doesn't. 193 tests where
+      tsc expects 0 errors but we emit some. Root causes are typically in
+      solver relations, checker assignability gates, or narrowing — not just
+      in the error_reporter. Follow the root cause wherever it leads.
     focus_codes: [TS2322, TS2339, TS2345, TS5107]
     research_command: |
       python3 scripts/conformance/query-conformance.py --false-positives
       python3 scripts/conformance/query-conformance.py --one-extra
       python3 scripts/conformance/query-conformance.py --extra-code TS2322
     test_filter: ""  # cross-cutting — use research_command instead
-    primary_files:
+    entry_files:
       - crates/tsz-checker/src/error_reporter/
       - crates/tsz-checker/src/assignability/
+      - crates/tsz-solver/src/subtype.rs
+      - crates/tsz-solver/src/narrowing.rs
     estimated_impact: 193 tests
     difficulty: medium
 
@@ -168,7 +184,7 @@ campaigns:
   # ---------------------------------------------------------------------------
 
   performance:
-    description: >
+    mission: >
       Fix 8 ERROR benchmarks (crashes on generic functions, utility types,
       controlFlowArrays). Optimize slow paths: large union discrimination
       (5.12x), optional chains (3x), deep mapped types (1.5x).
@@ -182,7 +198,7 @@ campaigns:
           print(f\"{t['name']}: {t.get('status','slow')} ({t.get('factor','N/A')}x)\")
       "
     test_filter: ""
-    primary_files: []  # varies — guided by profiling
+    entry_files: []  # varies — guided by profiling
     targets:
       - "Fix 8 ERROR benchmark cases (generic functions, utility types, controlFlowArrays)"
       - "Optimize conditionalTypeDiscriminatingLargeUnion (5.12x slower than tsgo)"
@@ -196,11 +212,11 @@ campaigns:
   # ---------------------------------------------------------------------------
 
   integrator:
-    description: >
+    mission: >
       Merge queue manager. Does NOT write code. Validates campaign branches
       against main, merges if conformance holds, rejects if regressions.
       Runs via /loop. Updates conformance snapshots after merges.
     role: integration
     loop_command: "/loop 30m run scripts/session/integrate.sh --auto and report results"
-    primary_files: []
+    entry_files: []
     estimated_impact: "Keeps main green"

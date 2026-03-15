@@ -159,20 +159,34 @@ Skill usage rules:
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
 ## 20.25) Multi-Session Work (Campaign System)
-- **10 concurrent agents** run across 2-3 machines, coordinated via git branches.
-- Each agent owns a **campaign** (mechanism area). See `scripts/session/campaigns.yaml`.
+- **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
+- Each agent owns a **mission** (diagnostic/semantic goal). See `scripts/session/campaigns.yaml`.
+- **Follow root causes across crate boundaries.** Campaigns define goals, not file ownership.
 - Agents work on `campaign/<name>` branches, never push directly to main.
 - An **integrator agent** validates and merges campaign branches to main.
+- **Never declare a campaign "complete."** Run `campaign-checkpoint.sh` to record progress.
+- **Read the progress file before starting.** Don't re-investigate known dead ends.
 - Follow the **discipline cycle**: research → plan → implement → verify → commit → push.
 - Read `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
 
 ### Quick Reference
 ```bash
+# Health check (run before starting any campaign work):
+scripts/session/healthcheck.sh
+
 # See campaign status (what's claimed vs available):
 scripts/session/check-status.sh
 
 # Claim a campaign and create a worktree:
 scripts/session/start-campaign.sh <campaign-name>
+
+# Check/record session progress (MANDATORY before claiming session done):
+scripts/session/campaign-checkpoint.sh <campaign-name> --status   # read progress
+scripts/session/campaign-checkpoint.sh <campaign-name> --init     # initialize
+scripts/session/campaign-checkpoint.sh <campaign-name>            # record checkpoint
+
+# Launch agents with staggered starts (prevents rate limit cascade):
+scripts/session/launch-agents.sh --max 3 --stagger 120
 
 # Integrator: validate and merge campaign branches:
 scripts/session/integrate.sh --auto
@@ -183,6 +197,12 @@ scripts/session/cleanup.sh --auto
 # Setup a new machine:
 scripts/session/setup-machine.sh
 ```
+
+### Key rules
+- **Follow root causes across crate boundaries.** Campaigns define missions, not file ownership.
+- **Never declare a campaign "complete."** Only the integrator can. Run the checkpoint script.
+- **Read the progress file before starting.** Don't re-investigate known dead ends.
+- **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
 
 ### Periodic coordination via /loop
 ```bash
