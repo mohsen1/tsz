@@ -7337,13 +7337,24 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_literal(expr_node)
                 .map(|lit| format!("\"{}\"", lit.text)),
-            k if k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::BigIntLiteral as u16 =>
-            {
-                self.arena
-                    .get_literal(expr_node)
-                    .map(|lit| lit.text.clone())
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                self.arena.get_literal(expr_node).map(|lit| {
+                    // For large numbers (21+ digits), parse as f64 and format
+                    // using JS Number.toString() semantics (scientific notation).
+                    let text = &lit.text;
+                    let digits = text.chars().filter(|c| c.is_ascii_digit()).count();
+                    if digits >= 21 {
+                        if let Ok(n) = text.parse::<f64>() {
+                            return Self::format_js_number(n);
+                        }
+                    }
+                    text.clone()
+                })
             }
+            k if k == SyntaxKind::BigIntLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .map(|lit| lit.text.clone()),
             k if k == SyntaxKind::TrueKeyword as u16 => Some("true".to_string()),
             k if k == SyntaxKind::FalseKeyword as u16 => Some("false".to_string()),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
