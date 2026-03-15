@@ -41,11 +41,15 @@ impl BinderState {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
+        // Pre-size the largest hash maps to avoid resize thrashing.
+        // These capacities are tuned for typical source files (500-5000 AST nodes).
+        // Oversizing is cheap (a few KB of empty buckets) but undersizing causes
+        // O(N) rehash cascades during binding.
         let mut binder = Self {
             options,
             symbols: SymbolArena::new(),
             current_scope: SymbolTable::new(),
-            scope_stack: Vec::new(),
+            scope_stack: Vec::with_capacity(16),
             file_locals: SymbolTable::new(),
             expando_properties: FxHashMap::default(),
             declared_modules: FxHashSet::default(),
@@ -54,20 +58,20 @@ impl BinderState {
             flow_nodes,
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
-            scope_chain: Vec::new(),
+            scope_chain: Vec::with_capacity(32),
             current_scope_idx: 0,
-            node_symbols: FxHashMap::default(),
+            node_symbols: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
-            node_flow: FxHashMap::default(),
+            node_flow: FxHashMap::with_capacity_and_hasher(128, Default::default()),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
-            scopes: Vec::new(),
-            node_scope_ids: FxHashMap::default(),
+            scopes: Vec::with_capacity(32),
+            node_scope_ids: FxHashMap::with_capacity_and_hasher(64, Default::default()),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: FxHashMap::default(),

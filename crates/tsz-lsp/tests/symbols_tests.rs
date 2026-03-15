@@ -1118,3 +1118,191 @@ fn test_symbols_api_declare_module() {
     let tree = symbols.get_symbol_tree(root);
     assert!(!tree.is_empty(), "Declare module should produce symbols");
 }
+
+// =========================================================================
+// Additional coverage tests
+// =========================================================================
+
+#[test]
+fn test_symbols_api_function_with_overloads() {
+    let source = "function foo(x: string): string;\nfunction foo(x: number): number;\nfunction foo(x: any): any { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(
+        !tree.is_empty(),
+        "Overloaded functions should produce symbols"
+    );
+    // All overloads should be named "foo"
+    for sym in &tree {
+        assert_eq!(sym.name, "foo");
+    }
+}
+
+#[test]
+fn test_symbols_api_class_with_index_signature() {
+    let source = r#"
+class Dictionary {
+    [key: string]: any;
+    count: number;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Dictionary");
+    assert_eq!(tree[0].kind, SymbolKind::Class);
+}
+
+#[test]
+fn test_symbols_api_class_extends_and_implements() {
+    let source = r#"
+interface Serializable { serialize(): string; }
+class Base { id: number; }
+class Entity extends Base implements Serializable {
+    serialize() { return ""; }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 3);
+    assert_eq!(tree[0].name, "Serializable");
+    assert_eq!(tree[0].kind, SymbolKind::Interface);
+    assert_eq!(tree[1].name, "Base");
+    assert_eq!(tree[1].kind, SymbolKind::Class);
+    assert_eq!(tree[2].name, "Entity");
+    assert_eq!(tree[2].kind, SymbolKind::Class);
+}
+
+#[test]
+fn test_symbols_api_export_enum_with_computed_values() {
+    let source = "export enum Bits {\n  A = 1 << 0,\n  B = 1 << 1,\n  C = 1 << 2\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Bits");
+    assert_eq!(tree[0].kind, SymbolKind::Enum);
+    assert_eq!(tree[0].children.len(), 3);
+}
+
+#[test]
+fn test_symbols_api_type_alias_tuple() {
+    let source = "type Pair = [string, number];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Pair");
+    assert_eq!(tree[0].kind, SymbolKind::Struct);
+}
+
+#[test]
+fn test_symbols_api_multiple_var_in_one_statement() {
+    let source = "var a = 1, b = 2, c = 3;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 3);
+    assert_eq!(tree[0].name, "a");
+    assert_eq!(tree[0].kind, SymbolKind::Variable);
+    assert_eq!(tree[1].name, "b");
+    assert_eq!(tree[2].name, "c");
+}
+
+#[test]
+fn test_symbols_api_class_with_readonly_property() {
+    let source = r#"
+class Config {
+    readonly name: string;
+    readonly version: number;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Config");
+    assert_eq!(tree[0].children.len(), 2);
+    assert_eq!(tree[0].children[0].name, "name");
+    assert_eq!(tree[0].children[0].kind, SymbolKind::Property);
+    assert_eq!(tree[0].children[1].name, "version");
+}
+
+#[test]
+fn test_symbols_api_async_generator_function() {
+    let source = "async function* asyncGen() { yield 1; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(!tree.is_empty(), "Should have symbol for async generator");
+    assert_eq!(tree[0].name, "asyncGen");
+    assert_eq!(tree[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_symbols_api_class_with_optional_method() {
+    let source = r#"
+abstract class Widget {
+    abstract render(): void;
+    destroy?(): void;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Widget");
+    assert!(
+        tree[0].children.len() >= 1,
+        "Should have at least one method child"
+    );
+}
+
+#[test]
+fn test_symbols_api_namespace_with_interface_and_class() {
+    let source = r#"
+namespace Models {
+    interface IUser { name: string; }
+    class User { name: string; }
+    enum Role { Admin, Guest }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Models");
+    assert_eq!(tree[0].kind, SymbolKind::Module);
+    assert_eq!(tree[0].children.len(), 3);
+
+    let names: Vec<&str> = tree[0].children.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"IUser"));
+    assert!(names.contains(&"User"));
+    assert!(names.contains(&"Role"));
+}
+
+#[test]
+fn test_symbols_api_whitespace_only() {
+    let source = "   \n\n\t\t  \n  ";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(
+        tree.is_empty(),
+        "Whitespace-only file should produce no symbols"
+    );
+}
