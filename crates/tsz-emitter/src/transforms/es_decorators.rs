@@ -147,8 +147,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // --- IIFE header ---
         out.push_str(&format!("let {class_name} = (() => {{\n"));
 
-        // Var declarations
-        if !self.use_static_blocks {
+        // Var declarations (class alias only when IIFE without class decorators)
+        if !self.use_static_blocks && !has_class_decorators {
             out.push_str(&format!("{i1}var {class_alias};\n"));
         }
         if !computed_key_vars.is_empty() {
@@ -199,21 +199,24 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // The ctor_ref determines what goes in Object.defineProperty/runInitializers:
         // - ES2022 with class decorators: `_classThis` (captured via static { _classThis = this; })
         // - ES2022 without class decorators: `this`
-        // - ES2015 (IIFE): the class alias `_a`
-        let ctor_ref = if self.use_static_blocks {
-            if has_class_decorators {
-                "_classThis".to_string()
-            } else {
-                "this".to_string()
-            }
+        // - ES2015 with class decorators: `_classThis`
+        // - ES2015 without class decorators: the class alias `_a`
+        let ctor_ref = if has_class_decorators {
+            "_classThis".to_string()
+        } else if self.use_static_blocks {
+            "this".to_string()
         } else {
             class_alias.clone()
         };
 
         // --- Class expression ---
-        if self.use_static_blocks && has_class_decorators {
-            // With class decorators: `var C = class {` (anonymous class assigned to var)
-            out.push_str(&format!("{i1}var {class_name} = class"));
+        if has_class_decorators {
+            // With class decorators: `var C = _classThis = class {` (ES2015) or `var C = class {` (ES2022)
+            if self.use_static_blocks {
+                out.push_str(&format!("{i1}var {class_name} = class"));
+            } else {
+                out.push_str(&format!("{i1}var {class_name} = _classThis = class"));
+            }
         } else if self.use_static_blocks {
             out.push_str(&format!("{i1}return class {class_name}"));
         } else {
@@ -249,8 +252,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         // --- Emit class members ---
         // At ES2022, class is at indent+1, so members at indent+2.
-        // At ES2015, class is at indent+2 (inside return _a = ...), so members at indent+3.
-        let (member_indent, member_inner_indent) = if self.use_static_blocks {
+        // At ES2015 + class decorators, class is at indent+1 (var C = class {}), members at indent+2.
+        // At ES2015 without class decorators, class is at indent+2 (return _a = class), members at indent+3.
+        let (member_indent, member_inner_indent) = if self.use_static_blocks || has_class_decorators
+        {
             (&i2, &i3)
         } else {
             (&i3, &i4)
@@ -276,8 +281,38 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 // With class decorators: return C = _classThis after the class
                 out.push_str(&format!("{i1}return {class_name} = _classThis;\n"));
             }
+        } else if has_class_decorators {
+            // ES2015 + class decorators: separate statements pattern
+            // Close class with semicolon (it's a var assignment, not a return)
+            out.push_str(&format!("{i1}}};\n"));
+
+            // __setFunctionName
+            let set_fn_name = self.helper("__setFunctionName");
+            out.push_str(&format!(
+                "{i1}{set_fn_name}(_classThis, \"{class_name}\");\n"
+            ));
+
+            // Decorator application as separate IIFE
+            out.push_str(&format!("{i1}(() => {{\n"));
+            self.emit_decorator_application(
+                &decorated_members,
+                &member_vars,
+                &class_decorators,
+                &class_name,
+                &ctor_ref,
+                &computed_key_vars,
+                has_extends,
+                has_any_static,
+                class_data,
+                &i2,
+                &mut out,
+            );
+            out.push_str(&format!("{i1}}})();\n"));
+
+            // Return C = _classThis
+            out.push_str(&format!("{i1}return {class_name} = _classThis;\n"));
         } else {
-            // ES2015: close class body, then IIFE for decorator application
+            // ES2015 without class decorators: comma expression pattern
             out.push_str(&format!("{i2}}},\n"));
 
             out.push_str(&format!("{i2}(() => {{\n"));
