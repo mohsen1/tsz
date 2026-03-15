@@ -1372,8 +1372,7 @@ impl ParserState {
                 // TS1029: 'export' modifier must precede 'declare' modifier.
                 // Skip for `declare export as namespace` which is a valid UMD pattern.
                 // Skip for `declare export = expr` — TS1120 will be emitted instead.
-                if !self.is_token(SyntaxKind::AsKeyword)
-                    && !self.is_token(SyntaxKind::EqualsToken)
+                if !self.is_token(SyntaxKind::AsKeyword) && !self.is_token(SyntaxKind::EqualsToken)
                 {
                     self.parse_error_at(
                         export_start,
