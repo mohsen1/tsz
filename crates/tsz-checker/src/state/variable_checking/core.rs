@@ -1166,6 +1166,13 @@ impl<'a> CheckerState<'a> {
                     final_type,
                 );
             }
+            // TS4094: Property of exported anonymous class type may not be private or protected.
+            if is_exported && var_decl.initializer.is_some() {
+                self.maybe_report_exported_anonymous_class_private_members(
+                    var_decl.name,
+                    var_decl.initializer,
+                );
+            }
             if self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
                 && !sym_already_cached
