@@ -1363,10 +1363,19 @@ impl ParserState {
             // If parse_type_member returned NONE (couldn't parse) and we haven't advanced,
             // skip the current token to prevent infinite loops
             if member.is_none() && self.token_pos() == saved_pos {
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                );
+                // tsc emits TS1434 "Unexpected keyword or identifier" when the stuck token
+                // is an identifier or keyword, TS1131 "Property or signature expected" otherwise
+                if self.is_identifier_or_keyword() {
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    );
+                }
                 self.next_token(); // Skip the problematic token
                 continue;
             }
