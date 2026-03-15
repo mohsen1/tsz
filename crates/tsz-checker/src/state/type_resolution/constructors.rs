@@ -403,9 +403,12 @@ impl<'a> CheckerState<'a> {
             query::ConstructorTypeKind::Callable => {
                 ctor_types.push(evaluated);
             }
-            query::ConstructorTypeKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                if shape.is_constructor {
+            query::ConstructorTypeKind::Function(_) => {
+                // Delegate to solver query for constructor check
+                if tsz_solver::type_queries::data::is_constructor_like_type(
+                    self.ctx.types,
+                    evaluated,
+                ) {
                     ctor_types.push(evaluated);
                 }
             }
