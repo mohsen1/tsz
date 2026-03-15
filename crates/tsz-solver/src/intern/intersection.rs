@@ -162,7 +162,7 @@ impl TypeInterner {
             )
         });
         if has_unresolved {
-            let list_id = self.intern_type_list(flat.into_vec());
+            let list_id = self.intern_type_list_from_slice(&flat);
             return self.intern(TypeData::Intersection(list_id));
         }
 
@@ -273,7 +273,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Intersection(list_id))
     }
 

@@ -853,3 +853,99 @@ fn test_compute_line_edits_fewer_lines_in_formatted() {
         "Should produce edits when formatted has fewer lines"
     );
 }
+
+#[test]
+fn test_formatting_class_with_methods() {
+    let source = "class Foo{\n  method1()  {}\n  method2()  {}\n}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_interface_members() {
+    let source = "interface IFoo{\n  name:string;\n  age  :  number;\n}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_arrow_functions() {
+    let source = "const add=(a:number,b:number)=>a+b;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_template_literals() {
+    let source = "const msg = `Hello\n  ${name}\n  world`;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_switch_case() {
+    let source = "switch(x){\ncase 1:\nbreak;\ncase 2:\nbreak;\ndefault:\nbreak;\n}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_enum_declaration() {
+    let source = "enum Color  {Red,Green,  Blue}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_type_alias() {
+    let source = "type Result<T,E>=  {ok:T}|{err:E};\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_destructuring() {
+    let source = "const {a,b,c}=obj;\nconst [x,y,...rest]=arr;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_async_await() {
+    let source = "async function fetch(){const data=await   getData();return data;}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_try_catch() {
+    let source = "try{doSomething();}catch(e){handleError(e);}finally{cleanup();}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_generics() {
+    let source = "function identity<T>(arg:T):T{return arg;}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
+
+#[test]
+fn test_formatting_jsx_like() {
+    let source = "const el = <div className=\"test\">content</div>;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    let _ = formatted;
+}
