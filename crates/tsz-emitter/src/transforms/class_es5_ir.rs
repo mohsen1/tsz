@@ -1858,6 +1858,23 @@ impl<'a> ES5ClassTransformer<'a> {
         prologue
     }
 
+    /// Check if any parameters are destructured binding patterns.
+    pub(super) fn has_destructured_parameters(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        params.nodes.iter().any(|&param_idx| {
+            self.arena
+                .get(param_idx)
+                .and_then(|n| self.arena.get_parameter(n))
+                .and_then(|p| self.arena.get(p.name))
+                .is_some_and(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                })
+        })
+    }
+
     /// Get the extends clause base class
     fn get_extends_class(&self, heritage_clauses: &Option<NodeList>) -> Option<IRNode> {
         let expr_idx = crate::transforms::emit_utils::get_extends_expression_index(

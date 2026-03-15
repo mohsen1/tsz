@@ -529,8 +529,11 @@ impl<'a> ES5ClassTransformer<'a> {
                     .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
                     && !method_data.asterisk_token;
 
+                // Generate destructuring prologue for binding-pattern parameters
+                let static_destructuring =
+                    self.generate_destructuring_prologue(&method_data.parameters, &params);
+
                 let method_body = if is_async {
-                    // Async method: use async transformer to build proper generator body
                     let mut async_transformer = AsyncES5Transformer::new(self.arena);
                     let has_await = async_transformer.body_contains_await(method_data.body);
                     let generator_body =
@@ -541,16 +544,26 @@ impl<'a> ES5ClassTransformer<'a> {
                         hoisted_vars: Vec::new(),
                     }]
                 } else {
-                    // Check if this static method has arrow functions with class_alias
                     let class_alias = self.get_class_alias_for_static_method(method_data.body);
-                    self.convert_block_body_with_alias_static(method_data.body, class_alias)
+                    let mut mbody =
+                        self.convert_block_body_with_alias_static(method_data.body, class_alias);
+                    if !static_destructuring.is_empty() {
+                        let mut full = static_destructuring;
+                        full.append(&mut mbody);
+                        mbody = full;
+                    }
+                    mbody
                 };
 
-                // Capture body source range for single-line detection
-                let body_source_range = self
-                    .arena
-                    .get(method_data.body)
-                    .map(|body_node| (body_node.pos, body_node.end));
+                // Force multi-line when destructuring prologue exists
+                let body_source_range = if self.has_destructured_parameters(&method_data.parameters)
+                {
+                    None
+                } else {
+                    self.arena
+                        .get(method_data.body)
+                        .map(|body_node| (body_node.pos, body_node.end))
+                };
 
                 // Extract leading JSDoc comment
                 let leading_comment = self.extract_leading_comment(member_node);
