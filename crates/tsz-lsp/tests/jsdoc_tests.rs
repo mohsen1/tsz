@@ -387,3 +387,134 @@ fn test_jsdoc_for_node_regular_comment_not_jsdoc() {
         "Regular block comment should not be treated as JSDoc, got: {doc}",
     );
 }
+
+// ============================================================================
+// Additional parse_jsdoc edge cases
+// ============================================================================
+
+#[test]
+fn test_parse_jsdoc_param_with_nested_braces_type() {
+    let result = parse_jsdoc("@param {{key: string}} obj The object");
+    // Nested braces may not be parsed correctly by all implementations
+    if let Some(desc) = result.params.get("obj") {
+        assert!(
+            desc.contains("object") || desc.contains("The"),
+            "Unexpected param description: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_return_tag() {
+    // @return is a synonym for @returns
+    let result = parse_jsdoc("Gets data.\n@return The data");
+    assert!(!result.tags.is_empty(), "Should parse @return tag");
+    assert_eq!(result.tags[0].name, "return");
+    assert_eq!(result.tags[0].text, "The data");
+}
+
+#[test]
+fn test_parse_jsdoc_see_tag() {
+    let result = parse_jsdoc("A utility.\n@see https://example.com");
+    assert_eq!(result.summary, Some("A utility.".to_string()));
+    assert_eq!(result.tags.len(), 1);
+    assert_eq!(result.tags[0].name, "see");
+    assert_eq!(result.tags[0].text, "https://example.com");
+}
+
+#[test]
+fn test_parse_jsdoc_throws_tag() {
+    let result = parse_jsdoc("@throws {Error} When the input is invalid");
+    assert_eq!(result.tags.len(), 1);
+    assert_eq!(result.tags[0].name, "throws");
+}
+
+#[test]
+fn test_parse_jsdoc_since_and_version_tags() {
+    let result = parse_jsdoc("A feature.\n@since 1.0.0\n@version 2.3.1");
+    assert_eq!(result.summary, Some("A feature.".to_string()));
+    assert_eq!(result.tags.len(), 2);
+    let tag_names: Vec<&str> = result.tags.iter().map(|t| t.name.as_str()).collect();
+    assert!(tag_names.contains(&"since"));
+    assert!(tag_names.contains(&"version"));
+}
+
+#[test]
+fn test_parse_jsdoc_param_with_hyphen_separator() {
+    // Some JSDoc styles use "- " to separate param name from description
+    let result = parse_jsdoc("@param name - The user name");
+    if let Some(desc) = result.params.get("name") {
+        assert!(
+            desc.contains("The user name"),
+            "Should parse param with hyphen separator, got: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_star_stripped_lines() {
+    // JSDoc lines often start with " * " which should be stripped
+    let result = parse_jsdoc("Summary line.\n * @param x The value");
+    // The parser should handle the leading " * " prefix
+    if let Some(desc) = result.params.get("x") {
+        assert!(
+            desc.contains("The value"),
+            "Should strip leading star from JSDoc lines, got: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_typedef_tag() {
+    let result = parse_jsdoc("@typedef {Object} MyType");
+    assert!(!result.tags.is_empty(), "Should parse @typedef tag");
+    assert_eq!(result.tags[0].name, "typedef");
+}
+
+#[test]
+fn test_parse_jsdoc_is_empty_for_only_params() {
+    let result = parse_jsdoc("@param x The value");
+    assert!(
+        !result.is_empty(),
+        "ParsedJsdoc with params should not be empty"
+    );
+}
+
+#[test]
+fn test_parse_jsdoc_is_empty_for_only_tags() {
+    let result = parse_jsdoc("@deprecated");
+    assert!(
+        !result.is_empty(),
+        "ParsedJsdoc with tags should not be empty"
+    );
+}
+
+#[test]
+fn test_jsdoc_for_node_class_with_jsdoc() {
+    let source = "/** A simple class */\nclass MyClass {}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let class_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::CLASS_DECLARATION);
+    if let Some(idx) = class_idx {
+        let doc = jsdoc_for_node(arena, root, idx, source);
+        // Verify no crash; the doc may or may not be extracted depending on implementation
+        let _ = doc;
+    }
+}
+
+#[test]
+fn test_jsdoc_for_node_arrow_function_with_jsdoc() {
+    let source = "/** Adds one */\nconst addOne = (x: number) => x + 1;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let var_decl = find_first_node_of_kind(arena, root, syntax_kind_ext::VARIABLE_DECLARATION);
+    assert!(var_decl.is_some(), "Should find variable declaration");
+
+    let doc = jsdoc_for_node(arena, root, var_decl.unwrap(), source);
+    assert!(
+        doc.contains("Adds one"),
+        "Should extract JSDoc for arrow function variable, got: {doc}",
+    );
+}

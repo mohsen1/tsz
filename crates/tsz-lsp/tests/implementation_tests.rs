@@ -448,3 +448,220 @@ fn test_multiple_abstract_class_implementors() {
     let locs = result.unwrap();
     assert_eq!(locs.len(), 3, "Should find three implementors");
 }
+
+#[test]
+fn test_find_implementations_for_name_interface() {
+    let source = "interface Runnable {}\nclass Worker implements Runnable {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let results = provider.find_implementations_for_name("Runnable", TargetKind::Interface);
+    assert_eq!(results.len(), 1, "Should find Worker implementing Runnable");
+    assert_eq!(results[0].name, "Worker");
+}
+
+#[test]
+fn test_find_implementations_for_name_no_match() {
+    let source = "interface Foo {}\nclass Bar {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let results = provider.find_implementations_for_name("Foo", TargetKind::Interface);
+    assert!(
+        results.is_empty(),
+        "Bar does not implement Foo, should find nothing"
+    );
+}
+
+#[test]
+fn test_resolve_target_kind_for_interface() {
+    let source = "interface MyInterface {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let kind = provider.resolve_target_kind_for_name("MyInterface");
+    assert_eq!(kind, Some(TargetKind::Interface));
+}
+
+#[test]
+fn test_resolve_target_kind_for_class() {
+    let source = "class MyClass {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let kind = provider.resolve_target_kind_for_name("MyClass");
+    assert_eq!(kind, Some(TargetKind::ConcreteClass));
+}
+
+#[test]
+fn test_resolve_target_kind_for_variable_returns_none() {
+    let source = "const x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let kind = provider.resolve_target_kind_for_name("x");
+    assert_eq!(kind, None, "Variable should not resolve to a target kind");
+}
+
+#[test]
+fn test_resolve_target_kind_nonexistent_name() {
+    let source = "interface Foo {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let kind = provider.resolve_target_kind_for_name("DoesNotExist");
+    assert_eq!(kind, None, "Nonexistent name should return None");
+}
+
+#[test]
+fn test_class_extends_abstract_with_multiple_methods() {
+    let source = "abstract class Processor {\n  abstract process(): void;\n  abstract validate(): boolean;\n}\nclass MyProcessor extends Processor {\n  process() {}\n  validate() { return true; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 15);
+    let result = provider.get_implementations(root, pos);
+
+    assert!(result.is_some(), "Should find implementation of Processor");
+    let locs = result.unwrap();
+    assert_eq!(locs.len(), 1);
+    assert_eq!(locs[0].range.start.line, 4);
+}
+
+#[test]
+fn test_interface_with_generic_implementor() {
+    let source =
+        "interface Comparable<T> {}\nclass NumberComparable implements Comparable<number> {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 10);
+    let result = provider.get_implementations(root, pos);
+
+    assert!(
+        result.is_some(),
+        "Should find generic interface implementation"
+    );
+    let locs = result.unwrap();
+    assert_eq!(locs.len(), 1);
+}
+
+#[test]
+fn test_interface_extends_multiple() {
+    let source = "interface A {}\ninterface B {}\ninterface C extends A, B {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Searching for A should find C (which extends A)
+    let pos_a = Position::new(0, 10);
+    let result_a = provider.get_implementations(root, pos_a);
+    assert!(result_a.is_some(), "Should find C extending A");
+    assert_eq!(result_a.unwrap().len(), 1);
+
+    // Searching for B should also find C
+    let pos_b = Position::new(1, 10);
+    let result_b = provider.get_implementations(root, pos_b);
+    assert!(result_b.is_some(), "Should find C extending B");
+    assert_eq!(result_b.unwrap().len(), 1);
+}
+
+#[test]
+fn test_find_implementations_for_name_class_extends() {
+    let source = "class Parent {}\nclass Child extends Parent {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let results = provider.find_implementations_for_name("Parent", TargetKind::ConcreteClass);
+    assert_eq!(results.len(), 1, "Should find Child extending Parent");
+    assert_eq!(results[0].name, "Child");
+}

@@ -723,3 +723,227 @@ fn test_semantic_tokens_class_with_constructor() {
         assert_eq!(tt, SemanticTokenType::Modifier as u32);
     }
 }
+
+// =========================================================================
+// Additional tests for improved coverage
+// =========================================================================
+
+#[test]
+fn test_semantic_tokens_arrow_function_variable() {
+    let source = "const add = (a: number, b: number) => a + b;";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "add" at (0, 6) should be a Variable
+    let add_token = find_token_at(&decoded, 0, 6);
+    assert!(add_token.is_some(), "Should have token for add");
+    let (tt, m) = add_token.unwrap();
+    assert_eq!(tt, SemanticTokenType::Variable as u32);
+    assert_ne!(
+        m & semantic_token_modifiers::READONLY,
+        0,
+        "const arrow fn should have READONLY"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_destructured_variable() {
+    let source = "const { a, b } = { a: 1, b: 2 };";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Just ensure no crash and tokens are produced
+    assert!(
+        !decoded.is_empty(),
+        "Should produce tokens for destructuring"
+    );
+    assert_eq!(tokens.len() % 5, 0, "Token array should be divisible by 5");
+}
+
+#[test]
+fn test_semantic_tokens_for_of_loop_variable() {
+    let source = "const arr = [1, 2];\nfor (const item of arr) {\n  item;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "arr" declaration at (0, 6)
+    let arr_token = find_token_at(&decoded, 0, 6);
+    assert!(arr_token.is_some(), "Should have token for arr");
+    assert_eq!(arr_token.unwrap().0, SemanticTokenType::Variable as u32);
+}
+
+#[test]
+fn test_semantic_tokens_class_extends_reference() {
+    let source = "class Base {}\nclass Child extends Base {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Base" class declaration at (0, 6)
+    let base_decl = find_token_at(&decoded, 0, 6);
+    assert!(
+        base_decl.is_some(),
+        "Should have token for Base declaration"
+    );
+    assert_eq!(base_decl.unwrap().0, SemanticTokenType::Class as u32);
+
+    // "Child" class at (1, 6)
+    let child_token = find_token_at(&decoded, 1, 6);
+    assert!(child_token.is_some(), "Should have token for Child");
+    assert_eq!(child_token.unwrap().0, SemanticTokenType::Class as u32);
+}
+
+#[test]
+fn test_semantic_tokens_type_reference_in_annotation() {
+    let source = "interface Foo {}\nconst x: Foo = {};";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Interface "Foo" declaration at (0, 10)
+    let foo_decl = find_token_at(&decoded, 0, 10);
+    assert!(foo_decl.is_some(), "Should have token for Foo declaration");
+    assert_eq!(foo_decl.unwrap().0, SemanticTokenType::Interface as u32);
+
+    // "x" variable at (1, 6)
+    let x_token = find_token_at(&decoded, 1, 6);
+    assert!(x_token.is_some(), "Should have token for x");
+    assert_eq!(x_token.unwrap().0, SemanticTokenType::Variable as u32);
+}
+
+#[test]
+fn test_semantic_tokens_export_function() {
+    let source = "export function exported() {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Find the function token
+    let fn_token = decoded
+        .iter()
+        .find(|t| t.3 == SemanticTokenType::Function as u32);
+    assert!(
+        fn_token.is_some(),
+        "Should have Function token for exported function"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_class_static_method() {
+    let source = "class Util {\n  static create() { return new Util(); }\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Util" class at (0, 6)
+    let class_token = find_token_at(&decoded, 0, 6);
+    assert!(class_token.is_some(), "Should have token for Util class");
+    assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
+
+    // "static" modifier at (1, 2)
+    let static_token = find_token_at(&decoded, 1, 2);
+    assert!(
+        static_token.is_some(),
+        "Should have token for static keyword"
+    );
+    assert_eq!(static_token.unwrap().0, SemanticTokenType::Modifier as u32);
+
+    // "create" method at (1, 9)
+    let method_token = find_token_at(&decoded, 1, 9);
+    assert!(
+        method_token.is_some(),
+        "Should have token for create method"
+    );
+    if let Some((tt, m)) = method_token {
+        assert_eq!(tt, SemanticTokenType::Method as u32);
+        assert_ne!(
+            m & semantic_token_modifiers::STATIC,
+            0,
+            "Static method should have STATIC modifier"
+        );
+    }
+}
+
+#[test]
+fn test_semantic_tokens_protected_modifier() {
+    let source = "class C {\n  protected value: number = 0;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "protected" modifier at (1, 2)
+    let protected_kw = find_token_at(&decoded, 1, 2);
+    assert!(
+        protected_kw.is_some(),
+        "Should have token for protected keyword"
+    );
+    assert_eq!(protected_kw.unwrap().0, SemanticTokenType::Modifier as u32);
+}
+
+#[test]
+fn test_semantic_tokens_nested_function() {
+    let source = "function outer() {\n  function inner() {}\n  inner();\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "outer" function at (0, 9)
+    let outer_token = find_token_at(&decoded, 0, 9);
+    assert!(outer_token.is_some(), "Should have token for outer");
+    assert_eq!(outer_token.unwrap().0, SemanticTokenType::Function as u32);
+
+    // "inner" function at (1, 11)
+    let inner_token = find_token_at(&decoded, 1, 11);
+    assert!(inner_token.is_some(), "Should have token for inner");
+    assert_eq!(inner_token.unwrap().0, SemanticTokenType::Function as u32);
+}
+
+#[test]
+fn test_semantic_tokens_var_variable() {
+    let source = "var legacy = 42;";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "legacy" at (0, 4)
+    let var_token = find_token_at(&decoded, 0, 4);
+    assert!(var_token.is_some(), "Should have token for var variable");
+    let (tt, m) = var_token.unwrap();
+    assert_eq!(tt, SemanticTokenType::Variable as u32);
+    // var should not have READONLY modifier
+    assert_eq!(
+        m & semantic_token_modifiers::READONLY,
+        0,
+        "var variable should NOT have READONLY modifier"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_builder_single_token() {
+    let mut builder = SemanticTokensBuilder::new();
+    builder.push(
+        3,
+        10,
+        5,
+        SemanticTokenType::Class,
+        semantic_token_modifiers::DECLARATION,
+    );
+    let data = builder.build();
+
+    assert_eq!(data.len(), 5);
+    assert_eq!(data[0], 3); // deltaLine
+    assert_eq!(data[1], 10); // deltaStart
+    assert_eq!(data[2], 5); // length
+    assert_eq!(data[3], SemanticTokenType::Class as u32); // tokenType
+    assert_eq!(data[4], semantic_token_modifiers::DECLARATION); // modifiers
+}
+
+#[test]
+fn test_semantic_tokens_class_implements_interface_ref() {
+    let source = "interface Serializable {}\nclass Data implements Serializable {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Interface "Serializable" declaration at (0, 10)
+    let iface_token = find_token_at(&decoded, 0, 10);
+    assert!(iface_token.is_some(), "Should have token for Serializable");
+    assert_eq!(iface_token.unwrap().0, SemanticTokenType::Interface as u32);
+
+    // Class "Data" at (1, 6)
+    let class_token = find_token_at(&decoded, 1, 6);
+    assert!(class_token.is_some(), "Should have token for Data class");
+    assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
+}

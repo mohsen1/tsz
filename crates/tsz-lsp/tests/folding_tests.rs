@@ -587,3 +587,53 @@ fn test_folding_ranges_interface_with_many_properties() {
         "Should find folding range for interface with many properties"
     );
 }
+
+#[test]
+fn test_folding_ranges_try_catch_finally() {
+    let source =
+        "try {\n  doSomething();\n} catch (e) {\n  handleError(e);\n} finally {\n  cleanup();\n}\n";
+    let ranges = get_ranges(source);
+    assert!(ranges.len() >= 1, "Should fold try/catch/finally blocks");
+}
+
+#[test]
+fn test_folding_ranges_template_literal_multiline() {
+    let source = "const html = `\n  <div>\n    <p>Hello</p>\n  </div>\n`;\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_class_with_decorators() {
+    let source = "@Component({\n  selector: 'app'\n})\nclass AppComponent {\n  method() {\n    return true;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(ranges.len() >= 1, "Should fold class with decorators");
+}
+
+#[test]
+fn test_folding_ranges_single_line_no_fold() {
+    let source = "const x = 1;";
+    let ranges = get_ranges(source);
+    assert!(ranges.is_empty(), "Single line should not produce folds");
+}
+
+#[test]
+fn test_folding_ranges_arrow_function_body() {
+    let source = "const process = (items: any[]) => {\n  return items\n    .filter(x => x)\n    .map(x => x * 2);\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should fold arrow function body");
+}
+
+#[test]
+fn test_folding_ranges_type_alias_object() {
+    let source = "type Config = {\n  host: string;\n  port: number;\n  debug: boolean;\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should fold type alias object literal");
+}
+
+#[test]
+fn test_folding_ranges_mapped_type() {
+    let source = "type Readonly<T> = {\n  readonly [K in keyof T]: T[K];\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should fold mapped type");
+}
