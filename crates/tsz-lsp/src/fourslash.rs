@@ -523,7 +523,7 @@ impl FoldingRangesResult {
         self
     }
 
-    /// Assert a folding range spans from start_line to end_line.
+    /// Assert a folding range spans from `start_line` to `end_line`.
     pub fn expect_range(&self, start_line: u32, end_line: u32) -> &Self {
         let found = self
             .ranges
@@ -865,7 +865,7 @@ impl InlayHintsResult {
     }
 }
 
-/// Parse markers from source text and return (cleaned_source, markers).
+/// Parse markers from source text and return (`cleaned_source`, markers).
 ///
 /// Markers have the format `/*name*/` where `name` is the marker identifier.
 /// The anonymous marker `/**/` gets the name `""`.
@@ -1041,7 +1041,7 @@ impl FourslashTest {
 
     /// Create a multi-file test.
     ///
-    /// Each tuple is (file_name, source_with_markers).
+    /// Each tuple is (`file_name`, `source_with_markers`).
     ///
     /// # Example
     /// ```ignore
@@ -1099,7 +1099,7 @@ impl FourslashTest {
     }
 
     /// Access the underlying project (for advanced operations).
-    pub fn project(&mut self) -> &mut Project {
+    pub const fn project(&mut self) -> &mut Project {
         &mut self.project
     }
 
