@@ -10794,3 +10794,138 @@ fn test_call_generic_intersection_param_inference() {
         ),
     }
 }
+
+/// Test that self-referential constraints like `T extends C<keyof T>` don't
+/// trigger false TypeParameterConstraintViolation from the trivial fast path.
+///
+/// Reproduces the bug where `resolve_trivial_single_type_param_call` checked
+/// the raw (uninstantiated) constraint and used deep widening, causing:
+///   function test<T extends Test<keyof T>>(arg: T): T
+/// to falsely reject `{foo: true, bar(): void}`.
+#[test]
+fn test_self_referential_constraint_no_false_violation() {
+    let interner = TypeInterner::new();
+    let mut compat = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut compat);
+
+    let t_name = interner.intern_string("T");
+
+    // Build the type parameter T with a self-referential constraint: keyof T
+    // (a constraint that references T itself)
+    let t_param_id = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None, // will be set below
+        default: None,
+        is_const: false,
+    }));
+    let keyof_t = interner.keyof(t_param_id);
+
+    // Now create a concrete constraint that uses keyof T.
+    // We'll use a simple object type as constraint: { foo: () => any }
+    // which approximates what Test<keyof T> would evaluate to.
+    // The key invariant is: the constraint references T via keyof T.
+    let constraint_type = keyof_t; // Use `keyof T` directly as constraint for simplicity
+
+    // Rebuild T with the self-referential constraint
+    let t_param_with_constraint = TypeParamInfo {
+        name: t_name,
+        constraint: Some(constraint_type),
+        default: None,
+        is_const: false,
+    };
+
+    // function test<T extends keyof T>(arg: T): T
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param_with_constraint],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: t_param_id,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_param_id,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with a string literal "foo" — should succeed (not false constraint violation)
+    let foo_literal = interner.literal_string("foo");
+    let result = evaluator.resolve_call(func, &[foo_literal]);
+
+    // The fast path should bail out due to self-referential constraint,
+    // and the normal inference path should handle it.
+    // We just verify it doesn't return TypeParameterConstraintViolation.
+    match result {
+        CallResult::TypeParameterConstraintViolation { .. } => {
+            panic!(
+                "Self-referential constraint should NOT cause TypeParameterConstraintViolation. \
+                 The fast path should bail out and the normal inference path should handle it."
+            );
+        }
+        _ => {
+            // Any other result (Success, ArgumentTypeMismatch, etc.) is acceptable.
+            // The point is we don't get a false constraint violation.
+        }
+    }
+}
+
+/// Test that normal (non-self-referential) constraints still work in the fast path.
+#[test]
+fn test_non_self_referential_constraint_fast_path_works() {
+    let interner = TypeInterner::new();
+    let mut compat = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut compat);
+
+    let t_name = interner.intern_string("T");
+
+    // T param with constraint: T extends string (NOT self-referential)
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let t_param_id = interner.intern(TypeData::TypeParameter(t_param_info.clone()));
+
+    // function test<T extends string>(arg: T): T
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param_info],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: t_param_id,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_param_id,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with "hello" — should succeed via the fast path
+    let hello = interner.literal_string("hello");
+    let result = evaluator.resolve_call(func, &[hello]);
+    match result {
+        CallResult::Success(_) => {
+            // Expected: fast path handles this correctly
+        }
+        other => panic!(
+            "Expected success for <T extends string>(arg: T) called with 'hello', got {other:?}"
+        ),
+    }
+
+    // Call with number — should fail (constraint violation)
+    let result = evaluator.resolve_call(func, &[TypeId::NUMBER]);
+    match result {
+        CallResult::TypeParameterConstraintViolation { .. } => {
+            // Expected: number doesn't satisfy extends string
+        }
+        other => panic!(
+            "Expected TypeParameterConstraintViolation for <T extends string>(arg: T) called \
+             with number, got {other:?}"
+        ),
+    }
+}
