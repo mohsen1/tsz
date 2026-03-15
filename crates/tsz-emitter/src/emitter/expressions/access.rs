@@ -353,12 +353,11 @@ impl<'a> Printer<'a> {
                     self.emit_property_name_without_import_substitution(access.name_or_argument);
                     self.decrease_indent();
                     return;
-                } else {
-                    self.emit(access.expression);
-                    self.write(token);
-                    self.emit_property_name_without_import_substitution(access.name_or_argument);
-                    return;
                 }
+                self.emit(access.expression);
+                self.write(token);
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                return;
             }
         }
 

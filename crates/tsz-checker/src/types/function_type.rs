@@ -965,9 +965,8 @@ impl<'a> CheckerState<'a> {
                             } else if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                                 current = parent; // Skip parens
                                 continue;
-                            } else {
-                                break;
                             }
+                            break;
                         }
                         None
                     })

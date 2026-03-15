@@ -1042,13 +1042,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         {
                             if member_data.initializer.is_none() {
                                 return true;
-                            } else {
-                                return self.is_numeric_constant_enum_expr(
-                                    member_data.initializer,
-                                    enum_data,
-                                    depth + 1,
-                                );
                             }
+                            return self.is_numeric_constant_enum_expr(
+                                member_data.initializer,
+                                enum_data,
+                                depth + 1,
+                            );
                         }
                     }
                 }

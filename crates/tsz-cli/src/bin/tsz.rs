@@ -567,15 +567,14 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                         skip_positions.push(false);
                         i += 2;
                         continue;
-                    } else {
-                        // Plain bool flag: skip both (flag is not set)
-                        if let Some(&prev_idx) = flag_positions.get(&flag_name) {
-                            skip_positions[prev_idx] = true;
-                        }
-                        flag_positions.remove(&flag_name);
-                        i += 2;
-                        continue;
                     }
+                    // Plain bool flag: skip both (flag is not set)
+                    if let Some(&prev_idx) = flag_positions.get(&flag_name) {
+                        skip_positions[prev_idx] = true;
+                    }
+                    flag_positions.remove(&flag_name);
+                    i += 2;
+                    continue;
                 } else if next_lower == "true" {
                     if option_bool_flags.contains(flag_name.as_str()) {
                         // Option<bool> flag: emit --flag=true so clap gets the value
