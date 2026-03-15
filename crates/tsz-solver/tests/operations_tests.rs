@@ -6287,9 +6287,9 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // With getSingleCommonSupertype, conflicting candidates for T and U resolve to
-    // single types (not unions), causing assignability failures → ERROR.
-    assert_eq!(result, TypeId::ERROR);
+    // Index signature candidates use union semantics: T and U get unions of all
+    // matching property types, so the call succeeds (no assignability failure).
+    assert_ne!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -6364,9 +6364,9 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // With getSingleCommonSupertype, conflicting candidates for U resolve to
-    // a single type (not union), causing assignability failures → ERROR.
-    assert_eq!(result, TypeId::ERROR);
+    // Index signature candidates use union semantics, so U gets the union
+    // of all matching property types. The call succeeds.
+    assert_ne!(result, TypeId::ERROR);
 }
 
 // DELETED: test_infer_generic_property_from_source_index_signature
