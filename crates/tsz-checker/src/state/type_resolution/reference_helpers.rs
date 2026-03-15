@@ -4,6 +4,7 @@
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -461,5 +462,140 @@ impl<'a> CheckerState<'a> {
         // Cross-file fallback: class declaration is not in the current arena.
         // Delegate to a child checker with the symbol's arena.
         self.delegate_cross_arena_class_instance_type(sym_id)
+    }
+
+    /// Check if a type alias declaration has a mapped type body that
+    /// unconditionally references the alias with the same type arguments
+    /// (e.g., `type Circular<T> = {[P in keyof T]: Circular<T>}`).
+    /// Used for TS2589 detection. Bounded recursion like
+    /// `type DeepMap<T, R> = {[K in keyof T]: T[K] extends unknown[] ? DeepMap<T[K], R> : R}`
+    /// does NOT trigger this because the recursive call uses different args.
+    pub(crate) fn alias_has_self_referencing_mapped_body(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            return false;
+        }
+        let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
+            return false;
+        };
+        let Some(body_node) = self.ctx.arena.get(type_alias.type_node) else {
+            return false;
+        };
+        if body_node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return false;
+        }
+
+        // Get the alias name and type parameter names
+        let sym_name = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .map(|s| s.escaped_name.clone())
+            .unwrap_or_default();
+        let param_names: Vec<String> = type_alias
+            .type_parameters
+            .as_ref()
+            .map(|tpl| {
+                tpl.nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        let param_node = self.ctx.arena.get(param_idx)?;
+                        let param = self.ctx.arena.get_type_parameter(param_node)?;
+                        let name_node = self.ctx.arena.get(param.name)?;
+                        let ident = self.ctx.arena.get_identifier(name_node)?;
+                        Some(self.ctx.arena.resolve_identifier_text(ident).to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Get the mapped type template node
+        let Some(mapped) = self.ctx.arena.get_mapped_type(body_node) else {
+            return false;
+        };
+
+        // Check if the template contains a type reference to the alias
+        // with the SAME type arguments (identity recursion)
+        self.template_has_identity_self_ref(mapped.type_node, &sym_name, &param_names)
+    }
+
+    /// Check if a type node contains a type reference to `name` with type args
+    /// that exactly match the given parameter names (identity recursion).
+    /// Skips conditional type branches (they represent bounded recursion).
+    fn template_has_identity_self_ref(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+        param_names: &[String],
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Skip conditional type branches — they represent bounded recursion
+        if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
+            return false;
+        }
+
+        // Check type references
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                // Check if the type name matches
+                if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && self.ctx.arena.resolve_identifier_text(ident) == name
+                {
+                    // Check if type args are identity (same as param names)
+                    if let Some(args) = &type_ref.type_arguments {
+                        if args.nodes.len() == param_names.len() {
+                            let is_identity = args.nodes.iter().zip(param_names.iter()).all(
+                                |(&arg_idx, param_name)| {
+                                    self.ctx
+                                        .arena
+                                        .get(arg_idx)
+                                        .and_then(|n| {
+                                            if n.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                                let tr = self.ctx.arena.get_type_ref(n)?;
+                                                let name_n = self.ctx.arena.get(tr.type_name)?;
+                                                let id = self.ctx.arena.get_identifier(name_n)?;
+                                                Some(
+                                                    self.ctx.arena.resolve_identifier_text(id)
+                                                        == *param_name,
+                                                )
+                                            } else if n.kind == SyntaxKind::Identifier as u16 {
+                                                let id = self.ctx.arena.get_identifier(n)?;
+                                                Some(
+                                                    self.ctx.arena.resolve_identifier_text(id)
+                                                        == *param_name,
+                                                )
+                                            } else {
+                                                Some(false)
+                                            }
+                                        })
+                                        .unwrap_or(false)
+                                },
+                            );
+                            if is_identity {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recurse into children
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.template_has_identity_self_ref(child_idx, name, param_names) {
+                return true;
+            }
+        }
+        false
     }
 }
