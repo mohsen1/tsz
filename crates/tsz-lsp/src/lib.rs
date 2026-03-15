@@ -48,9 +48,14 @@ pub mod signature_help;
 pub mod symbols;
 pub mod utils;
 
+pub mod fourslash;
+
 #[cfg(test)]
 #[path = "../tests/code_actions_tests.rs"]
 mod code_actions_tests;
+#[cfg(test)]
+#[path = "../tests/fourslash_tests.rs"]
+mod fourslash_tests;
 #[cfg(test)]
 #[path = "../tests/project_tests.rs"]
 mod project_tests;
