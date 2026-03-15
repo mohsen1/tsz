@@ -29837,6 +29837,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             jsx_import_source: String::new(),
             verbatim_module_syntax: false,
             ignore_deprecations: false,
+            allow_umd_global_access: false,
         },
     );
     assert!(
