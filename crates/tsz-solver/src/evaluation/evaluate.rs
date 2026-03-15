@@ -1053,11 +1053,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-        let mut i = 0;
-        while i < members.len() {
-            let mut redundant = false;
-            for j in 0..members.len() {
-                if i == j {
+        // Use mark-and-compact instead of Vec::remove() which is O(N) per removal.
+        // Since max size is 25 (from guard above), a u32 bitset avoids heap allocation.
+        let len = members.len();
+        let mut keep: u32 = (1u32 << len) - 1; // all bits set
+        for i in 0..len {
+            if keep & (1u32 << i) == 0 {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || keep & (1u32 << j) == 0 {
                     continue;
                 }
                 if members[i] == members[j] {
@@ -1081,16 +1086,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 };
                 if is_subtype {
-                    redundant = true;
+                    keep &= !(1u32 << i);
                     break;
                 }
             }
-            if redundant {
-                members.remove(i);
-            } else {
-                i += 1;
+        }
+        // Compact: retain only non-redundant elements
+        let mut write = 0;
+        for read in 0..len {
+            if keep & (1u32 << read) != 0 {
+                if write != read {
+                    members[write] = members[read];
+                }
+                write += 1;
             }
         }
+        members.truncate(write);
     }
 
     /// Check if `candidate` has any property names that `subsuming` doesn't have.
