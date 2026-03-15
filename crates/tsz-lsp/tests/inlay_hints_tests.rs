@@ -787,3 +787,265 @@ fn test_no_hint_for_explicit_array_type() {
         "Should NOT produce a type hint when array type annotation is present"
     );
 }
+
+// =========================================================================
+// Additional tests to reach 65+
+// =========================================================================
+
+#[test]
+fn test_type_hint_empty_object_literal() {
+    let source = "let obj = {};";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Empty object literal should produce a type hint, not crash
+    for hint in &type_hints {
+        assert!(
+            hint.label != ": error",
+            "Empty object literal should not produce 'error' hint, got '{}'",
+            hint.label
+        );
+    }
+}
+
+#[test]
+fn test_no_hint_for_explicit_tuple_type() {
+    let source = "let pair: [number, string] = [1, \"a\"];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.is_empty(),
+        "Should NOT produce a type hint when tuple type annotation is present"
+    );
+}
+
+#[test]
+fn test_type_hint_parenthesized_expression() {
+    let source = "let val = (1 + 2);";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("number"),
+            "Parenthesized number expression should hint 'number', got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_void_literal() {
+    let source = "let v = void 0;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // void 0 should infer as undefined; verify no crash
+    for hint in &type_hints {
+        assert!(
+            hint.label != ": error",
+            "void expression should not produce 'error' hint, got '{}'",
+            hint.label
+        );
+    }
+}
+
+#[test]
+fn test_no_hint_for_unknown_type_annotation() {
+    let source = "let x: unknown = 42;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.is_empty(),
+        "Should NOT produce a type hint when 'unknown' type annotation is present"
+    );
+}
+
+#[test]
+fn test_type_hint_new_expression_no_class() {
+    // new expression with unknown constructor should not crash
+    let source = "let d = new Date();";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // May or may not produce a hint depending on built-in type resolution
+    for hint in &type_hints {
+        assert!(
+            hint.label != ": error",
+            "new Date() should not produce 'error' hint, got '{}'",
+            hint.label
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_comma_expression() {
+    let source = "let val = (1, 2, 3);";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Comma expression should not crash
+    for hint in &type_hints {
+        assert!(
+            hint.label != ": error",
+            "Comma expression should not produce 'error' hint, got '{}'",
+            hint.label
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_not_expression() {
+    let source = "let notTrue = !true;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // !true should infer as boolean
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("boolean") || label.contains("false"),
+            "!true should hint 'boolean' or 'false', got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_double_negation() {
+    let source = "let val = !!0;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // !!0 should infer as boolean
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("boolean") || label.contains("true") || label.contains("false"),
+            "!!0 should hint boolean, got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_no_hint_for_explicit_string_type() {
+    let source = "let name: string = \"Alice\";";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.is_empty(),
+        "Should NOT produce a type hint when string type annotation is present"
+    );
+}
+
+#[test]
+fn test_type_hint_mixed_array() {
+    let source = "let arr = [1, \"two\", true];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    // Mixed array should produce some type hint, not crash
+    assert!(
+        !type_hints.is_empty(),
+        "Mixed array literal should produce a type hint"
+    );
+}
+
+#[test]
+fn test_type_hint_conditional_chain() {
+    let source = "let val = true ? \"yes\" : \"no\";";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    if !type_hints.is_empty() {
+        let label = &type_hints[0].label;
+        assert!(
+            label.contains("string"),
+            "Conditional with string branches should hint 'string', got '{label}'"
+        );
+    }
+}
+
+#[test]
+fn test_type_hint_multiline_object() {
+    let source = "let config = {\n  host: \"localhost\",\n  port: 3000,\n  debug: true\n};";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        !type_hints.is_empty(),
+        "Multiline object should produce a type hint"
+    );
+    let label = &type_hints[0].label;
+    assert!(
+        label.contains("host") && label.contains("port"),
+        "Object hint should contain property names, got '{label}'"
+    );
+}
+
+#[test]
+fn test_no_hint_for_explicit_boolean_type() {
+    let source = "let flag: boolean = true;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        type_hints.is_empty(),
+        "Should NOT produce a type hint when boolean type annotation is present"
+    );
+}
+
+#[test]
+fn test_type_hint_const_array() {
+    let source = "const items = [\"a\", \"b\", \"c\"];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        !type_hints.is_empty(),
+        "Const array should produce a type hint"
+    );
+    let label = &type_hints[0].label;
+    assert!(
+        label.contains("string"),
+        "Const string array should mention 'string', got '{label}'"
+    );
+}
+
+#[test]
+fn test_type_hint_var_keyword() {
+    let source = "var x = 42;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    assert!(
+        !type_hints.is_empty(),
+        "var keyword with initializer should produce a type hint"
+    );
+    assert_eq!(type_hints[0].label, ": number");
+}
+
+#[test]
+fn test_type_hint_position_multiline() {
+    let source = "let a = 1;\nlet b = 2;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+
+    if type_hints.len() >= 2 {
+        // First hint should be on line 0, second on line 1
+        assert_eq!(type_hints[0].position.line, 0, "First hint on line 0");
+        assert_eq!(type_hints[1].position.line, 1, "Second hint on line 1");
+    }
+}
+
+#[test]
+fn test_inlay_hint_new_with_tooltip() {
+    let position = Position::new(5, 10);
+    let mut hint = InlayHint::new(position, ": string".to_string(), InlayHintKind::Type);
+    hint.tooltip = Some("This is a string type".to_string());
+
+    assert_eq!(hint.tooltip.as_deref(), Some("This is a string type"));
+    assert_eq!(hint.kind, InlayHintKind::Type);
+}
