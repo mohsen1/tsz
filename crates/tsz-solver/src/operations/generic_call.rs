@@ -2677,6 +2677,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
+        // Bail out for self-referential constraints like `T extends Test<keyof T>`.
+        // The fast path cannot properly instantiate the constraint with the inferred
+        // type (it checks the raw constraint), and it uses `widen_type` which
+        // deep-widens object properties. The normal inference path handles this
+        // correctly by instantiating the constraint with `final_subst`.
+        if let Some(constraint) = tp.constraint {
+            if crate::visitor::contains_type_parameter_named(
+                self.interner.as_type_database(),
+                constraint,
+                tp.name,
+            ) {
+                return None;
+            }
+        }
+
         let arg_ty = arg_types[0];
         let inferred_ty = if tp.is_const {
             arg_ty
