@@ -144,8 +144,14 @@ impl BinderState {
         self.reexports.clear();
         self.wildcard_reexports.clear();
         self.wildcard_reexports_type_only.clear();
-        self.resolved_export_cache.write().unwrap().clear();
-        self.resolved_identifier_cache.write().unwrap().clear();
+        self.resolved_export_cache
+            .write()
+            .expect("RwLock not poisoned")
+            .clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("RwLock not poisoned")
+            .clear();
         self.shorthand_ambient_modules.clear();
         self.modules_with_export_equals.clear();
         self.module_export_equals_non_module.clear();
@@ -660,7 +666,10 @@ impl BinderState {
 
         // Binding mutates scope/symbol tables, so stale identifier resolution entries
         // from prior passes must be dropped.
-        self.resolved_identifier_cache.write().unwrap().clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("RwLock not poisoned")
+            .clear();
 
         // Preserve lib symbols that were merged before binding (e.g., in parallel.rs)
         // When merge_lib_symbols is called before bind_source_file, lib symbols are stored
@@ -1173,7 +1182,10 @@ impl BinderState {
     /// Panics if the resolved identifier cache lock is poisoned.
     pub fn merge_lib_symbols(&mut self, lib_files: &[Arc<lib_loader::LibFile>]) {
         // Merging lib globals changes visible symbols, so invalidate identifier cache.
-        self.resolved_identifier_cache.write().unwrap().clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("RwLock not poisoned")
+            .clear();
 
         // Convert LibFiles to LibContexts
         let lib_contexts: Vec<LibContext> = lib_files
@@ -1256,7 +1268,10 @@ impl BinderState {
         reparse_start: u32,
     ) -> bool {
         // Incremental binding mutates scopes; clear stale identifier resolutions.
-        self.resolved_identifier_cache.write().unwrap().clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("RwLock not poisoned")
+            .clear();
 
         let Some(&last_prefix) = prefix_statements.last() else {
             return false;
