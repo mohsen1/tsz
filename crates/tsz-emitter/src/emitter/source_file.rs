@@ -1580,17 +1580,23 @@ impl<'a> Printer<'a> {
             let Some(named) = self.arena.get_named_imports(clause_node) else {
                 continue;
             };
+            // Skip clauses that mix same-name and renamed exports
+            // (e.g., `export { as, as as return }`). When mixed, let the
+            // clause handle ALL exports together to preserve source order.
+            let has_renamed = named.elements.nodes.iter().any(|&spec_idx| {
+                self.arena
+                    .get(spec_idx)
+                    .and_then(|n| self.arena.get_specifier(n))
+                    .is_some_and(|s| s.property_name.is_some())
+            });
+            if has_renamed {
+                continue;
+            }
             for &spec_idx in &named.elements.nodes {
                 if let Some(spec_node) = self.arena.get(spec_idx)
                     && let Some(spec) = self.arena.get_specifier(spec_node)
                 {
                     if spec.is_type_only {
-                        continue;
-                    }
-                    // Only collect names where export name == local name.
-                    // Renamed exports (`export { C as D }`) are handled
-                    // by the export clause, not inline.
-                    if spec.property_name.is_some() {
                         continue;
                     }
                     let local = self.get_identifier_text_idx(spec.name);
