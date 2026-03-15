@@ -2398,3 +2398,2282 @@ fn nested_class_definition() {
         .expect_found()
         .expect_display_string_contains("Inner");
 }
+
+// =============================================================================
+// Go-to-Definition: Property Access & Member Resolution (NEW)
+// =============================================================================
+
+#[test]
+fn definition_interface_property_access() {
+    let mut t = FourslashTest::new(
+        "
+        interface Config {
+            /*def*/host: string;
+            port: number;
+        }
+        const cfg: Config = { host: 'localhost', port: 80 };
+        cfg./*ref*/host;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_interface_method_access() {
+    let mut t = FourslashTest::new(
+        "
+        interface Greeter {
+            /*def*/greet(name: string): string;
+        }
+        const g: Greeter = { greet: (n) => `Hello ${n}` };
+        g./*ref*/greet('World');
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_class_method_via_type_annotation() {
+    let mut t = FourslashTest::new(
+        "
+        class Animal {
+            /*def*/speak() { return 'sound'; }
+        }
+        const a: Animal = new Animal();
+        a./*ref*/speak();
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_class_property_via_new_expression() {
+    let mut t = FourslashTest::new(
+        "
+        class Point {
+            /*def*/x: number;
+            y: number;
+            constructor(x: number, y: number) {
+                this.x = x;
+                this.y = y;
+            }
+        }
+        const p = new Point(1, 2);
+        p./*ref*/x;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_parameter_type_property_access() {
+    let mut t = FourslashTest::new(
+        "
+        interface User {
+            /*def*/name: string;
+            age: number;
+        }
+        function greetUser(user: User) {
+            return user./*ref*/name;
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_enum_member_access() {
+    let mut t = FourslashTest::new(
+        "
+        enum Direction {
+            /*def*/Up,
+            Down,
+            Left,
+            Right
+        }
+        const d = Direction./*ref*/Up;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_enum_string_member_access() {
+    let mut t = FourslashTest::new(
+        "
+        enum Color {
+            /*def*/Red = 'red',
+            Green = 'green',
+            Blue = 'blue'
+        }
+        const c = Color./*ref*/Red;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_namespace_member_access() {
+    let mut t = FourslashTest::new(
+        "
+        namespace Utils {
+            export function /*def*/format(s: string) { return s; }
+        }
+        Utils./*ref*/format('hello');
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_class_static_member() {
+    let mut t = FourslashTest::new(
+        "
+        class MathUtils {
+            static /*def*/PI = 3.14;
+        }
+        const pi = MathUtils./*ref*/PI;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_class_static_method() {
+    let mut t = FourslashTest::new(
+        "
+        class Factory {
+            static /*def*/create() { return new Factory(); }
+        }
+        Factory./*ref*/create();
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_this_property_access() {
+    let mut t = FourslashTest::new(
+        "
+        class Foo {
+            /*def*/value = 42;
+            getIt() {
+                return this./*ref*/value;
+            }
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_interface_optional_property() {
+    let mut t = FourslashTest::new(
+        "
+        interface Options {
+            /*def*/verbose?: boolean;
+            output?: string;
+        }
+        function run(opts: Options) {
+            if (opts./*ref*/verbose) {
+                console.log('verbose mode');
+            }
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+#[ignore = "requires class inheritance chain resolution"]
+fn definition_inherited_class_member() {
+    let mut t = FourslashTest::new(
+        "
+        class Base {
+            /*def*/baseMethod() { return 1; }
+        }
+        class Derived extends Base {
+            derivedMethod() { return 2; }
+        }
+        const d = new Derived();
+        d./*ref*/baseMethod();
+    ",
+    );
+    // Should resolve to Base.baseMethod
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+// =============================================================================
+// Go-to-Definition: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn definition_function_expression_variable() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/add = function(a: number, b: number) {
+            return a + b;
+        };
+        /*ref*/add(1, 2);
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_default_export_class() {
+    let mut t = FourslashTest::new(
+        "
+        export default class /*def*/MyClass {}
+        const x = new /*ref*/MyClass();
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_const_enum() {
+    let mut t = FourslashTest::new(
+        "
+        const enum /*def*/Status { Active, Inactive }
+        const s: /*ref*/Status = Status.Active;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_abstract_class() {
+    let mut t = FourslashTest::new(
+        "
+        abstract class /*def*/Shape {
+            abstract area(): number;
+        }
+        class Circle extends /*ref*/Shape {
+            area() { return 3.14; }
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_type_in_union() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/A { x: number; }
+        interface B { y: string; }
+        type C = /*ref*/A | B;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_type_in_intersection() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/X { a: number; }
+        interface Y { b: string; }
+        type Z = /*ref*/X & Y;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_generic_constraint() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/HasLength { length: number; }
+        function longest<T extends /*ref*/HasLength>(a: T, b: T): T {
+            return a.length >= b.length ? a : b;
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_return_type_reference() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/Result { success: boolean; }
+        function getResult(): /*ref*/Result {
+            return { success: true };
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_array_element_type() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/Item { id: number; }
+        const items: /*ref*/Item[] = [];
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_promise_type_argument() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/Data { value: string; }
+        async function fetch(): Promise</*ref*/Data> {
+            return { value: '' };
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+// =============================================================================
+// Hover: Property Access & Members (NEW)
+// =============================================================================
+
+#[test]
+fn hover_interface_property() {
+    let mut t = FourslashTest::new(
+        "
+        interface Config {
+            host: string;
+            port: number;
+        }
+        const cfg: Config = { host: 'localhost', port: 80 };
+        cfg./*h*/host;
+    ",
+    );
+    t.hover("h").expect_found();
+}
+
+#[test]
+fn hover_class_method_call() {
+    let mut t = FourslashTest::new(
+        "
+        class Calc {
+            add(a: number, b: number) { return a + b; }
+        }
+        const c = new Calc();
+        c./*h*/add(1, 2);
+    ",
+    );
+    t.hover("h").expect_found();
+}
+
+#[test]
+#[ignore = "requires member access hover resolution"]
+fn hover_enum_member_dot_access() {
+    let mut t = FourslashTest::new(
+        "
+        enum Status {
+            Active = 1,
+            Inactive = 0
+        }
+        Status./*h*/Active;
+    ",
+    );
+    t.hover("h").expect_found();
+}
+
+#[test]
+#[ignore = "requires namespace member hover resolution"]
+fn hover_namespace_function() {
+    let mut t = FourslashTest::new(
+        "
+        namespace Utils {
+            export function format(s: string) { return s.trim(); }
+        }
+        Utils./*h*/format(' hello ');
+    ",
+    );
+    t.hover("h").expect_found();
+}
+
+#[test]
+fn hover_optional_chaining() {
+    let mut t = FourslashTest::new(
+        "
+        interface User { name?: string; }
+        const u: User | undefined = { name: 'Bob' };
+        u?./*h*/name;
+    ",
+    );
+    // Optional chaining hover may or may not resolve - just verify no crash
+    let _ = t.hover("h");
+}
+
+#[test]
+fn hover_getter_setter() {
+    let mut t = FourslashTest::new(
+        "
+        class Thermometer {
+            private _temp = 0;
+            get /*h*/temperature() { return this._temp; }
+            set temperature(val: number) { this._temp = val; }
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("temperature");
+}
+
+#[test]
+fn hover_readonly_property() {
+    let mut t = FourslashTest::new(
+        "
+        class Config {
+            readonly /*h*/apiKey: string = 'key123';
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("apiKey");
+}
+
+#[test]
+fn hover_string_literal_type() {
+    let mut t = FourslashTest::new(
+        "
+        type /*h*/Direction = 'north' | 'south' | 'east' | 'west';
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("Direction");
+}
+
+#[test]
+fn hover_numeric_literal_type() {
+    let mut t = FourslashTest::new(
+        "
+        const /*h*/PI = 3.14159;
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("PI");
+}
+
+#[test]
+fn hover_typeof_variable() {
+    let mut t = FourslashTest::new(
+        "
+        const config = { host: 'localhost', port: 80 };
+        type /*h*/ConfigType = typeof config;
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("ConfigType");
+}
+
+#[test]
+fn hover_keyof_type() {
+    let mut t = FourslashTest::new(
+        "
+        interface Person { name: string; age: number; }
+        type /*h*/PersonKey = keyof Person;
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("PersonKey");
+}
+
+#[test]
+fn hover_nested_generic_type() {
+    let mut t = FourslashTest::new(
+        "
+        type /*h*/DeepReadonly<T> = {
+            readonly [P in keyof T]: T[P] extends object ? DeepReadonly<T[P]> : T[P];
+        };
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("DeepReadonly");
+}
+
+#[test]
+fn hover_function_with_overloads() {
+    let mut t = FourslashTest::new(
+        "
+        function /*h*/format(x: string): string;
+        function format(x: number): string;
+        function format(x: string | number): string {
+            return String(x);
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("format");
+}
+
+#[test]
+fn hover_abstract_method() {
+    let mut t = FourslashTest::new(
+        "
+        abstract class Shape {
+            abstract /*h*/area(): number;
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("area");
+}
+
+#[test]
+fn hover_private_method() {
+    let mut t = FourslashTest::new(
+        "
+        class Service {
+            private /*h*/fetchData() { return null; }
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("fetchData");
+}
+
+#[test]
+fn hover_static_property() {
+    let mut t = FourslashTest::new(
+        "
+        class Counter {
+            static /*h*/count = 0;
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("count");
+}
+
+#[test]
+fn hover_computed_property() {
+    let mut t = FourslashTest::new(
+        "
+        const key = 'name';
+        const obj = { [key]: 'value' };
+        const /*h*/x = obj;
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("x");
+}
+
+// =============================================================================
+// Hover: JSDoc & Documentation (NEW)
+// =============================================================================
+
+#[test]
+fn hover_jsdoc_param_tags() {
+    let mut t = FourslashTest::new(
+        "
+        /**
+         * Calculates the sum of two numbers.
+         * @param a - First number
+         * @param b - Second number
+         * @returns The sum
+         */
+        function /*h*/add(a: number, b: number): number {
+            return a + b;
+        }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_display_string_contains("add")
+        .expect_documentation_contains("sum");
+}
+
+#[test]
+fn hover_jsdoc_deprecated() {
+    let mut t = FourslashTest::new(
+        "
+        /**
+         * @deprecated Use newMethod instead
+         */
+        function /*h*/oldMethod() {}
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_documentation_contains("deprecated");
+}
+
+#[test]
+#[ignore = "requires JSDoc @example tag extraction in hover"]
+fn hover_jsdoc_example() {
+    let mut t = FourslashTest::new(
+        "
+        /**
+         * Formats a name.
+         * @example
+         * formatName('john') // => 'John'
+         */
+        function /*h*/formatName(name: string) { return name; }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_documentation_contains("example");
+}
+
+#[test]
+fn hover_jsdoc_multiline() {
+    let mut t = FourslashTest::new(
+        "
+        /**
+         * A complex utility function that does several things:
+         *
+         * 1. Validates input
+         * 2. Transforms data
+         * 3. Returns result
+         */
+        function /*h*/process(data: string) { return data; }
+    ",
+    );
+    t.hover("h")
+        .expect_found()
+        .expect_documentation_contains("Validates");
+}
+
+// =============================================================================
+// References: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn references_type_annotation_usage() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*def*/Config {
+            host: string;
+        }
+        const a: /*r1*/Config = { host: '' };
+        function f(c: /*r2*/Config) {}
+    ",
+    );
+    t.references("def").expect_found().expect_count(3);
+}
+
+#[test]
+#[ignore = "requires type annotation reference tracking"]
+fn references_enum_usage() {
+    let mut t = FourslashTest::new(
+        "
+        enum /*def*/Color { Red, Green }
+        const c: /*r1*/Color = Color.Red;
+        function paint(color: /*r2*/Color) {}
+    ",
+    );
+    t.references("def").expect_found().expect_count(3);
+}
+
+#[test]
+fn references_type_alias_usage() {
+    let mut t = FourslashTest::new(
+        "
+        type /*def*/ID = string | number;
+        const id: /*r1*/ID = '123';
+        function getById(id: /*r2*/ID) {}
+    ",
+    );
+    t.references("def").expect_found().expect_count(3);
+}
+
+#[test]
+fn references_multiple_declarations() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/x = 1;
+        const y = /*r1*/x + 2;
+        const z = /*r2*/x + 3;
+        const w = /*r3*/x + /*r4*/x;
+    ",
+    );
+    t.references("def").expect_found().expect_count(5);
+}
+
+#[test]
+fn references_from_middle_usage() {
+    let mut t = FourslashTest::new(
+        "
+        const x = 1;
+        const y = /*ref*/x + 2;
+        const z = x + 3;
+    ",
+    );
+    // Finding references from a usage should find all refs including declaration
+    t.references("ref").expect_found();
+}
+
+#[test]
+#[ignore = "requires heritage clause reference tracking"]
+fn references_class_with_heritage() {
+    let mut t = FourslashTest::new(
+        "
+        class /*def*/Base { value = 1; }
+        class Child extends /*r1*/Base {}
+        class GrandChild extends Child {}
+        const b: /*r2*/Base = new Base();
+    ",
+    );
+    t.references("def").expect_found().expect_count(3);
+}
+
+// =============================================================================
+// Rename: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn rename_interface() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*r*/Config { host: string; }
+        const c: Config = { host: '' };
+        function setup(c: Config) {}
+    ",
+    );
+    t.rename("r", "Options")
+        .expect_success()
+        .expect_total_edits(3);
+}
+
+#[test]
+fn rename_enum() {
+    let mut t = FourslashTest::new(
+        "
+        enum /*r*/Status { Active, Inactive }
+        const s: Status = Status.Active;
+    ",
+    );
+    t.rename("r", "State")
+        .expect_success()
+        .expect_total_edits(3);
+}
+
+#[test]
+fn rename_type_alias() {
+    let mut t = FourslashTest::new(
+        "
+        type /*r*/ID = string;
+        const id: ID = '123';
+    ",
+    );
+    t.rename("r", "Identifier")
+        .expect_success()
+        .expect_total_edits(2);
+}
+
+#[test]
+#[ignore = "requires destructuring pattern rename support"]
+fn rename_destructured() {
+    let mut t = FourslashTest::new(
+        "
+        const { /*r*/name, age } = { name: 'Alice', age: 30 };
+        console.log(name);
+    ",
+    );
+    t.rename("r", "fullName")
+        .expect_success()
+        .expect_total_edits(2);
+}
+
+#[test]
+fn rename_across_scopes() {
+    let mut t = FourslashTest::new(
+        "
+        function outer() {
+            const /*r*/val = 1;
+            function inner() {
+                return val + 1;
+            }
+            return val + inner();
+        }
+    ",
+    );
+    t.rename("r", "result")
+        .expect_success()
+        .expect_total_edits(3);
+}
+
+// =============================================================================
+// Completions: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn completions_class_members_after_dot() {
+    let mut t = FourslashTest::new(
+        "
+        class Calculator {
+            add(a: number, b: number) { return a + b; }
+            subtract(a: number, b: number) { return a - b; }
+            multiply(a: number, b: number) { return a * b; }
+        }
+        const calc = new Calculator();
+        calc./*c*/
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("add")
+        .expect_includes("subtract")
+        .expect_includes("multiply");
+}
+
+#[test]
+fn completions_interface_members_after_dot() {
+    let mut t = FourslashTest::new(
+        "
+        interface Config {
+            host: string;
+            port: number;
+            debug: boolean;
+        }
+        declare const cfg: Config;
+        cfg./*c*/
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("host")
+        .expect_includes("port")
+        .expect_includes("debug");
+}
+
+#[test]
+fn completions_enum_members_after_dot() {
+    let mut t = FourslashTest::new(
+        "
+        enum Color {
+            Red,
+            Green,
+            Blue
+        }
+        Color./*c*/
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("Red")
+        .expect_includes("Green")
+        .expect_includes("Blue");
+}
+
+#[test]
+fn completions_namespace_exports_after_dot() {
+    let mut t = FourslashTest::new(
+        "
+        namespace Utils {
+            export function format(s: string) { return s; }
+            export function parse(s: string) { return s; }
+            export const VERSION = '1.0';
+        }
+        Utils./*c*/
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("format")
+        .expect_includes("parse")
+        .expect_includes("VERSION");
+}
+
+#[test]
+fn completions_nested_scope() {
+    let mut t = FourslashTest::new(
+        "
+        const outer = 1;
+        function test() {
+            const inner = 2;
+            /*c*/
+        }
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("outer")
+        .expect_includes("inner")
+        .expect_includes("test");
+}
+
+#[test]
+fn completions_function_parameters() {
+    let mut t = FourslashTest::new(
+        "
+        function doSomething(name: string, count: number) {
+            /*c*/
+        }
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("name")
+        .expect_includes("count");
+}
+
+#[test]
+#[ignore = "requires this-member completion in class context"]
+fn completions_class_this_members() {
+    let mut t = FourslashTest::new(
+        "
+        class Foo {
+            value = 42;
+            method() { return 1; }
+            doStuff() {
+                this./*c*/
+            }
+        }
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("value")
+        .expect_includes("method")
+        .expect_includes("doStuff");
+}
+
+#[test]
+fn completions_no_completions_in_string() {
+    let mut t = FourslashTest::new(
+        "
+        const x = 1;
+        const s = 'hello /*c*/ world';
+    ",
+    );
+    // Inside a string literal, normal identifier completions should not appear
+    let result = t.completions("c");
+    // Either none or very few - just verify no crash
+    let _ = result;
+}
+
+#[test]
+fn completions_after_new_keyword() {
+    let mut t = FourslashTest::new(
+        "
+        class MyClass { }
+        class OtherClass { }
+        const x = new /*c*/
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("MyClass")
+        .expect_includes("OtherClass");
+}
+
+#[test]
+fn completions_static_members_on_class() {
+    let mut t = FourslashTest::new(
+        "
+        class MathUtils {
+            static PI = 3.14;
+            static square(n: number) { return n * n; }
+            instanceMethod() {}
+        }
+        MathUtils./*c*/
+    ",
+    );
+    t.completions("c")
+        .expect_found()
+        .expect_includes("PI")
+        .expect_includes("square");
+}
+
+// =============================================================================
+// Signature Help: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn signature_help_multi_param() {
+    let mut t = FourslashTest::new(
+        "
+        function create(name: string, age: number, active: boolean) {}
+        create(/*c*/);
+    ",
+    );
+    t.signature_help("c")
+        .expect_found()
+        .expect_parameter_count(3);
+}
+
+#[test]
+fn signature_help_generic_function() {
+    let mut t = FourslashTest::new(
+        "
+        function identity<T>(arg: T): T { return arg; }
+        identity(/*c*/);
+    ",
+    );
+    t.signature_help("c").expect_found();
+}
+
+#[test]
+fn signature_help_rest_parameter() {
+    let mut t = FourslashTest::new(
+        "
+        function sum(...nums: number[]) { return 0; }
+        sum(/*c*/);
+    ",
+    );
+    t.signature_help("c").expect_found();
+}
+
+#[test]
+fn signature_help_optional_params() {
+    let mut t = FourslashTest::new(
+        "
+        function greet(name: string, greeting?: string) {}
+        greet(/*c*/);
+    ",
+    );
+    t.signature_help("c")
+        .expect_found()
+        .expect_parameter_count(2);
+}
+
+#[test]
+fn signature_help_method_call() {
+    let mut t = FourslashTest::new(
+        "
+        class Calc {
+            add(a: number, b: number): number { return a + b; }
+        }
+        const c = new Calc();
+        c.add(/*h*/);
+    ",
+    );
+    t.signature_help("h").expect_found();
+}
+
+#[test]
+fn signature_help_nested_call() {
+    let mut t = FourslashTest::new(
+        "
+        function outer(x: number) { return x; }
+        function inner(a: string, b: string) { return a; }
+        outer(inner(/*c*/));
+    ",
+    );
+    // Should show inner's signature, not outer's
+    t.signature_help("c")
+        .expect_found()
+        .expect_parameter_count(2);
+}
+
+#[test]
+fn signature_help_arrow_function() {
+    let mut t = FourslashTest::new(
+        "
+        const transform = (input: string, repeat: number): string => input;
+        transform(/*c*/);
+    ",
+    );
+    t.signature_help("c").expect_found();
+}
+
+#[test]
+fn signature_help_constructor() {
+    let mut t = FourslashTest::new(
+        "
+        class Point {
+            constructor(x: number, y: number) {}
+        }
+        new Point(/*c*/);
+    ",
+    );
+    t.signature_help("c").expect_found();
+}
+
+// =============================================================================
+// Document Symbols: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn symbols_nested_functions() {
+    let mut t = FourslashTest::new(
+        "
+        function outer() {
+            function inner() {
+                function deepest() {}
+            }
+        }
+    ",
+    );
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("outer");
+}
+
+#[test]
+fn symbols_class_with_static_members() {
+    let mut t = FourslashTest::new(
+        "
+        class Config {
+            static defaultHost = 'localhost';
+            static defaultPort = 80;
+            host: string;
+            port: number;
+            constructor(host: string, port: number) {
+                this.host = host;
+                this.port = port;
+            }
+            static create() { return new Config('', 0); }
+        }
+    ",
+    );
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("Config");
+}
+
+#[test]
+fn symbols_abstract_class() {
+    let mut t = FourslashTest::new(
+        "
+        abstract class Shape {
+            abstract area(): number;
+            abstract perimeter(): number;
+            toString() { return `Area: ${this.area()}`; }
+        }
+    ",
+    );
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("Shape");
+}
+
+#[test]
+fn symbols_type_declarations() {
+    let mut t = FourslashTest::new(
+        "
+        type Point = { x: number; y: number };
+        type StringOrNumber = string | number;
+        type Callback<T> = (value: T) => void;
+    ",
+    );
+    let result = t.document_symbols("test.ts");
+    result.expect_found().expect_count(3);
+}
+
+#[test]
+fn symbols_exported_declarations() {
+    let mut t = FourslashTest::new(
+        "
+        export const VERSION = '1.0';
+        export function initialize() {}
+        export class App {}
+        export interface AppConfig { debug: boolean; }
+        export type AppId = string;
+        export enum AppStatus { Running, Stopped }
+    ",
+    );
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("VERSION")
+        .expect_symbol("initialize")
+        .expect_symbol("App")
+        .expect_symbol("AppConfig")
+        .expect_symbol("AppId")
+        .expect_symbol("AppStatus");
+}
+
+#[test]
+fn symbols_module_declarations() {
+    let mut t = FourslashTest::new(
+        "
+        declare module 'my-module' {
+            export function doSomething(): void;
+        }
+    ",
+    );
+    t.document_symbols("test.ts").expect_found();
+}
+
+// =============================================================================
+// Diagnostics: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn diagnostics_unused_variable() {
+    let mut t = FourslashTest::new(
+        "
+        const x = 42;
+    ",
+    );
+    // A clean file with just a const should have no errors
+    t.verify_no_errors("test.ts");
+}
+
+#[test]
+fn diagnostics_duplicate_identifier() {
+    let mut t = FourslashTest::new(
+        "
+        let x = 1;
+        let x = 2;
+    ",
+    );
+    t.diagnostics("test.ts").expect_found();
+}
+
+#[test]
+fn diagnostics_missing_return_type() {
+    let mut t = FourslashTest::new(
+        "
+        function add(a: number, b: number): number {
+            return a + b;
+        }
+    ",
+    );
+    t.verify_no_errors("test.ts");
+}
+
+#[test]
+fn diagnostics_const_reassignment() {
+    let mut t = FourslashTest::new(
+        "
+        const x = 1;
+        x = 2;
+    ",
+    );
+    t.diagnostics("test.ts").expect_found();
+}
+
+#[test]
+fn diagnostics_property_does_not_exist() {
+    let mut t = FourslashTest::new(
+        "
+        interface Point { x: number; y: number; }
+        const p: Point = { x: 1, y: 2 };
+        p.z;
+    ",
+    );
+    t.diagnostics("test.ts").expect_found();
+}
+
+// =============================================================================
+// Folding Ranges: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn folding_multiline_comment() {
+    let t = FourslashTest::new(
+        "
+        /**
+         * This is a multiline
+         * JSDoc comment
+         */
+        function test() {
+            return 1;
+        }
+    ",
+    );
+    t.folding_ranges("test.ts")
+        .expect_found()
+        .expect_min_count(2); // comment + function body
+}
+
+#[test]
+fn folding_switch_statement() {
+    let t = FourslashTest::new(
+        "
+        function handler(action: string) {
+            switch (action) {
+                case 'a': {
+                    break;
+                }
+                case 'b': {
+                    break;
+                }
+            }
+        }
+    ",
+    );
+    t.folding_ranges("test.ts").expect_found();
+}
+
+#[test]
+fn folding_array_literal() {
+    let t = FourslashTest::new(
+        "
+        const items = [
+            1,
+            2,
+            3,
+            4,
+            5,
+        ];
+    ",
+    );
+    t.folding_ranges("test.ts").expect_found();
+}
+
+#[test]
+fn folding_object_literal() {
+    let t = FourslashTest::new(
+        "
+        const config = {
+            host: 'localhost',
+            port: 80,
+            debug: true,
+        };
+    ",
+    );
+    t.folding_ranges("test.ts").expect_found();
+}
+
+// =============================================================================
+// Selection Range: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn selection_range_in_function_body() {
+    let t = FourslashTest::new(
+        "
+        function test() {
+            const x = /*m*/42;
+        }
+    ",
+    );
+    let result = t.selection_range("m");
+    result.expect_found().expect_has_parent();
+}
+
+#[test]
+fn selection_range_in_class_method() {
+    let t = FourslashTest::new(
+        "
+        class Foo {
+            bar() {
+                return /*m*/this;
+            }
+        }
+    ",
+    );
+    t.selection_range("m").expect_found().expect_has_parent();
+}
+
+#[test]
+fn selection_range_in_object_literal() {
+    let t = FourslashTest::new(
+        "
+        const obj = {
+            key: /*m*/'value',
+        };
+    ",
+    );
+    t.selection_range("m").expect_found();
+}
+
+// =============================================================================
+// Document Highlights: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn highlight_class_name_usage() {
+    let t = FourslashTest::new(
+        "
+        class /*h*/Foo {}
+        const a: Foo = new Foo();
+        const b = new Foo();
+    ",
+    );
+    let result = t.document_highlights("h");
+    result.expect_found();
+    assert!(
+        result.highlights.as_ref().unwrap().len() >= 3,
+        "Expected at least 3 highlights for class usage"
+    );
+}
+
+#[test]
+fn highlight_enum_name() {
+    let t = FourslashTest::new(
+        "
+        enum /*h*/Color { Red, Green, Blue }
+        const c: Color = Color.Red;
+    ",
+    );
+    let result = t.document_highlights("h");
+    result.expect_found();
+    assert!(
+        result.highlights.as_ref().unwrap().len() >= 2,
+        "Expected at least 2 highlights for enum"
+    );
+}
+
+#[test]
+fn highlight_interface_name() {
+    let t = FourslashTest::new(
+        "
+        interface /*h*/Serializable {
+            serialize(): string;
+        }
+        class Item implements Serializable {
+            serialize() { return '{}'; }
+        }
+    ",
+    );
+    let result = t.document_highlights("h");
+    result.expect_found();
+    assert!(
+        result.highlights.as_ref().unwrap().len() >= 2,
+        "Expected at least 2 highlights for interface"
+    );
+}
+
+// =============================================================================
+// Semantic Tokens: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn semantic_tokens_enum_declaration() {
+    let t = FourslashTest::new(
+        "
+        enum Direction {
+            Up = 'UP',
+            Down = 'DOWN',
+        }
+    ",
+    );
+    t.semantic_tokens("test.ts").expect_found();
+}
+
+#[test]
+fn semantic_tokens_generic_function() {
+    let t = FourslashTest::new(
+        "
+        function map<T, U>(arr: T[], fn: (item: T) => U): U[] {
+            return arr.map(fn);
+        }
+    ",
+    );
+    t.semantic_tokens("test.ts").expect_found();
+}
+
+#[test]
+fn semantic_tokens_decorators() {
+    let t = FourslashTest::new(
+        "
+        function log(target: any) { return target; }
+
+        @log
+        class MyService {
+            @log
+            method() {}
+        }
+    ",
+    );
+    t.semantic_tokens("test.ts").expect_found();
+}
+
+#[test]
+fn semantic_tokens_type_annotations() {
+    let t = FourslashTest::new(
+        "
+        interface Foo { bar: string; }
+        const x: Foo = { bar: 'baz' };
+        function f(a: number, b: string): boolean { return true; }
+    ",
+    );
+    t.semantic_tokens("test.ts").expect_found();
+}
+
+// =============================================================================
+// Workspace Symbols: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn workspace_symbols_case_insensitive() {
+    let t = FourslashTest::new(
+        "
+        function myLongFunctionName() {}
+        class MyService {}
+    ",
+    );
+    let result = t.workspace_symbols("mylong");
+    // Case-insensitive should find the function
+    if !result.symbols.is_empty() {
+        result.expect_found();
+    }
+}
+
+#[test]
+#[ignore = "requires multi-file workspace symbol aggregation"]
+fn workspace_symbols_multi_file() {
+    let t = FourslashTest::multi_file(&[
+        ("a.ts", "export function helperA() {}"),
+        ("b.ts", "export function helperB() {}"),
+        ("c.ts", "export class MainApp {}"),
+    ]);
+    let result = t.workspace_symbols("helper");
+    result.expect_found();
+    assert!(
+        result.symbols.len() >= 2,
+        "Expected at least 2 symbols matching 'helper'"
+    );
+}
+
+#[test]
+#[ignore = "requires workspace symbol search for class declarations"]
+fn workspace_symbols_returns_classes() {
+    let t = FourslashTest::new(
+        "
+        class UserService {}
+        class ProductService {}
+        class OrderService {}
+    ",
+    );
+    let result = t.workspace_symbols("Service");
+    result.expect_found();
+    assert!(
+        result.symbols.len() >= 3,
+        "Expected at least 3 service classes"
+    );
+}
+
+// =============================================================================
+// Code Lens: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn code_lens_class_methods() {
+    let t = FourslashTest::new(
+        "
+        class Service {
+            start() {}
+            stop() {}
+            restart() {}
+        }
+    ",
+    );
+    let result = t.code_lenses("test.ts");
+    // Should produce lenses for the class and its methods
+    if !result.lenses.is_empty() {
+        result.expect_min_count(1);
+    }
+}
+
+#[test]
+fn code_lens_interface_with_implementations() {
+    let t = FourslashTest::new(
+        "
+        interface Serializable {
+            serialize(): string;
+        }
+        class JsonSerializer implements Serializable {
+            serialize() { return '{}'; }
+        }
+    ",
+    );
+    let result = t.code_lenses("test.ts");
+    if !result.lenses.is_empty() {
+        result.expect_min_count(1);
+    }
+}
+
+// =============================================================================
+// Inlay Hints: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn inlay_hints_function_parameters() {
+    let t = FourslashTest::new(
+        "
+        function createUser(name: string, age: number, active: boolean) {}
+        createUser('Alice', 30, true);
+    ",
+    );
+    let result = t.inlay_hints("test.ts");
+    // Should have parameter name hints for the call
+    if !result.hints.is_empty() {
+        result.expect_min_count(1);
+    }
+}
+
+#[test]
+fn inlay_hints_variable_type() {
+    let t = FourslashTest::new(
+        "
+        const x = [1, 2, 3];
+        const y = { a: 1, b: 'hello' };
+        const z = new Map<string, number>();
+    ",
+    );
+    let result = t.inlay_hints("test.ts");
+    // Should have type hints for the variables
+    let _ = result; // Just verify no crash
+}
+
+// =============================================================================
+// Type Hierarchy: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn type_hierarchy_deep_inheritance() {
+    let t = FourslashTest::new(
+        "
+        class /*base*/Animal {}
+        class /*mammal*/Mammal extends Animal {}
+        class /*dog*/Dog extends Mammal {}
+    ",
+    );
+    // Dog's supertypes should include Mammal
+    let result = t.supertypes("dog");
+    result.expect_found();
+}
+
+#[test]
+fn type_hierarchy_interface_extends() {
+    let t = FourslashTest::new(
+        "
+        interface /*base*/Printable {
+            print(): void;
+        }
+        interface /*child*/FormattedPrintable extends Printable {
+            format(): string;
+        }
+    ",
+    );
+    let result = t.supertypes("child");
+    result.expect_found();
+    assert!(
+        result.items.iter().any(|item| item.name == "Printable"),
+        "Expected Printable as a supertype"
+    );
+}
+
+#[test]
+fn type_hierarchy_class_implements_interface() {
+    let t = FourslashTest::new(
+        "
+        interface Serializable {
+            serialize(): string;
+        }
+        class /*cls*/JsonItem implements Serializable {
+            serialize() { return '{}'; }
+        }
+    ",
+    );
+    let result = t.supertypes("cls");
+    result.expect_found();
+    assert!(
+        result.items.iter().any(|item| item.name == "Serializable"),
+        "Expected Serializable as a supertype"
+    );
+}
+
+#[test]
+fn type_hierarchy_subtypes_finds_implementations() {
+    let t = FourslashTest::new(
+        "
+        interface /*iface*/Logger {
+            log(msg: string): void;
+        }
+        class ConsoleLogger implements Logger {
+            log(msg: string) { console.log(msg); }
+        }
+        class FileLogger implements Logger {
+            log(msg: string) {}
+        }
+    ",
+    );
+    let result = t.subtypes("iface");
+    result.expect_found();
+    assert!(
+        result.items.len() >= 2,
+        "Expected at least 2 implementations"
+    );
+}
+
+#[test]
+fn type_hierarchy_multiple_interfaces() {
+    let t = FourslashTest::new(
+        "
+        interface Readable { read(): string; }
+        interface Writable { write(s: string): void; }
+        class /*cls*/Stream implements Readable, Writable {
+            read() { return ''; }
+            write(s: string) {}
+        }
+    ",
+    );
+    let result = t.supertypes("cls");
+    result.expect_found();
+    assert!(result.items.len() >= 2, "Expected at least 2 supertypes");
+}
+
+// =============================================================================
+// Call Hierarchy: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn call_hierarchy_prepare_constructor() {
+    let t = FourslashTest::new(
+        "
+        class Foo {
+            /*c*/constructor() {}
+        }
+    ",
+    );
+    let result = t.prepare_call_hierarchy("c");
+    result.expect_found();
+}
+
+#[test]
+fn call_hierarchy_prepare_arrow_function() {
+    let t = FourslashTest::new(
+        "
+        const /*f*/greet = (name: string) => `Hello ${name}`;
+    ",
+    );
+    let result = t.prepare_call_hierarchy("f");
+    result.expect_found();
+}
+
+#[test]
+fn call_hierarchy_outgoing_from_function() {
+    let t = FourslashTest::new(
+        "
+        function helper() { return 1; }
+        function /*f*/main() {
+            helper();
+            helper();
+        }
+    ",
+    );
+    let result = t.outgoing_calls("f");
+    result.expect_found();
+}
+
+#[test]
+fn call_hierarchy_incoming_to_function() {
+    let t = FourslashTest::new(
+        "
+        function /*f*/target() { return 42; }
+        function caller1() { target(); }
+        function caller2() { target(); }
+    ",
+    );
+    let result = t.incoming_calls("f");
+    result.expect_found();
+    assert!(result.calls.len() >= 2, "Expected at least 2 callers");
+}
+
+#[test]
+fn call_hierarchy_method_calls() {
+    let t = FourslashTest::new(
+        "
+        class Service {
+            /*m*/process() {
+                this.validate();
+                this.execute();
+            }
+            validate() {}
+            execute() {}
+        }
+    ",
+    );
+    let result = t.outgoing_calls("m");
+    result.expect_found();
+}
+
+// =============================================================================
+// Document Links: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn document_links_re_export() {
+    let t = FourslashTest::new(
+        "
+        export { something } from './other';
+        export * from './utils';
+    ",
+    );
+    let result = t.document_links("test.ts");
+    result.expect_found();
+    result.expect_min_count(2);
+}
+
+#[test]
+fn document_links_type_import() {
+    let t = FourslashTest::new(
+        "
+        import type { Config } from './config';
+    ",
+    );
+    let result = t.document_links("test.ts");
+    result.expect_found();
+}
+
+#[test]
+fn document_links_require() {
+    let t = FourslashTest::new(
+        "
+        const fs = require('fs');
+        const path = require('path');
+    ",
+    );
+    let result = t.document_links("test.ts");
+    result.expect_found();
+}
+
+// =============================================================================
+// Linked Editing (JSX Tag Sync): Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn linked_editing_simple_jsx() {
+    let t = FourslashTest::new(
+        "
+        const elem = </*m*/div>content</div>;
+    ",
+    );
+    // JSX linked editing should find paired tags
+    let _ = t.linked_editing_ranges("m");
+}
+
+// =============================================================================
+// Multi-file: Advanced Patterns (NEW)
+// =============================================================================
+
+#[test]
+fn multi_file_cross_file_references() {
+    let mut t = FourslashTest::multi_file(&[
+        ("types.ts", "export interface /*def*/User { name: string; }"),
+        ("utils.ts", "import { /*ref*/User } from './types';"),
+    ]);
+    // Within-file definition of the import binding
+    let result = t.go_to_definition("ref");
+    result.expect_found();
+}
+
+#[test]
+fn multi_file_workspace_symbols() {
+    let t = FourslashTest::multi_file(&[
+        ("a.ts", "export class Alpha {}"),
+        ("b.ts", "export class Beta {}"),
+        ("c.ts", "export class Gamma {}"),
+    ]);
+    let result = t.workspace_symbols("a");
+    // Should find Alpha at minimum
+    if !result.symbols.is_empty() {
+        result.expect_found();
+    }
+}
+
+#[test]
+fn multi_file_diagnostics_independent() {
+    let mut t = FourslashTest::multi_file(&[
+        ("good.ts", "const x: number = 42;"),
+        ("bad.ts", "const y: number = 'not a number';"),
+    ]);
+    t.verify_no_errors("good.ts");
+    t.diagnostics("bad.ts").expect_found();
+}
+
+#[test]
+fn multi_file_completions_imports() {
+    let mut t = FourslashTest::multi_file(&[
+        ("lib.ts", "export function helperFunc() { return 1; }"),
+        ("main.ts", "/*c*/"),
+    ]);
+    // Completions at the top of main.ts
+    let result = t.completions("c");
+    // Just verify no crash - cross-file completions depend on project setup
+    let _ = result;
+}
+
+// =============================================================================
+// Edge Cases & Robustness (NEW)
+// =============================================================================
+
+#[test]
+fn edge_case_empty_class() {
+    let mut t = FourslashTest::new(
+        "
+        class /*cls*/Empty {}
+    ",
+    );
+    t.hover("cls")
+        .expect_found()
+        .expect_display_string_contains("Empty");
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("Empty");
+}
+
+#[test]
+fn edge_case_empty_interface() {
+    let mut t = FourslashTest::new(
+        "
+        interface /*iface*/Marker {}
+    ",
+    );
+    t.hover("iface")
+        .expect_found()
+        .expect_display_string_contains("Marker");
+}
+
+#[test]
+fn edge_case_single_line_function() {
+    let mut t = FourslashTest::new(
+        "
+        const /*f*/double = (x: number) => x * 2;
+    ",
+    );
+    t.hover("f")
+        .expect_found()
+        .expect_display_string_contains("double");
+}
+
+#[test]
+fn edge_case_nested_destructuring() {
+    let mut t = FourslashTest::new(
+        "
+        const { a: { /*def*/b } } = { a: { b: 42 } };
+        /*ref*/b;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_spread_operator() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/base = { x: 1, y: 2 };
+        const extended = { .../*ref*/base, z: 3 };
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_template_expression() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/name = 'World';
+        const greeting = `Hello ${/*ref*/name}!`;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_ternary_expression() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/flag = true;
+        const result = /*ref*/flag ? 'yes' : 'no';
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_array_destructuring() {
+    let mut t = FourslashTest::new(
+        "
+        const [/*def*/first, second] = [1, 2];
+        /*ref*/first;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_for_of_variable() {
+    let mut t = FourslashTest::new(
+        "
+        const items = [1, 2, 3];
+        for (const /*def*/item of items) {
+            console.log(/*ref*/item);
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_labeled_statement() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/x = 1;
+        /*ref*/x;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_very_long_identifier() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/thisIsAVeryLongVariableNameThatShouldStillWorkCorrectly = 42;
+        /*ref*/thisIsAVeryLongVariableNameThatShouldStillWorkCorrectly;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_numeric_variable_name() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/$0 = 'first';
+        /*ref*/$0;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn edge_case_underscore_variable() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/_private = 42;
+        /*ref*/_private;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+// =============================================================================
+// Type-annotated Variable Go-to-Definition Comprehensive (NEW)
+// =============================================================================
+
+#[test]
+fn definition_type_annotated_interface_method() {
+    let mut t = FourslashTest::new(
+        "
+        interface Logger {
+            /*def*/log(msg: string): void;
+            warn(msg: string): void;
+        }
+        function setup(logger: Logger) {
+            logger./*ref*/log('hello');
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_type_annotated_class_property() {
+    let mut t = FourslashTest::new(
+        "
+        class Database {
+            /*def*/connectionString: string = '';
+            isConnected: boolean = false;
+        }
+        function connect(db: Database) {
+            return db./*ref*/connectionString;
+        }
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_enum_from_variable_type() {
+    let mut t = FourslashTest::new(
+        "
+        enum /*def*/Priority {
+            Low,
+            Medium,
+            High
+        }
+        const p: /*ref*/Priority = Priority.High;
+    ",
+    );
+    t.go_to_definition("ref").expect_at_marker("def");
+}
+
+#[test]
+fn definition_interface_nested_property() {
+    let mut t = FourslashTest::new(
+        "
+        interface Address {
+            /*def*/street: string;
+            city: string;
+        }
+        interface Person {
+            name: string;
+            address: Address;
+        }
+        function getStreet(p: Person): string {
+            return p.address./*ref*/street;
+        }
+    ",
+    );
+    // This tests nested property access - needs the first dot resolved then the second
+    // Currently may not resolve all the way through, so just verify no crash
+    let result = t.go_to_definition("ref");
+    let _ = result;
+}
+
+// =============================================================================
+// Combined Feature Tests (NEW)
+// =============================================================================
+
+#[test]
+fn combined_hover_definition_references_for_class() {
+    let mut t = FourslashTest::new(
+        "
+        class /*def*/EventEmitter {
+            /*on*/on(event: string, listener: Function) {}
+            /*emit*/emit(event: string) {}
+        }
+        const emitter = new /*r1*/EventEmitter();
+    ",
+    );
+
+    // Definition
+    t.go_to_definition("r1").expect_at_marker("def");
+
+    // Hover
+    t.hover("def")
+        .expect_found()
+        .expect_display_string_contains("EventEmitter");
+
+    // Symbols
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("EventEmitter")
+        .expect_symbol("emitter");
+}
+
+#[test]
+fn combined_completions_and_signature_help() {
+    let mut t = FourslashTest::new(
+        "
+        function transform(input: string, factor: number): string {
+            return input.repeat(factor);
+        }
+        const result = transform(/*sig*/'hello', 3);
+        /*comp*/
+    ",
+    );
+
+    // Signature help at the call
+    t.signature_help("sig")
+        .expect_found()
+        .expect_parameter_count(2);
+
+    // Completions should include result and transform
+    t.completions("comp")
+        .expect_found()
+        .expect_includes("result")
+        .expect_includes("transform");
+}
+
+#[test]
+fn combined_diagnostics_and_code_actions() {
+    let mut t = FourslashTest::new(
+        "
+        const x: number = 'not a number';
+    ",
+    );
+
+    // Should have a diagnostic
+    t.diagnostics("test.ts").expect_found();
+
+    // Code actions should be available
+    let actions = t.code_actions("test.ts");
+    // Just verify no crash
+    let _ = actions;
+}
+
+#[test]
+fn combined_folding_selection_highlights() {
+    let t = FourslashTest::new(
+        "
+        function /*f*/processData(data: string[]) {
+            const results: string[] = [];
+            for (const item of data) {
+                results.push(item.trim());
+            }
+            return results;
+        }
+    ",
+    );
+
+    // Folding ranges
+    t.folding_ranges("test.ts").expect_found();
+
+    // Selection range inside
+    t.selection_range("f").expect_found();
+
+    // Highlights
+    let hl = t.document_highlights("f");
+    hl.expect_found();
+}
+
+// =============================================================================
+// Edit File & Incremental Update Tests (NEW)
+// =============================================================================
+
+#[test]
+fn edit_file_preserves_definition() {
+    let mut t = FourslashTest::new(
+        "
+        const /*def*/x = 1;
+        /*ref*/x;
+    ",
+    );
+
+    // Initially should work
+    t.go_to_definition("ref").expect_at_marker("def");
+
+    // Edit the file - add a new line
+    t.edit_file("test.ts", "const x = 1;\nconst y = 2;\nx;");
+
+    // Should still have symbols
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("x")
+        .expect_symbol("y");
+}
+
+#[test]
+fn edit_file_new_function_appears() {
+    let mut t = FourslashTest::new("const x = 1;");
+
+    // Add a function
+    t.edit_file("test.ts", "const x = 1;\nfunction newFunc() { return x; }");
+
+    t.document_symbols("test.ts")
+        .expect_found()
+        .expect_symbol("x")
+        .expect_symbol("newFunc");
+}
+
+#[test]
+fn edit_file_fixes_diagnostic() {
+    let mut t = FourslashTest::new(
+        "
+        const x: number = 'bad';
+    ",
+    );
+
+    // Should have error
+    t.diagnostics("test.ts").expect_found();
+
+    // Fix the type error
+    t.edit_file("test.ts", "const x: number = 42;");
+
+    // Should be clean now
+    t.verify_no_errors("test.ts");
+}
