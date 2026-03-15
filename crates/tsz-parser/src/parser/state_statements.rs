@@ -1820,7 +1820,11 @@ impl ParserState {
             }
         }
 
-        let name = if self.is_reserved_word() {
+        // For async generator declarations, `yield` is valid as the function name
+        // (it binds in the outer scope, not the generator body)
+        let is_yield_as_generator_name =
+            is_async_generator_declaration && self.is_token(SyntaxKind::YieldKeyword);
+        let name = if self.is_reserved_word() && !is_yield_as_generator_name {
             use tsz_common::diagnostics::diagnostic_codes;
 
             let name_start = self.token_pos();
