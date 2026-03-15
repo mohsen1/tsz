@@ -132,11 +132,14 @@ fn is_invalid_index_type_inner(
                 | crate::IntrinsicKind::Bigint
                 | crate::IntrinsicKind::Object
                 | crate::IntrinsicKind::Function
+                | crate::IntrinsicKind::Symbol
         ),
         Some(TypeData::Literal(value)) => matches!(
             value,
             crate::LiteralValue::Boolean(_) | crate::LiteralValue::BigInt(_)
         ),
+        // Unique symbols cannot be used as index types (TS2538)
+        Some(TypeData::UniqueSymbol(_)) => true,
         // Note: Lazy types are intentionally NOT listed here. They are
         // deferred references (type aliases, etc.) that could resolve to
         // valid index types like `string`. They fall through to the default
