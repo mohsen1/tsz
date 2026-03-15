@@ -371,6 +371,89 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// TS4094: Property '{0}' of exported anonymous class type may not be private or protected.
+    ///
+    /// When `declaration: true` and a variable is exported with a class expression
+    /// initializer, private/protected members of the anonymous class cannot be
+    /// represented in a .d.ts file.
+    pub(crate) fn maybe_report_exported_anonymous_class_private_members(
+        &mut self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) {
+        if !self.ctx.emit_declarations() || self.ctx.is_declaration_file() {
+            return;
+        }
+        let Some(init_node) = self.ctx.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return;
+        }
+        let Some(class) = self.ctx.arena.get_class(init_node) else {
+            return;
+        };
+        // Anonymous class: name is absent
+        if class.name.is_some() {
+            if let Some(name_node) = self.ctx.arena.get(class.name) {
+                if name_node.kind == SyntaxKind::Identifier as u16 {
+                    return;
+                }
+            }
+        }
+        self.report_anonymous_class_private_members(name_idx, &class.members);
+    }
+
+    /// Emit TS4094 for each private/protected member in a class member list.
+    pub(crate) fn report_anonymous_class_private_members(
+        &mut self,
+        report_at: NodeIndex,
+        members: &tsz_parser::parser::NodeList,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_private_modifier(&prop.modifiers)
+                        || self.has_protected_modifier(&prop.modifiers)
+                        || self.is_private_identifier_name(prop.name)
+                    {
+                        let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                        self.error_at_node_msg(
+                            report_at,
+                            diagnostic_codes::PROPERTY_OF_EXPORTED_ANONYMOUS_CLASS_TYPE_MAY_NOT_BE_PRIVATE_OR_PROTECTED,
+                            &[&name],
+                        );
+                    }
+                }
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_private_modifier(&method.modifiers)
+                        || self.has_protected_modifier(&method.modifiers)
+                        || self.is_private_identifier_name(method.name)
+                    {
+                        let name = self.get_member_name_text(method.name).unwrap_or_default();
+                        self.error_at_node_msg(
+                            report_at,
+                            diagnostic_codes::PROPERTY_OF_EXPORTED_ANONYMOUS_CLASS_TYPE_MAY_NOT_BE_PRIVATE_OR_PROTECTED,
+                            &[&name],
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn maybe_report_unnameable_exported_variable_type(
         &mut self,
         name_idx: NodeIndex,
