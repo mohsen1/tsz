@@ -34,8 +34,8 @@ impl ParserState {
 
         // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
         // Type keywords like 'void' are parsed as names and rejected by the checker (TS2427)
+        // tsc allows `yield` as an interface name even inside generators
         let name = if self.is_token(SyntaxKind::YieldKeyword) {
-            self.report_yield_reserved_word_error();
             self.parse_identifier_name()
         } else if self.is_identifier_or_keyword() {
             // Type keywords (void, null) are accepted as names by the parser.
