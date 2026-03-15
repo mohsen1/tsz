@@ -142,7 +142,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::query_boundaries::common::contains_type_parameters;
         use tsz_solver::type_queries;
 
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
@@ -161,10 +160,33 @@ impl<'a> CheckerState<'a> {
         // remains a union that still contains unresolved type parameters.
         // This keeps follow-on property errors from obscuring the primary root cause
         // (typically assignability/inference diagnostics).
-        if type_queries::is_union_type(self.ctx.types, type_id)
-            && contains_type_parameters(self.ctx.types, type_id)
-        {
-            return;
+        //
+        // Only suppress when a DIRECT union member is a type parameter (e.g., T | Foo).
+        // Do NOT suppress when type parameters are deeply nested inside object types
+        // (e.g., string | MyInterface where MyInterface has generic base types).
+        // The deep nesting case occurs with concrete unions like `string | MyArr`
+        // where MyArr extends Array<string> -- the resolved object shape may contain
+        // type parameters from the generic base, but the union itself is concrete.
+        if type_queries::is_union_type(self.ctx.types, type_id) {
+            let has_direct_type_param = if let Some(tsz_solver::TypeData::Union(list_id)) =
+                self.ctx.types.lookup(type_id)
+            {
+                let members = self.ctx.types.type_list(list_id);
+                members.iter().any(|&m| {
+                    matches!(
+                        self.ctx.types.lookup(m),
+                        Some(
+                            tsz_solver::TypeData::TypeParameter(_)
+                                | tsz_solver::TypeData::Infer(_)
+                        )
+                    )
+                })
+            } else {
+                false
+            };
+            if has_direct_type_param {
+                return;
+            }
         }
 
         // When a class extends `any`, tsc treats unknown member accesses as `any`
