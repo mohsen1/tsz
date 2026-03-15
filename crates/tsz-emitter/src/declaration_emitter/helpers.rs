@@ -7355,10 +7355,10 @@ impl<'a> DeclarationEmitter<'a> {
                     // using JS Number.toString() semantics (scientific notation).
                     let text = &lit.text;
                     let digits = text.chars().filter(|c| c.is_ascii_digit()).count();
-                    if digits >= 21 {
-                        if let Ok(n) = text.parse::<f64>() {
-                            return Self::format_js_number(n);
-                        }
+                    if digits >= 21
+                        && let Ok(n) = text.parse::<f64>()
+                    {
+                        return Self::format_js_number(n);
                     }
                     text.clone()
                 })

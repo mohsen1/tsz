@@ -65,10 +65,7 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
         // Function boundaries: don't recurse into functions for var/control flow collection
         k if k == syntax_kind_ext::FUNCTION_DECLARATION
             || k == syntax_kind_ext::FUNCTION_EXPRESSION
-            || k == syntax_kind_ext::ARROW_FUNCTION =>
-        {
-            return;
-        }
+            || k == syntax_kind_ext::ARROW_FUNCTION => {}
 
         // Variable statement
         k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -228,16 +225,15 @@ fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, names: &mut Vec
                 names.push(text);
             }
         }
-    } else if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-        || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+    } else if (name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN)
+        && let Some(pattern) = arena.get_binding_pattern(name_node)
     {
-        if let Some(pattern) = arena.get_binding_pattern(name_node) {
-            for &elem_idx in &pattern.elements.nodes {
-                if let Some(elem_node) = arena.get(elem_idx)
-                    && let Some(elem) = arena.get_binding_element(elem_node)
-                {
-                    collect_binding_names(arena, elem.name, names);
-                }
+        for &elem_idx in &pattern.elements.nodes {
+            if let Some(elem_node) = arena.get(elem_idx)
+                && let Some(elem) = arena.get_binding_element(elem_node)
+            {
+                collect_binding_names(arena, elem.name, names);
             }
         }
     }
@@ -335,7 +331,7 @@ impl<'a> Printer<'a> {
         vars
     }
 
-    /// Emit a for-statement with the _loop_N IIFE capture pattern
+    /// Emit a for-statement with the _`loop_N` IIFE capture pattern
     pub(in crate::emitter) fn emit_for_statement_with_capture(
         &mut self,
         _node: &Node,
@@ -392,7 +388,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    /// Emit a do-while statement with the _loop_N IIFE capture pattern
+    /// Emit a do-while statement with the _`loop_N` IIFE capture pattern
     pub(in crate::emitter) fn emit_do_statement_with_capture(
         &mut self,
         _node: &Node,
@@ -437,7 +433,7 @@ impl<'a> Printer<'a> {
         self.write(");");
     }
 
-    /// Emit a while statement with the _loop_N IIFE capture pattern
+    /// Emit a while statement with the _`loop_N` IIFE capture pattern
     pub(in crate::emitter) fn emit_while_statement_with_capture(
         &mut self,
         _node: &Node,
@@ -482,7 +478,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    /// Emit the _loop_N function definition
+    /// Emit the _`loop_N` function definition
     fn emit_loop_function(
         &mut self,
         fn_name: &str,
@@ -551,7 +547,7 @@ impl<'a> Printer<'a> {
     fn emit_statement_in_loop_iife(
         &mut self,
         stmt_idx: NodeIndex,
-        body_info: &LoopBodyVarInfo,
+        _body_info: &LoopBodyVarInfo,
         _captured_vars: &[String],
         _init_vars: &[String],
     ) {
@@ -584,16 +580,15 @@ impl<'a> Printer<'a> {
                                 if let Some(decl_node) = self.arena.get(decl_idx)
                                     && let Some(decl) =
                                         self.arena.get_variable_declaration(decl_node)
+                                    && decl.initializer.is_some()
                                 {
-                                    if decl.initializer.is_some() {
-                                        if !first {
-                                            self.write(", ");
-                                        }
-                                        first = false;
-                                        self.emit(decl.name);
-                                        self.write(" = ");
-                                        self.emit(decl.initializer);
+                                    if !first {
+                                        self.write(", ");
                                     }
+                                    first = false;
+                                    self.emit(decl.name);
+                                    self.write(" = ");
+                                    self.emit(decl.initializer);
                                 }
                             }
                             self.write(";");
@@ -636,7 +631,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit the loop call: _loop_1(args);
+    /// Emit the loop call: _`loop_1(args)`;
     pub(in crate::emitter) fn emit_loop_call(
         &mut self,
         fn_name: &str,

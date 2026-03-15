@@ -672,7 +672,22 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
-            // Methods and accessors are always context-sensitive — skip them
+            // Methods with all params annotated are not context-sensitive
+            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && !is_contextually_sensitive(self, elem_idx)
+                && let Some(method) = self.ctx.arena.get_method_decl(elem_node)
+                && let Some(name) = self.property_name_for_error(method.name)
+            {
+                let prev_context = self.ctx.contextual_type;
+                self.ctx.contextual_type = None;
+                // Use get_type_of_function for methods — get_type_of_node
+                // doesn't handle METHOD_DECLARATION as expression nodes.
+                let value_type = self.get_type_of_function(elem_idx);
+                self.ctx.contextual_type = prev_context;
+                let name_atom = self.ctx.types.intern_string(&name);
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+            // Accessors are always context-sensitive — skip them
         }
 
         if properties.is_empty() {
@@ -758,6 +773,44 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                // If the target property type is a bare type parameter being inferred,
+                // compute the property type without context. The property's type
+                // directly constrains the type parameter.
+                // Example: make({ mutations: { foo() {} }, action: (m) => m.foo() })
+                // where mutations has target type M (a type param).
+                if self.type_contains_any_type_param(target_prop_type, type_param_names)
+                    && tsz_solver::type_param_info(self.ctx.types, target_prop_type).is_some()
+                {
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    let diag_len = self.ctx.diagnostics.len();
+                    let value_type = self.get_type_of_node(prop.initializer);
+                    self.ctx.diagnostics.truncate(diag_len);
+                    self.ctx.contextual_type = prev_context;
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                    continue;
+                }
+
+                // If the target property is an object type, try to recursively extract
+                // inference-contributing properties from nested object literals.
+                // Example: nested({ prop: { produce: (a) => [a], consume: (arg) => arg.join(",") } })
+                // where prop has target type { produce: (arg1: number) => T, consume: (arg2: T) => void }
+                if tsz_solver::type_queries::get_object_shape(self.ctx.types, target_prop_type)
+                    .is_some()
+                {
+                    if let Some(nested_partial) = self
+                        .extract_inference_contributing_object_type(
+                            prop.initializer,
+                            target_prop_type,
+                            type_param_names,
+                        )
+                    {
+                        properties
+                            .push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                        continue;
+                    }
+                }
+
                 // Get the function shape for the target property
                 let target_fn_shape =
                     tsz_solver::type_queries::get_function_shape(self.ctx.types, target_prop_type);
@@ -833,7 +886,7 @@ impl<'a> CheckerState<'a> {
                 let prev_context = self.ctx.contextual_type;
                 self.ctx.contextual_type = Some(target_prop_type);
                 let diag_len = self.ctx.diagnostics.len();
-                let value_type = self.get_type_of_node(elem_idx);
+                let value_type = self.get_type_of_function(elem_idx);
                 self.ctx.diagnostics.truncate(diag_len);
                 self.ctx.contextual_type = prev_context;
 
