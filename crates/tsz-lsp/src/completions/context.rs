@@ -29,6 +29,21 @@ impl<'a> Completions<'a> {
         }
     }
 
+    /// Check if the cursor is immediately after `..` (double dot).
+    /// This indicates a spread operator or syntax error, not member access.
+    pub(super) fn is_after_double_dot(&self, offset: u32) -> bool {
+        if offset >= 2 {
+            let text_before =
+                Self::strip_trailing_fourslash_marker(&self.source_text[..offset as usize]);
+            let trimmed = text_before.trim_end();
+            // Check for ".." but not "..." (spread operator — which should get
+            // completions for the spread argument)
+            trimmed.ends_with("..") && !trimmed.ends_with("...")
+        } else {
+            false
+        }
+    }
+
     /// Determine `isNewIdentifierLocation` by examining the AST context at the
     /// given byte offset. This matches tsserver's `computeCommitCharactersAndIsNewIdentifier`.
     ///
