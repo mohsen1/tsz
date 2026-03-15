@@ -129,6 +129,16 @@ CHECKS = [
     #     {"exclude_dirs": {"tests"}},
     # ),
     (
+        "Code quality: no bare .unwrap() in checker production code (use .expect())",
+        ROOT / "crates" / "tsz-checker" / "src",
+        re.compile(r"\.unwrap\(\)"),
+        {
+            "exclude_dirs": {"tests"},
+            "ignore_comment_lines": True,
+            "exclude_test_files": True,  # Skip *_tests.rs files
+        },
+    ),
+    (
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),
@@ -306,6 +316,9 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
     if exclude_dirs and exclude_dirs.intersection(part_set):
         return matches
 
+    if excludes.get("exclude_test_files") and is_test_file(rel):
+        return matches
+
     for i, line in enumerate(file_text.splitlines(), start=1):
         if excludes.get("ignore_comment_lines", False):
             if line.lstrip().startswith("//"):
@@ -313,6 +326,13 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
         if pattern.search(line):
             matches.append(i)
     return matches
+
+
+def is_test_file(rel: str) -> bool:
+    """Check if a file path looks like a test file."""
+    parts = rel.split("/")
+    filename = parts[-1] if parts else ""
+    return filename.endswith("_tests.rs") or filename.startswith("test_")
 
 
 def scan(base, pattern, excludes):
