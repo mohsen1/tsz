@@ -5,6 +5,7 @@
 //! most specific type that is a supertype of all candidates.
 
 use super::*;
+use crate::inference::infer::{InferenceContext, InferenceError};
 use crate::intern::TypeInterner;
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, PropertyInfo, TupleElement, TypeData};
 
