@@ -1543,11 +1543,13 @@ impl<'a> Printer<'a> {
     }
 
     /// Get names declared by a statement for inline CJS export.
+    /// Only returns names that have initializers — declarations without initializers
+    /// are already covered by the preamble `exports.X = void 0;`.
     fn get_declaration_export_names(&self, node: &tsz_parser::parser::node::Node) -> Vec<String> {
         match node.kind {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
-                    return self.collect_variable_names(&var_stmt.declarations);
+                    return self.collect_variable_names_with_initializers(&var_stmt.declarations);
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -1561,6 +1563,41 @@ impl<'a> Printer<'a> {
             _ => {}
         }
         Vec::new()
+    }
+
+    /// Collect variable names from declarations that HAVE initializers.
+    fn collect_variable_names_with_initializers(
+        &self,
+        declarations: &tsz_parser::parser::NodeList,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        for &decl_idx in &declarations.nodes {
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                if let Some(var_decl_list) = self.arena.get_variable(decl_node) {
+                    for &inner_idx in &var_decl_list.declarations.nodes {
+                        if let Some(inner_node) = self.arena.get(inner_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(inner_node)
+                            && decl.initializer.is_some()
+                        {
+                            if let Some(name_node) = self.arena.get(decl.name)
+                                && let Some(ident) = self.arena.get_identifier(name_node)
+                            {
+                                names.push(ident.escaped_text.clone());
+                            }
+                        }
+                    }
+                } else if let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    && decl.initializer.is_some()
+                {
+                    if let Some(name_node) = self.arena.get(decl.name)
+                        && let Some(ident) = self.arena.get_identifier(name_node)
+                    {
+                        names.push(ident.escaped_text.clone());
+                    }
+                }
+            }
+        }
+        names
     }
 
     pub(super) fn should_defer_for_of_comments(&self, node: &Node) -> bool {
