@@ -75,6 +75,12 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
+        "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)",
+        ROOT / "crates" / "tsz-checker" / "src",
+        re.compile(r"\buse\s+tsz_solver::.*ObjectFlags\b|\bObjectFlags::"),
+        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
+    ),
+    (
         "Checker boundary: direct solver relation queries outside query boundaries/tests",
         ROOT / "crates" / "tsz-checker",
         re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
@@ -206,7 +212,6 @@ CHECKS = [
             "exclude_dirs": {"tsz-solver", "tsz-lowering", "tsz-core", "tests"},
             "exclude_files": {
                 # TODO: refactor these to use solver query helpers
-                "crates/tsz-checker/src/types/computation/helpers.rs",
                 "crates/tsz-checker/src/types/computation/complex.rs",
                 "crates/tsz-checker/src/types/computation/object_literal.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",

@@ -1,6 +1,4 @@
-//! Type computation helpers, relationship queries, and format utilities.
-//! This module extends `CheckerState` with additional methods for type-related
-//! operations, providing cleaner APIs for common patterns.
+//! Type computation helpers, relationship queries, and format utilities for `CheckerState`.
 
 use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
@@ -518,10 +516,7 @@ impl<'a> CheckerState<'a> {
                     // create a spurious covariant candidate that overwrites contravariant
                     // inference (e.g., from callback parameters).
                     let is_uninformative = matches!(t_elem, TypeId::UNKNOWN)
-                        || matches!(
-                            self.ctx.types.lookup(t_elem),
-                            Some(tsz_solver::types::TypeData::TypeParameter(_))
-                        );
+                        || tsz_solver::visitor::is_type_parameter(self.ctx.types, t_elem);
                     if !is_uninformative {
                         return factory.array(t_elem);
                     }
