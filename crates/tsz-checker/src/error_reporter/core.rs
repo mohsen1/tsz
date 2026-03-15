@@ -1287,7 +1287,6 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
-                eprintln!("@@@ ANNOTATION TEXT FALLBACK 1: {}", display);
                 return display;
             }
         }
@@ -1348,7 +1347,6 @@ impl<'a> CheckerState<'a> {
             if expr_type == TypeId::ERROR
                 && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
             {
-                eprintln!("@@@ ANNOTATION TEXT FALLBACK 2: {}", display);
                 return display;
             }
 
@@ -1656,10 +1654,6 @@ impl<'a> CheckerState<'a> {
 
         let display_ty = self.normalize_assignability_display_type(ty);
         let mut formatted = self.format_type_diagnostic(display_ty);
-        eprintln!(
-            "@@@ format_type_for_assignability_message: display_ty={}, formatted={}",
-            display_ty.0, formatted
-        );
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')
