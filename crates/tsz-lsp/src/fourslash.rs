@@ -1504,7 +1504,7 @@ mod tests {
 
     #[test]
     fn test_fourslash_at_filename_parsing() {
-        let mut t = FourslashTest::from_content(
+        let t = FourslashTest::from_content(
             "// @filename: utils.ts\nexport function /*def*/helper() {}\n// @filename: main.ts\nimport { /*ref*/helper } from './utils';\nhelper();",
         );
         // Verify markers were parsed in correct files

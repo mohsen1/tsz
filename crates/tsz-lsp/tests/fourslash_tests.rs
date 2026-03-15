@@ -496,14 +496,14 @@ fn empty_source() {
 
 #[test]
 fn markers_at_start_and_end() {
-    let mut t = FourslashTest::new("/*start*/const x = 1/*end*/;");
+    let t = FourslashTest::new("/*start*/const x = 1/*end*/;");
     // Should parse markers at boundaries without issues
     assert_eq!(t.marker("start").character, 0);
 }
 
 #[test]
 fn multiple_markers_same_line() {
-    let mut t = FourslashTest::new("const /*a*/a = /*b*/b;");
+    let t = FourslashTest::new("const /*a*/a = /*b*/b;");
     let a = t.marker("a");
     let b = t.marker("b");
     assert_eq!(a.line, b.line);
@@ -513,7 +513,7 @@ fn multiple_markers_same_line() {
 #[test]
 fn marker_in_string_literal() {
     // Markers in strings should still be parsed (they're source-level markers)
-    let mut t = FourslashTest::new("const s = '/*m*/hello';");
+    let t = FourslashTest::new("const s = '/*m*/hello';");
     let m = t.marker("m");
     assert_eq!(m.line, 0);
 }
