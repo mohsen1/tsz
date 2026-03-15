@@ -303,7 +303,7 @@ pub struct TypeInterner {
     ///
     /// Key: `ObjectShapeId` of the widened (interned) shape.
     /// Value: Vec of `PropertyInfo` with original (non-widened) `type_ids`.
-    display_properties: DashMap<ObjectShapeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
+    display_properties: DashMap<TypeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -709,19 +709,16 @@ impl TypeInterner {
     /// These are the pre-widened property types shown in error messages.
     /// The `shape_id` is the widened (interned) shape; `props` contains
     /// the original literal types from the source code.
-    pub fn store_display_properties(&self, shape_id: ObjectShapeId, props: Vec<PropertyInfo>) {
-        self.display_properties.insert(shape_id, Arc::new(props));
+    pub fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        self.display_properties.insert(type_id, Arc::new(props));
     }
 
     /// Retrieve display-only properties for a fresh object literal.
     ///
     /// Returns `None` if no display properties were stored (i.e., the
     /// object type was not a fresh literal or had no widened properties).
-    pub fn get_display_properties(
-        &self,
-        shape_id: ObjectShapeId,
-    ) -> Option<Arc<Vec<PropertyInfo>>> {
-        self.display_properties.get(&shape_id).map(|r| r.clone())
+    pub fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        self.display_properties.get(&type_id).map(|r| r.clone())
     }
 
     fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
@@ -1666,12 +1663,8 @@ impl TypeInterner {
         // Intern the widened properties as the canonical type
         let type_id = self.object_with_flags(widened_properties, ObjectFlags::FRESH_LITERAL);
 
-        // Extract the ObjectShapeId to store display properties against
-        if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-            self.lookup(type_id)
-        {
-            self.store_display_properties(shape_id, display_props);
-        }
+        // Store display properties keyed by TypeId (not ObjectShapeId)
+        self.store_display_properties(type_id, display_props);
 
         type_id
     }

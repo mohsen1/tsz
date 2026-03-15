@@ -71,6 +71,11 @@ pub struct TypeFormatter<'a> {
     /// When true, preserve the declared surface syntax of optional properties
     /// instead of appending synthetic `| undefined`.
     preserve_optional_property_surface_syntax: bool,
+    /// When true, use display properties (pre-widened literal types) for fresh
+    /// object literals. This implements tsc's freshness model where error messages
+    /// show literal types like `{ x: "hello" }` even when the type system uses
+    /// widened types like `{ x: string }`.
+    use_display_properties: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -88,6 +93,7 @@ impl<'a> TypeFormatter<'a> {
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
             preserve_optional_property_surface_syntax: false,
+            use_display_properties: false,
         }
     }
 
@@ -109,6 +115,7 @@ impl<'a> TypeFormatter<'a> {
             atom_cache: FxHashMap::default(),
             skip_union_optionalize: false,
             preserve_optional_property_surface_syntax: false,
+            use_display_properties: false,
         }
     }
 
@@ -147,6 +154,14 @@ impl<'a> TypeFormatter<'a> {
     /// Should be set when formatting types for error messages (not hover/quickinfo).
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
+        self
+    }
+
+    /// Enable display properties for fresh object literal types.
+    /// When enabled, the formatter uses pre-widened literal types from the
+    /// freshness model side table for error messages.
+    pub const fn with_display_properties(mut self) -> Self {
+        self.use_display_properties = true;
         self
     }
 
@@ -327,12 +342,12 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.current_depth += 1;
-        let result = self.format_key(&key);
+        let result = self.format_key(type_id, &key);
         self.current_depth -= 1;
         result
     }
 
-    fn format_key(&mut self, key: &TypeData) -> Cow<'static, str> {
+    fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
         match key {
             TypeData::Intrinsic(kind) => Cow::Borrowed(self.format_intrinsic(*kind)),
             TypeData::Literal(lit) => self.format_literal(lit).into(),
@@ -341,11 +356,11 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
-                // Use display properties (pre-widened literal types) when available.
-                // This implements tsc's freshness model where error messages show
-                // literal types even though the type system uses widened types.
-                if let Some(display_props) = self.interner.get_display_properties(*shape_id) {
-                    return self.format_object(display_props.as_slice()).into();
+                // Use display properties (pre-widened literal types) when enabled.
+                if self.use_display_properties {
+                    if let Some(display_props) = self.interner.get_display_properties(type_id) {
+                        return self.format_object(display_props.as_slice()).into();
+                    }
                 }
                 self.format_object(shape.properties.as_slice()).into()
             }
@@ -354,12 +369,12 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
-                // Use display properties for fresh object types with index signatures too.
-                if let Some(display_props) = self.interner.get_display_properties(*shape_id) {
-                    // Build a temporary shape with display properties for formatting
-                    let mut display_shape = shape.as_ref().clone();
-                    display_shape.properties = display_props.as_ref().clone();
-                    return self.format_object_with_index(&display_shape).into();
+                if self.use_display_properties {
+                    if let Some(display_props) = self.interner.get_display_properties(type_id) {
+                        let mut display_shape = shape.as_ref().clone();
+                        display_shape.properties = display_props.as_ref().clone();
+                        return self.format_object_with_index(&display_shape).into();
+                    }
                 }
                 self.format_object_with_index(shape.as_ref()).into()
             }

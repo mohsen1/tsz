@@ -1821,6 +1821,16 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a type for diagnostics with display properties enabled.
+    /// Uses pre-widened literal types from the freshness model side table.
+    pub fn format_type_diagnostic_with_display(&self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties();
+        formatter.format(type_id).into_owned()
+    }
+
     /// Format a pair of types for diagnostics that display two types side by side.
     pub fn format_type_pair(&self, type_a: TypeId, type_b: TypeId) -> (String, String) {
         let mut formatter = self.ctx.create_type_formatter();

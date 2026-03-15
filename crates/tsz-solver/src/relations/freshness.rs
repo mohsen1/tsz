@@ -29,9 +29,17 @@ pub fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let mut new_shape = (*shape).clone();
     new_shape.flags.remove(ObjectFlags::FRESH_LITERAL);
 
-    if has_index || new_shape.string_index.is_some() || new_shape.number_index.is_some() {
-        db.object_with_index(new_shape)
-    } else {
-        db.object_with_flags(new_shape.properties, new_shape.flags)
+    let new_type =
+        if has_index || new_shape.string_index.is_some() || new_shape.number_index.is_some() {
+            db.object_with_index(new_shape)
+        } else {
+            db.object_with_flags(new_shape.properties, new_shape.flags)
+        };
+
+    // Carry forward display properties from the fresh TypeId to the widened TypeId.
+    if let Some(display_props) = db.get_display_properties(type_id) {
+        db.store_display_properties(new_type, display_props.as_ref().clone());
     }
+
+    new_type
 }

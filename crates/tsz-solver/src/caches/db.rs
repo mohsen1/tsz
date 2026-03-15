@@ -129,12 +129,12 @@ pub trait TypeDatabase {
     /// These are the pre-widened property types shown in error messages.
     /// The `shape_id` is the widened (interned) shape; `props` contains
     /// the original literal types from the source code.
-    fn store_display_properties(&self, _shape_id: ObjectShapeId, _props: Vec<PropertyInfo>) {}
+    fn store_display_properties(&self, _type_id: TypeId, _props: Vec<PropertyInfo>) {}
 
     /// Retrieve display-only properties for a fresh object literal.
     ///
     /// Returns `None` if no display properties were stored.
-    fn get_display_properties(&self, _shape_id: ObjectShapeId) -> Option<Arc<Vec<PropertyInfo>>> {
+    fn get_display_properties(&self, _type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
         None
     }
 
@@ -418,12 +418,12 @@ impl TypeDatabase for TypeInterner {
         Self::string_intrinsic(self, kind, type_arg)
     }
 
-    fn store_display_properties(&self, shape_id: ObjectShapeId, props: Vec<PropertyInfo>) {
-        Self::store_display_properties(self, shape_id, props);
+    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        Self::store_display_properties(self, type_id, props);
     }
 
-    fn get_display_properties(&self, shape_id: ObjectShapeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        Self::get_display_properties(self, shape_id)
+    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        Self::get_display_properties(self, type_id)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
