@@ -350,10 +350,21 @@ impl<'a> Printer<'a> {
     ) {
         let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
 
+        // Only initializer let/const vars are passed as IIFE parameters.
+        // Body-scoped let/const vars get fresh scope inside the IIFE automatically.
+        let init_var_set: std::collections::HashSet<&str> =
+            init_vars.iter().map(String::as_str).collect();
+        let param_vars: Vec<String> = capture_info
+            .captured_vars
+            .iter()
+            .filter(|v| init_var_set.contains(v.as_str()))
+            .cloned()
+            .collect();
+
         // Emit: var _loop_1 = function (param1, param2) { ... };
         self.emit_loop_function(
             &loop_fn_name,
-            &capture_info.captured_vars,
+            &param_vars,
             loop_stmt.statement,
             body_info,
             init_vars,
@@ -390,7 +401,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_loop_call(&loop_fn_name, &capture_info.captured_vars, body_info);
+        self.emit_loop_call(&loop_fn_name, &param_vars, body_info);
 
         self.decrease_indent();
         self.write("}");
@@ -565,26 +576,46 @@ impl<'a> Printer<'a> {
 
         match node.kind {
             // Variable statement: check if it's var (needs hoisting transform)
+            // Note: LET/CONST flags are on the VARIABLE_DECLARATION_LIST child, not the statement.
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
-                    let flags = node.flags as u32;
-                    let is_var = (flags & node_flags::LET == 0) && (flags & node_flags::CONST == 0);
+                    // Check the first declaration list child for LET/CONST flags
+                    let is_var = var_stmt
+                        .declarations
+                        .nodes
+                        .first()
+                        .and_then(|&idx| self.arena.get(idx))
+                        .map(|list_node| {
+                            let flags = list_node.flags as u32;
+                            (flags & node_flags::LET == 0) && (flags & node_flags::CONST == 0)
+                        })
+                        .unwrap_or(true);
 
                     if is_var {
                         // Var declarations: emit just the assignments without `var`
-                        let mut has_initializer = false;
-                        for &decl_idx in &var_stmt.declarations.nodes {
-                            if let Some(decl_node) = self.arena.get(decl_idx)
-                                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                                && decl.initializer.is_some()
+                        // var_stmt.declarations contains VARIABLE_DECLARATION_LIST nodes,
+                        // each of which contains individual VARIABLE_DECLARATION nodes.
+                        let mut all_decls = Vec::new();
+                        for &list_idx in &var_stmt.declarations.nodes {
+                            if let Some(list_node) = self.arena.get(list_idx)
+                                && let Some(list_data) = self.arena.get_variable(list_node)
                             {
-                                has_initializer = true;
+                                for &decl_idx in &list_data.declarations.nodes {
+                                    all_decls.push(decl_idx);
+                                }
                             }
                         }
 
+                        let has_initializer = all_decls.iter().any(|&idx| {
+                            self.arena
+                                .get(idx)
+                                .and_then(|n| self.arena.get_variable_declaration(n))
+                                .is_some_and(|d| d.initializer.is_some())
+                        });
+
                         if has_initializer {
                             let mut first = true;
-                            for &decl_idx in &var_stmt.declarations.nodes {
+                            for &decl_idx in &all_decls {
                                 if let Some(decl_node) = self.arena.get(decl_idx)
                                     && let Some(decl) =
                                         self.arena.get_variable_declaration(decl_node)
