@@ -973,11 +973,8 @@ impl<'a> ES5ClassTransformer<'a> {
             body.push(ctor_ir);
         }
 
-        // Prototype methods
-        self.emit_methods_ir(&mut body, class_idx);
-
-        // Static members
-        let deferred_static_blocks = self.emit_static_members_ir(&mut body, class_idx);
+        // Prototype methods and static members interleaved in source order
+        let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
 
         // Legacy decorator __decorate calls (inside IIFE, before return)
         if self.legacy_decorators {
