@@ -1495,7 +1495,9 @@ impl<'a> AsyncES5Transformer<'a> {
                         // Has initializer -- hoist the name but keep as assignment
                         let var_name = name.clone();
                         hoisted.push(var_name.to_string());
-                        let init = initializer.clone().unwrap();
+                        let init = initializer
+                            .clone()
+                            .expect("else branch guarantees initializer is Some");
                         case.statements[i] =
                             IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
                                 left: Box::new(IRNode::Identifier(var_name)),

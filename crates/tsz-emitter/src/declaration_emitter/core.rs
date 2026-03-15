@@ -2792,10 +2792,10 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
                         let name_node = self.arena.get(decl.name);
-                        let is_destructuring = name_node.is_some()
-                            && (name_node.unwrap().kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || name_node.unwrap().kind
-                                    == syntax_kind_ext::ARRAY_BINDING_PATTERN);
+                        let is_destructuring = name_node.is_some_and(|n| {
+                            n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        });
 
                         if is_destructuring {
                             // Emit destructuring as individual declarations
