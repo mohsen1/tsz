@@ -15243,8 +15243,6 @@ interface StringTreeArray extends Array<StringTree> { }
         },
     );
 
-    eprintln!("All diagnostics: {diagnostics:#?}");
-
     assert!(
         has_error(&diagnostics, 2339),
         "Expected TS2339 'Property push does not exist on type StringTree', got: {diagnostics:?}"
