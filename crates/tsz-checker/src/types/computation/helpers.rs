@@ -1,6 +1,4 @@
-//! Type computation helpers, relationship queries, and format utilities.
-//! This module extends `CheckerState` with additional methods for type-related
-//! operations, providing cleaner APIs for common patterns.
+//! Type computation helpers, relationship queries, and format utilities for `CheckerState`.
 
 use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
