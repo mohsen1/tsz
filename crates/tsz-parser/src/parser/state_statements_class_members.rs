@@ -1118,6 +1118,12 @@ impl ParserState {
             return sig;
         }
 
+        // Handle mapped type member in class body: [P in K]: T (TS 4.1+)
+        if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start() {
+            let member = self.parse_mapped_type_member();
+            return member;
+        }
+
         // Recovery: Handle 'function' keyword used as a modifier in class members
         // `function foo() {}` is invalid in a class (the `function` keyword is not a modifier).
         // But `function;` or `function(){}` are valid property/method names.

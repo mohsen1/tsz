@@ -1328,12 +1328,48 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse optional semicolon
-        self.parse_optional(SyntaxKind::SemicolonToken);
+        // Parse separator after the mapped type portion
+        self.parse_type_member_separator_with_asi();
+
+        // Parse any additional regular members (TS 4.1+ mixed mapped type)
+        let mut extra_members = Vec::new();
+        while !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            let saved_pos = self.token_pos();
+            let member = self.parse_type_member(false);
+
+            if member.is_none() && self.token_pos() == saved_pos {
+                if self.is_identifier_or_keyword() {
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    );
+                }
+                self.next_token();
+                continue;
+            }
+
+            if member.is_some() {
+                extra_members.push(member);
+            }
+
+            self.parse_type_member_separator_with_asi();
+        }
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
+        let members = if extra_members.is_empty() {
+            None
+        } else {
+            Some(self.make_node_list(extra_members))
+        };
 
         self.arena.add_mapped_type(
             syntax_kind_ext::MAPPED_TYPE,
@@ -1345,7 +1381,202 @@ impl ParserState {
                 name_type,
                 question_token,
                 type_node,
+                members,
+            },
+        )
+    }
+
+    /// Parse a single mapped type member: `[K in T]?: U`
+    /// Returns a MappedType node without outer braces.
+    /// Used when a mapped type member appears inside an interface or class body.
+    pub(crate) fn parse_mapped_type_member(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        self.parse_expected(SyntaxKind::OpenBracketToken);
+
+        let type_param_start = self.token_pos();
+        let param_name = self.parse_identifier();
+
+        self.parse_expected(SyntaxKind::InKeyword);
+
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+        let constraint = self.parse_type();
+
+        let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+        self.context_flags = saved_flags;
+
+        let type_param_end = self.token_end();
+
+        let type_parameter = self.arena.add_type_parameter(
+            syntax_kind_ext::TYPE_PARAMETER,
+            type_param_start,
+            type_param_end,
+            crate::parser::node::TypeParameterData {
+                modifiers: None,
+                name: param_name,
+                constraint,
+                default: NodeIndex::NONE,
+            },
+        );
+
+        self.parse_expected(SyntaxKind::CloseBracketToken);
+
+        // Parse optional ? modifier
+        let question_token = if self.is_token(SyntaxKind::QuestionToken) {
+            let pos = self.token_pos();
+            self.next_token();
+            self.arena
+                .add_token(SyntaxKind::QuestionToken as u16, pos, self.token_end())
+        } else {
+            NodeIndex::NONE
+        };
+
+        // Parse optional : and type
+        let type_node = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        let end_pos = self.token_end();
+
+        self.arena.add_mapped_type(
+            syntax_kind_ext::MAPPED_TYPE,
+            start_pos,
+            end_pos,
+            crate::parser::node::MappedTypeData {
+                readonly_token: NodeIndex::NONE,
+                type_parameter,
+                name_type,
+                question_token,
+                type_node,
                 members: None,
+            },
+        )
+    }
+
+    /// Parse a mapped type that appears mixed with regular members in a type literal (TS 4.1+).
+    /// Called when we encounter `[identifier in ...]` while parsing type literal members.
+    /// Already-parsed members are passed in; remaining members after the mapped type are also collected.
+    /// The result is a MappedType node with all regular members in its `members` field.
+    pub(crate) fn parse_mapped_type_with_members(
+        &mut self,
+        start_pos: u32,
+        mut prior_members: Vec<NodeIndex>,
+    ) -> NodeIndex {
+        // Parse the mapped type portion: [K in T]?: U
+        // No readonly/+/- prefix since we're inside a type literal body
+        let readonly_token = NodeIndex::NONE;
+
+        self.parse_expected(SyntaxKind::OpenBracketToken);
+
+        let type_param_start = self.token_pos();
+        let param_name = self.parse_identifier();
+
+        self.parse_expected(SyntaxKind::InKeyword);
+
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+        let constraint = self.parse_type();
+
+        let name_type = if self.parse_optional(SyntaxKind::AsKeyword) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+        self.context_flags = saved_flags;
+
+        let type_param_end = self.token_end();
+
+        let type_parameter = self.arena.add_type_parameter(
+            syntax_kind_ext::TYPE_PARAMETER,
+            type_param_start,
+            type_param_end,
+            crate::parser::node::TypeParameterData {
+                modifiers: None,
+                name: param_name,
+                constraint,
+                default: NodeIndex::NONE,
+            },
+        );
+
+        self.parse_expected(SyntaxKind::CloseBracketToken);
+
+        // Parse optional ? modifier
+        let question_token = if self.is_token(SyntaxKind::QuestionToken) {
+            let pos = self.token_pos();
+            self.next_token();
+            self.arena
+                .add_token(SyntaxKind::QuestionToken as u16, pos, self.token_end())
+        } else {
+            NodeIndex::NONE
+        };
+
+        // Parse optional : and type
+        let type_node = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        // Parse separator after the mapped type member
+        self.parse_type_member_separator_with_asi();
+
+        // Continue parsing remaining regular members
+        while !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            let saved_pos = self.token_pos();
+            let member = self.parse_type_member(false);
+
+            if member.is_none() && self.token_pos() == saved_pos {
+                if self.is_identifier_or_keyword() {
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    );
+                }
+                self.next_token();
+                continue;
+            }
+
+            if member.is_some() {
+                prior_members.push(member);
+            }
+
+            self.parse_type_member_separator_with_asi();
+        }
+
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+
+        let end_pos = self.token_end();
+        let members = if prior_members.is_empty() {
+            None
+        } else {
+            Some(self.make_node_list(prior_members))
+        };
+
+        self.arena.add_mapped_type(
+            syntax_kind_ext::MAPPED_TYPE,
+            start_pos,
+            end_pos,
+            crate::parser::node::MappedTypeData {
+                readonly_token,
+                type_parameter,
+                name_type,
+                question_token,
+                type_node,
+                members,
             },
         )
     }
@@ -1357,6 +1588,13 @@ impl ParserState {
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
+            // Check if this is a mapped type member: [identifier in ...]
+            // If so, switch to parsing a mapped type with mixed members (TS 4.1+)
+            if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start()
+            {
+                return self.parse_mapped_type_with_members(start_pos, members);
+            }
+
             let saved_pos = self.token_pos();
             let member = self.parse_type_member(false);
 
