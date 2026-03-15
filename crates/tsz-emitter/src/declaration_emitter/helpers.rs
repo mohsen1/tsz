@@ -6186,6 +6186,14 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&typeof_text);
+            } else if keyword == "const"
+                && has_initializer
+                && let Some(lit_text) = self.const_literal_initializer_text_deep(initializer)
+            {
+                // For const declarations where the type cache missed,
+                // preserve the literal value: `declare const X = 123;`
+                self.write(if self.source_is_js_file { ": " } else { " = " });
+                self.write(&lit_text);
             } else if let Some(type_text) = self
                 .infer_fallback_type_text(initializer)
                 .or_else(|| self.data_view_new_expression_type_text(initializer))
@@ -7364,6 +7372,24 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => self.simple_enum_access_member_text(expr_idx),
         }
+    }
+
+    /// Like `const_literal_initializer_text` but also unwraps `as` and
+    /// `satisfies` expressions to find the underlying literal.
+    fn const_literal_initializer_text_deep(&self, expr_idx: NodeIndex) -> Option<String> {
+        // Try the normal path first
+        if let Some(text) = self.const_literal_initializer_text(expr_idx) {
+            return Some(text);
+        }
+        // Unwrap as/satisfies expressions
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::AS_EXPRESSION
+            || expr_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            let assertion = self.arena.get_type_assertion(expr_node)?;
+            return self.const_literal_initializer_text_deep(assertion.expression);
+        }
+        None
     }
 
     fn is_import_meta_url_expression(&self, expr_idx: NodeIndex) -> bool {
