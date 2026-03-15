@@ -99,7 +99,10 @@ impl<'a> InferenceContext<'a> {
         // Case 3: Structural recursion - match based on type structure
         match (source_key, target_key) {
             // Object types: recurse into properties
-            (Some(TypeData::Object(source_shape)), Some(TypeData::Object(target_shape))) => {
+            (
+                Some(TypeData::Object(source_shape) | TypeData::ObjectWithIndex(source_shape)),
+                Some(TypeData::Object(target_shape) | TypeData::ObjectWithIndex(target_shape)),
+            ) => {
                 self.infer_objects(source_shape, target_shape, priority)?;
             }
 
@@ -193,7 +196,10 @@ impl<'a> InferenceContext<'a> {
             // Mapped type inference: infer from object properties against mapped type
             // Handles: source { a: string, b: number } against target { [P in K]: T }
             // Infers K from property names and T from property value types
-            (Some(TypeData::Object(source_shape)), Some(TypeData::Mapped(mapped_id))) => {
+            (
+                Some(TypeData::Object(source_shape) | TypeData::ObjectWithIndex(source_shape)),
+                Some(TypeData::Mapped(mapped_id)),
+            ) => {
                 self.infer_from_mapped_type(source_shape, mapped_id, priority)?;
             }
 
