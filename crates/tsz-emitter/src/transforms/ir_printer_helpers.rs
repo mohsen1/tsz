@@ -368,7 +368,8 @@ impl<'a> IRPrinter<'a> {
                 '\0' => self.output.push_str("\\0"),
                 c if (c as u32) < 0x20 || c == '\x7F' => {
                     // Escape control characters as \u00NN (matching TypeScript format)
-                    write!(self.output, "\\u{:04X}", c as u32).unwrap();
+                    write!(self.output, "\\u{:04X}", c as u32)
+                        .expect("write to String cannot fail");
                 }
                 _ => self.output.push(c),
             }
