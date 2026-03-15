@@ -14,9 +14,59 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // breakpointStatement returns a TextSpan or undefined
-        // Return undefined (no body) to indicate no breakpoint at this position
-        self.stub_response(seq, request, None)
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
+            let source_text = self.open_files.get(file)?;
+            let line_map = LineMap::build(source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let byte_offset = line_map.position_to_offset(position, source_text)? as usize;
+
+            // Find the statement that contains this position.
+            // Walk through lines to find the line's content and determine if it's a
+            // valid breakpoint target (non-empty, non-comment-only, non-declaration-only).
+            let line_start = source_text[..byte_offset].rfind('\n').map_or(0, |i| i + 1);
+            let line_end = source_text[byte_offset..]
+                .find('\n')
+                .map_or(source_text.len(), |i| byte_offset + i);
+            let line_text = source_text[line_start..line_end].trim();
+
+            // Skip empty lines and pure comment lines
+            if line_text.is_empty()
+                || line_text.starts_with("//")
+                || line_text.starts_with("/*")
+                || line_text == "*/"
+                || line_text.starts_with('*')
+            {
+                return None;
+            }
+
+            // Skip lines that are only closing braces/brackets
+            if line_text == "}" || line_text == "};" || line_text == "]" || line_text == "];" {
+                // These are valid breakpoint targets in TypeScript
+            }
+
+            // Return the text span for the whole line content
+            let content_start = line_start
+                + source_text[line_start..line_end]
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .count();
+            let content_end = line_end;
+
+            let start_pos = line_map.offset_to_position(content_start as u32, source_text);
+            let end_pos = line_map.offset_to_position(content_end as u32, source_text);
+
+            Some(serde_json::json!({
+                "textSpan": {
+                    "start": Self::lsp_to_tsserver_position(start_pos),
+                    "end": Self::lsp_to_tsserver_position(end_pos)
+                }
+            }))
+        })();
+
+        self.stub_response(seq, request, result)
     }
 
     pub(crate) fn handle_jsx_closing_tag(
@@ -25,8 +75,103 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         // jsxClosingTag returns { newText: string } or undefined
-        // Return undefined (no body) to indicate no closing tag needed
-        self.stub_response(seq, request, None)
+        // The request fires when the user types '>' after a JSX tag name,
+        // and we should return the closing tag text (e.g., "</div>").
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
+
+            let source_text = self.open_files.get(file)?;
+            let line_map = LineMap::build(source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let byte_offset = line_map.position_to_offset(position, source_text)? as usize;
+
+            // The cursor is right after '>'. Look backward to find the tag name.
+            // We need to find a pattern like '<TagName ...>' ending at byte_offset.
+            if byte_offset == 0 {
+                return None;
+            }
+
+            let bytes = source_text.as_bytes();
+
+            // The character just before cursor should be '>'
+            if byte_offset > 0 && bytes[byte_offset - 1] != b'>' {
+                return None;
+            }
+
+            // Don't close self-closing tags like <br />
+            if byte_offset >= 2 && bytes[byte_offset - 2] == b'/' {
+                return None;
+            }
+
+            // Scan backwards past attributes to find '<TagName'
+            let mut i = byte_offset - 1; // skip the '>'
+            let mut depth = 0;
+
+            // Skip past attributes, strings, etc. to find the '<'
+            while i > 0 {
+                i -= 1;
+                match bytes[i] {
+                    b'<' if depth == 0 => {
+                        // Found the opening '<', now extract the tag name
+                        let tag_start = i + 1;
+                        // Check it's not a closing tag '</'
+                        if tag_start < bytes.len() && bytes[tag_start] == b'/' {
+                            return None;
+                        }
+                        // Extract tag name (alphanumeric, dots, underscores, dashes, dollar signs)
+                        let mut tag_end = tag_start;
+                        while tag_end < byte_offset - 1 {
+                            let c = bytes[tag_end];
+                            if c.is_ascii_alphanumeric()
+                                || c == b'.'
+                                || c == b'_'
+                                || c == b'-'
+                                || c == b'$'
+                            {
+                                tag_end += 1;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if tag_end == tag_start {
+                            return None; // No tag name found
+                        }
+
+                        let tag_name = &source_text[tag_start..tag_end];
+
+                        // Don't auto-close void HTML elements
+                        let void_elements = [
+                            "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+                            "meta", "param", "source", "track", "wbr",
+                        ];
+                        if void_elements
+                            .iter()
+                            .any(|&v| v.eq_ignore_ascii_case(tag_name))
+                        {
+                            return None;
+                        }
+
+                        return Some(serde_json::json!({
+                            "newText": format!("$0</{}>", tag_name)
+                        }));
+                    }
+                    b'>' => depth += 1,
+                    b'<' => {
+                        if depth > 0 {
+                            depth -= 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            None
+        })();
+
+        self.stub_response(seq, request, result)
     }
 
     pub(crate) fn handle_brace_completion(
@@ -34,9 +179,124 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // braceCompletion returns boolean
-        // Default to true (brace completion is valid)
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
+        // braceCompletion returns boolean indicating whether the opening brace
+        // should be auto-completed with the closing one.
+        // We should NOT complete if we're inside a string or comment.
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
+            let opening_brace = request
+                .arguments
+                .get("openingBrace")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{");
+
+            let source_text = self.open_files.get(file)?;
+            let line_map = LineMap::build(source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let byte_offset = line_map.position_to_offset(position, source_text)? as usize;
+
+            // Check if position is inside a string or comment
+            let bytes = source_text.as_bytes();
+            let mut i = 0;
+            let mut in_string = false;
+            let mut string_char: u8 = 0;
+            let mut in_line_comment = false;
+            let mut in_block_comment = false;
+            let mut in_template = false;
+            let mut template_depth: u32 = 0;
+
+            while i < byte_offset && i < bytes.len() {
+                if in_line_comment {
+                    if bytes[i] == b'\n' {
+                        in_line_comment = false;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if in_block_comment {
+                    if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        in_block_comment = false;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if in_string {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == string_char {
+                        in_string = false;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if in_template {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == b'`' {
+                        in_template = false;
+                        i += 1;
+                        continue;
+                    }
+                    if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                        template_depth += 1;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+
+                if bytes[i] == b'"' || bytes[i] == b'\'' {
+                    in_string = true;
+                    string_char = bytes[i];
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'`' {
+                    in_template = true;
+                    i += 1;
+                    continue;
+                }
+                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+                    in_line_comment = true;
+                    i += 2;
+                    continue;
+                }
+                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'}' && template_depth > 0 {
+                    template_depth -= 1;
+                    in_template = true;
+                }
+                i += 1;
+            }
+
+            // Don't auto-complete braces inside strings, comments, or template literals
+            if in_string || in_line_comment || in_block_comment || in_template {
+                return Some(serde_json::json!(false));
+            }
+
+            // All valid opening braces should be completed
+            let valid = matches!(opening_brace, "{" | "(" | "[" | "'" | "\"" | "`" | "<");
+            Some(serde_json::json!(valid))
+        })();
+
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!(true))),
+        )
     }
 
     pub(crate) fn handle_span_of_enclosing_comment(
@@ -44,9 +304,97 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // getSpanOfEnclosingComment returns TextSpan or undefined
-        // Return undefined (no body) to indicate not inside a comment
-        self.stub_response(seq, request, None)
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64().unwrap_or(1) as u32;
+            let only_multi_line = request
+                .arguments
+                .get("onlyMultiLine")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+
+            let source_text = self.open_files.get(file)?;
+            let line_map = LineMap::build(source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let byte_offset = line_map.position_to_offset(position, source_text)? as usize;
+            let bytes = source_text.as_bytes();
+            let len = bytes.len();
+
+            // Scan for comments that contain the position
+            let mut i = 0;
+            while i < len {
+                // Skip string literals
+                if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < len {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == quote {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+
+                if i + 1 < len && bytes[i] == b'/' {
+                    if bytes[i + 1] == b'/' && !only_multi_line {
+                        // Single-line comment
+                        let comment_start = i;
+                        let comment_end = source_text[i..].find('\n').map_or(len, |j| i + j);
+                        if byte_offset >= comment_start && byte_offset <= comment_end {
+                            let start_pos =
+                                line_map.offset_to_position(comment_start as u32, source_text);
+                            let end_pos =
+                                line_map.offset_to_position(comment_end as u32, source_text);
+                            return Some(serde_json::json!({
+                                "textSpan": {
+                                    "start": Self::lsp_to_tsserver_position(start_pos),
+                                    "end": Self::lsp_to_tsserver_position(end_pos)
+                                }
+                            }));
+                        }
+                        i = comment_end;
+                        continue;
+                    } else if bytes[i + 1] == b'*' {
+                        // Multi-line comment
+                        let comment_start = i;
+                        i += 2;
+                        while i + 1 < len {
+                            if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                                i += 2;
+                                break;
+                            }
+                            i += 1;
+                        }
+                        let comment_end = i;
+                        if byte_offset >= comment_start && byte_offset <= comment_end {
+                            let start_pos =
+                                line_map.offset_to_position(comment_start as u32, source_text);
+                            let end_pos =
+                                line_map.offset_to_position(comment_end as u32, source_text);
+                            return Some(serde_json::json!({
+                                "textSpan": {
+                                    "start": Self::lsp_to_tsserver_position(start_pos),
+                                    "end": Self::lsp_to_tsserver_position(end_pos)
+                                }
+                            }));
+                        }
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+
+            None
+        })();
+
+        self.stub_response(seq, request, result)
     }
 
     pub(crate) fn handle_todo_comments(
