@@ -1312,8 +1312,10 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             let init_vars = self.collect_for_initializer_let_const_vars(loop_stmt.initializer);
             if !init_vars.is_empty() {
-                let body_info =
-                    super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
+                let body_info = super::es5::loop_capture::collect_loop_body_vars(
+                    self.arena,
+                    loop_stmt.statement,
+                );
                 if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
                     self.arena,
                     loop_stmt.statement,
