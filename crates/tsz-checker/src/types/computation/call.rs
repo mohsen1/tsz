@@ -218,6 +218,19 @@ impl<'a> CheckerState<'a> {
             // TS2322: Check options arg against ImportCallOptions
             self.check_dynamic_import_options_type(call);
             self.check_dynamic_import_module_specifier(call);
+
+            // TS2712: Dynamic import requires Promise constructor.
+            // When the lib doesn't include Promise as a value (e.g., @lib: es5),
+            // dynamic import() cannot work because it returns a Promise.
+            if !self.ctx.has_promise_constructor_in_scope() {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::A_DYNAMIC_IMPORT_CALL_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YOU_HAVE,
+                    diagnostic_codes::A_DYNAMIC_IMPORT_CALL_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YOU_HAVE,
+                );
+            }
+
             // Dynamic imports return Promise<typeof module>
             // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports
             return self.get_dynamic_import_type(call);

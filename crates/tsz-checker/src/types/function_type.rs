@@ -1145,19 +1145,15 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // TS2705: Async function in ES5/ES3 requires the Promise constructor.
-            // Only emit when targeting ES5/ES3 and Promise is not available globally.
+            // TS2705: Async function requires the Promise constructor.
+            // Emits when Promise value is not available in the loaded libs
+            // (e.g., @lib: es5 lacks `declare var Promise: PromiseConstructor`).
+            // tsc checks lib availability, not just target level.
             if is_async && !is_generator {
-                use crate::context::ScriptTarget;
-                let is_es5_or_lower = matches!(
-                    self.ctx.compiler_options.target,
-                    ScriptTarget::ES3 | ScriptTarget::ES5
-                );
                 let should_check_promise_constructor =
                     !is_function_declaration || has_type_annotation;
-                let missing_promise_for_target = !self.ctx.has_promise_constructor_in_scope();
-                if is_es5_or_lower && should_check_promise_constructor && missing_promise_for_target
-                {
+                let missing_promise = !self.ctx.has_promise_constructor_in_scope();
+                if should_check_promise_constructor && missing_promise {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     let diagnostic_node = if async_node_idx.is_none() {
                         idx
