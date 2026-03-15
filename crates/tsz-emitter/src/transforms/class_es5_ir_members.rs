@@ -332,7 +332,15 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let mut params = self.extract_parameters(&accessor_data.parameters);
 
-        let body_source_range = self.arena.get(accessor_data.body).map(|n| (n.pos, n.end));
+        // Generate destructuring prologue for binding-pattern parameters
+        let accessor_destructuring =
+            self.generate_destructuring_prologue(&accessor_data.parameters, &params);
+
+        let body_source_range = if accessor_destructuring.is_empty() {
+            self.arena.get(accessor_data.body).map(|n| (n.pos, n.end))
+        } else {
+            None // Force multi-line when destructuring prologue exists
+        };
 
         let mut body = if accessor_data.body.is_none() {
             vec![]
@@ -346,8 +354,14 @@ impl<'a> ES5ClassTransformer<'a> {
             // Check if setter needs `var _this = this;` capture
             let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
             if needs_this_capture {
-                // Insert `var _this = this;` at the start of setter body
                 body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            }
+
+            // Prepend destructuring prologue
+            if !accessor_destructuring.is_empty() {
+                let mut full = accessor_destructuring;
+                full.append(&mut body);
+                body = full;
             }
 
             body
