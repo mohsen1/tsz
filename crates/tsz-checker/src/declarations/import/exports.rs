@@ -214,9 +214,13 @@ impl<'a> CheckerState<'a> {
         // Direct exports from module_exports (populated during binding, pre-merge)
         if let Some(exports) = binder.module_exports.get(&file_name) {
             for (name, &sym_id) in exports.iter() {
-                // Skip lib/global symbols (e.g. `escape`, `unescape`) that leaked
-                // into module_exports from lib.d.ts merging.
-                if binder.lib_symbol_ids.contains(&sym_id) {
+                // Skip lib/global symbols merged from lib.d.ts.
+                if binder.lib_symbol_ids.contains(&sym_id)
+                    || binder
+                        .symbols
+                        .get(sym_id)
+                        .is_some_and(|s| s.decl_file_idx == u32::MAX)
+                {
                     continue;
                 }
                 names.insert(name.to_string());
