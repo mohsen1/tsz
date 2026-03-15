@@ -425,7 +425,7 @@ createInstance(MenuWorkbenchToolBar, {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
+
 fn compile_array_from_iterable_uses_real_lib_iterable_overload() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
