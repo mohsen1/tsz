@@ -98,18 +98,23 @@ impl BlockScopeState {
         // `var` could shadow variables referenced elsewhere in the function.
         let at_function_level = self.function_scope_marks.last().copied().unwrap_or(false);
 
-        let needs_rename = if at_function_level {
-            // At function body level: only check the current function scope itself
-            // (for redeclarations within the same scope)
-            self.scope_stack
-                .last()
-                .is_some_and(|scope| scope.contains_key(original_name))
-        } else {
-            // In a nested block: check all parent scopes (original behavior)
-            self.scope_stack
-                .iter()
-                .any(|scope| scope.contains_key(original_name))
-        };
+        // `arguments` is a built-in identifier in function scope — always rename
+        // block-scoped declarations that shadow it to avoid conflicts.
+        let is_builtin_shadow = original_name == "arguments";
+
+        let needs_rename = is_builtin_shadow
+            || if at_function_level {
+                // At function body level: only check the current function scope itself
+                // (for redeclarations within the same scope)
+                self.scope_stack
+                    .last()
+                    .is_some_and(|scope| scope.contains_key(original_name))
+            } else {
+                // In a nested block: check all parent scopes (original behavior)
+                self.scope_stack
+                    .iter()
+                    .any(|scope| scope.contains_key(original_name))
+            };
 
         let emitted_name = if needs_rename {
             // Find a unique suffix by checking both existing scopes and reserved names
