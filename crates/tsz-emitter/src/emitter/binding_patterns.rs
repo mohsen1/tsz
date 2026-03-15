@@ -71,15 +71,14 @@ impl<'a> Printer<'a> {
         }
 
         // propertyName: name  or just name
+        // When the source explicitly wrote `{ x: x }`, the parser sets
+        // `property_name` even though it matches `name`. TSC always preserves
+        // the explicit form, so we must emit `property_name: name` whenever
+        // `property_name` is set — never collapse to shorthand.
         if elem.property_name.is_some() {
-            // Check for shorthand: { name } where property_name text == name text
-            if self.is_shorthand_binding(elem.property_name, elem.name) {
-                self.emit_decl_name(elem.name);
-            } else {
-                self.emit(elem.property_name);
-                self.write(": ");
-                self.emit_decl_name(elem.name);
-            }
+            self.emit(elem.property_name);
+            self.write(": ");
+            self.emit_decl_name(elem.name);
         } else {
             self.emit_decl_name(elem.name);
         }
@@ -100,24 +99,6 @@ impl<'a> Printer<'a> {
     /// across both destructuring and for-of lowering.
     pub(super) fn get_temp_var_name(&mut self) -> String {
         self.make_unique_name()
-    }
-
-    /// Check if a binding element is a shorthand (`property_name` text == name text)
-    fn is_shorthand_binding(&self, property_name: NodeIndex, name: NodeIndex) -> bool {
-        let prop_text = self
-            .arena
-            .get(property_name)
-            .and_then(|n| self.arena.get_identifier(n))
-            .map(|id| id.escaped_text.as_str());
-        let name_text = self
-            .arena
-            .get(name)
-            .and_then(|n| self.arena.get_identifier(n))
-            .map(|id| id.escaped_text.as_str());
-        match (prop_text, name_text) {
-            (Some(p), Some(n)) => p == n,
-            _ => false,
-        }
     }
 
     /// Check if a node is a binding pattern
