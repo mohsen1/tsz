@@ -6287,9 +6287,14 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // With getSingleCommonSupertype, conflicting candidates for T and U resolve to
-    // single types (not unions), causing assignability failures → ERROR.
-    assert_eq!(result, TypeId::ERROR);
+    // With index signature inference creating unions (matching tsc's getCommonSupertype),
+    // conflicting candidates for U resolve to a union (string | number), so the call
+    // succeeds. T gets a single candidate (string). Return type is [T, U] = [string, string | number].
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "Call should succeed with union inference for index signatures"
+    );
 }
 
 #[test]
@@ -6364,9 +6369,14 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // With getSingleCommonSupertype, conflicting candidates for U resolve to
-    // a single type (not union), causing assignability failures → ERROR.
-    assert_eq!(result, TypeId::ERROR);
+    // With index signature inference creating unions (matching tsc's getCommonSupertype),
+    // conflicting candidates for U resolve to a union (string | number), so the call
+    // succeeds rather than failing with ERROR.
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "Call should succeed with union inference for index signatures"
+    );
 }
 
 // DELETED: test_infer_generic_property_from_source_index_signature
@@ -6375,6 +6385,128 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
 
 // DELETED: test_infer_generic_property_from_number_index_signature_infinity
 // Same reasoning as above - required properties don't infer from index signatures.
+
+/// Tests that index signature inference creates a union of all source property types.
+/// Corresponds to TypeScript conformance test: inferenceOptionalPropertiesToIndexSignatures.ts
+///
+/// ```ts
+/// declare function foo<T>(obj: { [x: string]: T }): T;
+/// declare const x1: { a: string, b: number };
+/// let a1 = foo(x1);  // T = string | number
+/// ```
+///
+/// tsc's getCommonSupertype creates a union when candidates are incompatible.
+/// Without this fix, the tournament picks a single winner (string) causing
+/// a false positive TS2345 error.
+#[test]
+fn test_infer_generic_index_signature_union_from_mixed_properties() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    // foo<T>(obj: { [x: string]: T }): T
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("obj")),
+            type_id: interner.object_with_index(ObjectShape {
+                symbol: None,
+                flags: ObjectFlags::empty(),
+                properties: Vec::new(),
+                string_index: Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: t_type,
+                    readonly: false,
+                    param_name: None,
+                }),
+                number_index: None,
+            }),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // Source: { a: string, b: number }
+    let arg = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+    ]);
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
+    // T should be inferred as string | number (union of all property types),
+    // not just string (tournament winner). The call should succeed.
+    let expected_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        result, expected_union,
+        "Expected T = string | number, got {:?}",
+        result
+    );
+}
+
+/// Tests that index signature inference with homogeneous types still works correctly.
+/// When all source properties have the same type, the union fixup should be a no-op.
+#[test]
+fn test_infer_generic_index_signature_homogeneous_properties() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    // foo<T>(obj: { [x: string]: T }): T
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("obj")),
+            type_id: interner.object_with_index(ObjectShape {
+                symbol: None,
+                flags: ObjectFlags::empty(),
+                properties: Vec::new(),
+                string_index: Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: t_type,
+                    readonly: false,
+                    param_name: None,
+                }),
+                number_index: None,
+            }),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // Source: { a: number, b: number } — homogeneous types
+    let arg = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+    ]);
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
+    // T should be inferred as number (all candidates identical)
+    assert_eq!(result, TypeId::NUMBER);
+}
 
 #[test]
 #[ignore = "pre-existing: overload/inference logic changed by remote"]

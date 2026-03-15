@@ -385,6 +385,9 @@ impl<'a> InferenceContext<'a> {
                 )
             })
             .unwrap_or(false);
+        let has_index_signature_candidates = filtered_no_never
+            .iter()
+            .any(|candidate| candidate.from_index_signature);
         let resolved = if priority_implies_combination {
             // Union: used for return type inference and low-priority contexts
             self.best_common_type(&candidate_types)
@@ -407,6 +410,28 @@ impl<'a> InferenceContext<'a> {
                 candidate_types.clone()
             };
             self.get_common_supertype_for_inference(&widened_candidates)
+        };
+        // When candidates come from index signature inference (e.g., inferring T from
+        // source properties against target `{ [x: string]: T }`), tsc creates a union
+        // of all candidate types. The tournament in get_common_supertype_for_inference
+        // may have picked a single winner, but for index signatures we need the union.
+        let resolved = if has_index_signature_candidates && !priority_implies_combination {
+            // Filter out error types that arise from failed constraint paths
+            // (e.g., readonly mismatches). These should not pollute the union.
+            let valid_candidates: Vec<TypeId> = candidate_types
+                .iter()
+                .copied()
+                .filter(|&c| c != TypeId::ERROR && c != TypeId::NEVER)
+                .collect();
+            let all_same = valid_candidates.iter().all(|&c| c == resolved);
+            if all_same || valid_candidates.is_empty() {
+                resolved
+            } else {
+                // Create a union of all valid candidate types (subtype-reduced).
+                self.best_common_type(&valid_candidates)
+            }
+        } else {
+            resolved
         };
         // Widen the resolved type if literals should not be preserved.
         // After best_common_type, subtype reduction has already eliminated redundant
@@ -457,9 +482,6 @@ impl<'a> InferenceContext<'a> {
         } else {
             resolved
         };
-        let has_index_signature_candidates = filtered_no_never
-            .iter()
-            .any(|candidate| candidate.from_index_signature);
         if all_from_object_properties
             && !has_index_signature_candidates
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
