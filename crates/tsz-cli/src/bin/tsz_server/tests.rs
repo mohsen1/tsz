@@ -761,6 +761,7 @@ fn test_semantic_diagnostics_resolve_imports_from_open_dependency_files() {
 }
 
 #[test]
+#[ignore = "requires full TypeScript checkout with src/lib"]
 fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
     let mut server = make_server_with_real_libs();
     let resp = server.handle_tsserver_request(make_request(
@@ -832,6 +833,7 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
 }
 
 #[test]
+#[ignore = "requires full TypeScript checkout with src/lib"]
 fn test_semantic_diagnostics_partial_union_alias_insert_keeps_array_is_array_valid() {
     let mut server = make_server_with_real_libs();
     let resp = server.handle_tsserver_request(make_request(
@@ -880,6 +882,7 @@ fn test_semantic_diagnostics_partial_union_alias_insert_keeps_array_is_array_val
 }
 
 #[test]
+#[ignore = "requires full TypeScript checkout with src/lib"]
 fn test_semantic_diagnostics_unused_label_content_round_trip_is_stable() {
     let mut server = make_server_with_real_libs();
     let resp = server.handle_tsserver_request(make_request(
