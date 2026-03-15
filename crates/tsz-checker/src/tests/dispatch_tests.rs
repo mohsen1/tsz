@@ -145,9 +145,10 @@ fn({ a: 1, b: 2 });
     assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
 
     let msg = &matching[0].message_text;
+    // tsc preserves literal types in fresh object literals passed directly to functions
     assert!(
-        msg.contains("Argument of type '{ a: number; b: number; }'"),
-        "Expected non-contextual object literal display, got: {msg}"
+        msg.contains("Argument of type '{ a: 1; b: 2; }'"),
+        "Expected fresh literal display, got: {msg}"
     );
     assert!(
         msg.contains("parameter of type 'never'"),

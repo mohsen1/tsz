@@ -967,18 +967,11 @@ impl<'a> CheckerState<'a> {
                     }
                     return init_type;
                 }
-                // Only widen when the initializer is a "fresh" literal expression
-                // (direct literal in source code). Types from variable references,
-                // narrowing, or computed expressions are "non-fresh" and NOT widened.
-                // EXCEPTION: Enum member types are always widened for mutable bindings.
-                let is_enum_member = checker.is_enum_member_type_for_widening(init_type);
-                let widened = if is_enum_member
-                    || checker.is_fresh_literal_expression(var_decl.initializer)
-                {
-                    checker.widen_initializer_type_for_mutable_binding(init_type)
-                } else {
-                    init_type
-                };
+                // Widen literal types for mutable bindings (let/var).
+                // tsc widens all fresh literal types at variable binding time.
+                // With literal preservation at expression level, the initializer
+                // type always contains literals, so we always widen.
+                let widened = checker.widen_initializer_type_for_mutable_binding(init_type);
                 // When strictNullChecks is off, undefined and null widen to any
                 // regardless of freshness (this applies to destructured bindings too)
                 if !checker.ctx.strict_null_checks()
