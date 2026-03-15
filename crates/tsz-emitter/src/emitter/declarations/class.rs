@@ -342,6 +342,19 @@ impl<'a> Printer<'a> {
                             {
                                 return false;
                             }
+                            // Skip TypeReference to null/undefined/void/never
+                            // (parser emits these as TypeReference with keyword name)
+                            if member.kind == syntax_kind_ext::TYPE_REFERENCE
+                                && let Some(type_ref) = self.arena.get_type_ref(member)
+                            {
+                                let ref_name = self.get_identifier_text_idx(type_ref.type_name);
+                                if matches!(
+                                    ref_name.as_str(),
+                                    "null" | "undefined" | "void" | "never"
+                                ) {
+                                    return false;
+                                }
+                            }
                             true
                         })
                         .collect();

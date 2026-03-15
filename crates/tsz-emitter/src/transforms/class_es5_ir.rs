@@ -153,10 +153,25 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
                         let Some(m) = arena.get(m_idx) else {
                             return false;
                         };
-                        m.kind != sk(SyntaxKind::NullKeyword)
-                            && m.kind != sk(SyntaxKind::UndefinedKeyword)
-                            && m.kind != sk(SyntaxKind::VoidKeyword)
-                            && m.kind != sk(SyntaxKind::NeverKeyword)
+                        if m.kind == sk(SyntaxKind::NullKeyword)
+                            || m.kind == sk(SyntaxKind::UndefinedKeyword)
+                            || m.kind == sk(SyntaxKind::VoidKeyword)
+                            || m.kind == sk(SyntaxKind::NeverKeyword)
+                        {
+                            return false;
+                        }
+                        // Skip TypeReference to null/undefined/void/never
+                        if m.kind == syntax_kind_ext::TYPE_REFERENCE
+                            && let Some(type_ref) = arena.get_type_ref(m)
+                        {
+                            let ref_name =
+                                get_identifier_text(arena, type_ref.type_name).unwrap_or_default();
+                            if matches!(ref_name.as_str(), "null" | "undefined" | "void" | "never")
+                            {
+                                return false;
+                            }
+                        }
+                        true
                     })
                     .collect();
                 if meaningful.len() == 1 {
