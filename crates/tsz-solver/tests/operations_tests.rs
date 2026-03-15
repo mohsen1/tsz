@@ -3158,7 +3158,6 @@ fn test_infer_generic_function_param_from_callable() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_infer_generic_function_param_from_overloaded_callable() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -3654,7 +3653,6 @@ fn test_infer_generic_callable_param_from_callable() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_infer_generic_construct_signature_param() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -4283,7 +4281,6 @@ fn test_infer_generic_application_param() {
 }
 
 #[test]
-#[ignore = "pre-existing: contextual return inference for application TypeId mismatch"]
 fn test_generic_call_uses_contextual_return_inference_for_application() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
