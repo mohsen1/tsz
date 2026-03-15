@@ -397,32 +397,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
     ) {
         let run_init = self.helper("__runInitializers");
 
-        // Build the decorator assignment comma expression that goes in the sink member
-        let mut assignment_parts: Vec<String> = Vec::new();
-        for (i, member) in decorated_members.iter().enumerate() {
-            let var_info = &member_vars[i];
-            let dec_exprs = member.decorator_exprs.join(", ");
-            assignment_parts.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
-        }
-        // Add computed key assignments
-        for (member_i, var_name) in computed_key_vars {
-            if let Some(member) = decorated_members.get(*member_i)
-                && let MemberName::Computed(expr_idx) = &member.name
-            {
-                assignment_parts.push(format!(
-                    "{var_name} = {}({})",
-                    self.helper("__propKey"),
-                    self.node_text(*expr_idx)
-                ));
-            }
-        }
+        // Build map: member_idx -> propKey variable for computed members
+        let propkey_map: std::collections::HashMap<NodeIndex, &str> = computed_key_vars
+            .iter()
+            .filter_map(|(mi, var)| {
+                decorated_members
+                    .get(*mi)
+                    .map(|m| (m.member_idx, var.as_str()))
+            })
+            .collect();
 
-        let needs_sink = !assignment_parts.is_empty();
-        let sink_expr = assignment_parts.join(", ");
-
-        // Emit each member (excluding constructors and index signatures).
-        // Use the NEXT sibling's pos as the end boundary for each member.
-        // This avoids relying on member_node.end which includes trailing trivia.
+        // Collect all class members
         let all_members: Vec<_> = class_data
             .members
             .nodes
@@ -430,42 +415,93 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .filter_map(|&idx| self.arena.get(idx).map(|n| (idx, n)))
             .collect();
 
-        // Members with computed keys needing __propKey are folded into the sink
-        let propkey_member_indices: Vec<NodeIndex> = decorated_members
-            .iter()
-            .filter(|m| matches!(m.name, MemberName::Computed(_)))
-            .map(|m| m.member_idx)
-            .collect();
+        // Build map of which assignment expressions go into which computed member.
+        // Walk decorated members in order; assignments accumulate until flushed
+        // into a computed-key member.
+        let mut assignment_queue: Vec<String> = Vec::new();
+        let mut injected_assignments: std::collections::HashMap<NodeIndex, Vec<String>> =
+            std::collections::HashMap::new();
 
+        for (i, member) in decorated_members.iter().enumerate() {
+            let var_info = &member_vars[i];
+            let dec_exprs = member.decorator_exprs.join(", ");
+            assignment_queue.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
+
+            // If this member has a computed key with propKey, flush all accumulated
+            // assignments into this member's computed brackets
+            if propkey_map.contains_key(&member.member_idx) {
+                if let MemberName::Computed(expr_idx) = &member.name {
+                    if let Some((_, var_name)) = computed_key_vars.iter().find(|(mi, _)| *mi == i) {
+                        assignment_queue.push(format!(
+                            "{var_name} = {}({})",
+                            self.helper("__propKey"),
+                            self.node_text(*expr_idx)
+                        ));
+                    }
+                }
+                injected_assignments
+                    .insert(member.member_idx, std::mem::take(&mut assignment_queue));
+            }
+        }
+        // Any remaining assignments need a synthetic sink
+        let remaining_assignments = assignment_queue;
+
+        // Determine emittable members (exclude constructors, index sigs, semicolons)
         let emittable: Vec<usize> = all_members
             .iter()
             .enumerate()
-            .filter(|(_, (idx, node))| {
+            .filter(|(_, (_, node))| {
                 node.kind != syntax_kind_ext::CONSTRUCTOR
                     && node.kind != syntax_kind_ext::INDEX_SIGNATURE
                     && node.kind != syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
-                    && !propkey_member_indices.contains(idx)
             })
             .map(|(i, _)| i)
             .collect();
 
         let class_close = self.find_class_close_brace(class_node);
         for &emit_i in &emittable {
-            let (_, member_node) = all_members[emit_i];
-            // Find next sibling in the full member list (not just emittable ones)
+            let (member_idx, member_node) = all_members[emit_i];
             let next_boundary = if emit_i + 1 < all_members.len() {
                 all_members[emit_i + 1].1.pos as usize
             } else {
-                // Last member: use class closing brace position
                 class_close
             };
             let member_text = self.emit_member_bounded(member_node, next_boundary.min(class_close));
-            out.push_str(&format!("{indent}{member_text}\n"));
+
+            // Check if this member has injected assignments (computed-key member)
+            if let Some(assignments) = injected_assignments.get(&member_idx) {
+                // Inject assignments into the computed property name brackets
+                let injected = assignments.join(", ");
+                // Replace the original computed expression with (assignments, original)
+                // The member text starts with something like `static get [expr](`
+                // We need to find the `[` and inject before the original expression
+                if let Some(bracket_start) = member_text.find('[') {
+                    let before = &member_text[..bracket_start + 1];
+                    let after = &member_text[bracket_start + 1..];
+                    // Find the matching `]` for the computed name
+                    if let Some(bracket_end) = self.find_matching_bracket(after) {
+                        // The propKey assignment already captures the original expression,
+                        // so replace [expr] entirely with [(assignments)]
+                        let rest = &after[bracket_end + 1..];
+                        out.push_str(&format!("{indent}{before}({injected})]{rest}\n"));
+                    } else {
+                        // Fallback: just emit with injected prefix
+                        out.push_str(&format!("{indent}{before}({injected})]() {{ }}\n"));
+                    }
+                } else {
+                    out.push_str(&format!("{indent}{member_text}\n"));
+                }
+            } else {
+                out.push_str(&format!("{indent}{member_text}\n"));
+            }
         }
 
-        // Emit the sink computed member with all decorator assignments
-        if needs_sink {
-            out.push_str(&format!("{indent}[({sink_expr})]() {{ }}\n"));
+        // Emit synthetic sink for any remaining assignments not injected into computed members
+        if !remaining_assignments.is_empty() {
+            let sink_expr = remaining_assignments.join(", ");
+            let sink_is_static = decorated_members.iter().any(|m| m.is_static);
+            let static_prefix = if sink_is_static { "static " } else { "" };
+            out.push_str(&format!("{indent}{static_prefix}[({sink_expr})]() {{ }}\n"));
         }
 
         // Emit constructor only if source has one or we need instance initializers
@@ -533,12 +569,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let mut text = source[clean_start..raw_end].trim();
             // Strip class closing brace that may leak into last member's text.
             // The parser sets member.end to include trailing trivia up to the class `}`.
-            // Detect this by checking for a stray `}` after the member's own content.
-            if let Some(before_last_brace) = text.strip_suffix('}') {
-                let before_trimmed = before_last_brace.trim_end();
-                // If there's another `}` before, the last one is the class brace
-                if before_trimmed.ends_with('}') || before_trimmed.ends_with(';') {
-                    text = before_trimmed;
+            // The class closing brace always appears after a newline, so strip only
+            // a trailing `}` that follows whitespace containing a newline.
+            if text.ends_with('}') {
+                // Check if the `}` is preceded by newline+optional-whitespace
+                let before_brace = &text[..text.len() - 1];
+                let trimmed = before_brace.trim_end_matches(|c: char| c == ' ' || c == '\t');
+                if trimmed.len() < before_brace.len() || trimmed.ends_with('\n') {
+                    // Check if the trimmed part has a newline between content and `}`
+                    if before_brace.contains('\n') && trimmed.ends_with('}') {
+                        text = trimmed;
+                    }
                 }
             }
             // Normalize empty method bodies: `{}` -> `{ }`
@@ -643,6 +684,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         member_node.pos as usize
+    }
+
+    /// Find the position of the matching `]` for a string starting after `[`.
+    /// Returns the index of `]` within the input string, handling nested brackets.
+    fn find_matching_bracket(&self, s: &str) -> Option<usize> {
+        let mut depth = 1;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
