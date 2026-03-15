@@ -324,6 +324,9 @@ pub struct CompilerOptions {
     /// Suppress deprecation warnings. Valid values: "5.0", "6.0".
     #[serde(default)]
     pub ignore_deprecations: Option<String>,
+    /// Allow accessing UMD globals from modules.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_umd_global_access: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -876,6 +879,10 @@ pub fn resolve_compiler_options(
         && (id == "5.0" || id == "6.0")
     {
         resolved.checker.ignore_deprecations = true;
+    }
+
+    if let Some(allow_umd) = options.allow_umd_global_access {
+        resolved.checker.allow_umd_global_access = allow_umd;
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
@@ -2873,6 +2880,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_implicit_override,
             module_detection,
             ignore_deprecations,
+            allow_umd_global_access,
         }
     )
 }

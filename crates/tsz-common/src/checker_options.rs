@@ -147,6 +147,9 @@ pub struct CheckerOptions {
     /// When true, suppress deprecation warnings (e.g., TS2880 for `assert` import assertions).
     /// Set when `ignoreDeprecations` is "5.0" or "6.0".
     pub ignore_deprecations: bool,
+    /// When true, allow accessing UMD globals from modules without importing them.
+    /// Suppresses TS2686 ("refers to a UMD global, but the current file is a module").
+    pub allow_umd_global_access: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -225,6 +228,7 @@ impl Default for CheckerOptions {
             jsx_import_source: String::new(),
             verbatim_module_syntax: false,
             ignore_deprecations: false,
+            allow_umd_global_access: false,
         }
     }
 }

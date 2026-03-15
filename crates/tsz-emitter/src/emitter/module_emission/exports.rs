@@ -13,10 +13,14 @@ impl<'a> Printer<'a> {
             self.write("exports_1(\"");
             self.write(export_name);
             self.write("\", ");
-        } else {
+        } else if super::super::is_valid_identifier_name(export_name) {
             self.write("exports.");
             self.write(export_name);
             self.write(" = ");
+        } else {
+            self.write("exports[\"");
+            self.write(export_name);
+            self.write("\"] = ");
         }
     }
 
