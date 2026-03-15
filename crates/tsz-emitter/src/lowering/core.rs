@@ -1350,11 +1350,15 @@ impl<'a> LoweringPass<'a> {
         // Set new state - we're now inside a constructor
         self.in_constructor = true;
 
-        // Visit children (modifiers, parameters, body)
+        // Visit children (modifiers, parameters, body).
+        // Save/restore the decorate flag — constructor decorators are errors and
+        // tsc doesn't emit __decorate helpers for them.
         if let Some(mods) = &ctor.modifiers {
+            let prev_decorate = self.transforms.helpers().decorate;
             for &mod_idx in &mods.nodes {
                 self.visit(mod_idx);
             }
+            self.transforms.helpers_mut().decorate = prev_decorate;
         }
         for &param_idx in &ctor.parameters.nodes {
             self.visit(param_idx);
