@@ -671,7 +671,7 @@ fn numeric_value_to_property_name(value: f64) -> String {
     // For non-negative integers representable exactly as u64, use integer format.
     // This covers 0, 1, 2, … which are the typical numeric property name cases.
     if value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < 1e15 {
-        return format!("{}", value as u64);
+        return (value as u64).to_string();
     }
     // Fall back to canonicalize_numeric_name for edge cases.
     crate::utils::canonicalize_numeric_name(&format!("{value}"))

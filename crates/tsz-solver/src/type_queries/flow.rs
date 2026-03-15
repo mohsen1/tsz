@@ -262,7 +262,7 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
         TypeData::Literal(crate::LiteralValue::Number(n)) => {
             let v = n.0;
             if v.fract() == 0.0 && v.abs() < 1e20 {
-                Some(format!("{}", v as i64))
+                Some((v as i64).to_string())
             } else {
                 Some(format!("{v}"))
             }

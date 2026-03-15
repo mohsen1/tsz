@@ -729,7 +729,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         while let Some(pos) = tag_pos {
             let next_char = jsdoc[pos + "@type".len()..].chars().next();
-            if next_char.is_none() || !next_char.unwrap().is_alphabetic() {
+            if !next_char.is_some_and(|c| c.is_alphabetic()) {
                 if let Some(td_pos) = typedef_pos
                     && td_pos < pos
                 {
