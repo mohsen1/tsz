@@ -61,6 +61,18 @@ impl<'a> Printer<'a> {
                     self.write(" ");
                 }
                 self.emit_es5_destructuring(decl_idx, &mut first);
+            } else if self.is_binding_pattern(decl.name) && !decl.initializer.is_some() {
+                // Binding pattern without initializer: `var {} ;` → `var _a = void 0;`
+                // tsc emits a temp var with void 0 to ensure the pattern is evaluated
+                let temp_name = self.get_temp_var_name();
+                if !first {
+                    self.write(", ");
+                } else {
+                    self.write(" ");
+                }
+                first = false;
+                self.write(&temp_name);
+                self.write(" = void 0");
             } else {
                 if first {
                     self.write(" ");
