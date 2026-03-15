@@ -138,6 +138,7 @@ impl TsCompilerOptions {
             implied_classic_resolution: false,
             verbatim_module_syntax: false,
             ignore_deprecations: false,
+            allow_umd_global_access: false,
         }
     }
 }
@@ -498,7 +499,9 @@ impl TsProgram {
         // Create new type checker
         // In a full implementation, we'd cache this
         TsTypeChecker::new(
-            self.merged.as_ref().unwrap(),
+            self.merged
+                .as_ref()
+                .expect("merged must be set before creating type checker"),
             std::sync::Arc::clone(&self.type_interner),
             &self.options,
             &self.lib_files,

@@ -388,6 +388,9 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let jsdoc = self.get_jsdoc_for_function(func_idx)?;
         let sf = self.source_file_data_for_node(func_idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
         let source_text = sf.text.to_string();
         let comments = sf.comments.clone();
         let node = self.ctx.arena.get(func_idx)?;

@@ -358,10 +358,12 @@ impl<'a> CheckerState<'a> {
         // args is already defined above before the ANY/ERROR check
 
         // Validate explicit type arguments against constraints (TS2344)
+        let mut type_arg_count_mismatch = false;
         if let Some(ref type_args_list) = call.type_arguments
             && !type_args_list.nodes.is_empty()
         {
-            self.validate_call_type_arguments(callee_type, type_args_list, idx);
+            type_arg_count_mismatch =
+                self.validate_call_type_arguments(callee_type, type_args_list, idx);
 
             // `super<T>(...)` is always invalid (TS2754). Don't proceed with
             // argument checking — it would emit a false TS2554 because the
@@ -380,6 +382,34 @@ impl<'a> CheckerState<'a> {
                 );
                 return TypeId::VOID;
             }
+        }
+
+        // When the type argument count is wrong (TS2558 already emitted), don't proceed
+        // with argument type checking against the incorrectly-instantiated signature.
+        // tsc skips argument checking in this case. Without this guard, the checker
+        // would run generic inference on an uninstantiated signature and emit spurious
+        // TS2345 errors for arguments that are actually valid.
+        if type_arg_count_mismatch {
+            // Still evaluate argument expressions for side-effect errors
+            // (definite assignment, etc.) but don't type-check them against
+            // the function signature.
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+            );
+            // Try to recover a return type for downstream type checking
+            if let Some(return_type) =
+                crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
+                    self.ctx.types,
+                    callee_type,
+                )
+            {
+                return return_type;
+            }
+            return TypeId::ERROR;
         }
 
         // Apply explicit type arguments to the callee type before checking arguments.
@@ -615,6 +645,10 @@ impl<'a> CheckerState<'a> {
         let mut non_generic_contextual_types: Option<Vec<Option<TypeId>>> = None;
         // Track whether we pushed a ThisType marker to this_type_stack during call processing.
         let mut pushed_this_type_from_shape = false;
+        // Track whether Round 2 successfully used a non-empty return context substitution.
+        // When true, the post-inference retry should be suppressed because Round 2 already
+        // correctly resolved the callback parameter types using the return context.
+        let mut had_return_context_substitution = false;
         let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
@@ -1044,6 +1078,7 @@ impl<'a> CheckerState<'a> {
 
                             if should_update {
                                 round2_substitution.insert(name, ty);
+                                had_return_context_substitution = true;
                             }
                         }
                     }
@@ -1876,6 +1911,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let should_retry_generic_call = if is_generic_call
+            && !had_return_context_substitution
             && args
                 .iter()
                 .copied()

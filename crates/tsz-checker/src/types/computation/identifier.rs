@@ -250,7 +250,7 @@ impl<'a> CheckerState<'a> {
                 {
                     // Variable is captured by a nested function — emit TS7034 at declaration.
                     let decl_name_node =
-                        self.ctx.pending_implicit_any_vars.remove(&sym_id).unwrap();
+                        self.ctx.pending_implicit_any_vars.remove(&sym_id).expect("sym_id was verified present via should_emit_pending_implicit_any_capture_diagnostic");
                     self.ctx.reported_implicit_any_vars.insert(sym_id);
                     if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
                         use crate::diagnostics::diagnostic_codes;
@@ -341,7 +341,7 @@ impl<'a> CheckerState<'a> {
             }
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
-            let (flags, value_decl, symbol_declarations) = {
+            let (flags, value_decl, symbol_declarations, is_umd_export) = {
                 let local_symbol = self
                     .get_cross_file_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id));
@@ -350,8 +350,37 @@ impl<'a> CheckerState<'a> {
                 let symbol_declarations = local_symbol
                     .map(|s| s.declarations.clone())
                     .unwrap_or_default();
-                (flags, value_decl, symbol_declarations)
+                let is_umd_export = local_symbol.map_or(false, |s| s.is_umd_export);
+                (flags, value_decl, symbol_declarations, is_umd_export)
             };
+
+            // TS2686: UMD global used as a value in a module file.
+            // `export as namespace Foo` makes `Foo` globally visible, but in a module
+            // file it must be imported — bare value references are an error.
+            // Guards:
+            // - Only emit for pure UMD aliases (ALIAS without VALUE). If the symbol
+            //   also has a VALUE flag, a non-UMD global declaration exists for this name
+            //   (e.g. `declare const React` in a global.d.ts), so it's a legitimate value.
+            // - Skip identifiers that are part of the `export as namespace X` declaration
+            //   itself — those are definition sites, not usage sites.
+            // - Skip if any cross-file binder provides a non-UMD VALUE binding for the
+            //   same name (e.g. `declare global { const React }` in another file).
+            if is_umd_export
+                && self.ctx.binder.is_external_module()
+                && !self.ctx.compiler_options.allow_umd_global_access
+                && (flags & symbol_flags::VALUE) == 0
+                && !self.is_namespace_export_declaration_name(idx)
+                && !self.has_non_umd_global_value(name)
+            {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    idx,
+                    diagnostic_codes::REFERS_TO_A_UMD_GLOBAL_BUT_THE_CURRENT_FILE_IS_A_MODULE_CONSIDER_ADDING_AN_IMPOR,
+                    &[name],
+                );
+                // Don't return early — continue with type computation so downstream
+                // checks don't cascade (tsc emits TS2686 but still resolves the type).
+            }
 
             // TS2662: Bare identifier resolving to a static class member.
             // Static members must be accessed via `ClassName.member`, not as
@@ -1235,6 +1264,47 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, idx);
         TypeId::ERROR
+    }
+
+    /// Returns `true` if any cross-file binder provides a non-UMD VALUE binding for
+    /// `name`. This handles cases like `declare global { const React }` where a separate
+    /// declaration provides a legitimate global value binding alongside the UMD export.
+    fn has_non_umd_global_value(&self, name: &str) -> bool {
+        // Check lib_contexts (lib files + some user files)
+        for lib_ctx in &self.ctx.lib_contexts {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                if let Some(sym) = lib_ctx.binder.get_symbol(sym_id) {
+                    if (sym.flags & symbol_flags::VALUE) != 0 && !sym.is_umd_export {
+                        return true;
+                    }
+                }
+            }
+        }
+        // Check all_binders (all project files in multi-file mode)
+        if let Some(ref all_binders) = self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if let Some(sym_id) = binder.file_locals.get(name) {
+                    if let Some(sym) = binder.get_symbol(sym_id) {
+                        if (sym.flags & symbol_flags::VALUE) != 0 && !sym.is_umd_export {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Returns `true` if `idx` is the name identifier inside an
+    /// `export as namespace X` declaration.
+    fn is_namespace_export_declaration_name(&self, idx: NodeIndex) -> bool {
+        if let Some(ext) = self.ctx.arena.get_extended(idx)
+            && ext.parent.is_some()
+            && let Some(parent) = self.ctx.arena.get(ext.parent)
+        {
+            return parent.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
+        }
+        false
     }
 
     fn is_root_identifier_of_js_prototype_assignment(&self, idx: NodeIndex) -> bool {

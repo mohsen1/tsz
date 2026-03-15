@@ -493,8 +493,12 @@ impl<'a> EnumEvaluator<'a> {
                 if matches!(l_val, EnumValue::Number(_) | EnumValue::Float(_))
                     && matches!(r_val, EnumValue::Number(_) | EnumValue::Float(_)) =>
             {
-                let l = l_val.as_f64().unwrap();
-                let r = r_val.as_f64().unwrap();
+                let l = l_val
+                    .as_f64()
+                    .expect("pattern guard ensures Number or Float variant");
+                let r = r_val
+                    .as_f64()
+                    .expect("pattern guard ensures Number or Float variant");
                 let result = match op {
                     k if k == SyntaxKind::PlusToken as u16 => l + r,
                     k if k == SyntaxKind::MinusToken as u16 => l - r,

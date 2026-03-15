@@ -49,7 +49,7 @@ impl BinderState {
         if let Some(&cached) = self
             .resolved_identifier_cache
             .read()
-            .unwrap()
+            .expect("RwLock not poisoned")
             .get(&cache_key)
         {
             return cached;
@@ -142,7 +142,7 @@ impl BinderState {
 
         self.resolved_identifier_cache
             .write()
-            .unwrap()
+            .expect("RwLock not poisoned")
             .insert(cache_key, result);
 
         result
@@ -495,7 +495,12 @@ impl BinderState {
     ) -> Option<SymbolId> {
         // Check cache first for fast path
         let cache_key = (module_specifier.to_string(), export_name.to_string());
-        if let Some(&cached) = self.resolved_export_cache.read().unwrap().get(&cache_key) {
+        if let Some(&cached) = self
+            .resolved_export_cache
+            .read()
+            .expect("RwLock not poisoned")
+            .get(&cache_key)
+        {
             return cached;
         }
 

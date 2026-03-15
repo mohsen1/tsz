@@ -410,6 +410,9 @@ impl<'a> InferenceContext<'a> {
                 )
             })
             .unwrap_or(false);
+        let has_index_signature_candidates = filtered_no_never
+            .iter()
+            .any(|candidate| candidate.from_index_signature);
         let resolved = if priority_implies_combination {
             // Union: used for return type inference and low-priority contexts
             self.best_common_type(&candidate_types)
@@ -432,6 +435,28 @@ impl<'a> InferenceContext<'a> {
                 candidate_types.clone()
             };
             self.get_common_supertype_for_inference(&widened_candidates)
+        };
+        // When candidates come from index signature inference (e.g., inferring T from
+        // source properties against target `{ [x: string]: T }`), tsc creates a union
+        // of all candidate types. The tournament in get_common_supertype_for_inference
+        // may have picked a single winner, but for index signatures we need the union.
+        let resolved = if has_index_signature_candidates && !priority_implies_combination {
+            // Filter out error types that arise from failed constraint paths
+            // (e.g., readonly mismatches). These should not pollute the union.
+            let valid_candidates: Vec<TypeId> = candidate_types
+                .iter()
+                .copied()
+                .filter(|&c| c != TypeId::ERROR && c != TypeId::NEVER)
+                .collect();
+            let all_same = valid_candidates.iter().all(|&c| c == resolved);
+            if all_same || valid_candidates.is_empty() {
+                resolved
+            } else {
+                // Create a union of all valid candidate types (subtype-reduced).
+                self.best_common_type(&valid_candidates)
+            }
+        } else {
+            resolved
         };
         // Widen the resolved type if literals should not be preserved.
         // After best_common_type, subtype reduction has already eliminated redundant
@@ -482,9 +507,6 @@ impl<'a> InferenceContext<'a> {
         } else {
             resolved
         };
-        let has_index_signature_candidates = filtered_no_never
-            .iter()
-            .any(|candidate| candidate.from_index_signature);
         if all_from_object_properties
             && !has_index_signature_candidates
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
@@ -1280,21 +1302,31 @@ impl<'a> InferenceContext<'a> {
                 continue;
             }
 
-            // Compute the current best type from existing candidates
-            // This uses the same logic as compute_constraint_result but doesn't
-            // validate against upper bounds yet (that happens in final resolution)
+            // Compute the current best type from existing candidates.
+            // Mirror the unknown/error candidate filtering from compute_constraint_result:
+            // when informative upper bounds exist, discard unknown/error covariant candidates
+            // so that contra-candidates (from contravariant positions like function params)
+            // can drive inference instead.
             let is_const = self.is_var_const(root);
             let dc = self.declared_constraints.get(&root).copied();
-            let result = if !info.candidates.is_empty() {
-                let covariant_result = self.resolve_from_candidates(
-                    &info.candidates,
-                    is_const,
-                    &info.upper_bounds,
-                    dc,
-                );
+            let mut candidates = info.candidates.clone();
+            if !info.upper_bounds.is_empty() {
+                let has_informative_upper_bound = info
+                    .upper_bounds
+                    .iter()
+                    .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                candidates.retain(|candidate| match candidate.type_id {
+                    TypeId::UNKNOWN | TypeId::ERROR => false,
+                    TypeId::ANY => !has_informative_upper_bound,
+                    _ => true,
+                });
+            }
+            let result = if !candidates.is_empty() {
+                let covariant_result =
+                    self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
                 // If covariant resolution yields never or unknown but we have contra-candidates,
                 // prefer the contra-candidates. This handles cases like f([], callback) where
-                // [] gives T=unknown covariant but the callback gives T=number contravariant.
+                // [] gives T=unknown/never covariant but the callback gives T=number contravariant.
                 if matches!(covariant_result, TypeId::NEVER | TypeId::UNKNOWN)
                     && !info.contra_candidates.is_empty()
                 {
@@ -1302,8 +1334,17 @@ impl<'a> InferenceContext<'a> {
                 } else {
                     covariant_result
                 }
-            } else {
+            } else if !info.contra_candidates.is_empty() {
                 self.resolve_from_contra_candidates(&info.contra_candidates)
+            } else {
+                // All covariant candidates were filtered; fall back to upper bounds
+                if info.upper_bounds.len() == 1 {
+                    info.upper_bounds[0]
+                } else if !info.upper_bounds.is_empty() {
+                    self.interner.intersection(info.upper_bounds.clone())
+                } else {
+                    TypeId::UNKNOWN
+                }
             };
 
             // Check for occurs (recursive type)

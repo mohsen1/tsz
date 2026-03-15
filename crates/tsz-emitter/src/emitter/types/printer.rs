@@ -1809,7 +1809,9 @@ fn needs_property_name_quoting(name: &str) -> bool {
         return true;
     }
     let mut chars = name.chars();
-    let first = chars.next().unwrap();
+    let first = chars
+        .next()
+        .expect("identifier name must be non-empty after keyword/numeric checks");
     if !(first == '_' || first == '$' || first.is_alphabetic()) {
         return true;
     }

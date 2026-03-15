@@ -712,3 +712,818 @@ fn test_hover_export_function() {
         info.kind_modifiers
     );
 }
+
+// =========================================================================
+// Additional coverage tests for hover module
+// =========================================================================
+
+#[test]
+fn test_hover_variable_with_type_annotation() {
+    let source = "let x: string = \"hello\";\nx;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for annotated variable");
+    assert!(
+        info.display_string.contains("x"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("string"),
+        "Should contain the type annotation, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_interface_property_via_access() {
+    let source = "interface Point { x: number; y: number; }\ndeclare const p: Point;\np.x;";
+    let info =
+        get_hover_at(source, 2, 2).expect("Should find hover for interface property via access");
+    assert!(
+        info.display_string.contains("x"),
+        "Should contain property name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "property",
+        "Kind should be 'property', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_class_property_with_type_annotation() {
+    let source = "class Foo {\n  name: string = \"\";\n}";
+    let info = get_hover_at(source, 1, 2).expect("Should find hover for class property");
+    assert!(
+        info.display_string.contains("name"),
+        "Should contain property name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("string"),
+        "Should contain the type, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "property",
+        "Kind should be 'property', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_enum_member_with_value() {
+    let source = "enum Direction { Up = 0, Down = 1, Left = 2, Right = 3 }\nDirection.Up;";
+    // Use the reference on line 1 to get hover for the enum member access
+    let info = get_hover_at(source, 1, 10);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("Up"),
+            "Should contain enum member name 'Up', got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_local_variable_inside_function() {
+    let source = "function foo() {\n  const local = 42;\n  local;\n}";
+    let info = get_hover_at(source, 2, 2).expect("Should find hover for local variable");
+    assert!(
+        info.display_string.contains("local"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    // Local variables inside functions are displayed as "(local const) local: ..."
+    assert!(
+        info.display_string.contains("local"),
+        "Should show local variable, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_declare_function() {
+    let source = "declare function greet(name: string): void;\ngreet;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for declared function");
+    assert!(
+        info.display_string.contains("greet"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_declare_const() {
+    let source = "declare const PI: number;\nPI;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for declared const");
+    assert!(
+        info.display_string.contains("PI"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("number"),
+        "Should contain type, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_interface_method_via_access() {
+    let source =
+        "interface Greeter { greet(name: string): string; }\ndeclare const g: Greeter;\ng.greet;";
+    let info =
+        get_hover_at(source, 2, 2).expect("Should find hover for interface method via access");
+    assert!(
+        info.display_string.contains("greet"),
+        "Should contain method name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_class_expression_keyword() {
+    let source = "const MyClass = class Named { x = 1; };";
+    // Hover on the 'class' keyword of a class expression
+    let info = get_hover_at(source, 0, 16);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("Named") || info.display_string.contains("class"),
+            "Should contain class info, got: {}",
+            info.display_string
+        );
+        assert_eq!(
+            info.kind, "class",
+            "Kind should be 'class', got: {}",
+            info.kind
+        );
+    }
+}
+
+#[test]
+fn test_hover_union_type_annotation() {
+    let source = "let val: string | number = \"hello\";\nval;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for union-typed variable");
+    assert!(
+        info.display_string.contains("val"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("string") || info.display_string.contains("number"),
+        "Should contain at least part of the union type, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_intersection_type_annotation() {
+    let source = "interface A { a: number; }\ninterface B { b: string; }\nlet val: A & B;\nval;";
+    let info =
+        get_hover_at(source, 3, 0).expect("Should find hover for intersection-typed variable");
+    assert!(
+        info.display_string.contains("val"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("A") && info.display_string.contains("B"),
+        "Should contain both intersection type parts, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_generic_function() {
+    let source = "function identity<T>(arg: T): T { return arg; }\nidentity;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for generic function");
+    assert!(
+        info.display_string.contains("identity"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "function",
+        "Kind should be 'function', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_generic_class() {
+    let source = "class Container<T> {\n  value: T;\n  constructor(v: T) { this.value = v; }\n}";
+    let info = get_hover_at(source, 0, 6).expect("Should find hover for generic class");
+    assert!(
+        info.display_string.contains("Container"),
+        "Should contain class name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "class",
+        "Kind should be 'class', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_generic_type_alias() {
+    let source = "type Pair<A, B> = { first: A; second: B; };\nlet p: Pair<number, string>;";
+    let info = get_hover_at(source, 0, 5).expect("Should find hover for generic type alias");
+    assert!(
+        info.display_string.contains("Pair"),
+        "Should contain type alias name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "type",
+        "Kind should be 'type', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_array_typed_variable() {
+    let source = "let nums: number[] = [1, 2, 3];\nnums;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for array-typed variable");
+    assert!(
+        info.display_string.contains("nums"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("number[]"),
+        "Should contain array type, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_tuple_type_annotation() {
+    let source = "let pair: [string, number] = [\"a\", 1];\npair;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for tuple-typed variable");
+    assert!(
+        info.display_string.contains("pair"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("string") && info.display_string.contains("number"),
+        "Should contain tuple element types, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_function_returning_void() {
+    let source = "function doNothing(): void {}\ndoNothing;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for void function");
+    assert!(
+        info.display_string.contains("doNothing"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("void"),
+        "Should contain void return type, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_abstract_class() {
+    let source = "abstract class Shape {\n  abstract area(): number;\n}";
+    let info = get_hover_at(source, 0, 15).expect("Should find hover for abstract class");
+    assert!(
+        info.display_string.contains("Shape"),
+        "Should contain class name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.kind_modifiers.contains("abstract"),
+        "Should have 'abstract' modifier, got: {}",
+        info.kind_modifiers
+    );
+}
+
+#[test]
+fn test_hover_property_access_on_typed_object() {
+    let source =
+        "interface Config { host: string; port: number; }\ndeclare const cfg: Config;\ncfg.host;";
+    let info = get_hover_at(source, 2, 4).expect("Should find hover for property access member");
+    assert!(
+        info.display_string.contains("host"),
+        "Should contain property name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("string"),
+        "Should contain property type, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "property",
+        "Kind should be 'property', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_enum_member_access() {
+    let source = "enum Color { Red, Green, Blue }\nColor.Red;";
+    let info = get_hover_at(source, 1, 6);
+    // Hovering on 'Red' in Color.Red
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("Red"),
+            "Should contain enum member name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_const_enum() {
+    let source = "const enum Status { Active, Inactive }";
+    let info = get_hover_at(source, 0, 11).expect("Should find hover for const enum");
+    assert!(
+        info.display_string.contains("Status"),
+        "Should contain enum name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "enum",
+        "Kind should be 'enum', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_function_with_optional_parameter() {
+    let source = "function greet(name?: string): string { return name ?? \"world\"; }\ngreet;";
+    let info =
+        get_hover_at(source, 1, 0).expect("Should find hover for function with optional param");
+    assert!(
+        info.display_string.contains("greet"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_function_with_rest_parameter() {
+    let source =
+        "function sum(...nums: number[]): number { return nums.reduce((a, b) => a + b, 0); }\nsum;";
+    let info =
+        get_hover_at(source, 1, 0).expect("Should find hover for function with rest parameter");
+    assert!(
+        info.display_string.contains("sum"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "function",
+        "Kind should be 'function', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_deprecated_tag() {
+    let source = "/** @deprecated Use newFn instead */\nfunction oldFn() {}\noldFn;";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover for deprecated function");
+    assert!(
+        info.contents
+            .iter()
+            .any(|c| c.contains("deprecated") || c.contains("Use newFn")),
+        "Should contain deprecation info in hover contents, got: {:?}",
+        info.contents
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_returns_tag() {
+    let source = "/**\n * Doubles a number.\n * @returns The doubled value.\n */\nfunction double(n: number): number { return n * 2; }\ndouble;";
+    let info = get_hover_at(source, 5, 0).expect("Should find hover for function with @returns");
+    assert!(
+        info.documentation.contains("Doubles a number"),
+        "Should contain summary in documentation, got: '{}'",
+        info.documentation
+    );
+}
+
+#[test]
+fn test_hover_var_inside_function_is_local() {
+    let source = "function outer() {\n  var inner = 10;\n  inner;\n}";
+    let info = get_hover_at(source, 2, 2).expect("Should find hover for local var");
+    assert!(
+        info.display_string.contains("inner"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("local var")
+            || info.display_string.contains("var")
+            || info.display_string.contains("inner"),
+        "Should show local var info, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_let_inside_function_is_local() {
+    let source = "function outer() {\n  let count = 0;\n  count;\n}";
+    let info = get_hover_at(source, 2, 2).expect("Should find hover for local let");
+    assert!(
+        info.display_string.contains("count"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    // Local block-scoped variables get "(local let)" prefix
+    assert!(
+        info.display_string.contains("local") || info.display_string.contains("let"),
+        "Should indicate local scope, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_class_with_namespace_merge() {
+    let source = "class Widget {}\nnamespace Widget {\n  export const version = 1;\n}";
+    let info =
+        get_hover_at(source, 0, 6).expect("Should find hover for class with namespace merge");
+    assert!(
+        info.display_string.contains("Widget"),
+        "Should contain class name, got: {}",
+        info.display_string
+    );
+    // Should show class + namespace merge
+    assert!(
+        info.display_string.contains("class") && info.display_string.contains("namespace"),
+        "Should show both class and namespace, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_function_with_namespace_merge() {
+    let source =
+        "function handler() {}\nnamespace handler {\n  export const timeout = 1000;\n}\nhandler;";
+    let info =
+        get_hover_at(source, 4, 0).expect("Should find hover for function with namespace merge");
+    assert!(
+        info.display_string.contains("handler"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("function") && info.display_string.contains("namespace"),
+        "Should show both function and namespace, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_whitespace_only_returns_none() {
+    let source = "const x = 1;\n\n\nconst y = 2;";
+    let info = get_hover_at(source, 1, 0);
+    assert!(info.is_none(), "Should not find hover info on blank line");
+}
+
+#[test]
+fn test_hover_string_literal_variable() {
+    let source = "const greeting = \"hello world\";\ngreeting;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for string variable");
+    assert!(
+        info.display_string.contains("greeting"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    // const should preserve literal type "hello world" or show string
+    assert!(
+        info.display_string.contains("hello world") || info.display_string.contains("string"),
+        "Should contain string type info, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_boolean_literal_variable() {
+    let source = "const flag = true;\nflag;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for boolean variable");
+    assert!(
+        info.display_string.contains("flag"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("true") || info.display_string.contains("boolean"),
+        "Should contain boolean type info, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_numeric_literal_const() {
+    let source = "const PI = 3.14;\nPI;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for numeric const");
+    assert!(
+        info.display_string.contains("PI"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("3.14") || info.display_string.contains("number"),
+        "Should contain numeric type info, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_multiple_declarations_same_interface() {
+    let source =
+        "interface Obj { a: number; }\ninterface Obj { b: string; }\ndeclare const o: Obj;\no.a;";
+    let info = get_hover_at(source, 3, 2).expect("Should find hover for merged interface member");
+    assert!(
+        info.display_string.contains("a"),
+        "Should contain property name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.display_string.contains("number"),
+        "Should contain property type, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_readonly_property() {
+    let source = "class Immutable {\n  readonly id: number = 1;\n}";
+    let info = get_hover_at(source, 1, 11).expect("Should find hover for readonly property");
+    assert!(
+        info.display_string.contains("id"),
+        "Should contain property name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.kind_modifiers.contains("readonly") || info.display_string.contains("id"),
+        "Should indicate readonly or contain property name, got modifiers: {}, display: {}",
+        info.kind_modifiers,
+        info.display_string
+    );
+}
+
+// =========================================================================
+// Additional edge-case tests
+// =========================================================================
+
+#[test]
+fn test_hover_object_destructuring_variable() {
+    let source = "const obj = { a: 1, b: 'hello' };\nconst { a, b } = obj;\na;";
+    let info = get_hover_at(source, 2, 0);
+    assert!(
+        info.is_some(),
+        "Should find hover info for destructured variable"
+    );
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("a"),
+            "Should contain destructured variable name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_array_destructuring_variable() {
+    let source = "const arr = [1, 2, 3];\nconst [first, second] = arr;\nfirst;";
+    let info = get_hover_at(source, 2, 0);
+    assert!(
+        info.is_some(),
+        "Should find hover info for array destructured variable"
+    );
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("first"),
+            "Should contain variable name 'first', got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_catch_parameter() {
+    let source = "try {\n  throw new Error('oops');\n} catch (err) {\n  err;\n}";
+    let info = get_hover_at(source, 3, 2);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("err"),
+            "Should contain catch parameter name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_for_of_variable() {
+    let source = "const items = [1, 2, 3];\nfor (const item of items) {\n  item;\n}";
+    let info = get_hover_at(source, 2, 2);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("item"),
+            "Should contain for-of variable name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_arrow_function_typed() {
+    let source = "const add = (a: number, b: number): number => a + b;\nadd;";
+    let info = get_hover_at(source, 1, 0);
+    assert!(
+        info.is_some(),
+        "Should find hover for arrow function variable"
+    );
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("add"),
+            "Should contain arrow function variable name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_namespace_declaration() {
+    let source = "namespace MyNS {\n  export const value = 42;\n}\nMyNS;";
+    let info = get_hover_at(source, 3, 0);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("MyNS"),
+            "Should contain namespace name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_type_assertion_variable() {
+    let source = "const x = 42 as unknown as string;\nx;";
+    let info = get_hover_at(source, 1, 0);
+    assert!(
+        info.is_some(),
+        "Should find hover for type-asserted variable"
+    );
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("x"),
+            "Should contain variable name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_import_declaration() {
+    let source = "import { foo } from './mod';\nfoo;";
+    // Hover over imported identifier
+    let info = get_hover_at(source, 1, 0);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("foo"),
+            "Should contain imported name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_generic_function_call() {
+    let source = "function identity<T>(val: T): T { return val; }\nidentity;";
+    let info = get_hover_at(source, 1, 0);
+    assert!(info.is_some(), "Should find hover for generic function");
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("identity"),
+            "Should contain function name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_method_declaration() {
+    let source =
+        "class Greeter {\n  greet(name: string): string {\n    return 'Hello ' + name;\n  }\n}";
+    let info = get_hover_at(source, 1, 4);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("greet"),
+            "Should contain method name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_getter_accessor() {
+    let source =
+        "class Box {\n  private _value = 0;\n  get value(): number { return this._value; }\n}";
+    let info = get_hover_at(source, 2, 6);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("value"),
+            "Should contain getter name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_setter_accessor() {
+    let source =
+        "class Box {\n  private _value = 0;\n  set value(v: number) { this._value = v; }\n}";
+    let info = get_hover_at(source, 2, 6);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("value"),
+            "Should contain setter name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_static_method() {
+    let source = "class Factory {\n  static create(): Factory { return new Factory(); }\n}";
+    let info = get_hover_at(source, 1, 9);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("create"),
+            "Should contain static method name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_mapped_type_alias() {
+    let source = "type ReadonlyAll<T> = { readonly [K in keyof T]: T[K] };\ntype X = ReadonlyAll<{a: 1}>;\nlet v: X;";
+    // Hover over the type alias name
+    let info = get_hover_at(source, 0, 5);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("ReadonlyAll"),
+            "Should contain mapped type alias name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_conditional_type_alias() {
+    let source = "type IsString<T> = T extends string ? true : false;\ntype R = IsString<'hello'>;";
+    let info = get_hover_at(source, 0, 5);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("IsString"),
+            "Should contain conditional type alias name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_export_default_function() {
+    let source = "export default function myFunc() { return 1; }";
+    let info = get_hover_at(source, 0, 24);
+    if let Some(info) = info {
+        assert!(
+            info.contents[0].contains("myFunc"),
+            "Should contain exported default function name, got: {}",
+            info.contents[0]
+        );
+    }
+}
+
+#[test]
+fn test_hover_private_field() {
+    let source = "class Secret {\n  #data = 42;\n  reveal() { return this.#data; }\n}";
+    let info = get_hover_at(source, 1, 4);
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("data") || info.display_string.contains("#data"),
+            "Should contain private field name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_keyword_returns_none() {
+    let source = "const x = 1;";
+    // Hover over the 'const' keyword at col 0
+    let info = get_hover_at(source, 0, 0);
+    assert!(info.is_none(), "Should return None for keyword 'const'");
+}

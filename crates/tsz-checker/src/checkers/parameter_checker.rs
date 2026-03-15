@@ -388,7 +388,10 @@ impl<'a> CheckerState<'a> {
             let is_optional = param.question_token
                 || (jsdoc.is_some() && {
                     if let Some(name) = self.get_parameter_name(param.name) {
-                        Self::is_jsdoc_param_optional(jsdoc.as_deref().unwrap(), &name)
+                        Self::is_jsdoc_param_optional(
+                            jsdoc.as_deref().expect("guarded by jsdoc.is_some()"),
+                            &name,
+                        )
                     } else {
                         false
                     }

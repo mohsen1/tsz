@@ -45,9 +45,7 @@ pub use self::core::LoweringPass;
 
 // Re-exports consumed by submodules via `use super::*`
 use self::core::{MAX_BINDING_PATTERN_DEPTH, MAX_QUALIFIED_NAME_DEPTH};
-pub(super) use crate::context::transform::{
-    IdentifierId, ModuleFormat, TransformDirective,
-};
+pub(super) use crate::context::transform::{IdentifierId, ModuleFormat, TransformDirective};
 pub(super) use crate::transforms::emit_utils;
 pub(super) use std::sync::Arc;
 pub(super) use tsz_common::common::ModuleKind;

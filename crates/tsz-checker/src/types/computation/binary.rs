@@ -334,7 +334,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let _ = self.check_assignable_or_report_at_exact_anchor(
                             right_type,
-                            prev_context.unwrap(),
+                            prev_context.expect("guarded by prev_context.is_some() check"),
                             right_idx,
                             right_idx,
                         );

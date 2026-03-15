@@ -15257,3 +15257,42 @@ interface StringTreeArray extends Array<StringTree> { }
         "Expected TS2454 'Variable x is used before being assigned', got: {diagnostics:?}"
     );
 }
+
+/// Return-context substitution: when the return type of a generic call is an Application
+/// (e.g. GenericClass<T>) and the contextual return type has been evaluated to an Object,
+/// the checker must structurally match object properties to extract type parameter
+/// substitutions. Without this, callback parameters fall back to constraint types.
+///
+/// Regression test for lambdaParameterWithTupleArgsHasCorrectAssignability.ts
+#[test]
+fn test_return_context_substitution_application_vs_object() {
+    let source = r#"
+// @strict: true
+type MyTupleItem = {};
+type MyTuple = [MyTupleItem, ...MyTupleItem[]];
+type GenericFunction<T extends MyTuple> = (...fromArgs: T) => void;
+class GenericClass<T extends MyTuple> {
+    from: GenericFunction<T> | undefined;
+}
+function createClass<T extends MyTuple>(f: GenericFunction<T>): GenericClass<T> {
+    return new GenericClass<T>();
+}
+function consumeClass(c: GenericClass<[string, boolean]>) { }
+consumeClass(createClass(str => console.log(str.length)));
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Should not emit TS2339: return-context substitution should infer T=[string, boolean] \
+         so `str` is typed as `string` (which has `.length`), not `MyTupleItem`. Got: {diagnostics:?}"
+    );
+}

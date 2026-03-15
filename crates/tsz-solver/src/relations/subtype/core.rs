@@ -639,7 +639,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     std::slice::from_ref(&source)
                 };
 
-            let mut factored_members = Vec::new();
+            let mut factored_members = Vec::with_capacity(member_list.len());
             let mut all_contain_source = true;
             for &member in member_list.iter() {
                 let i_arc;
@@ -660,7 +660,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 if contains_all {
-                    let mut rem = Vec::new();
+                    let mut rem = Vec::with_capacity(i_list.len());
                     for &i_m in i_list.iter() {
                         if !source_members.contains(&i_m) {
                             rem.push(i_m);

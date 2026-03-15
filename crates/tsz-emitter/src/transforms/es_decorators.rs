@@ -253,17 +253,26 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if var_info.has_initializers {
                 out.push_str(&format!(
                     "{i1}let {} = [];\n",
-                    var_info.initializers_var.as_ref().unwrap()
+                    var_info
+                        .initializers_var
+                        .as_ref()
+                        .expect("has_initializers guard ensures initializers_var is Some")
                 ));
                 out.push_str(&format!(
                     "{i1}let {} = [];\n",
-                    var_info.extra_initializers_var.as_ref().unwrap()
+                    var_info
+                        .extra_initializers_var
+                        .as_ref()
+                        .expect("has_initializers guard ensures extra_initializers_var is Some")
                 ));
             }
             if var_info.has_descriptor {
                 out.push_str(&format!(
                     "{i1}let {};\n",
-                    var_info.descriptor_var.as_ref().unwrap()
+                    var_info
+                        .descriptor_var
+                        .as_ref()
+                        .expect("has_descriptor guard ensures descriptor_var is Some")
                 ));
             }
         }
@@ -334,7 +343,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
             } else if self.expression_mode && self.function_name.is_some() {
                 // Member-only decorators on class expression with a context name:
                 // emit __setFunctionName(this, "name") in a static block
-                let fn_name = self.function_name.as_ref().unwrap();
+                let fn_name = self
+                    .function_name
+                    .as_ref()
+                    .expect("guarded by function_name.is_some()");
                 let set_fn = self.helper("__setFunctionName");
                 out.push_str(&format!(
                     "{i2}static {{ {set_fn}(this, \"{fn_name}\"); }}\n"

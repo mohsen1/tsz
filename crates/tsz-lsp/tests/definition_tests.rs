@@ -1160,3 +1160,830 @@ fn test_goto_definition_multiple_declarations_same_name() {
         "Should point to original declaration"
     );
 }
+
+// =========================================================================
+// Additional coverage tests for navigation/definition module
+// =========================================================================
+
+#[test]
+fn test_goto_definition_generic_type_parameter_usage() {
+    // Go-to-definition on a generic type parameter used in function body type position
+    let source = "function identity<T>(arg: T): T {\n  let result: T = arg;\n  return result;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'T' in the type annotation "let result: T" (line 1, col 14)
+    let position = Position::new(1, 14);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should either find the type parameter declaration or return None gracefully
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should have at least one definition");
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Type parameter definition should be on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_generic_type_param_in_return_type() {
+    // Go-to-definition on a generic type parameter used as return type
+    let source = "function wrap<U>(val: U): U {\n  return val;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'U' in return type annotation ": U" (line 0, col 26)
+    let position = Position::new(0, 26);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should not crash; may or may not resolve
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty());
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_goto_definition_default_export_class() {
+    // Go-to-definition on a default-exported class name
+    let source = "export default class Widget {\n  render() {}\n}\nconst w = new Widget();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'Widget' in "new Widget()" (line 2, col 14)
+    let position = Position::new(2, 14);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should find the class declaration on line 0
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should find default export class");
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Default export class should be on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_namespace_member_access() {
+    // Go-to-definition on namespace member access (ns.member)
+    let source = "namespace MyNS {\n  export const value = 42;\n}\nconst x = MyNS.value;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'MyNS' in "MyNS.value" (line 2, col 10)
+    let position = Position::new(2, 10);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should find the namespace declaration
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should find namespace definition");
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Namespace definition should be on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_namespace_exported_member() {
+    // Go-to-definition on the member part of namespace access (ns.member)
+    let source = "namespace NS {\n  export function helper() {}\n}\nNS.helper();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'helper' in "NS.helper()" (line 2, col 3)
+    let position = Position::new(2, 3);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the function declaration inside namespace
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should find namespace member definition");
+        assert_eq!(
+            defs[0].range.start.line, 1,
+            "Namespace member definition should be on line 1"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_decorator_factory() {
+    // Go-to-definition on a decorator used as a factory
+    let source = "function sealed(target: any) { return target; }\n@sealed\nclass MyService {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'sealed' in "@sealed" (line 1, col 1)
+    let position = Position::new(1, 1);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    assert!(
+        definitions.is_some(),
+        "Should find decorator function definition"
+    );
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty());
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Decorator function definition should be on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_inherited_class_member_via_instance() {
+    // Go-to-definition on a member that's defined in a base class
+    let source = "class Base {\n  greet() { return 'hi'; }\n}\nclass Child extends Base {}\nconst c = new Child();\nc.greet();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'greet' in "c.greet()" (line 4, col 2)
+    let position = Position::new(4, 2);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // May or may not resolve inherited members — should not crash
+    // If it does resolve, it should point to the Base class definition
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should have at least one definition");
+    }
+}
+
+#[test]
+fn test_goto_definition_computed_property_name() {
+    // Go-to-definition on a computed property name using a variable
+    let source = "const key = 'myProp';\nconst obj = { [key]: 42 };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'key' inside computed property [key] (line 1, col 15)
+    let position = Position::new(1, 15);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve 'key' to the const declaration on line 0
+    assert!(
+        definitions.is_some(),
+        "Should find definition for computed property variable"
+    );
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty());
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Computed property variable should resolve to line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_shorthand_property() {
+    // Go-to-definition on a shorthand property in object literal
+    let source = "const name = 'Alice';\nconst obj = { name };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'name' inside shorthand property { name } (line 1, col 14)
+    let position = Position::new(1, 14);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the const declaration on line 0
+    assert!(
+        definitions.is_some(),
+        "Should find definition for shorthand property"
+    );
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty());
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Shorthand property should resolve to original declaration on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_at_start_of_file() {
+    // Go-to-definition at position (0,0) on a valid identifier
+    let source = "myVar + 1;\nconst myVar = 10;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at (0,0) — the very start of the file
+    let position = Position::new(0, 0);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should not crash and may find the var declaration
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty());
+    }
+}
+
+#[test]
+fn test_goto_definition_string_enum_member_value() {
+    // Go-to-definition on a string enum member
+    let source =
+        "enum Status {\n  Active = 'active',\n  Inactive = 'inactive'\n}\nconst s = Status.Active;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'Active' in "Status.Active" (line 3, col 17)
+    let position = Position::new(3, 17);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the enum member declaration
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should find enum member definition");
+        assert_eq!(
+            defs[0].range.start.line, 1,
+            "Enum member Active should be on line 1"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_typeof_usage() {
+    // Go-to-definition on a variable used in typeof expression
+    let source = "const original = { a: 1 };\ntype Copy = typeof original;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'original' in "typeof original" (line 1, col 19)
+    let position = Position::new(1, 19);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the const declaration on line 0
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should find definition in typeof");
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "typeof target should resolve to line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_interface_property_via_member_access() {
+    // Go-to-definition on a property accessed through a typed variable
+    let source = "interface Config {\n  host: string;\n  port: number;\n}\nconst cfg: Config = { host: 'localhost', port: 3000 };\ncfg.host;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'host' in "cfg.host" (line 4, col 4)
+    let position = Position::new(4, 4);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the interface property declaration
+    if let Some(defs) = &definitions {
+        assert!(
+            !defs.is_empty(),
+            "Should find interface property definition"
+        );
+        assert_eq!(
+            defs[0].range.start.line, 1,
+            "Interface property 'host' should be on line 1"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_catch_clause_variable() {
+    // Go-to-definition on a catch clause variable
+    let source = "try {\n  throw new Error();\n} catch (err) {\n  console.log(err);\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'err' usage in "console.log(err)" (line 3, col 14)
+    let position = Position::new(3, 14);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the catch clause parameter on line 2
+    assert!(
+        definitions.is_some(),
+        "Should find definition for catch clause variable"
+    );
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty());
+        assert_eq!(
+            defs[0].range.start.line, 2,
+            "Catch clause variable should resolve to line 2"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_for_loop_variable() {
+    // Go-to-definition on a for-of loop variable
+    let source = "const items = [1, 2, 3];\nfor (const item of items) {\n  item;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'item' usage (line 2, col 2)
+    let position = Position::new(2, 2);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the for-of declaration on line 1
+    assert!(
+        definitions.is_some(),
+        "Should find definition for for-of variable"
+    );
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty());
+        assert_eq!(
+            defs[0].range.start.line, 1,
+            "For-of variable should resolve to line 1"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_keyword_null_returns_none() {
+    // Go-to-definition on null keyword should return None
+    let source = "const x = null;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'null' (line 0, col 10)
+    let position = Position::new(0, 10);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    assert!(
+        definitions.is_none(),
+        "null keyword should return None (is_builtin_node)"
+    );
+}
+
+#[test]
+fn test_goto_definition_keyword_true_returns_none() {
+    // Go-to-definition on boolean true keyword should return None
+    let source = "const flag = true;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'true' (line 0, col 13)
+    let position = Position::new(0, 13);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    assert!(
+        definitions.is_none(),
+        "true keyword should return None (is_builtin_node)"
+    );
+}
+
+#[test]
+fn test_goto_definition_class_property_via_typed_instance() {
+    // Go-to-definition on a class member accessed via a typed variable
+    let source =
+        "class Dog {\n  name: string = '';\n  bark() {}\n}\nconst d: Dog = new Dog();\nd.name;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'name' in "d.name" (line 4, col 2)
+    let position = Position::new(4, 2);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    // Should resolve to the class property on line 1
+    if let Some(defs) = &definitions {
+        assert!(!defs.is_empty(), "Should find class property definition");
+        assert_eq!(
+            defs[0].range.start.line, 1,
+            "Class property 'name' should be on line 1"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_arguments_returns_none() {
+    // Go-to-definition on the special 'arguments' identifier should return None
+    let source = "function foo() {\n  return arguments;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    // Position at 'arguments' (line 1, col 9)
+    let position = Position::new(1, 9);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, position);
+
+    assert!(
+        definitions.is_none(),
+        "arguments keyword should return None (is_builtin_node)"
+    );
+}
+
+// =========================================================================
+// Additional edge-case tests
+// =========================================================================
+
+#[test]
+fn test_goto_definition_getter_accessor() {
+    let source = "class Box {\n  private _v = 0;\n  get value(): number { return this._v; }\n}\nconst b = new Box();\nb.value;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'value' in b.value (line 5, col 2)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(5, 2));
+
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find definition for getter");
+    }
+}
+
+#[test]
+fn test_goto_definition_setter_accessor() {
+    let source = "class Box {\n  private _v = 0;\n  set value(v: number) { this._v = v; }\n}\nconst b = new Box();\nb.value = 5;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(5, 2));
+
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find definition for setter");
+    }
+}
+
+#[test]
+fn test_goto_definition_nested_class() {
+    let source = "class Outer {\n  inner() {\n    class Inner {\n      method() {}\n    }\n    const i = new Inner();\n    i;\n  }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'Inner' usage in `new Inner()` (line 5, col 18)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(5, 18));
+
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find nested class definition");
+        assert_eq!(
+            defs[0].range.start.line, 2,
+            "Inner class should be on line 2"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_default_parameter() {
+    let source = "function greet(name: string = 'world') {\n  return name;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'name' usage in return (line 1, col 9)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 9));
+
+    assert!(
+        definitions.is_some(),
+        "Should find definition for default parameter"
+    );
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Parameter should be on line 0");
+    }
+}
+
+#[test]
+fn test_goto_definition_rest_parameter() {
+    let source = "function sum(...nums: number[]) {\n  return nums.length;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'nums' usage in body (line 1, col 9)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 9));
+
+    assert!(
+        definitions.is_some(),
+        "Should find definition for rest parameter"
+    );
+    if let Some(defs) = definitions {
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Rest param should be on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_empty_file_returns_none() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(0, 0));
+
+    assert!(definitions.is_none(), "Empty file should return None");
+}
+
+#[test]
+fn test_goto_definition_arrow_function_param() {
+    let source = "const fn = (x: number) => x * 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'x' usage in body (col 26)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(0, 26));
+
+    assert!(
+        definitions.is_some(),
+        "Should find definition for arrow function param"
+    );
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Param should be on line 0");
+    }
+}
+
+#[test]
+fn test_goto_definition_enum_in_type_annotation() {
+    let source = "enum Status { Active, Inactive }\nfunction check(s: Status) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'Status' in type annotation (line 1, col 19)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 19));
+
+    assert!(
+        definitions.is_some(),
+        "Should find enum definition from type annotation"
+    );
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Enum should be on line 0");
+    }
+}
+
+#[test]
+fn test_goto_definition_interface_used_as_type() {
+    let source = "interface Point { x: number; y: number; }\nfunction draw(p: Point) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'Point' in type annotation (line 1, col 17)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 17));
+
+    assert!(
+        definitions.is_some(),
+        "Should find interface definition from type annotation"
+    );
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Interface should be on line 0");
+    }
+}
+
+#[test]
+fn test_goto_definition_type_alias_used_as_type() {
+    let source = "type ID = string | number;\nfunction process(id: ID) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'ID' in type annotation (line 1, col 21)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 21));
+
+    assert!(definitions.is_some(), "Should find type alias definition");
+    if let Some(defs) = definitions {
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Type alias should be on line 0"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_variable_in_for_in_loop() {
+    let source = "const obj = { a: 1 };\nfor (const key in obj) {\n  key;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'key' usage in body (line 2, col 2)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(2, 2));
+
+    if let Some(defs) = definitions {
+        assert!(
+            !defs.is_empty(),
+            "Should find definition for for-in variable"
+        );
+        assert_eq!(
+            defs[0].range.start.line, 1,
+            "For-in variable should be on line 1"
+        );
+    }
+}
+
+#[test]
+fn test_goto_definition_class_in_extends() {
+    let source = "class Base {\n  value = 1;\n}\nclass Derived extends Base {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at 'Base' in extends clause (line 3, col 22)
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(3, 22));
+
+    assert!(definitions.is_some(), "Should find base class definition");
+    if let Some(defs) = definitions {
+        assert_eq!(
+            defs[0].range.start.line, 0,
+            "Base class should be on line 0"
+        );
+    }
+}

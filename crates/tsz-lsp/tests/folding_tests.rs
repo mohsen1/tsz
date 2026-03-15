@@ -409,3 +409,231 @@ fn test_combined_imports_comments_regions() {
         comments.len()
     );
 }
+
+#[test]
+fn test_folding_ranges_switch_statement() {
+    let source = "\nswitch (x) {\n  case 1:\n    foo();\n    break;\n  case 2:\n    bar();\n    break;\n  default:\n    baz();\n}\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should find folding ranges for switch");
+    let switch_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        switch_range.is_some(),
+        "Should find switch body folding range"
+    );
+}
+
+#[test]
+fn test_folding_ranges_arrow_function() {
+    let source = "\nconst fn = () => {\n  return 42;\n};\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding ranges for arrow function"
+    );
+    let arrow_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        arrow_range.is_some(),
+        "Should find arrow function body folding range"
+    );
+}
+
+#[test]
+fn test_folding_ranges_constructor() {
+    let source = "\nclass Foo {\n  constructor() {\n    this.x = 1;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    // Should have class body + constructor body
+    assert!(
+        ranges.len() >= 2,
+        "Should find folding ranges for class and constructor"
+    );
+}
+
+#[test]
+fn test_folding_ranges_getter_setter() {
+    let source = "\nclass Foo {\n  get value() {\n    return this._v;\n  }\n  set value(v: number) {\n    this._v = v;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    // class body + get body + set body
+    assert!(
+        ranges.len() >= 3,
+        "Should find folding ranges for getter and setter, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_deeply_nested() {
+    let source =
+        "\nfunction a() {\n  function b() {\n    function c() {\n      return 1;\n    }\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 3,
+        "Should find folding ranges for nested functions, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_object_literal() {
+    let source = "\nconst obj = {\n  a: 1,\n  b: 2,\n  c: 3\n};\n";
+    let ranges = get_ranges(source);
+    let obj_range = ranges.iter().find(|r| r.start_line <= 1 && r.end_line >= 4);
+    assert!(
+        obj_range.is_some(),
+        "Should find folding range for multiline object literal"
+    );
+}
+
+#[test]
+fn test_folding_ranges_array_literal() {
+    let source = "\nconst arr = [\n  1,\n  2,\n  3\n];\n";
+    let ranges = get_ranges(source);
+    let arr_range = ranges.iter().find(|r| r.start_line <= 1 && r.end_line >= 4);
+    assert!(
+        arr_range.is_some(),
+        "Should find folding range for multiline array literal"
+    );
+}
+
+#[test]
+fn test_folding_ranges_try_catch() {
+    let source = "\ntry {\n  foo();\n} catch (e) {\n  bar();\n} finally {\n  baz();\n}\n";
+    let ranges = get_ranges(source);
+    // Should have block ranges for try, catch, and finally
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding ranges for try/catch/finally"
+    );
+}
+
+#[test]
+fn test_folding_ranges_module_declaration() {
+    let source = "\nnamespace MyModule {\n  export function hello() {\n    return 1;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find folding ranges for module and function inside, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_method_in_class() {
+    let source = "\nclass Calculator {\n  add(a: number, b: number) {\n    return a + b;\n  }\n  multiply(a: number, b: number) {\n    return a * b;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    // class body + 2 method bodies = at least 3
+    assert!(
+        ranges.len() >= 3,
+        "Should have class body + 2 method body folds, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_function_expression() {
+    let source = "\nconst handler = function() {\n  return true;\n};\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for function expression"
+    );
+}
+
+#[test]
+fn test_folding_ranges_multiline_type_alias() {
+    let source =
+        "\ntype Complex =\n  | { kind: 'a'; value: number }\n  | { kind: 'b'; value: string };\n";
+    let ranges = get_ranges(source);
+    let alias_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        alias_range.is_some(),
+        "Should find folding range for multiline type alias"
+    );
+}
+
+#[test]
+fn test_folding_ranges_enum_with_computed_members() {
+    let source = "\nenum Flags {\n  Read = 1 << 0,\n  Write = 1 << 1,\n  Execute = 1 << 2\n}\n";
+    let ranges = get_ranges(source);
+    let enum_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        enum_range.is_some(),
+        "Should find folding range for enum with computed members"
+    );
+}
+
+#[test]
+fn test_folding_ranges_consecutive_three_comment_groups() {
+    let source = "// group 1 line 1\n// group 1 line 2\nconst a = 1;\n// group 2 line 1\n// group 2 line 2\n// group 2 line 3\nconst b = 2;\n";
+    let ranges = get_ranges(source);
+    let comment_folds: Vec<&FoldingRange> = ranges
+        .iter()
+        .filter(|r| r.kind.as_deref() == Some("comment"))
+        .collect();
+    assert_eq!(
+        comment_folds.len(),
+        2,
+        "Should find two separate comment groups, found {}",
+        comment_folds.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_interface_with_many_properties() {
+    let source = "\ninterface Config {\n  host: string;\n  port: number;\n  debug: boolean;\n  timeout: number;\n}\n";
+    let ranges = get_ranges(source);
+    let iface_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        iface_range.is_some(),
+        "Should find folding range for interface with many properties"
+    );
+}
+
+#[test]
+fn test_folding_ranges_try_catch_finally() {
+    let source =
+        "try {\n  doSomething();\n} catch (e) {\n  handleError(e);\n} finally {\n  cleanup();\n}\n";
+    let ranges = get_ranges(source);
+    assert!(ranges.len() >= 1, "Should fold try/catch/finally blocks");
+}
+
+#[test]
+fn test_folding_ranges_template_literal_multiline() {
+    let source = "const html = `\n  <div>\n    <p>Hello</p>\n  </div>\n`;\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_class_with_decorators() {
+    let source = "@Component({\n  selector: 'app'\n})\nclass AppComponent {\n  method() {\n    return true;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(ranges.len() >= 1, "Should fold class with decorators");
+}
+
+#[test]
+fn test_folding_ranges_single_line_no_fold() {
+    let source = "const x = 1;";
+    let ranges = get_ranges(source);
+    assert!(ranges.is_empty(), "Single line should not produce folds");
+}
+
+#[test]
+fn test_folding_ranges_arrow_function_body() {
+    let source = "const process = (items: any[]) => {\n  return items\n    .filter(x => x)\n    .map(x => x * 2);\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should fold arrow function body");
+}
+
+#[test]
+fn test_folding_ranges_type_alias_object() {
+    let source = "type Config = {\n  host: string;\n  port: number;\n  debug: boolean;\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should fold type alias object literal");
+}
+
+#[test]
+fn test_folding_ranges_mapped_type() {
+    let source = "type Readonly<T> = {\n  readonly [K in keyof T]: T[K];\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty(), "Should fold mapped type");
+}

@@ -506,7 +506,14 @@ impl ParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
-            SyntaxKind::VarKeyword | SyntaxKind::UsingKeyword => self.parse_variable_statement(),
+            SyntaxKind::VarKeyword => self.parse_variable_statement(),
+            SyntaxKind::UsingKeyword => {
+                if self.look_ahead_is_using_declaration() {
+                    self.parse_variable_statement()
+                } else {
+                    self.parse_expression_statement()
+                }
+            }
             SyntaxKind::LetKeyword => {
                 // In strict mode (modules, classes, etc.), `let` is a reserved word and
                 // cannot be used as an identifier. But `let;` or `let` followed by a
@@ -532,7 +539,7 @@ impl ParserState {
             SyntaxKind::AwaitKeyword => {
                 // await using declaration (ES2022)
                 // Look ahead to see if it's "await using"
-                if self.look_ahead_is_await_using() {
+                if self.look_ahead_is_await_using_declaration() {
                     self.parse_variable_statement()
                 } else {
                     self.parse_expression_statement()
@@ -991,6 +998,22 @@ impl ParserState {
     }
 
     /// Look ahead to see if we have "await using"
+    pub(crate) fn look_ahead_is_using_declaration(&mut self) -> bool {
+        look_ahead_is(&mut self.scanner, self.current_token, |token| {
+            is_identifier_or_keyword(token) || token == SyntaxKind::OpenBraceToken
+        })
+    }
+
+    pub(crate) fn look_ahead_is_await_using_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let t1 = self.scanner.scan();
+        let t2 = self.scanner.scan();
+        let result = t1 == SyntaxKind::UsingKeyword
+            && (is_identifier_or_keyword(t2) || t2 == SyntaxKind::OpenBraceToken);
+        self.scanner.restore_state(snapshot);
+        result
+    }
+
     pub(crate) fn look_ahead_is_await_using(&mut self) -> bool {
         look_ahead_is(&mut self.scanner, self.current_token, |token| {
             token == SyntaxKind::UsingKeyword

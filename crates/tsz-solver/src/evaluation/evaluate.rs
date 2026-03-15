@@ -26,20 +26,6 @@ use crate::types::{
 use crate::visitors::visitor_predicates::is_primitive_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// Result of conditional type evaluation
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ConditionalResult {
-    /// The condition was resolved to a definite type
-    Resolved(TypeId),
-    /// The condition could not be resolved (deferred)
-    /// This happens when `check_type` is a type parameter that hasn't been substituted
-    Deferred(TypeId),
-}
-
-/// Maximum number of unique types to track in the visiting set.
-/// Prevents unbounded memory growth in pathological cases.
-pub const MAX_VISITING_SET_SIZE: usize = 10_000;
-
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
 enum SubtypeDirection {
@@ -77,7 +63,7 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
 }
 
 /// Array methods that return any (used for apparent type computation).
-pub const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
+pub(crate) const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
     "concat",
     "filter",
     "flat",
@@ -103,9 +89,9 @@ pub const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
     "reduceRight",
 ];
 /// Array methods that return boolean.
-pub const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
+pub(crate) const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
 /// Array methods that return number.
-pub const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
+pub(crate) const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
     "findIndex",
     "findLastIndex",
     "indexOf",
@@ -114,9 +100,9 @@ pub const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
     "unshift",
 ];
 /// Array methods that return void.
-pub const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
+pub(crate) const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
 /// Array methods that return string.
-pub const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
+pub(crate) const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
 
 impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
@@ -992,16 +978,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `number | 1 | 2` → `number` (literals absorbed by primitive)
     /// - `{ a: string } | { a: string; b: number }` → `{ a: string; b: number }`
     fn simplify_union_members(&mut self, members: &mut Vec<TypeId>) {
-        // Union-specific early exits
-        if members.iter().any(|&id| id.is_unknown()) {
-            return;
+        // Single-pass early-exit: check for unknown (skip entirely) and whether all
+        // members are identity-comparable (disjoint, so O(n²) loop finds nothing).
+        let mut all_identity = true;
+        for &id in members.iter() {
+            if id.is_unknown() {
+                return;
+            }
+            if all_identity && !self.interner.is_identity_comparable_type(id) {
+                all_identity = false;
+            }
         }
-        // Skip if all members are identity-comparable — they're disjoint, so the O(n²) loop
-        // would find nothing. The interner's reduce_union_subtypes handles shallow cases.
-        if members
-            .iter()
-            .all(|&id| self.interner.is_identity_comparable_type(id))
-        {
+        if all_identity {
             return;
         }
         // In a union, A <: B means A is redundant (B subsumes it).
@@ -1039,12 +1027,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
-        if members.iter().any(|&id| id.is_any()) {
-            return;
-        }
-
-        if members.iter().any(|&id| self.is_complex_type(id)) {
-            return;
+        // Single-pass early-exit check instead of two separate O(N) scans.
+        for &id in members.iter() {
+            if id.is_any() || self.is_complex_type(id) {
+                return;
+            }
         }
 
         use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
@@ -1053,11 +1040,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-        let mut i = 0;
-        while i < members.len() {
-            let mut redundant = false;
-            for j in 0..members.len() {
-                if i == j {
+        // Pre-compute property name sets for all members once, avoiding O(N²) FxHashSet
+        // allocations in the inner loop. Each entry is None for non-object types.
+        let prop_names: Vec<Option<FxHashSet<u32>>> = members
+            .iter()
+            .map(|&id| {
+                let mut names = FxHashSet::default();
+                Self::collect_property_names(self.interner, id, &mut names);
+                if names.is_empty() { None } else { Some(names) }
+            })
+            .collect();
+
+        // Use mark-and-compact instead of Vec::remove() which is O(N) per removal.
+        // Since max size is 25 (from guard above), a u32 bitset avoids heap allocation.
+        let len = members.len();
+        let mut keep: u32 = (1u32 << len) - 1; // all bits set
+        for i in 0..len {
+            if keep & (1u32 << i) == 0 {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || keep & (1u32 << j) == 0 {
                     continue;
                 }
                 if members[i] == members[j] {
@@ -1067,7 +1070,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
                         checker.is_subtype_of(members[i], members[j])
-                            && !self.has_unique_properties(members[i], members[j])
+                            && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
                         // For intersections: member[j] <: member[i] means member[i] is
@@ -1077,41 +1080,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // This matters for optional properties: {a: string} <: {b?: number}
                         // but {a: string} & {b?: number} must preserve both properties.
                         checker.is_subtype_of(members[j], members[i])
-                            && !self.has_unique_properties(members[i], members[j])
+                            && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                     }
                 };
                 if is_subtype {
-                    redundant = true;
+                    keep &= !(1u32 << i);
                     break;
                 }
             }
-            if redundant {
-                members.remove(i);
-            } else {
-                i += 1;
+        }
+        // Compact: retain only non-redundant elements
+        let mut write = 0;
+        for read in 0..len {
+            if keep & (1u32 << read) != 0 {
+                if write != read {
+                    members[write] = members[read];
+                }
+                write += 1;
             }
         }
+        members.truncate(write);
     }
 
-    /// Check if `candidate` has any property names that `subsuming` doesn't have.
-    /// Used to prevent incorrect intersection simplification: even if A <: B,
-    /// B should not be removed from A & B if B declares properties missing from A.
-    fn has_unique_properties(&self, candidate: TypeId, subsuming: TypeId) -> bool {
-        // Collect property names from both types
-        let mut candidate_names = FxHashSet::default();
-        let mut subsuming_names = FxHashSet::default();
-        Self::collect_property_names(self.interner, candidate, &mut candidate_names);
-        Self::collect_property_names(self.interner, subsuming, &mut subsuming_names);
-
-        // If candidate has no properties, it can't contribute unique ones
-        if candidate_names.is_empty() {
-            return false;
-        }
-
-        // Check if candidate has any property name not in subsuming
-        candidate_names
-            .iter()
-            .any(|name| !subsuming_names.contains(name))
+    /// Check if `candidate` has any property names that `subsuming` doesn't have,
+    /// using pre-computed property name sets to avoid repeated allocation.
+    fn has_unique_properties_cached(
+        candidate_names: &Option<FxHashSet<u32>>,
+        subsuming_names: &Option<FxHashSet<u32>>,
+    ) -> bool {
+        let Some(candidate) = candidate_names else {
+            return false; // No properties → can't contribute unique ones
+        };
+        let Some(subsuming) = subsuming_names else {
+            return true; // Candidate has properties but subsuming doesn't
+        };
+        candidate.iter().any(|name| !subsuming.contains(name))
     }
 
     /// Collect property name atoms from an object type into the provided set.

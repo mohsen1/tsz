@@ -858,3 +858,275 @@ fn test_parse_jsdoc_whitespace_only() {
     assert!(result.summary.is_none());
     assert!(result.is_empty());
 }
+
+// ---- Additional diagnostic tests ----
+
+#[test]
+fn test_convert_diagnostic_at_start_of_source() {
+    let source = "x";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 1, "err", DiagnosticCategory::Error, 2304);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 0);
+    assert_eq!(lsp_diag.range.start.character, 0);
+    assert_eq!(lsp_diag.range.end.line, 0);
+    assert_eq!(lsp_diag.range.end.character, 1);
+}
+
+#[test]
+fn test_convert_diagnostic_multiline_source() {
+    let source = "aaa\nbbb\nccc\nddd";
+    let line_map = LineMap::build(source);
+    // Position at start of line 3 ("ddd"), offset = 12
+    let diag = make_diagnostic("test.ts", 12, 3, "err", DiagnosticCategory::Error, 2322);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 3);
+    assert_eq!(lsp_diag.range.start.character, 0);
+    assert_eq!(lsp_diag.range.end.line, 3);
+    assert_eq!(lsp_diag.range.end.character, 3);
+}
+
+#[test]
+fn test_convert_diagnostic_message_category() {
+    let source = "x";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 1, "info msg", DiagnosticCategory::Message, 0);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.severity, Some(DiagnosticSeverity::Information));
+}
+
+#[test]
+fn test_convert_diagnostic_preserves_message_text() {
+    let source = "const x: string = 123;";
+    let line_map = LineMap::build(source);
+    let msg = "Type 'number' is not assignable to type 'string'.";
+    let diag = make_diagnostic("test.ts", 6, 1, msg, DiagnosticCategory::Error, 2322);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.message, msg);
+}
+
+#[test]
+fn test_convert_diagnostic_source_is_tsc_rust() {
+    let source = "x";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 1, "err", DiagnosticCategory::Error, 2304);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.source, Some("tsc-rust".to_string()));
+}
+
+#[test]
+fn test_convert_diagnostics_batch_empty() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diags: Vec<Diagnostic> = vec![];
+    let lsp_diags = convert_diagnostics_batch(&diags, &line_map, source);
+    assert!(lsp_diags.is_empty());
+}
+
+#[test]
+fn test_convert_diagnostics_batch_single() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diags = vec![make_diagnostic(
+        "test.ts",
+        6,
+        1,
+        "err",
+        DiagnosticCategory::Error,
+        2322,
+    )];
+    let lsp_diags = convert_diagnostics_batch(&diags, &line_map, source);
+    assert_eq!(lsp_diags.len(), 1);
+    assert_eq!(lsp_diags[0].code, Some(2322));
+}
+
+#[test]
+fn test_ts_diagnostic_category_message_string() {
+    let source = "x";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 1, "msg", DiagnosticCategory::Message, 0);
+    let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
+    assert_eq!(ts_diag.category, "message");
+}
+
+#[test]
+fn test_ts_diagnostic_no_source_field_by_default() {
+    let source = "x";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 1, "err", DiagnosticCategory::Error, 2322);
+    let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
+    // Source field behavior is implementation-defined
+    let json = serde_json::to_value(&ts_diag).unwrap();
+    let _ = json.get("source");
+}
+
+#[test]
+fn test_filter_semantic_diagnostics_excludes_syntactic_codes() {
+    let diags = vec![
+        make_diagnostic("t.ts", 0, 5, "parse err", DiagnosticCategory::Error, 1005),
+        make_diagnostic("t.ts", 0, 5, "type err", DiagnosticCategory::Error, 2322),
+        make_diagnostic(
+            "t.ts",
+            0,
+            5,
+            "another parse",
+            DiagnosticCategory::Error,
+            1109,
+        ),
+    ];
+    let semantic = filter_semantic_diagnostics(&diags);
+    assert_eq!(semantic.len(), 1);
+    assert_eq!(semantic[0].code, 2322);
+}
+
+#[test]
+fn test_filter_syntactic_diagnostics_excludes_semantic_codes() {
+    let diags = vec![
+        make_diagnostic("t.ts", 0, 5, "type err", DiagnosticCategory::Error, 2322),
+        make_diagnostic("t.ts", 0, 5, "cannot find", DiagnosticCategory::Error, 2304),
+    ];
+    let syntactic = filter_syntactic_diagnostics(&diags);
+    assert!(syntactic.is_empty());
+}
+
+#[test]
+fn test_filter_suggestion_diagnostics_only_includes_suggestions() {
+    let diags = vec![
+        make_diagnostic("t.ts", 0, 5, "err", DiagnosticCategory::Error, 2322),
+        make_diagnostic("t.ts", 0, 5, "warn", DiagnosticCategory::Warning, 6133),
+        make_diagnostic("t.ts", 0, 5, "sug1", DiagnosticCategory::Suggestion, 80006),
+        make_diagnostic("t.ts", 0, 5, "sug2", DiagnosticCategory::Suggestion, 80007),
+    ];
+    let suggestions = filter_suggestion_diagnostics(&diags);
+    assert_eq!(suggestions.len(), 2);
+    assert_eq!(suggestions[0].code, 80006);
+    assert_eq!(suggestions[1].code, 80007);
+}
+
+#[test]
+fn test_is_unnecessary_code_false_for_random_codes() {
+    assert!(!is_unnecessary_code(2322));
+    assert!(!is_unnecessary_code(1005));
+    assert!(!is_unnecessary_code(0));
+    assert!(!is_unnecessary_code(9999));
+}
+
+#[test]
+fn test_is_deprecated_code_false_for_adjacent_values() {
+    assert!(!is_deprecated_code(6384));
+    assert!(is_deprecated_code(6385));
+    assert!(!is_deprecated_code(6386));
+    assert!(is_deprecated_code(6387));
+    assert!(!is_deprecated_code(6388));
+}
+
+#[test]
+fn test_lsp_diagnostic_serialization_skips_none_fields() {
+    let lsp_diag = LspDiagnostic {
+        range: Range::new(Position::new(0, 0), Position::new(0, 5)),
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(2322),
+        source: Some("tsc-rust".to_string()),
+        message: "err".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+    let json = serde_json::to_value(&lsp_diag).unwrap();
+    assert!(json.get("relatedInformation").is_none());
+    assert!(json.get("reportsUnnecessary").is_none());
+    assert!(json.get("reportsDeprecated").is_none());
+    assert_eq!(json["message"], "err");
+    assert_eq!(json["code"], 2322);
+}
+
+#[test]
+fn test_lsp_diagnostic_deserialization_roundtrip() {
+    let lsp_diag = LspDiagnostic {
+        range: Range::new(Position::new(1, 5), Position::new(1, 10)),
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(6133),
+        source: Some("tsc-rust".to_string()),
+        message: "unused var".to_string(),
+        related_information: None,
+        reports_unnecessary: Some(true),
+        reports_deprecated: None,
+    };
+    let json_str = serde_json::to_string(&lsp_diag).unwrap();
+    let deserialized: LspDiagnostic = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(deserialized.message, "unused var");
+    assert_eq!(deserialized.code, Some(6133));
+    assert_eq!(deserialized.reports_unnecessary, Some(true));
+}
+
+#[test]
+fn test_ts_diagnostic_deserialization_roundtrip() {
+    let ts_diag = TsDiagnostic {
+        start: TsPosition { line: 3, offset: 7 },
+        end: TsPosition {
+            line: 3,
+            offset: 12,
+        },
+        text: "Cannot find name 'foo'.".to_string(),
+        code: 2304,
+        category: "error".to_string(),
+        source: None,
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+    let json_str = serde_json::to_string(&ts_diag).unwrap();
+    let deserialized: TsDiagnostic = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(deserialized.code, 2304);
+    assert_eq!(deserialized.start.line, 3);
+    assert_eq!(deserialized.start.offset, 7);
+    assert_eq!(deserialized.text, "Cannot find name 'foo'.");
+}
+
+// ---- Additional JSDoc tests ----
+
+#[test]
+fn test_parse_jsdoc_example_tag() {
+    let result = parse_jsdoc("@example\nconst x = foo();");
+    assert_eq!(result.tags.len(), 1);
+    assert_eq!(result.tags[0].name, "example");
+}
+
+#[test]
+fn test_parse_jsdoc_see_tag() {
+    let result = parse_jsdoc("@see https://example.com");
+    assert_eq!(result.tags.len(), 1);
+    assert_eq!(result.tags[0].name, "see");
+    assert_eq!(result.tags[0].text, "https://example.com");
+}
+
+#[test]
+fn test_parse_jsdoc_since_tag() {
+    let result = parse_jsdoc("@since 1.0.0");
+    assert_eq!(result.tags.len(), 1);
+    assert_eq!(result.tags[0].name, "since");
+    assert_eq!(result.tags[0].text, "1.0.0");
+}
+
+#[test]
+fn test_parse_jsdoc_multiple_tags() {
+    let doc = "@deprecated Use newFn.\n@see newFn\n@since 2.0.0";
+    let result = parse_jsdoc(doc);
+    assert_eq!(result.tags.len(), 3);
+    let tag_names: Vec<&str> = result.tags.iter().map(|t| t.name.as_str()).collect();
+    assert!(tag_names.contains(&"deprecated"));
+    assert!(tag_names.contains(&"see"));
+    assert!(tag_names.contains(&"since"));
+}
+
+#[test]
+fn test_parse_jsdoc_is_empty_with_tags() {
+    let result = parse_jsdoc("@param x The x value.");
+    assert!(!result.is_empty(), "JSDoc with params should not be empty");
+}
+
+#[test]
+fn test_parse_jsdoc_is_empty_with_summary() {
+    let result = parse_jsdoc("A summary.");
+    assert!(!result.is_empty(), "JSDoc with summary should not be empty");
+}

@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::emit::EmitContext;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::NodeArena;

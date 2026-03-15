@@ -319,3 +319,67 @@ var r2 = utils.fold(c, (s, t) => t);
         checker.ctx.diagnostics
     );
 }
+
+/// Regression test for false TS2322 on self-referential type parameter constraints.
+///
+/// `function test<T extends Test<keyof T>>(arg: T): T` should accept
+/// `{foo: true, bar() {}}` without error. Previously the trivial fast path
+/// in `resolve_trivial_single_type_param_call` checked the raw (uninstantiated)
+/// constraint and used deep widening, causing a false constraint violation.
+#[test]
+fn test_self_referential_constraint_no_false_ts2322() {
+    let source = r#"
+type Test<K extends keyof any> = {
+  [P in K | "foo"]: P extends "foo" ? true : () => any
+}
+
+function test<T extends Test<keyof T>>(arg: T) {
+  return arg;
+}
+
+const res1 = test({
+  foo: true,
+  bar() {}
+});
+
+const res2 = test({
+  foo: true,
+  bar: function () {}
+});
+
+const res3 = test({
+  foo: true,
+  bar: () => {}
+});
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Filter out "Cannot find global type" (TS2318) which are expected without lib files
+    let type_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
+
+    assert!(
+        type_errors.is_empty(),
+        "Expected no type errors for self-referential constraint, got: {type_errors:?}"
+    );
+}

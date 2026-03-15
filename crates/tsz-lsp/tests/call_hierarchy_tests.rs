@@ -870,3 +870,808 @@ fn test_call_hierarchy_item_serialization() {
     assert_eq!(deserialized.name, "test");
     assert_eq!(deserialized.kind, SymbolKind::Function);
 }
+
+#[test]
+fn test_prepare_on_arrow_function_assigned_to_variable() {
+    let source = "const greet = (name: string) => {\n  return `Hello ${name}`;\n};\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "greet" (line 0, col 6)
+    let pos = Position::new(0, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for arrow function variable 'greet'"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "greet");
+}
+
+#[test]
+fn test_prepare_on_constructor() {
+    let source = "class Foo {\n  constructor(x: number) {\n    this.x = x;\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "constructor" (line 1, col 2)
+    let pos = Position::new(1, 2);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for constructor"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.kind, SymbolKind::Constructor);
+}
+
+#[test]
+fn test_prepare_on_getter() {
+    let source = "class Foo {\n  get value(): number {\n    return 42;\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "value" in getter (line 1, col 6)
+    let pos = Position::new(1, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(item.is_some(), "Should find call hierarchy item for getter");
+    let item = item.unwrap();
+    assert_eq!(item.name, "get value");
+}
+
+#[test]
+fn test_prepare_on_setter() {
+    let source = "class Foo {\n  set value(v: number) {\n    this._v = v;\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "value" in setter (line 1, col 6)
+    let pos = Position::new(1, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(item.is_some(), "Should find call hierarchy item for setter");
+    let item = item.unwrap();
+    assert_eq!(item.name, "set value");
+}
+
+#[test]
+fn test_prepare_on_static_method() {
+    let source = "class Util {\n  static helper() {\n    return 1;\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "helper" (line 1, col 9)
+    let pos = Position::new(1, 9);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for static method"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "helper");
+    assert_eq!(item.kind, SymbolKind::Method);
+}
+
+#[test]
+fn test_incoming_calls_from_nested_functions() {
+    let source =
+        "function target() {}\nfunction outer() {\n  function inner() {\n    target();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "target" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|c| c.from.name == "inner"),
+        "Should find incoming call from nested function 'inner', got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_incoming_calls_from_callbacks() {
+    let source = "function handler() {}\nfunction setup() {\n  [1, 2].forEach(() => {\n    handler();\n  });\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "handler" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.incoming_calls(root, pos);
+
+    // The call to handler() is inside an arrow function inside setup()
+    // It should report the arrow function or setup as the caller
+    assert!(
+        !calls.is_empty(),
+        "Should find incoming calls from callback/closure context"
+    );
+}
+
+#[test]
+fn test_outgoing_calls_from_class_constructor() {
+    let source = "function init() {}\nfunction validate() {}\nclass App {\n  constructor() {\n    init();\n    validate();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "constructor" (line 3, col 2)
+    let pos = Position::new(3, 2);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|c| c.to.name == "init"),
+        "Constructor should have outgoing call to 'init', got: {calls:?}"
+    );
+    assert!(
+        calls.iter().any(|c| c.to.name == "validate"),
+        "Constructor should have outgoing call to 'validate', got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_recursive_function_calls() {
+    let source = "function factorial(n: number): number {\n  if (n <= 1) return 1;\n  return n * factorial(n - 1);\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "factorial" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+
+    // Outgoing calls should include the recursive call to itself
+    let outgoing = provider.outgoing_calls(root, pos);
+    assert!(
+        outgoing.iter().any(|c| c.to.name == "factorial"),
+        "Recursive function should have outgoing call to itself, got: {outgoing:?}"
+    );
+
+    // Incoming calls should NOT include the self-call (it's the same function)
+    let incoming = provider.incoming_calls(root, pos);
+    assert!(
+        incoming.is_empty(),
+        "Recursive function with no external callers should have no incoming calls, got: {incoming:?}"
+    );
+}
+
+#[test]
+fn test_iife_outgoing_calls() {
+    let source = "function helper() {}\n(function() {\n  helper();\n})();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "helper" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let incoming = provider.incoming_calls(root, pos);
+
+    // The call is inside an IIFE, which may or may not be reported
+    // At minimum, it should not crash
+    let _ = incoming;
+}
+
+#[test]
+fn test_no_hierarchy_at_type_alias() {
+    let source = "type Foo = string;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Foo" (line 0, col 5) - a type alias, not callable
+    let pos = Position::new(0, 5);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_none(),
+        "Should not find call hierarchy item for type alias"
+    );
+}
+
+#[test]
+fn test_no_hierarchy_at_interface() {
+    let source = "interface Bar {\n  x: number;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Bar" (line 0, col 10)
+    let pos = Position::new(0, 10);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_none(),
+        "Should not find call hierarchy item for interface name"
+    );
+}
+
+#[test]
+fn test_prepare_on_async_function() {
+    let source = "async function fetchData(): Promise<void> {\n  await fetch('url');\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "fetchData" (line 0, col 15)
+    let pos = Position::new(0, 15);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for async function"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "fetchData");
+    assert_eq!(item.kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_prepare_on_generator_function() {
+    let source = "function* gen() {\n  yield 1;\n  yield 2;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "gen" (line 0, col 10)
+    let pos = Position::new(0, 10);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for generator function"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "gen");
+    assert_eq!(item.kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_multiple_incoming_calls_from_same_function() {
+    let source =
+        "function target() {}\nfunction caller() {\n  target();\n  target();\n  target();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "target" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(!calls.is_empty(), "Should have incoming calls");
+    let caller_entry = calls
+        .iter()
+        .find(|c| c.from.name == "caller")
+        .expect("Should find incoming call from 'caller'");
+    assert_eq!(
+        caller_entry.from_ranges.len(),
+        3,
+        "Should have 3 call ranges from the same function"
+    );
+}
+
+#[test]
+fn test_outgoing_calls_with_chained_method_calls() {
+    let source = "function a() {}\nfunction b() {}\nfunction chain() {\n  a();\n  b();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "chain" (line 2, col 9)
+    let pos = Position::new(2, 9);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|c| c.to.name == "a"),
+        "Should have outgoing call to 'a'"
+    );
+    assert!(
+        calls.iter().any(|c| c.to.name == "b"),
+        "Should have outgoing call to 'b'"
+    );
+}
+
+#[test]
+fn test_prepare_on_function_expression_variable() {
+    let source = "const myFunc = function myFuncImpl() {\n  return 1;\n};\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "myFunc" variable name (line 0, col 6)
+    let pos = Position::new(0, 6);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for function expression variable"
+    );
+}
+
+#[test]
+fn test_prepare_on_method_in_object_literal() {
+    let source = "const obj = {\n  doWork() {\n    return 42;\n  }\n};\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "doWork" (line 1, col 2)
+    let pos = Position::new(1, 2);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for object literal method"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "doWork");
+}
+
+#[test]
+fn test_incoming_calls_multiple_callers() {
+    let source = "function target() {}\nfunction callerA() {\n  target();\n}\nfunction callerB() {\n  target();\n}\nfunction callerC() {\n  target();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "target" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.len() >= 3,
+        "Should have at least 3 incoming callers, got: {}",
+        calls.len()
+    );
+    assert!(calls.iter().any(|c| c.from.name == "callerA"));
+    assert!(calls.iter().any(|c| c.from.name == "callerB"));
+    assert!(calls.iter().any(|c| c.from.name == "callerC"));
+}
+
+// ---- Additional call hierarchy tests ----
+
+#[test]
+fn test_prepare_on_exported_function() {
+    let source = "export function greet(name: string) {\n  return `Hello ${name}`;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "greet" (line 0, col 16)
+    let pos = Position::new(0, 16);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for exported function"
+    );
+    let item = item.unwrap();
+    assert_eq!(item.name, "greet");
+    assert_eq!(item.kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_prepare_not_on_enum() {
+    let source = "enum Color { Red, Green, Blue }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Color" (line 0, col 5)
+    let pos = Position::new(0, 5);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_none(),
+        "Should not find call hierarchy item for enum name"
+    );
+}
+
+#[test]
+fn test_prepare_on_namespace_function() {
+    let source = "namespace NS {\n  export function helper() {}\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "helper" (line 1, col 19)
+    let pos = Position::new(1, 19);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for namespace function"
+    );
+    if let Some(item) = item {
+        assert_eq!(item.name, "helper");
+        assert_eq!(item.kind, SymbolKind::Function);
+    }
+}
+
+#[test]
+fn test_outgoing_calls_empty_function() {
+    let source = "function empty() {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "empty" (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert!(
+        calls.is_empty(),
+        "Empty function should have no outgoing calls"
+    );
+}
+
+#[test]
+fn test_outgoing_calls_single_call() {
+    let source = "function helper() {}\nfunction main() {\n  helper();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "main" (line 1, col 9)
+    let pos = Position::new(1, 9);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert_eq!(calls.len(), 1, "Should have exactly one outgoing call");
+    assert_eq!(calls[0].to.name, "helper");
+}
+
+#[test]
+fn test_incoming_calls_from_method() {
+    let source = "function target() {}\nclass Svc {\n  run() {\n    target();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "target" declaration (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|c| c.from.name == "run"),
+        "Should find incoming call from method 'run', got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_outgoing_calls_method_calling_function() {
+    let source = "function doWork() {}\nclass Worker {\n  process() {\n    doWork();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "process" method (line 2, col 2)
+    let pos = Position::new(2, 2);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|c| c.to.name == "doWork"),
+        "Method should have outgoing call to 'doWork', got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_prepare_on_abstract_method() {
+    let source = "abstract class Base {\n  abstract compute(): number;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "compute" (line 1, col 11)
+    let pos = Position::new(1, 11);
+    let item = provider.prepare(root, pos);
+
+    // Abstract methods may or may not produce hierarchy items
+    // This tests that it doesn't crash
+    let _ = item;
+}
+
+#[test]
+fn test_prepare_on_private_method() {
+    let source = "class Foo {\n  private secret() {\n    return 42;\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "secret" (line 1, col 10)
+    let pos = Position::new(1, 10);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for private method"
+    );
+    if let Some(item) = item {
+        assert_eq!(item.name, "secret");
+        assert_eq!(item.kind, SymbolKind::Method);
+    }
+}
+
+#[test]
+fn test_outgoing_calls_multiple_distinct_targets() {
+    let source = "function x() {}\nfunction y() {}\nfunction z() {}\nfunction caller() {\n  x();\n  y();\n  z();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "caller" (line 3, col 9)
+    let pos = Position::new(3, 9);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert!(
+        calls.len() >= 3,
+        "Should have at least 3 outgoing calls, got: {}",
+        calls.len()
+    );
+    assert!(calls.iter().any(|c| c.to.name == "x"));
+    assert!(calls.iter().any(|c| c.to.name == "y"));
+    assert!(calls.iter().any(|c| c.to.name == "z"));
+}
+
+#[test]
+fn test_prepare_on_overloaded_function() {
+    let source = "function add(a: number, b: number): number;\nfunction add(a: string, b: string): string;\nfunction add(a: any, b: any): any {\n  return a + b;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "add" implementation (line 2, col 9)
+    let pos = Position::new(2, 9);
+    let item = provider.prepare(root, pos);
+
+    // Should at least not crash; defensively check
+    if let Some(item) = item {
+        assert_eq!(item.name, "add");
+        assert_eq!(item.kind, SymbolKind::Function);
+    }
+}
+
+#[test]
+fn test_prepare_on_async_method() {
+    let source = "class Api {\n  async fetch() {\n    return 'data';\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "fetch" (line 1, col 8)
+    let pos = Position::new(1, 8);
+    let item = provider.prepare(root, pos);
+
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for async method"
+    );
+    if let Some(item) = item {
+        assert_eq!(item.name, "fetch");
+        assert_eq!(item.kind, SymbolKind::Method);
+    }
+}

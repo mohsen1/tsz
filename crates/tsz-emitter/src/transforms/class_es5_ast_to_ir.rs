@@ -199,7 +199,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_block(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(block) = self.arena.get_block(node) {
             let stmts: Vec<IRNode> = block
                 .statements
@@ -214,7 +217,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_expression_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
             if self.is_destructuring_assignment_expr(expr_stmt.expression) {
                 return IRNode::ASTRef(idx);
@@ -226,7 +232,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_return_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(ret) = self.arena.get_return_statement(node) {
             let expr = if ret.expression.is_none() {
                 None
@@ -240,7 +249,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_if_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(if_stmt) = self.arena.get_if_statement(node) {
             let else_branch = if if_stmt.else_statement.is_none() {
                 None
@@ -258,7 +270,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_variable_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // VariableStatement uses VariableData which has declarations directly
         if let Some(var_data) = self.arena.get_variable(node) {
             // Collect all declaration indices, handling the case where
@@ -340,7 +355,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_throw_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // Throw uses ReturnData (same as return statement)
         if let Some(return_data) = self.arena.get_return_statement(node) {
             IRNode::ThrowStatement(Box::new(self.convert_expression(return_data.expression)))
@@ -350,7 +368,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_try_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(try_data) = self.arena.get_try(node) {
             let try_block = Box::new(self.convert_statement(try_data.try_block));
 
@@ -402,7 +423,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_for_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // For uses LoopData (same as while/do-while)
         if let Some(loop_data) = self.arena.get_loop(node) {
             let initializer = if loop_data.initializer.is_none() {
@@ -432,7 +456,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_while_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // While uses LoopData (same as for/do-while)
         if let Some(loop_data) = self.arena.get_loop(node) {
             IRNode::WhileStatement {
@@ -445,7 +472,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_do_while_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // DoWhile uses LoopData (same as while/for loops)
         if let Some(loop_data) = self.arena.get_loop(node) {
             IRNode::DoWhileStatement {
@@ -458,7 +488,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_switch_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(switch_data) = self.arena.get_switch(node) {
             // Case block uses BlockData where statements contains the case clauses
             let cases = if let Some(case_block_node) = self.arena.get(switch_data.case_block)
@@ -483,7 +516,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_switch_case(&self, idx: NodeIndex) -> IRSwitchCase {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // get_case_clause works for both CASE_CLAUSE and DEFAULT_CLAUSE
         // For DEFAULT_CLAUSE, expression is NONE
         if let Some(case_clause) = self.arena.get_case_clause(node) {
@@ -510,7 +546,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_break_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(jump_data) = self.arena.get_jump_data(node) {
             let label = if jump_data.label.is_none() {
                 None
@@ -524,7 +563,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_continue_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(jump_data) = self.arena.get_jump_data(node) {
             let label = if jump_data.label.is_none() {
                 None
@@ -538,7 +580,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_labeled_statement(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(labeled) = self.arena.get_labeled_statement(node)
             && let Some(label) = get_identifier_text(self.arena, labeled.label)
         {
@@ -557,7 +602,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_identifier(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(ident) = self.arena.get_identifier(node) {
             IRNode::Identifier(ident.escaped_text.clone().into())
         } else {
@@ -566,7 +614,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_numeric_literal(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(lit) = self.arena.get_literal(node) {
             IRNode::NumericLiteral(lit.text.clone().into())
         } else {
@@ -580,7 +631,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_call_expression(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(call) = self.arena.get_call_expr(node) {
             let args: Vec<IRNode> = if let Some(ref args) = call.arguments {
                 args.nodes
@@ -694,7 +748,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_new_expression(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // NewExpression uses CallExprData (same as CallExpression)
         if let Some(call_data) = self.arena.get_call_expr(node) {
             let callee = self.convert_expression(call_data.expression);
@@ -717,7 +774,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_property_access(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // PropertyAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super.property → _super.prototype.property (instance) or _super.property (static)
@@ -754,7 +814,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_element_access(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // ElementAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super[expr] → _super.prototype[expr] (instance) or _super[expr] (static)
@@ -789,7 +852,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_binary_expression(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(bin) = self.arena.get_binary_expr(node) {
             let left = self.convert_expression(bin.left);
             let right = self.convert_expression(bin.right);
@@ -824,7 +890,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_prefix_unary(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // PrefixUnaryExpression uses UnaryExprData
         if let Some(unary) = self.arena.get_unary_expr(node) {
             let operand = self.convert_expression(unary.operand);
@@ -843,7 +912,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_postfix_unary(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // PostfixUnaryExpression uses UnaryExprData
         if let Some(unary) = self.arena.get_unary_expr(node) {
             let operand = self.convert_expression(unary.operand);
@@ -862,7 +934,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_parenthesized(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         if let Some(paren) = self.arena.get_parenthesized(node) {
             IRNode::Parenthesized(Box::new(self.convert_expression(paren.expression)))
         } else {
@@ -871,7 +946,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_conditional(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // ConditionalExpression uses ConditionalExprData
         if let Some(cond) = self.arena.get_conditional_expr(node) {
             IRNode::ConditionalExpr {
@@ -885,7 +963,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_array_literal(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // Array and Object literals use LiteralExprData
         if let Some(arr) = self.arena.get_literal_expr(node) {
             let elements: Vec<IRNode> = arr
@@ -901,7 +982,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_object_literal(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // Array and Object literals use LiteralExprData (elements = properties)
         if let Some(obj) = self.arena.get_literal_expr(node) {
             let props: Vec<IRProperty> = obj
@@ -946,7 +1030,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_function_expression(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // FunctionExpression uses FunctionData
         if let Some(func) = self.arena.get_function(node) {
             let name = if func.name.is_none() {
@@ -999,7 +1086,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_arrow_function(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
 
         // ArrowFunction uses FunctionData (has equals_greater_than_token set)
         if let Some(arrow) = self.arena.get_function(node) {
@@ -1106,7 +1196,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_spread_element(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // SpreadElement uses SpreadData
         if let Some(spread) = self.arena.get_spread(node) {
             IRNode::SpreadElement(Box::new(self.convert_expression(spread.expression)))
@@ -1127,7 +1220,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_type_assertion(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // Both TYPE_ASSERTION and AS_EXPRESSION use TypeAssertionData
         if let Some(assertion) = self.arena.get_type_assertion(node) {
             self.convert_expression(assertion.expression)
@@ -1137,7 +1233,10 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_non_null(&self, idx: NodeIndex) -> IRNode {
-        let node = self.arena.get(idx).unwrap();
+        let node = self
+            .arena
+            .get(idx)
+            .expect("NodeIndex must be valid in arena");
         // NON_NULL_EXPRESSION uses UnaryExpressionData
         if let Some(unary) = self.arena.get_unary_expr_ex(node) {
             self.convert_expression(unary.expression)
