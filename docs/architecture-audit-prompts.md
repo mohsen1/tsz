@@ -34,7 +34,7 @@ whether a query_boundaries wrapper already exists for this import. Do NOT make
 any code changes. This is research only.
 ```
 
-### Prompt 1.2 — Map Coverage Gaps in query_boundaries
+### Prompt 1.2 — Map Coverage Gaps in query_boundaries ✅ DONE (2026-03-15)
 
 ```
 Read every file in crates/tsz-checker/src/query_boundaries/ and catalog the
