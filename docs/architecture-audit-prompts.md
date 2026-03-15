@@ -12,7 +12,7 @@ The `query_boundaries` module was designed to mediate all checker→solver calls
 but 159 checker files import `tsz_solver` directly while only 28 boundary files
 exist. This 5.7:1 bypass ratio means the boundary is advisory, not enforced.
 
-### Prompt 1.1 — Inventory & Classify Direct Imports
+### Prompt 1.1 — Inventory & Classify Direct Imports ✅ DONE (2026-03-15)
 
 ```
 Audit every `use tsz_solver::` import in crates/tsz-checker/src/. For each
