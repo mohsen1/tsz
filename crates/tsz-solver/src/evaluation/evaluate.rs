@@ -70,6 +70,10 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
     /// permits legitimate bounded recursion where each expansion converges.
     def_depth: FxHashMap<DefId, u32>,
+    /// When true, suppress `this` type substitution during Lazy type evaluation.
+    /// Used during intersection evaluation to prevent premature `this` binding to
+    /// individual members instead of the full intersection type.
+    suppress_this_binding: bool,
 }
 
 /// Array methods that return any (used for apparent type computation).
@@ -128,6 +132,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
+            suppress_this_binding: false,
         }
     }
 }
@@ -149,6 +154,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
+            suppress_this_binding: false,
         }
     }
 
@@ -898,11 +904,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `string & number`, which then reduces to `never` via the interner's normalization.
     fn evaluate_intersection(&mut self, list_id: TypeListId) -> TypeId {
         let members = self.interner.type_list(list_id);
-        let mut evaluated_members = Vec::with_capacity(members.len());
 
+        // Suppress `this` binding during member evaluation so that methods
+        // returning `this` keep it as `ThisType` rather than binding to
+        // individual members. The `this` type will be correctly bound later
+        // during property access when the full intersection receiver is known.
+        let prev_suppress = self.suppress_this_binding;
+        self.suppress_this_binding = true;
+
+        let mut evaluated_members = Vec::with_capacity(members.len());
         for &member in members.iter() {
             evaluated_members.push(self.evaluate(member));
         }
+
+        self.suppress_this_binding = prev_suppress;
 
         // Deep structural simplification using SubtypeChecker
         self.simplify_intersection_members(&mut evaluated_members);
@@ -1197,7 +1212,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a lazy type reference: Lazy(DefId)
     fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
-            let resolved = if crate::contains_this_type(self.interner, resolved) {
+            let resolved = if !self.suppress_this_binding
+                && crate::contains_this_type(self.interner, resolved)
+            {
                 crate::substitute_this_type(self.interner, resolved, original_type_id)
             } else {
                 resolved
