@@ -137,10 +137,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Check if both are literals with the same value
             if let (Some(TypeData::Literal(s_lit)), Some(TypeData::Literal(t_lit))) =
                 (self.interner.lookup(source), self.interner.lookup(target))
+                && s_lit == t_lit
             {
-                if s_lit == t_lit {
-                    return SubtypeResult::True;
-                }
+                return SubtypeResult::True;
             }
             return SubtypeResult::False;
         }
