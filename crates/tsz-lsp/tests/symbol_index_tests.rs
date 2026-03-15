@@ -492,3 +492,274 @@ fn test_get_symbols_with_prefix_no_match() {
     let matches = index.get_symbols_with_prefix("xyz");
     assert!(matches.is_empty());
 }
+
+// =========================================================================
+// Additional coverage tests
+// =========================================================================
+
+#[test]
+fn test_remove_nonexistent_file() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("foo", make_location("a.ts", 0, 0, 3));
+
+    // Removing a file that was never added should not panic or affect existing data
+    index.remove_file("nonexistent.ts");
+
+    let defs = index.find_definitions("foo");
+    assert_eq!(defs.len(), 1, "Existing definitions should be preserved");
+}
+
+#[test]
+fn test_readd_same_file_updates_index() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("foo", make_location("a.ts", 0, 0, 3));
+    index.add_reference("a.ts", "bar", make_location("a.ts", 5, 0, 3));
+
+    // Remove and re-add with different content
+    index.remove_file("a.ts");
+    index.add_definition("baz", make_location("a.ts", 0, 0, 3));
+
+    // Old symbols should be gone
+    let foo_defs = index.find_definitions("foo");
+    assert!(
+        foo_defs.is_empty(),
+        "Old definition 'foo' should be removed"
+    );
+
+    let bar_refs = index.find_references("bar");
+    assert!(bar_refs.is_empty(), "Old reference 'bar' should be removed");
+
+    // New symbol should be present
+    let baz_defs = index.find_definitions("baz");
+    assert_eq!(baz_defs.len(), 1, "New definition 'baz' should be present");
+}
+
+#[test]
+fn test_add_reference_creates_file_symbol_tracking() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("x.ts", "myVar", make_location("x.ts", 0, 0, 5));
+
+    let files = index.get_files_with_symbol("myVar");
+    assert!(files.contains(&"x.ts".to_string()));
+}
+
+#[test]
+fn test_prefix_search_with_special_characters() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("$scope", make_location("a.ts", 0, 0, 6));
+    index.add_definition("$element", make_location("a.ts", 1, 0, 8));
+    index.add_definition("_private", make_location("a.ts", 2, 0, 8));
+
+    let dollar_matches = index.get_symbols_with_prefix("$");
+    assert_eq!(dollar_matches.len(), 2);
+    assert!(dollar_matches.contains(&"$element".to_string()));
+    assert!(dollar_matches.contains(&"$scope".to_string()));
+
+    let underscore_matches = index.get_symbols_with_prefix("_");
+    assert_eq!(underscore_matches.len(), 1);
+    assert_eq!(underscore_matches[0], "_private");
+}
+
+#[test]
+fn test_many_symbols_in_single_file() {
+    let mut index = SymbolIndex::new();
+    for i in 0..200 {
+        let name = format!("sym_{i}");
+        index.add_definition(&name, make_location("big.ts", i, 0, 10));
+    }
+
+    let stats = index.stats();
+    assert_eq!(stats.total_definitions, 200);
+
+    // Prefix search should work
+    let matches = index.get_symbols_with_prefix("sym_1");
+    // Should match sym_1, sym_10..sym_19, sym_100..sym_199
+    assert!(matches.len() > 10);
+
+    // Remove the file
+    index.remove_file("big.ts");
+    let after_stats = index.stats();
+    assert_eq!(
+        after_stats.total_definitions, 0,
+        "All definitions should be removed"
+    );
+}
+
+#[test]
+fn test_find_references_nonexistent_symbol() {
+    let index = SymbolIndex::new();
+    let refs = index.find_references("nonexistent");
+    assert!(refs.is_empty());
+}
+
+#[test]
+fn test_find_definitions_nonexistent_symbol() {
+    let index = SymbolIndex::new();
+    let defs = index.find_definitions("nonexistent");
+    assert!(defs.is_empty());
+}
+
+#[test]
+fn test_get_files_with_symbol_nonexistent() {
+    let index = SymbolIndex::new();
+    let files = index.get_files_with_symbol("nonexistent");
+    assert!(files.is_empty());
+}
+
+#[test]
+fn test_import_and_importer_tracking() {
+    let mut index = SymbolIndex::new();
+
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "default".to_string(),
+            source_module: "./utils".to_string(),
+            exported_name: "default".to_string(),
+            kind: ImportKind::Default,
+        },
+    );
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "side".to_string(),
+            source_module: "./polyfill".to_string(),
+            exported_name: "".to_string(),
+            kind: ImportKind::SideEffect,
+        },
+    );
+
+    let imports = index.get_imports("app.ts");
+    assert_eq!(imports.len(), 2);
+
+    let importers = index.get_importing_files("./utils");
+    assert!(importers.contains(&"app.ts".to_string()));
+
+    let polyfill_importers = index.get_importing_files("./polyfill");
+    assert!(polyfill_importers.contains(&"app.ts".to_string()));
+}
+
+#[test]
+fn test_remove_file_cleans_up_imports() {
+    let mut index = SymbolIndex::new();
+    index.add_import(
+        "consumer.ts",
+        ImportInfo {
+            local_name: "foo".to_string(),
+            source_module: "./lib".to_string(),
+            exported_name: "foo".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+
+    index.remove_file("consumer.ts");
+
+    let imports = index.get_imports("consumer.ts");
+    assert!(imports.is_empty(), "Imports should be cleaned up");
+
+    let importers = index.get_importing_files("./lib");
+    assert!(
+        importers.is_empty(),
+        "Importer reference should be cleaned up"
+    );
+}
+
+#[test]
+fn test_has_file_with_exports() {
+    let mut index = SymbolIndex::new();
+    index.add_export("mod.ts", "default");
+
+    assert!(index.has_file("mod.ts"));
+    assert!(!index.has_file("other.ts"));
+}
+
+#[test]
+fn test_has_file_with_imports() {
+    let mut index = SymbolIndex::new();
+    index.add_import(
+        "consumer.ts",
+        ImportInfo {
+            local_name: "x".to_string(),
+            source_module: "./mod".to_string(),
+            exported_name: "x".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+
+    assert!(index.has_file("consumer.ts"));
+}
+
+#[test]
+fn test_sorted_names_deduplication() {
+    let mut index = SymbolIndex::new();
+    // Add same symbol name from multiple files
+    index.add_definition("shared", make_location("a.ts", 0, 0, 6));
+    index.add_definition("shared", make_location("b.ts", 0, 0, 6));
+    index.add_definition("shared", make_location("c.ts", 0, 0, 6));
+
+    // Prefix search should only return one entry for "shared"
+    let matches = index.get_symbols_with_prefix("shared");
+    assert_eq!(
+        matches.len(),
+        1,
+        "Sorted names should be deduplicated, got: {:?}",
+        matches
+    );
+}
+
+#[test]
+fn test_definition_with_kind_overwrites_previous_kind() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("Foo", make_location("a.ts", 0, 0, 3), SymbolKind::Class);
+    // Overwrite with a different kind
+    index.add_definition_with_kind("Foo", make_location("b.ts", 0, 0, 3), SymbolKind::Interface);
+
+    // The last kind wins
+    assert_eq!(
+        index.get_definition_kind("Foo"),
+        Some(SymbolKind::Interface)
+    );
+    // But both definitions exist
+    assert_eq!(index.find_definitions("Foo").len(), 2);
+}
+
+#[test]
+fn test_stats_indexed_files() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("a.ts", "x", make_location("a.ts", 0, 0, 1));
+    index.add_reference("b.ts", "y", make_location("b.ts", 0, 0, 1));
+
+    let stats = index.stats();
+    assert_eq!(stats.indexed_files, 2);
+}
+
+#[test]
+fn test_clear_resets_everything() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("a.ts", "x", make_location("a.ts", 0, 0, 1));
+    index.add_definition("y", make_location("b.ts", 0, 0, 1));
+    index.add_definition_with_kind("z", make_location("c.ts", 0, 0, 1), SymbolKind::Function);
+    index.add_export("d.ts", "w");
+    index.add_import(
+        "e.ts",
+        ImportInfo {
+            local_name: "v".to_string(),
+            source_module: "./mod".to_string(),
+            exported_name: "v".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+
+    index.clear();
+
+    let stats = index.stats();
+    assert_eq!(stats.unique_symbols, 0);
+    assert_eq!(stats.total_references, 0);
+    assert_eq!(stats.total_definitions, 0);
+    assert_eq!(stats.files_with_exports, 0);
+    assert_eq!(stats.files_with_imports, 0);
+    assert_eq!(stats.indexed_files, 0);
+
+    let all = index.get_symbols_with_prefix("");
+    assert!(all.is_empty(), "sorted_names should be cleared");
+}

@@ -1055,3 +1055,878 @@ for (const item of items) {
         "'doubled' should NOT be in file_locals (for-of block scoped)"
     );
 }
+
+// ============================================================================
+// Additional tests for resolver coverage (appended)
+// ============================================================================
+
+#[test]
+fn test_shadowing_let_in_if_block_shadows_outer_let() {
+    // Inner let in an if-block should shadow the outer let
+    let source = r#"
+const x = "outer";
+if (true) {
+    const x = "inner";
+    const y = x;
+}
+const z = x;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let outer_x = binder
+        .file_locals
+        .get("x")
+        .expect("file-level x should exist");
+
+    // Find all 'x' identifiers
+    let x_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("x") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    // The last 'x' is in 'const z = x;' at file level -- should resolve to outer x
+    let last_x = *x_nodes.last().expect("should find x nodes");
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker.resolve_node(root, last_x);
+    assert_eq!(
+        resolved,
+        Some(outer_x),
+        "'x' in file-level 'const z = x' should resolve to the outer x, not the shadowed inner x"
+    );
+}
+
+#[test]
+fn test_var_hoisting_across_if_boundary() {
+    // var inside if should be function-scoped (hoisted to containing function)
+    let source = r#"
+function test() {
+    if (true) {
+        var a = 1;
+    }
+    if (false) {
+        var b = 2;
+    }
+    return a + b;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // 'a' and 'b' should NOT be in file_locals (they're hoisted to function scope, not file)
+    assert!(
+        binder.file_locals.get("a").is_none(),
+        "'a' should NOT be in file_locals (hoisted to function scope)"
+    );
+    assert!(
+        binder.file_locals.get("b").is_none(),
+        "'b' should NOT be in file_locals (hoisted to function scope)"
+    );
+
+    // Find the 'a' usage in 'return a + b;'
+    let a_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("a") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    // The last 'a' should be in 'return a + b;'
+    let a_usage = *a_nodes.last().expect("should find 'a' identifiers");
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker.resolve_node(root, a_usage);
+    assert!(
+        resolved.is_some(),
+        "var 'a' should be resolvable via hoisting in the function scope"
+    );
+}
+
+#[test]
+fn test_catch_clause_parameter_scoping() {
+    // catch parameter 'e' should be scoped to catch clause, not leak to try or outer
+    let source = r#"
+const e = "outer";
+try {
+    throw new Error();
+} catch (e) {
+    const msg = e;
+}
+const result = e;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let outer_e = binder
+        .file_locals
+        .get("e")
+        .expect("file-level 'e' should exist");
+
+    // Find the last 'e' identifier (in 'const result = e;')
+    let e_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("e") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let last_e = *e_nodes.last().expect("should find 'e' identifiers");
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker.resolve_node(root, last_e);
+    assert_eq!(
+        resolved,
+        Some(outer_e),
+        "'e' in 'const result = e' should resolve to outer 'e', not catch parameter"
+    );
+}
+
+#[test]
+fn test_class_static_block_scope() {
+    let source = r#"
+const x = "outer";
+class Foo {
+    static {
+        const x = "static-block";
+        const y = x;
+    }
+}
+const z = x;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // 'x', 'Foo', 'z' should be in file_locals; 'y' should not
+    assert!(binder.file_locals.get("x").is_some());
+    assert!(binder.file_locals.get("Foo").is_some());
+    assert!(binder.file_locals.get("z").is_some());
+    assert!(
+        binder.file_locals.get("y").is_none(),
+        "'y' should NOT be in file_locals (inside static block)"
+    );
+}
+
+#[test]
+fn test_multiple_functions_same_named_parameters() {
+    // Two functions with parameters named 'x' should not interfere
+    let source = r#"
+function foo(x: number) { return x; }
+function bar(x: string) { return x; }
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(binder.file_locals.get("foo").is_some());
+    assert!(binder.file_locals.get("bar").is_some());
+    assert!(
+        binder.file_locals.get("x").is_none(),
+        "parameter 'x' should NOT leak to file_locals from either function"
+    );
+
+    // Find the 'x' usages in 'return x;' statements
+    let x_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("x") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    // There should be at least 4 'x' identifiers (2 param decls + 2 return usages)
+    assert!(
+        x_nodes.len() >= 4,
+        "should find at least 4 'x' identifiers, found {}",
+        x_nodes.len()
+    );
+
+    // Each 'return x;' usage should resolve to some symbol (its own function's parameter)
+    for &x_node in &x_nodes {
+        let mut walker = ScopeWalker::new(arena, &binder);
+        let resolved = walker.resolve_node(root, x_node);
+        assert!(
+            resolved.is_some(),
+            "each 'x' identifier should resolve to a symbol"
+        );
+    }
+}
+
+#[test]
+fn test_arrow_function_parameter_scope() {
+    let source = r#"
+const outer = 1;
+const fn1 = (a: number, b: number) => a + b;
+const fn2 = (a: string) => a;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(binder.file_locals.get("outer").is_some());
+    assert!(binder.file_locals.get("fn1").is_some());
+    assert!(binder.file_locals.get("fn2").is_some());
+    assert!(
+        binder.file_locals.get("a").is_none(),
+        "'a' should NOT be in file_locals (arrow function parameter)"
+    );
+    assert!(
+        binder.file_locals.get("b").is_none(),
+        "'b' should NOT be in file_locals (arrow function parameter)"
+    );
+}
+
+#[test]
+fn test_export_function_and_class_resolution() {
+    let source = r#"
+export function exported() { return 1; }
+export class ExportedClass {}
+export interface ExportedInterface { x: number; }
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("exported").is_some(),
+        "'exported' function should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.get("ExportedClass").is_some(),
+        "'ExportedClass' should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.get("ExportedInterface").is_some(),
+        "'ExportedInterface' should be in file_locals"
+    );
+}
+
+#[test]
+fn test_namespace_nested_scoping() {
+    let source = r#"
+namespace Outer {
+    export namespace Inner {
+        export const value = 1;
+    }
+    const local = 2;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("Outer").is_some(),
+        "'Outer' namespace should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.get("Inner").is_none(),
+        "'Inner' should NOT be in file_locals (inside Outer namespace)"
+    );
+    assert!(
+        binder.file_locals.get("value").is_none(),
+        "'value' should NOT be in file_locals (inside Inner namespace)"
+    );
+    assert!(
+        binder.file_locals.get("local").is_none(),
+        "'local' should NOT be in file_locals (inside Outer namespace)"
+    );
+}
+
+#[test]
+fn test_getter_setter_scope_creation() {
+    let source = r#"
+class MyClass {
+    private _val: number = 0;
+    get val(): number {
+        const temp = this._val;
+        return temp;
+    }
+    set val(newVal: number) {
+        const validated = newVal;
+        this._val = validated;
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("MyClass").is_some(),
+        "'MyClass' should be in file_locals"
+    );
+    // Internal variables should not leak
+    assert!(
+        binder.file_locals.get("temp").is_none(),
+        "'temp' should NOT be in file_locals (inside getter)"
+    );
+    assert!(
+        binder.file_locals.get("validated").is_none(),
+        "'validated' should NOT be in file_locals (inside setter)"
+    );
+    assert!(
+        binder.file_locals.get("newVal").is_none(),
+        "'newVal' should NOT be in file_locals (setter parameter)"
+    );
+}
+
+#[test]
+fn test_private_identifier_resolution() {
+    let source = r#"
+class Counter {
+    #count: number = 0;
+    increment() {
+        this.#count++;
+    }
+    getCount() {
+        return this.#count;
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("Counter").is_some(),
+        "'Counter' should be in file_locals"
+    );
+
+    // Find private identifier nodes (#count)
+    let private_id_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("#count") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    assert!(
+        !private_id_nodes.is_empty(),
+        "should find at least one #count private identifier"
+    );
+
+    // Try resolving the first private identifier
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker.resolve_node(root, private_id_nodes[0]);
+    // Private identifiers are resolved through binder.resolve_identifier
+    // The result depends on whether the binder tracks them, but we verify no panic
+    let _ = resolved;
+}
+
+#[test]
+fn test_for_in_loop_variable_resolution() {
+    let source = r#"
+const obj = { a: 1, b: 2, c: 3 };
+for (const key in obj) {
+    const value = obj[key];
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find the 'key' usage inside the for-in body (in obj[key])
+    let key_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("key") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    assert!(
+        key_nodes.len() >= 2,
+        "should find at least 2 'key' identifiers (decl + usage)"
+    );
+
+    // The last 'key' should be the usage in obj[key]
+    let key_usage = *key_nodes.last().unwrap();
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker.resolve_node(root, key_usage);
+    assert!(
+        resolved.is_some(),
+        "'key' usage inside for-in body should resolve to its declaration"
+    );
+}
+
+#[test]
+fn test_for_of_loop_variable_resolution() {
+    let source = r#"
+const items = [10, 20, 30];
+for (const item of items) {
+    const doubled = item * 2;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find the 'item' usage inside the for-of body
+    let item_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("item") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    assert!(
+        item_nodes.len() >= 2,
+        "should find at least 2 'item' identifiers (decl + usage)"
+    );
+
+    let item_usage = *item_nodes.last().unwrap();
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker.resolve_node(root, item_usage);
+    assert!(
+        resolved.is_some(),
+        "'item' usage inside for-of body should resolve to its declaration"
+    );
+}
+
+#[test]
+fn test_scope_chain_deeply_nested() {
+    let source = r#"
+const a = 1;
+function outer() {
+    const b = 2;
+    function middle() {
+        const c = 3;
+        function inner() {
+            const d = 4;
+            return a + b + c + d;
+        }
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find the 'd' identifier in the return statement
+    let d_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("d") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let d_usage = *d_nodes.last().expect("should find 'd' identifiers");
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let chain = walker.get_scope_chain(root, d_usage);
+
+    // Should have at least 4 scopes (file + outer + middle + inner)
+    assert!(
+        chain.len() >= 4,
+        "deeply nested scope chain should have at least 4 scopes, got {}",
+        chain.len()
+    );
+
+    // 'a' should be visible from the innermost scope
+    let has_a = chain.iter().any(|scope| scope.get("a").is_some());
+    assert!(has_a, "'a' should be visible from the innermost scope");
+}
+
+#[test]
+fn test_resolve_node_cached_with_none_stats() {
+    use crate::resolver::ScopeCache;
+    use rustc_hash::FxHashMap;
+
+    let source = "const x = 10;\nconst y = x + 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let x_usage = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("x") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .last()
+        .expect("should find x usage");
+
+    // Resolve with cache but None stats (should not panic)
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let mut cache: ScopeCache = FxHashMap::default();
+    let result = walker.resolve_node_cached(root, x_usage, &mut cache, None);
+    assert!(result.is_some(), "should resolve x even with None stats");
+
+    // Second call should also work with None stats
+    let mut walker2 = ScopeWalker::new(arena, &binder);
+    let result2 = walker2.resolve_node_cached(root, x_usage, &mut cache, None);
+    assert_eq!(result, result2, "cached result should match first result");
+}
+
+#[test]
+fn test_resolve_non_identifier_node() {
+    // Resolving a node that is not an identifier should return None
+    let source = "const x = 1 + 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find a numeric literal node
+    let numeric_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
+        if node.kind == SyntaxKind::NumericLiteral as u16 {
+            Some(tsz_parser::NodeIndex(idx as u32))
+        } else {
+            None
+        }
+    });
+
+    if let Some(num_idx) = numeric_node {
+        let mut walker = ScopeWalker::new(arena, &binder);
+        let resolved = walker.resolve_node(root, num_idx);
+        assert!(
+            resolved.is_none(),
+            "resolving a numeric literal should return None"
+        );
+    }
+}
+
+#[test]
+fn test_find_references_across_scopes() {
+    // Variable declared at file level, used inside multiple nested scopes
+    let source = r#"
+const shared = 42;
+function foo() { return shared; }
+function bar() { return shared + 1; }
+const baz = () => shared;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let shared_symbol = binder
+        .file_locals
+        .get("shared")
+        .expect("shared should be bound");
+
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let refs = walker.find_references(root, shared_symbol);
+
+    // Should find the declaration + 3 usages (foo, bar, baz) = at least 4
+    assert!(
+        refs.len() >= 4,
+        "should find at least 4 references to 'shared' (decl + 3 usages), got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_scope_chain_cached_second_call_hits() {
+    use crate::resolver::{ScopeCache, ScopeCacheStats};
+    use rustc_hash::FxHashMap;
+
+    let source = "function f() { const a = 1; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let a_node = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("a") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .expect("should find 'a'");
+
+    let mut cache: ScopeCache = FxHashMap::default();
+
+    // First call - miss
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let mut stats1 = ScopeCacheStats::default();
+    let chain1 = walker.get_scope_chain_cached(root, a_node, &mut cache, Some(&mut stats1));
+    let chain1_len = chain1.len();
+    assert_eq!(stats1.misses, 1);
+    assert_eq!(stats1.hits, 0);
+
+    // Second call - hit
+    let mut walker2 = ScopeWalker::new(arena, &binder);
+    let mut stats2 = ScopeCacheStats::default();
+    let chain2 = walker2.get_scope_chain_cached(root, a_node, &mut cache, Some(&mut stats2));
+    assert_eq!(
+        chain2.len(),
+        chain1_len,
+        "cached chain should have same length"
+    );
+    assert_eq!(stats2.hits, 1, "second call should be a cache hit");
+    assert_eq!(stats2.misses, 0);
+}
+
+#[test]
+fn test_var_not_hoisted_to_file_level_from_nested_function() {
+    // var inside a nested function should NOT hoist to file scope
+    let source = r#"
+function outer() {
+    function inner() {
+        var deepVar = 1;
+    }
+    return deepVar;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("deepVar").is_none(),
+        "'deepVar' should NOT be in file_locals (var hoists only to its containing function)"
+    );
+}
+
+#[test]
+fn test_destructuring_in_catch_clause() {
+    let source = r#"
+try {
+    throw { message: "fail", code: 42 };
+} catch (err) {
+    const { message, code } = err as any;
+    console.log(message, code);
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // None of the catch-scoped variables should leak to file_locals
+    assert!(
+        binder.file_locals.get("err").is_none(),
+        "'err' should NOT be in file_locals (catch clause scoped)"
+    );
+    assert!(
+        binder.file_locals.get("message").is_none(),
+        "'message' should NOT be in file_locals (catch block scoped)"
+    );
+    assert!(
+        binder.file_locals.get("code").is_none(),
+        "'code' should NOT be in file_locals (catch block scoped)"
+    );
+}
+
+#[test]
+fn test_resolve_node_cached_for_non_identifier() {
+    use crate::resolver::{ScopeCache, ScopeCacheStats};
+    use rustc_hash::FxHashMap;
+
+    let source = "const x = 123;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find a numeric literal
+    let num_node = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind == SyntaxKind::NumericLiteral as u16 {
+                Some(tsz_parser::NodeIndex(idx as u32))
+            } else {
+                None
+            }
+        })
+        .expect("should find numeric literal");
+
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let mut cache: ScopeCache = FxHashMap::default();
+    let mut stats = ScopeCacheStats::default();
+    let result = walker.resolve_node_cached(root, num_node, &mut cache, Some(&mut stats));
+    assert!(
+        result.is_none(),
+        "resolve_node_cached should return None for non-identifier nodes"
+    );
+}
+
+#[test]
+fn test_scope_chain_at_class_method_body() {
+    let source = r#"
+const global = 1;
+class Foo {
+    method() {
+        const local = 2;
+        return local;
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find the 'local' usage in 'return local;'
+    let local_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("local") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let local_usage = *local_nodes.last().expect("should find 'local' usage");
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let chain = walker.get_scope_chain(root, local_usage);
+
+    // Should have scopes for: file + class + method (at least 3)
+    assert!(
+        chain.len() >= 3,
+        "scope chain inside class method should have at least 3 scopes, got {}",
+        chain.len()
+    );
+
+    // 'global' should be visible from inside the method
+    let has_global = chain.iter().any(|scope| scope.get("global").is_some());
+    assert!(
+        has_global,
+        "'global' should be visible from inside a class method"
+    );
+}
