@@ -75,6 +75,17 @@ pub trait TypeDatabase {
     fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
     }
+    /// Create a fresh object type with both widened properties (for type checking)
+    /// and display properties (for error messages, implementing tsc's freshness model).
+    fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        // Default: just create a fresh object (implementations can store display props)
+        let _ = display_properties;
+        self.object_fresh(widened_properties)
+    }
     fn object_with_index(&self, shape: ObjectShape) -> TypeId;
     fn function(&self, shape: FunctionShape) -> TypeId;
     fn callable(&self, shape: CallableShape) -> TypeId;
@@ -111,6 +122,20 @@ pub trait TypeDatabase {
             "Uncapitalize" => self.string_intrinsic(StringIntrinsicKind::Uncapitalize, type_arg),
             _ => TypeId::ERROR,
         }
+    }
+
+    /// Store display-only properties for a fresh object literal.
+    ///
+    /// These are the pre-widened property types shown in error messages.
+    /// The `shape_id` is the widened (interned) shape; `props` contains
+    /// the original literal types from the source code.
+    fn store_display_properties(&self, _shape_id: ObjectShapeId, _props: Vec<PropertyInfo>) {}
+
+    /// Retrieve display-only properties for a fresh object literal.
+    ///
+    /// Returns `None` if no display properties were stored.
+    fn get_display_properties(&self, _shape_id: ObjectShapeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        None
     }
 
     /// Get the base class type for a symbol (class/interface).
@@ -288,6 +313,14 @@ impl TypeDatabase for TypeInterner {
         Self::object_with_index(self, shape)
     }
 
+    fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        Self::object_fresh_with_display(self, widened_properties, display_properties)
+    }
+
     fn function(&self, shape: FunctionShape) -> TypeId {
         Self::function(self, shape)
     }
@@ -378,6 +411,14 @@ impl TypeDatabase for TypeInterner {
 
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
         Self::string_intrinsic(self, kind, type_arg)
+    }
+
+    fn store_display_properties(&self, shape_id: ObjectShapeId, props: Vec<PropertyInfo>) {
+        Self::store_display_properties(self, shape_id, props);
+    }
+
+    fn get_display_properties(&self, shape_id: ObjectShapeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        Self::get_display_properties(self, shape_id)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {

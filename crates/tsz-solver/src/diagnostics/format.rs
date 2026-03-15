@@ -341,12 +341,25 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
+                // Use display properties (pre-widened literal types) when available.
+                // This implements tsc's freshness model where error messages show
+                // literal types even though the type system uses widened types.
+                if let Some(display_props) = self.interner.get_display_properties(*shape_id) {
+                    return self.format_object(display_props.as_slice()).into();
+                }
                 self.format_object(shape.properties.as_slice()).into()
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
+                }
+                // Use display properties for fresh object types with index signatures too.
+                if let Some(display_props) = self.interner.get_display_properties(*shape_id) {
+                    // Build a temporary shape with display properties for formatting
+                    let mut display_shape = shape.as_ref().clone();
+                    display_shape.properties = display_props.as_ref().clone();
+                    return self.format_object_with_index(&display_shape).into();
                 }
                 self.format_object_with_index(shape.as_ref()).into()
             }
