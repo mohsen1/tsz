@@ -484,7 +484,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // We use a TypeParameter with a special name to track it during constraint collection
             use std::fmt::Write;
             placeholder_buf.clear();
-            write!(placeholder_buf, "__infer_{}", var.0).unwrap();
+            write!(placeholder_buf, "__infer_{}", var.0).expect("write to String is infallible");
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
@@ -1066,7 +1066,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // This var was fixed in Round 1 — map its placeholder name to the resolved type
                 use std::fmt::Write;
                 placeholder_buf.clear();
-                write!(placeholder_buf, "__infer_{}", var.0).unwrap();
+                write!(placeholder_buf, "__infer_{}", var.0)
+                    .expect("write to String is infallible");
                 let placeholder_atom = self.interner.intern_string(&placeholder_buf);
                 fixed_subst.insert(placeholder_atom, resolved);
                 // Also map the original type param name, in case target_type references it
@@ -1704,7 +1705,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if let Some(inferred) = final_subst.get(tp.name) {
                     use std::fmt::Write;
                     placeholder_buf.clear();
-                    write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
+                    write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
+                        .expect("write to String is infallible");
                     let placeholder_atom = self.interner.intern_string(&placeholder_buf);
                     s.insert(placeholder_atom, inferred);
                 }
@@ -2861,7 +2863,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             use std::fmt::Write;
             placeholder_buf.clear();
-            write!(placeholder_buf, "__infer_{}", var.0).unwrap();
+            write!(placeholder_buf, "__infer_{}", var.0).expect("write to String is infallible");
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
@@ -3142,7 +3144,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (i, tp) in func.type_params.iter().enumerate() {
             use std::fmt::Write;
             placeholder_buf.clear();
-            write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
+            write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
+                .expect("write to String is infallible");
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             let preferred_lower_bound =
                 infer_ctx
@@ -3245,7 +3248,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 use std::fmt::Write;
                 placeholder_buf.clear();
-                write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
+                write!(placeholder_buf, "__infer_{}", type_param_vars[i].0)
+                    .expect("write to String is infallible");
                 let placeholder_atom = self.interner.intern_string(&placeholder_buf);
                 let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                     is_const: tp.is_const,

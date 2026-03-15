@@ -918,7 +918,7 @@ impl<'a> InferenceContext<'a> {
             return true;
         }
         let source = source.unwrap_or(TypeId::UNKNOWN);
-        let target = target.unwrap();
+        let target = target.expect("target.is_none() case handled above");
         self.are_parameters_compatible(source, target, bivariant)
     }
 

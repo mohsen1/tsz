@@ -911,7 +911,10 @@ fn extract_param_type_at_inner(
         let rest_index = index - rest_start;
         if let Some(evaluated) = evaluate_rest_like_type(db, last_param.type_id) {
             let mut mock_params = params.to_vec();
-            mock_params.last_mut().unwrap().type_id = evaluated;
+            mock_params
+                .last_mut()
+                .expect("mock_params is non-empty after to_vec from non-empty params")
+                .type_id = evaluated;
             return extract_param_type_at_inner(db, &mock_params, index, arg_count);
         }
         if let Some(TypeData::Array(elem)) = db.lookup(last_param.type_id) {
@@ -924,7 +927,10 @@ fn extract_param_type_at_inner(
                 .rev()
                 .filter_map(|&member| {
                     let mut mock_params = params.to_vec();
-                    mock_params.last_mut().unwrap().type_id = member;
+                    mock_params
+                        .last_mut()
+                        .expect("mock_params is non-empty after to_vec from non-empty params")
+                        .type_id = member;
                     extract_param_type_at_inner(db, &mock_params, index, arg_count)
                 })
                 .collect();
@@ -964,14 +970,20 @@ fn extract_param_type_at_inner(
         } else if let Some(TypeData::TypeParameter(param_info)) = db.lookup(last_param.type_id) {
             if let Some(constraint) = param_info.constraint {
                 let mut mock_params = params.to_vec();
-                mock_params.last_mut().unwrap().type_id = constraint;
+                mock_params
+                    .last_mut()
+                    .expect("mock_params is non-empty after to_vec from non-empty params")
+                    .type_id = constraint;
                 return extract_param_type_at_inner(db, &mock_params, index, arg_count);
             }
         } else if let Some(TypeData::Intersection(members)) = db.lookup(last_param.type_id) {
             let members = db.type_list(members);
             for &m in members.iter() {
                 let mut mock_params = params.to_vec();
-                mock_params.last_mut().unwrap().type_id = m;
+                mock_params
+                    .last_mut()
+                    .expect("mock_params is non-empty after to_vec from non-empty params")
+                    .type_id = m;
                 if let Some(param_type) =
                     extract_param_type_at_inner(db, &mock_params, index, arg_count)
                 {
@@ -991,7 +1003,10 @@ fn extract_param_type_at_inner(
             crate::type_queries::get_type_parameter_constraint(db, last_param.type_id)
         {
             let mut mock_params = params.to_vec();
-            mock_params.last_mut().unwrap().type_id = constraint;
+            mock_params
+                .last_mut()
+                .expect("mock_params is non-empty after to_vec from non-empty params")
+                .type_id = constraint;
             if let Some(param_type) =
                 extract_param_type_at_inner(db, &mock_params, index, arg_count)
             {
