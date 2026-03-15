@@ -243,6 +243,12 @@ impl<'a> Completions<'a> {
         if let Some(items) = self.get_meta_property_completions(offset) {
             return Some(items);
         }
+        let is_orphan_dot = member_target.is_none() && self.is_member_context(offset);
+        // If cursor follows a dot but there's no valid expression before it
+        // (e.g., source is just "." or ".."), return no completions.
+        if is_orphan_dot {
+            return None;
+        }
         let member_request = member_target.is_some() || self.is_member_context(offset);
         let global_this_member_fallback = member_target
             .and_then(|idx| self.arena.get_identifier_text(idx))
