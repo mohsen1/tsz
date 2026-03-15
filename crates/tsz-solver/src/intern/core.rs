@@ -692,6 +692,12 @@ impl TypeInterner {
         TypeListId(self.type_lists.intern(&members))
     }
 
+    /// Intern a type list from a slice, avoiding Vec conversion when the caller
+    /// already has a SmallVec or slice reference.
+    pub(super) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
+        TypeListId(self.type_lists.intern(members))
+    }
+
     fn intern_tuple_list(&self, elements: Vec<TupleElement>) -> TupleListId {
         TupleListId(self.tuple_lists.intern(&elements))
     }
@@ -1001,7 +1007,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1359,7 +1365,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1427,7 +1433,7 @@ impl TypeInterner {
         // NOTE: No subtype reduction here — this is the key difference from normalize_union.
         // tsc's UnionReduction.Literal only absorbs literals into primitives.
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1506,7 +1512,7 @@ impl TypeInterner {
         }
 
         // Create the intersection directly without calling normalize_intersection
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Intersection(list_id))
     }
 
