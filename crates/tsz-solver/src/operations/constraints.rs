@@ -500,8 +500,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .collect();
 
                     if !structural_matches.is_empty() {
-                        // Prefer structural matches over naked type params
-                        for member in structural_matches {
+                        // When multiple Object-type members match, prefer the one with
+                        // deeper property-level alignment. For example, given source
+                        // `{d: number[]}` and targets `{d: T}` vs `{d: T[]}`, the second
+                        // is better because the Array structure in `d` aligns. Without
+                        // this, both contribute candidates and the naked-type-param member
+                        // produces a too-wide inference (T = number[] instead of T = number).
+                        let best_matches = if structural_matches.len() > 1 {
+                            self.select_best_structural_matches_for_constraint(
+                                source,
+                                &structural_matches,
+                                var_map,
+                            )
+                        } else {
+                            structural_matches.clone()
+                        };
+                        for member in best_matches {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     } else {
@@ -1969,6 +1983,86 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // For any other template shape (conditional types, etc.),
         // we can't safely reverse.
         None
+    }
+
+    /// When multiple union members structurally match the source (e.g., both are
+    /// Object types), select the ones with the deepest property-level alignment.
+    ///
+    /// For source `{d: T[]}` and candidates `{d: P}` vs `{d: P[]}`, the second
+    /// candidate scores higher because the Array wrapper in property `d` aligns
+    /// with the source. This prevents the naked-type-param member from producing
+    /// a too-wide inference candidate.
+    fn select_best_structural_matches_for_constraint(
+        &self,
+        source: TypeId,
+        candidates: &[TypeId],
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> Vec<TypeId> {
+        let Some(TypeData::Object(s_shape_id)) = self.interner.lookup(source) else {
+            return candidates.to_vec();
+        };
+        let s_shape = self.interner.object_shape(s_shape_id);
+        if s_shape.properties.is_empty() {
+            return candidates.to_vec();
+        }
+
+        // Score each candidate by how many properties have structural alignment
+        // with the source (e.g., Array-to-Array, Object-to-Object) rather than
+        // matching a naked type parameter placeholder.
+        let scored: Vec<(TypeId, usize)> = candidates
+            .iter()
+            .map(|&candidate| {
+                let score = self.score_property_alignment(&s_shape.properties, candidate, var_map);
+                (candidate, score)
+            })
+            .collect();
+
+        let max_score = scored.iter().map(|(_, s)| *s).max().unwrap_or(0);
+        if max_score == 0 {
+            // All candidates have the same score — return all
+            return candidates.to_vec();
+        }
+
+        scored
+            .into_iter()
+            .filter(|(_, s)| *s == max_score)
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Score how well a target object type's properties structurally align with
+    /// source properties. Each property where the target has a structural wrapper
+    /// (Array, Tuple, Function, etc.) that matches the source property's outer
+    /// structure scores 1. Naked type parameter placeholders score 0.
+    fn score_property_alignment(
+        &self,
+        source_props: &[PropertyInfo],
+        target: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> usize {
+        let Some(TypeData::Object(t_shape_id)) = self.interner.lookup(target) else {
+            return 0;
+        };
+        let t_shape = self.interner.object_shape(t_shape_id);
+        let mut score = 0;
+        for s_prop in source_props {
+            // Find matching property in target
+            if let Ok(idx) = t_shape
+                .properties
+                .binary_search_by_key(&s_prop.name, |p| p.name)
+            {
+                let t_prop_type = t_shape.properties[idx].type_id;
+                // If target property is a placeholder (inference var), no alignment bonus
+                if var_map.contains_key(&t_prop_type) {
+                    continue;
+                }
+                // If both have the same outer structure, score a point
+                if self.types_share_outer_structure_for_constraint(s_prop.type_id, t_prop_type) {
+                    score += 1;
+                }
+            }
+        }
+        score
     }
 
     /// Check if two types share the same outer structure for constraint matching.

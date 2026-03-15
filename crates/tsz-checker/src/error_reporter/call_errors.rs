@@ -942,16 +942,26 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
-                matches!(
-                    node.kind,
-                    syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        | syntax_kind_ext::ARROW_FUNCTION
-                        | syntax_kind_ext::FUNCTION_EXPRESSION
-                        | syntax_kind_ext::CONDITIONAL_EXPRESSION
-                )
-            }) && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
+            // Only try to elaborate sub-expression errors when the property value
+            // is NOT assignable to the target. Without this guard, elaboration can
+            // produce false-positive TS2322 errors on nested elements (e.g., array
+            // literal elements) even when the overall property type is compatible.
+            if source_prop_type != TypeId::ERROR
+                && source_prop_type != TypeId::ANY
+                && target_prop_type != TypeId::ERROR
+                && target_prop_type != TypeId::ANY
+                && !self.is_assignable_to(source_prop_type, target_prop_type)
+                && self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                            | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                    )
+                })
+                && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
             {
                 elaborated = true;
                 continue;
