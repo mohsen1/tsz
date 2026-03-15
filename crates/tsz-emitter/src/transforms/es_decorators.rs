@@ -432,26 +432,32 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{indent}const _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
         }
 
-        // In ES2022 static block mode for field-only decorators (no computed method sinks),
-        // emit assignment expressions before __esDecorate calls
-        if self.use_static_blocks {
-            let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
-                decorated_members.get(*mi).is_some_and(|m| {
-                    matches!(
-                        m.kind,
-                        MemberKind::Method | MemberKind::Getter | MemberKind::Setter
-                    )
-                })
-            });
-            if !has_computed_method_sink {
-                for (i, member) in decorated_members.iter().enumerate() {
-                    let var_info = &member_vars[i];
-                    let dec_exprs = member.decorator_exprs.join(", ");
-                    out.push_str(&format!(
-                        "{indent}{} = [{}];\n",
-                        var_info.decorators_var, dec_exprs
-                    ));
-                }
+        // Emit decorator assignment expressions before __esDecorate calls when
+        // assignments can't go in a computed member sink:
+        // - ES2022 static blocks without computed method sinks (field-only decorators)
+        // - ES2015 + class decorators (assignments go in the IIFE, not a sink member)
+        let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
+            decorated_members.get(*mi).is_some_and(|m| {
+                matches!(
+                    m.kind,
+                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+                )
+            })
+        });
+        let emit_assignments_here = if self.use_static_blocks {
+            !has_computed_method_sink
+        } else {
+            // ES2015 + class decorators: always put assignments in IIFE
+            !class_decorators.is_empty()
+        };
+        if emit_assignments_here {
+            for (i, member) in decorated_members.iter().enumerate() {
+                let var_info = &member_vars[i];
+                let dec_exprs = member.decorator_exprs.join(", ");
+                out.push_str(&format!(
+                    "{indent}{} = [{}];\n",
+                    var_info.decorators_var, dec_exprs
+                ));
             }
         }
 
@@ -634,8 +640,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 )
             })
         });
+        // Skip sink when assignments went to the decorator application block:
+        // - ES2022 without computed method sinks (assignments in static block)
+        // - ES2015 + class decorators (assignments in IIFE)
+        let es2015_class_decorators = !self.use_static_blocks && _class_alias == "_classThis";
         let skip_sink =
-            self.use_static_blocks && !has_computed_method_sink && !decorated_members.is_empty();
+            (self.use_static_blocks && !has_computed_method_sink && !decorated_members.is_empty())
+                || es2015_class_decorators;
         if !remaining_assignments.is_empty() && !skip_sink {
             let sink_expr = remaining_assignments.join(", ");
             let sink_is_static = decorated_members.iter().any(|m| m.is_static);
