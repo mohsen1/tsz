@@ -4677,17 +4677,16 @@ impl<'a> DeclarationEmitter<'a> {
         for &idx in &object.elements.nodes {
             if let Some(n) = self.arena.get(idx) {
                 if n.kind == syntax_kind_ext::SET_ACCESSOR {
-                    if let Some(acc) = self.arena.get_accessor(n) {
-                        if let Some(name) = self.infer_property_name_text(acc.name) {
-                            setter_names.insert(name);
-                        }
+                    if let Some(acc) = self.arena.get_accessor(n)
+                        && let Some(name) = self.infer_property_name_text(acc.name)
+                    {
+                        setter_names.insert(name);
                     }
-                } else if n.kind == syntax_kind_ext::GET_ACCESSOR {
-                    if let Some(acc) = self.arena.get_accessor(n) {
-                        if let Some(name) = self.infer_property_name_text(acc.name) {
-                            getter_names.insert(name);
-                        }
-                    }
+                } else if n.kind == syntax_kind_ext::GET_ACCESSOR
+                    && let Some(acc) = self.arena.get_accessor(n)
+                    && let Some(name) = self.infer_property_name_text(acc.name)
+                {
+                    getter_names.insert(name);
                 }
             }
         }
@@ -4699,45 +4698,43 @@ impl<'a> DeclarationEmitter<'a> {
             };
             // Handle setters: skip if there's a matching getter (merged),
             // otherwise emit as writable property with setter parameter type
-            if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                if let Some(acc) = self.arena.get_accessor(member_node) {
-                    if let Some(name) = self.infer_property_name_text(acc.name) {
-                        if getter_names.contains(&name) {
-                            continue; // merged with getter
-                        }
-                        // Setter-only: emit as writable property using first param type
-                        let type_text = acc
-                            .parameters
-                            .nodes
-                            .first()
-                            .and_then(|&p_idx| self.arena.get(p_idx))
-                            .and_then(|p_node| self.arena.get_parameter(p_node))
-                            .and_then(|param| {
-                                self.infer_fallback_type_text_at(param.type_annotation, depth + 1)
-                            })
-                            .unwrap_or_else(|| "any".to_string());
-                        members.push(format!("{name}: {type_text}"));
-                        continue;
-                    }
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(acc) = self.arena.get_accessor(member_node)
+                && let Some(name) = self.infer_property_name_text(acc.name)
+            {
+                if getter_names.contains(&name) {
+                    continue; // merged with getter
                 }
+                // Setter-only: emit as writable property using first param type
+                let type_text = acc
+                    .parameters
+                    .nodes
+                    .first()
+                    .and_then(|&p_idx| self.arena.get(p_idx))
+                    .and_then(|p_node| self.arena.get_parameter(p_node))
+                    .and_then(|param| {
+                        self.infer_fallback_type_text_at(param.type_annotation, depth + 1)
+                    })
+                    .unwrap_or_else(|| "any".to_string());
+                members.push(format!("{name}: {type_text}"));
+                continue;
             }
             // For getters: handle readonly based on setter existence + infer body type
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if let Some(acc) = self.arena.get_accessor(member_node) {
-                    if let Some(name) = self.infer_property_name_text(acc.name) {
-                        let type_text = self
-                            .infer_fallback_type_text_at(acc.type_annotation, depth + 1)
-                            .or_else(|| self.function_body_preferred_return_type_text(acc.body))
-                            .unwrap_or_else(|| "any".to_string());
-                        let readonly = if setter_names.contains(&name) {
-                            ""
-                        } else {
-                            "readonly "
-                        };
-                        members.push(format!("{readonly}{name}: {type_text}"));
-                        continue;
-                    }
-                }
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(acc) = self.arena.get_accessor(member_node)
+                && let Some(name) = self.infer_property_name_text(acc.name)
+            {
+                let type_text = self
+                    .infer_fallback_type_text_at(acc.type_annotation, depth + 1)
+                    .or_else(|| self.function_body_preferred_return_type_text(acc.body))
+                    .unwrap_or_else(|| "any".to_string());
+                let readonly = if setter_names.contains(&name) {
+                    ""
+                } else {
+                    "readonly "
+                };
+                members.push(format!("{readonly}{name}: {type_text}"));
+                continue;
             }
 
             if let Some(member_text) = self.infer_object_member_type_text_at(member_idx, depth + 1)

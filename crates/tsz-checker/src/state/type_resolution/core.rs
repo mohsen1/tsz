@@ -1688,13 +1688,12 @@ impl<'a> CheckerState<'a> {
                 // access expression (e.g., `export default C.B` where B is both a
                 // static property and an interface), resolve the type meaning of the
                 // property access.
-                if target_flags & symbol_flags::EXPORT_VALUE != 0 {
-                    if let Some(type_id) =
+                if target_flags & symbol_flags::EXPORT_VALUE != 0
+                    && let Some(type_id) =
                         self.resolve_default_export_property_type_meaning(target_sym_id)
-                    {
-                        self.ctx.leave_recursion();
-                        return type_id;
-                    }
+                {
+                    self.ctx.leave_recursion();
+                    return type_id;
                 }
             }
         }
