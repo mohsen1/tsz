@@ -297,6 +297,31 @@ impl<'a> CheckerState<'a> {
             self.evaluate_application_type(original_object_type)
         };
 
+        // When the object type is `unknown` but the expression is an identifier or
+        // property access whose type was not fully resolved (lazy type alias evaluation),
+        // re-resolve to trigger deferred Application type expansion. This handles
+        // cases where variables declared with generic type alias annotations (e.g.,
+        // `type P = Proxy<string>; const ps: P`) or mapped types with Application
+        // templates (e.g., `Proxify<Shape>`) have not been fully evaluated when
+        // the first property access occurs.
+        if object_type == TypeId::UNKNOWN {
+            if let Some(expr_node) = self.ctx.arena.get(access.expression) {
+                if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                    if let Some(sym_id) = self.resolve_identifier_symbol(access.expression) {
+                        let sym_type = self.get_type_of_symbol(sym_id);
+                        if sym_type != TypeId::UNKNOWN && sym_type != TypeId::ERROR {
+                            object_type = self.evaluate_application_type(sym_type);
+                        }
+                    }
+                } else if self.ctx.arena.get_access_expr(expr_node).is_some() {
+                    let inner_type = self.get_type_of_property_access(access.expression);
+                    if inner_type != TypeId::UNKNOWN && inner_type != TypeId::ERROR {
+                        object_type = self.evaluate_application_type(inner_type);
+                    }
+                }
+            }
+        }
+
         // Handle optional chain continuations: for `o?.b.c`, when processing `.c`,
         // the object type from `o?.b` includes `undefined` from the optional chain.
         // But `.c` should only be reached when `o` is defined, so we strip nullish
