@@ -26,20 +26,6 @@ use crate::types::{
 use crate::visitors::visitor_predicates::is_primitive_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// Result of conditional type evaluation
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ConditionalResult {
-    /// The condition was resolved to a definite type
-    Resolved(TypeId),
-    /// The condition could not be resolved (deferred)
-    /// This happens when `check_type` is a type parameter that hasn't been substituted
-    Deferred(TypeId),
-}
-
-/// Maximum number of unique types to track in the visiting set.
-/// Prevents unbounded memory growth in pathological cases.
-pub(crate) const MAX_VISITING_SET_SIZE: usize = 10_000;
-
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
 enum SubtypeDirection {
