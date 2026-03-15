@@ -477,10 +477,21 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
     fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
         let elements = self.evaluator.interner().tuple_list(TupleListId(list_id));
-        Some(
-            self.evaluator
-                .evaluate_tuple_index(&elements, self.index_type),
-        )
+        let result = self
+            .evaluator
+            .evaluate_tuple_index(&elements, self.index_type);
+
+        // CRITICAL FIX: If we can't find the element, but the index is generic,
+        // we must defer evaluation (return None) instead of returning UNDEFINED.
+        // This prevents false TS2344 errors when a tuple is indexed by a type
+        // parameter (e.g., `[-1, 0, 1, ...][Depth]` where `Depth extends number`).
+        // Without this, the evaluator resolves the IndexAccess to `undefined`,
+        // which then fails the constraint check against `number`.
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+
+        Some(result)
     }
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
