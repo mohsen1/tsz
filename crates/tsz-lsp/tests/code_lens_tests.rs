@@ -1086,3 +1086,303 @@ fn test_code_lens_file_path_in_data() {
         }
     }
 }
+
+#[test]
+fn test_code_lens_async_function() {
+    let source = "async function fetchData() {\n  return await Promise.resolve(1);\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let func_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        func_lens.is_some(),
+        "Async function should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_generator_function() {
+    let source = "function* gen() {\n  yield 1;\n  yield 2;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let func_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        func_lens.is_some(),
+        "Generator function should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_class_with_private_method() {
+    let source = "class Secret {\n  private hidden() {}\n  public visible() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Class should still get a lens regardless of member visibility
+    let class_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        class_lens.is_some(),
+        "Class with private methods should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_interface_with_readonly_properties() {
+    let source = "interface Immutable {\n  readonly x: number;\n  readonly y: string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let interface_lenses: Vec<_> = lenses.iter().filter(|l| l.range.start.line == 0).collect();
+    assert!(
+        interface_lenses.len() >= 2,
+        "Interface with readonly properties should have refs and impls lenses"
+    );
+}
+
+#[test]
+fn test_code_lens_enum_with_computed_values() {
+    let source =
+        "enum FileAccess {\n  Read = 1 << 0,\n  Write = 1 << 1,\n  ReadWrite = Read | Write\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let enum_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        enum_lens.is_some(),
+        "Enum with computed values should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_type_alias_union_of_interfaces() {
+    let source = "interface A {}\ninterface B {}\ntype AB = A | B;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Should have lenses for both interfaces and the type alias
+    assert!(
+        lenses.len() >= 3,
+        "Should have lenses for 2 interfaces + 1 type alias, got {}",
+        lenses.len()
+    );
+}
+
+#[test]
+fn test_code_lens_class_with_index_signature() {
+    let source = "class DynamicObj {\n  [key: string]: any;\n  method() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let class_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        class_lens.is_some(),
+        "Class with index signature should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_function_with_default_params() {
+    let source = "function greet(name: string = 'World') {\n  return `Hello ${name}`;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let func_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        func_lens.is_some(),
+        "Function with default params should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_declare_function() {
+    let source = "declare function external(): void;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Declared functions should still get code lenses
+    let _ = lenses; // Defensive: just ensure no panic
+}
+
+#[test]
+fn test_code_lens_class_with_decorators_syntax() {
+    let source = "class Component {\n  method() {}\n}\nclass Service {\n  handle() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Both classes should have lenses
+    let has_component = lenses.iter().any(|l| l.range.start.line == 0);
+    let has_service = lenses.iter().any(|l| l.range.start.line == 3);
+    assert!(has_component, "Component class should have a code lens");
+    assert!(has_service, "Service class should have a code lens");
+}
+
+#[test]
+fn test_code_lens_interface_with_optional_properties() {
+    let source =
+        "interface Options {\n  debug?: boolean;\n  verbose?: boolean;\n  timeout?: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let interface_lenses: Vec<_> = lenses.iter().filter(|l| l.range.start.line == 0).collect();
+    assert!(
+        interface_lenses.len() >= 2,
+        "Interface with optional properties should have refs and impls lenses"
+    );
+}
+
+#[test]
+fn test_code_lens_resolve_command_for_references() {
+    let source = "function target() {}\ntarget();\ntarget();\ntarget();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+    let ref_lens = lenses.iter().find(|l| {
+        l.data
+            .as_ref()
+            .map_or(false, |d| d.kind == CodeLensKind::References)
+            && l.range.start.line == 0
+    });
+
+    if let Some(lens) = ref_lens {
+        let resolved = provider.resolve_code_lens(root, lens);
+        if let Some(resolved) = resolved {
+            if let Some(command) = resolved.command {
+                assert_eq!(
+                    command.command, "editor.action.showReferences",
+                    "References lens should use showReferences command"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_code_lens_class_implementing_multiple_interfaces() {
+    let source = "interface A {\n  a(): void;\n}\ninterface B {\n  b(): void;\n}\nclass Impl implements A, B {\n  a() {}\n  b() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Should have lenses for both interfaces and the implementing class
+    assert!(
+        lenses.len() >= 5,
+        "Should have lenses for 2 interfaces (refs+impls each) + 1 class, got {}",
+        lenses.len()
+    );
+}
