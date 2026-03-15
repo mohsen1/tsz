@@ -538,8 +538,12 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const preserveConstEnums = variant.preserveconstenums !== undefined
       ? variant.preserveconstenums === 'true'
       : directives.preserveconstenums === true;
-    const verbatimModuleSyntax = directives.verbatimmodulesyntax === true;
-    const isolatedModules = directives.isolatedmodules === true;
+    const verbatimModuleSyntax = variant.verbatimmodulesyntax !== undefined
+      ? variant.verbatimmodulesyntax === 'true'
+      : directives.verbatimmodulesyntax === true;
+    const isolatedModules = variant.isolatedmodules !== undefined
+      ? variant.isolatedmodules === 'true'
+      : directives.isolatedmodules === true;
     const importsNotUsedAsValues = typeof directives.importsnotusedasvalues === 'string'
       ? directives.importsnotusedasvalues : undefined;
     const preserveValueImports = directives.preservevalueimports === true;
@@ -1027,12 +1031,9 @@ async function main() {
   const realFailures = failures.filter(f => !f.timeout);
   if (realFailures.length > 0 && !config.verbose) {
     console.log(`\n${pc.bold('First failures:')}`);
-    for (const f of realFailures.slice(0, 10)) {
+    for (const f of realFailures) {
       const diffInfo = f.jsError ? ` ${pc.dim(`(${f.jsError})`)}` : '';
       console.log(`  ${pc.red('✗')} ${f.name}${diffInfo}`);
-    }
-    if (realFailures.length > 10) {
-      console.log(`  ${pc.dim(`... and ${realFailures.length - 10} more`)}`);
     }
   }
 
