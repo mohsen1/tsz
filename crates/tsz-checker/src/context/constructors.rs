@@ -165,6 +165,7 @@ impl<'a> CheckerContext<'a> {
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
@@ -357,6 +358,7 @@ impl<'a> CheckerContext<'a> {
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store, // Use the shared store instead of creating new
             symbol_to_def: RefCell::new(FxHashMap::default()),
@@ -540,6 +542,7 @@ impl<'a> CheckerContext<'a> {
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
@@ -730,6 +733,7 @@ impl<'a> CheckerContext<'a> {
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
@@ -913,6 +917,7 @@ impl<'a> CheckerContext<'a> {
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
@@ -1121,6 +1126,7 @@ impl<'a> CheckerContext<'a> {
             generator_had_ts7057: false,
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             // Share DefinitionStore with parent so DefIds are globally unique
             // across parent/child checkers. This prevents DefId collisions where

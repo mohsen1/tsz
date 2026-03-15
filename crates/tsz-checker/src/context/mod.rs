@@ -628,6 +628,12 @@ pub struct CheckerContext<'a> {
     /// Current enclosing class info.
     pub enclosing_class: Option<EnclosingClassInfo>,
 
+    /// Stack of outer enclosing class `NodeIndex`es, from outermost to innermost.
+    /// When entering a nested class, the outer class is pushed here.
+    /// Used by protected member access checks (TS2446) to find the correct
+    /// enclosing class in the inheritance hierarchy when code is inside nested classes.
+    pub enclosing_class_chain: Vec<NodeIndex>,
+
     /// Type environment for symbol resolution with type parameters.
     /// Used by the evaluator to expand Application types.
     pub type_env: RefCell<TypeEnvironment>,

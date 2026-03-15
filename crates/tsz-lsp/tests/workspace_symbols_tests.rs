@@ -739,3 +739,163 @@ fn test_infer_symbol_kind_single_lowercase_char() {
         SymbolKind::Variable
     );
 }
+
+#[test]
+fn test_workspace_symbols_underscore_prefix() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "_privateHelper",
+        make_location("internal.ts", 0, 0, 14),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("_private");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "_privateHelper");
+}
+
+#[test]
+fn test_workspace_symbols_numeric_suffix() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "handler1",
+        make_location("handlers.ts", 0, 0, 8),
+        SymbolKind::Function,
+    );
+    index.add_definition_with_kind(
+        "handler2",
+        make_location("handlers.ts", 5, 0, 8),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("handler");
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
+fn test_workspace_symbols_many_results() {
+    let mut index = SymbolIndex::new();
+    for i in 0..20 {
+        index.add_definition_with_kind(
+            &format!("item{}", i),
+            make_location("items.ts", i, 0, 5),
+            SymbolKind::Variable,
+        );
+    }
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("item");
+    assert!(results.len() >= 10, "Should return many matching results");
+}
+
+#[test]
+fn test_workspace_symbols_interface_kind() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "IUserService",
+        make_location("services.ts", 0, 0, 12),
+        SymbolKind::Interface,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("IUser");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_workspace_symbols_enum_kind() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "Color",
+        make_location("enums.ts", 0, 0, 5),
+        SymbolKind::Enum,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Color");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Enum);
+}
+
+#[test]
+fn test_workspace_symbols_whitespace_query() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("  ");
+    // Whitespace-only query behavior is implementation-defined
+    let _ = results;
+}
+
+#[test]
+fn test_workspace_symbols_special_chars() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("@#$");
+    assert!(
+        results.is_empty(),
+        "Special chars should not match normal symbols"
+    );
+}
+
+#[test]
+fn test_workspace_symbols_module_kind() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "MyModule",
+        make_location("mod.ts", 0, 0, 8),
+        SymbolKind::Module,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("MyModule");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Module);
+}
+
+#[test]
+fn test_workspace_symbols_type_alias_kind() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "StringOrNumber",
+        make_location("types.ts", 0, 0, 14),
+        SymbolKind::TypeParameter,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("StringOr");
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn test_workspace_symbols_duplicate_names_different_files() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("Config", make_location("a.ts", 0, 0, 6), SymbolKind::Class);
+    index.add_definition_with_kind(
+        "Config",
+        make_location("b.ts", 0, 0, 6),
+        SymbolKind::Interface,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Config");
+    assert_eq!(
+        results.len(),
+        2,
+        "Should find both Configs from different files"
+    );
+}
+
+#[test]
+fn test_infer_symbol_kind_screaming_snake() {
+    // ALL_CAPS_NAME -> Constant
+    assert_eq!(
+        WorkspaceSymbolsProvider::infer_symbol_kind("MAX_VALUE"),
+        SymbolKind::Constant
+    );
+}
+
+#[test]
+fn test_infer_symbol_kind_camel_case() {
+    // camelCase may be inferred as Function or Variable depending on implementation
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("getUserName");
+    assert!(
+        kind == SymbolKind::Function || kind == SymbolKind::Variable,
+        "camelCase should be Function or Variable, got: {:?}",
+        kind
+    );
+}

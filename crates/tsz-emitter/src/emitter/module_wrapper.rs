@@ -1138,6 +1138,29 @@ impl<'a> Printer<'a> {
             return true;
         }
 
+        // Exported function declarations: emit the function then register with exports_1
+        if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func_decl) = self.arena.get_function(clause_node)
+        {
+            let func_name = self.get_identifier_text_idx(func_decl.name);
+            if func_name.is_empty() {
+                return false;
+            }
+            self.emit(export_decl.export_clause);
+            self.write_line();
+            self.write("exports_1(\"");
+            let export_name = if export_decl.is_default_export {
+                "default"
+            } else {
+                &func_name
+            };
+            self.write(export_name);
+            self.write("\", ");
+            self.write(&func_name);
+            self.write(");");
+            return true;
+        }
+
         false
     }
 
