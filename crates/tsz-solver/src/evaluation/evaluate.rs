@@ -874,6 +874,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let members = self.interner.type_list(list_id);
                 members.iter().any(|&m| self.is_complex_type(m))
             }
+            // Function types with Application return types are complex because
+            // bypass_evaluation doesn't prevent check_return_compat from fully
+            // evaluating Application return types. This causes structurally similar
+            // but distinct return types (e.g., Generator<T> vs AsyncGenerator<T>)
+            // to be incorrectly collapsed via remove_redundant_members.
+            TypeData::Function(fn_id) => {
+                let shape = self.interner.function_shape(fn_id);
+                matches!(
+                    self.interner.lookup(shape.return_type),
+                    Some(TypeData::Application(_) | TypeData::Lazy(_))
+                )
+            }
             _ => false,
         }
     }
