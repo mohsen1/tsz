@@ -1732,26 +1732,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When source is an IndexAccess like T["x"] where T is a constrained type
         // parameter, resolve through T's constraint. For example, T["x"] where
         // T extends { x: number } should resolve to number via the constraint.
-        if result == SubtypeResult::False {
-            if let Some((s_obj, s_idx)) = index_access_parts(self.interner, source) {
-                // Get the constraint: either from TypeParameter directly or
-                // by evaluating the object type and extracting its constraint
-                let constraint = if let Some(tp) = type_param_info(self.interner, s_obj) {
-                    tp.constraint
-                } else {
-                    // Try evaluating in case it's wrapped (e.g., Lazy)
-                    let evaluated_obj = self.evaluate_type(s_obj);
-                    type_param_info(self.interner, evaluated_obj).and_then(|tp| tp.constraint)
-                };
-                if let Some(constraint) = constraint {
-                    let constraint = self.evaluate_type(constraint);
-                    let resolved = self.interner.index_access(constraint, s_idx);
-                    let resolved = self.evaluate_type(resolved);
-                    if resolved != source && resolved != TypeId::ERROR && resolved != TypeId::NONE {
-                        if self.check_subtype(resolved, target).is_true() {
-                            return SubtypeResult::True;
-                        }
-                    }
+        if result == SubtypeResult::False
+            && let Some((s_obj, s_idx)) = index_access_parts(self.interner, source)
+        {
+            // Get the constraint: either from TypeParameter directly or
+            // by evaluating the object type and extracting its constraint
+            let constraint = if let Some(tp) = type_param_info(self.interner, s_obj) {
+                tp.constraint
+            } else {
+                // Try evaluating in case it's wrapped (e.g., Lazy)
+                let evaluated_obj = self.evaluate_type(s_obj);
+                type_param_info(self.interner, evaluated_obj).and_then(|tp| tp.constraint)
+            };
+            if let Some(constraint) = constraint {
+                let constraint = self.evaluate_type(constraint);
+                let resolved = self.interner.index_access(constraint, s_idx);
+                let resolved = self.evaluate_type(resolved);
+                if resolved != source
+                    && resolved != TypeId::ERROR
+                    && resolved != TypeId::NONE
+                    && self.check_subtype(resolved, target).is_true()
+                {
+                    return SubtypeResult::True;
                 }
             }
         }
