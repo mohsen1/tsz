@@ -33,10 +33,11 @@
 
 ## Highest-Impact Next Steps
 
-### 0. TS2323↔TS2528 Duplicate Default Export (investigated, complex)
-**Status**: Investigated. tsc emits TS2323 for SOME duplicate default exports and TS2528 for others, and sometimes both. The current code always emits TS2528 which is wrong for many tests. Changing to TS2323 helps some tests but hurts others (+1 net). Need to understand tsc's exact logic for when to emit each code. The `is_conflict` detection also misses interface+function (only interface+class should be allowed to merge).
-**Key tests**: `exportDefaultClassAndValue.ts` (expects TS2323), `exportDefaultTypeClassAndValue.ts` (expects both TS2323+TS2528), `exportDefaultInterfaceAndTwoFunctions.ts` (expects TS2323+TS2393).
-**Dead end**: Emitting BOTH TS2323 and TS2528 adds false positive TS2528 to tests expecting only TS2323. Emitting only TS2323 misses TS2528 for tests expecting both.
+### 0. TS2323↔TS2528 Duplicate Default Export (DEAD END — do not re-investigate)
+**Status**: Thoroughly investigated. tsc's choice between TS2323 and TS2528 depends on subtle per-test patterns that we can't replicate without deep understanding of tsc's symbol merge logic.
+**Key finding**: `multipleExportDefault4.ts` (class + object literal → TS2528) vs `exportDefaultClassAndValue.ts` (const + class → TS2323). Both involve classes but expect different codes. The distinction is NOT based on whether a class is involved.
+**Conflict detection bug**: interface+function is treated as OK but should be a conflict. However, fixing this AND changing TS2528→TS2323 breaks `multipleExportDefault1-4,6` (6 tests that correctly pass with TS2528). Fixing conflict detection ALONE (keeping TS2528) makes `exportDefaultInterfaceAndTwoFunctions` worse (adds TS2528 where TS2323 expected). All approaches are net-negative or zero.
+**Dead end confirmed**: Any change to TS2323/TS2528 emission breaks as many tests as it fixes.
 
 ### 1. TS2322↔TS2345 Diagnostic Elaboration (3 remaining tests)
 **Status**: FIXED for `circularResolvedSignature.ts` (commit `52b3a14f6`). The inner TS2322 is pruned by `collect_call_argument_types_with_context` (call_checker.rs:987-1022, filter at line 1009-1016). The fix stores the return-type TS2322 in `callback_return_type_errors` and restores it in `call_result.rs` when processing `ArgumentTypeMismatch`.
