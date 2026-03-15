@@ -5,5 +5,4 @@
 //! over direct `TypeInterner` access. Test code may use the re-exported
 //! `TypeInterner` type for scaffolding.
 
-#[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
