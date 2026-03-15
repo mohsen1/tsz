@@ -531,9 +531,13 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
     const moduleDetection =
       variant.moduledetection ?? (typeof directives.moduledetection === 'string' ? directives.moduledetection : undefined);
-    const jsxFactory = typeof directives.jsxfactory === 'string' ? directives.jsxfactory : undefined;
+    // @reactNamespace: X maps to jsxFactory: X.createElement, jsxFragmentFactory: X.Fragment
+    const reactNamespace = typeof directives.reactnamespace === 'string' ? directives.reactnamespace : undefined;
+    const jsxFactory = typeof directives.jsxfactory === 'string' ? directives.jsxfactory
+      : reactNamespace ? `${reactNamespace}.createElement` : undefined;
     const jsxFragmentFactory =
-      typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory : undefined;
+      typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory
+      : reactNamespace ? `${reactNamespace}.Fragment` : undefined;
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
     const preserveConstEnums = variant.preserveconstenums !== undefined
       ? variant.preserveconstenums === 'true'
