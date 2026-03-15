@@ -439,8 +439,16 @@ impl<'a> CheckerState<'a> {
         self.check_constructor_accessibility_for_new(idx, constructor_type);
 
         if constructor_type == TypeId::ANY {
+            // Before emitting TS2347, check if the new-expression target is a
+            // this-property access (e.g., `new this.Map_<K, V>()`). In property
+            // initializers, `this.X` may return `any` because the class type is
+            // still being constructed. But the member's DECLARED type may have
+            // construct signatures with type parameters. If so, suppress TS2347.
+            let has_declared_construct_type_params =
+                self.new_target_has_declared_generic_construct(new_expr.expression);
             if let Some(ref type_args_list) = new_expr.type_arguments
                 && !type_args_list.nodes.is_empty()
+                && !has_declared_construct_type_params
             {
                 self.error_at_node(
                     idx,
