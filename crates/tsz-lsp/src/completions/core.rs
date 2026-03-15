@@ -223,7 +223,15 @@ impl<'a> Completions<'a> {
             return if items.is_empty() { None } else { Some(items) };
         }
 
-        // 4. Resolve member completion targets before lexical suppression checks.
+        // 4a. Check for ".." (double dot) context — never complete after "..".
+        // This must run before member target resolution because the parser may
+        // create a PropertyAccessExpression for `q.` where the second `.` is the
+        // cursor position.
+        if self.is_after_double_dot(offset) {
+            return None;
+        }
+
+        // 4b. Resolve member completion targets before lexical suppression checks.
         // Fourslash marker comments (e.g. `obj./**/`) often place the cursor inside
         // comment trivia where no-completion filters would otherwise short-circuit.
         let member_target = self
@@ -245,10 +253,11 @@ impl<'a> Completions<'a> {
         }
         let is_orphan_dot = member_target.is_none() && self.is_member_context(offset);
         // If cursor follows a dot but there's no valid expression before it
-        // (e.g., source is just "." or ".."), return no completions.
+        // (e.g., source is just "."), return no completions.
         if is_orphan_dot {
             return None;
         }
+        // (Double-dot check already done at step 4a above.)
         let member_request = member_target.is_some() || self.is_member_context(offset);
         let global_this_member_fallback = member_target
             .and_then(|idx| self.arena.get_identifier_text(idx))
