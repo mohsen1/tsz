@@ -700,7 +700,8 @@ impl<'a> Printer<'a> {
         }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
-        if !self.ctx.options.no_emit_helpers && !(self.ctx.options.import_helpers && is_file_module) {
+        if !self.ctx.options.no_emit_helpers && !(self.ctx.options.import_helpers && is_file_module)
+        {
             let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
             if !helpers_code.is_empty() {
                 self.write(&helpers_code);
