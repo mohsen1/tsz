@@ -234,7 +234,7 @@ The architecture requires diagnostics to flow through `error_reporter/` for
 consistent formatting and solver-reason-based generation. But 13 calls in 7
 files bypass this, creating ad-hoc diagnostic paths.
 
-### Prompt 3.1 — Catalog All Bypass Diagnostics
+### Prompt 3.1 — Catalog All Bypass Diagnostics ✅ DONE
 
 ```
 Find every call to push_diagnostic (or ctx.push_diagnostic, self.ctx.push_diagnostic,
@@ -251,7 +251,7 @@ For each call, document:
 Output a table. Do NOT make code changes.
 ```
 
-### Prompt 3.2 — Identify Missing error_reporter Methods
+### Prompt 3.2 — Identify Missing error_reporter Methods ✅ DONE
 
 ```
 Based on the bypass diagnostic catalog, identify which diagnostics have NO
@@ -269,7 +269,7 @@ corresponding error_reporter method. For each missing method:
 Output the proposed method signatures as a list. Do NOT implement yet.
 ```
 
-### Prompt 3.3 — Implement Missing error_reporter Methods
+### Prompt 3.3 — Implement Missing error_reporter Methods ✅ DONE
 
 ```
 Implement the missing error_reporter methods identified in the previous analysis.
