@@ -1230,14 +1230,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
-        // Private brand incompatibility (TS2322)
-        // Check this before the structural check so we generate the right error
-        if let Some(false) = self.private_brand_assignability_override(source, target) {
-            return Some(SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
-        }
+        // Private brand incompatibility: remember the result but don't short-circuit.
+        // Let the structural explain path run first — it may find real missing properties
+        // (not just brands) that produce TS2741 instead of generic TS2322.
+        // Only use the brand result as a fallback if the structural path returns None.
+        let brand_fails = matches!(
+            self.private_brand_assignability_override(source, target),
+            Some(false)
+        );
 
         // Empty object target or top-like union `{}` | null | undefined
         if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target)
@@ -1252,7 +1252,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         self.configure_subtype(self.strict_function_types);
-        self.subtype.explain_failure(source, target)
+        let structural_result = self.subtype.explain_failure(source, target);
+
+        // If the structural path found a useful reason, use it.
+        // Otherwise, fall back to the brand mismatch result.
+        match (&structural_result, brand_fails) {
+            // Structural path found something — prefer it over brand mismatch
+            (Some(_), _) => structural_result,
+            // No structural result but brand fails — use TypeMismatch
+            (None, true) => Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            }),
+            // No structural result, no brand issue
+            (None, false) => None,
+        }
     }
 
     const fn configure_subtype(&mut self, strict_function_types: bool) {

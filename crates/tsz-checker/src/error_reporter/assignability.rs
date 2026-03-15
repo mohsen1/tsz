@@ -38,6 +38,21 @@ pub(super) fn is_object_prototype_method(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Get the declaring type name for a property in a target type.
+    /// For inherited properties (e.g., from a base class), returns the base class name.
+    /// Falls back to formatting the target type if no parent info is available.
+    fn property_declaring_type_name(
+        &self,
+        target_type: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let prop_info = self.property_info_for_display(target_type, property_name)?;
+        prop_info
+            .parent_id
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .map(|sym| sym.escaped_name.clone())
+    }
+
     fn property_info_for_display(
         &self,
         ty: TypeId,
@@ -808,15 +823,71 @@ impl<'a> CheckerState<'a> {
 
                 // Private brand properties are internal implementation details for
                 // nominal private member checking. They should never appear in
-                // user-facing diagnostics — emit TS2322 instead of TS2741.
+                // user-facing diagnostics — emit TS2322 with private/protected
+                // member detail when available (matching the TypeMismatch handler).
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 if prop_name.starts_with("__private_brand") {
-                    let src_str = self.format_type_for_assignability_message(*source_type);
-                    let tgt_str_with_args =
-                        self.format_type_for_assignability_message(*target_type);
+                    let src_str = if depth == 0 {
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    } else {
+                        self.format_type_for_assignability_message(*source_type)
+                    };
+                    let tgt_str = if depth == 0 {
+                        self.format_assignability_type_for_message(target, source)
+                    } else {
+                        self.format_type_for_assignability_message(*target_type)
+                    };
+                    // Try to find the backing private/protected member for a detailed
+                    // message. First: source missing a private member entirely.
+                    if depth == 0
+                        && let Some((member_name, owner_name, visibility)) =
+                            self.private_or_protected_member_missing_display(source, target, None)
+                    {
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &member_name,
+                            &owner_name,
+                            visibility,
+                            None,
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
+                    // Second: source HAS the property but with wrong visibility/nominal
+                    // identity. Use the brand's backing member display for the detail.
+                    if depth == 0
+                        && let Some((display_prop, owner_name, visibility)) =
+                            self.private_or_protected_brand_backing_member_display(target, None)
+                    {
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &display_prop,
+                            &owner_name,
+                            visibility,
+                            self.property_info_for_display(
+                                source,
+                                self.ctx.types.intern_string(&display_prop),
+                            )
+                            .map(|prop| prop.visibility),
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str_with_args],
+                        &[&src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1107,6 +1178,54 @@ impl<'a> CheckerState<'a> {
                         length,
                         message,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
+                // When filtering removed brand/prototype properties and only 1 remains,
+                // emit TS2741 (single missing property) instead of TS2739 (multiple).
+                // This matches tsc behavior: e.g., class with private member where the brand
+                // is filtered out, leaving only the real property like 'x'.
+                if filtered_names.len() == 1 {
+                    let prop_name = self
+                        .ctx
+                        .types
+                        .resolve_atom_ref(filtered_names[0])
+                        .to_string();
+                    let src_str = if depth == 0 {
+                        if *source_type == TypeId::OBJECT {
+                            "{}".to_string()
+                        } else {
+                            self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                        }
+                    } else if *source_type == TypeId::OBJECT {
+                        "{}".to_string()
+                    } else {
+                        let widened_source = self.widen_type_for_display(*source_type);
+                        self.format_type_diagnostic(widened_source)
+                    };
+                    // TSC uses the declaring type name for "required in type 'X'" when the
+                    // property is inherited from a base class. For example, if property 'x'
+                    // is declared in class A and inherited by C2 via extends, tsc says
+                    // "required in type 'A'", not "required in type 'C2'".
+                    let tgt_str = self
+                        .property_declaring_type_name(*target_type, filtered_names[0])
+                        .unwrap_or_else(|| {
+                            if depth == 0 {
+                                self.format_assignability_type_for_message(target, source)
+                            } else {
+                                self.format_type_diagnostic(*target_type)
+                            }
+                        });
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     );
                 }
 
