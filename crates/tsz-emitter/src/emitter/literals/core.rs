@@ -610,7 +610,7 @@ fn format_js_number(value: f64) -> String {
     // For integers < 1e21, emit as plain integer (no decimal point)
     // JavaScript switches to exponential notation at 1e21
     if value == value.trunc() && value.abs() < 1e21 {
-        return format!("{}", value as i128);
+        return (value as i128).to_string();
     }
     // For large values or non-integers, use JavaScript-style formatting
     // JavaScript's Number.toString() uses exponential for >= 1e21

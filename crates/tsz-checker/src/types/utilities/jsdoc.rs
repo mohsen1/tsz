@@ -1482,7 +1482,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(paren_idx) = Self::find_top_level_char(prop_str, '(') {
                 let colon_idx = Self::find_top_level_char(prop_str, ':');
-                if colon_idx.is_none() || paren_idx < colon_idx.unwrap() {
+                if colon_idx.is_none_or(|idx| paren_idx < idx) {
                     if paren_idx == 0 {
                         if let Some(func_ty) = self.parse_jsdoc_call_signature(prop_str) {
                             return Some(func_ty);
@@ -2241,7 +2241,7 @@ impl<'a> CheckerState<'a> {
         let mut tag_pos = jsdoc.find("@type");
         while let Some(pos) = tag_pos {
             let next_char = jsdoc[pos + "@type".len()..].chars().next();
-            if next_char.is_none() || !next_char.unwrap().is_alphabetic() {
+            if !next_char.is_some_and(|c| c.is_alphabetic()) {
                 if let Some(td_pos) = typedef_pos
                     && td_pos < pos
                 {

@@ -180,7 +180,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         vec![s]
                     } else if n_val.fract() == 0.0 && abs_val < 1e15 {
                         // Integer-like number - avoid scientific notation
-                        let s = format!("{}", n_val as i64);
+                        let s = (n_val as i64).to_string();
                         tracing::trace!(result = %s, "extract_literal_strings: integer-like");
                         vec![s]
                     } else {
