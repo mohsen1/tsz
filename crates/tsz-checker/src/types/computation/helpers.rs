@@ -510,7 +510,21 @@ impl<'a> CheckerState<'a> {
                 } else if let Some(t_elem) =
                     tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
                 {
-                    return factory.array(t_elem);
+                    // When the contextual element type is a TypeParameter, unknown, or any,
+                    // it carries no useful type information for an empty array (typically
+                    // happens when `[]` is an argument for a generic parameter like `T[]`).
+                    // Use never[] instead, matching tsc behavior where empty arrays always
+                    // start as never[] regardless of contextual type. This prevents
+                    // inference from being polluted with unknown/any from the contextual
+                    // type parameter's constraint.
+                    if t_elem == TypeId::UNKNOWN
+                        || t_elem == TypeId::ANY
+                        || tsz_solver::type_queries::is_type_parameter(self.ctx.types, t_elem)
+                    {
+                        // Fall through to never[]/any[] below
+                    } else {
+                        return factory.array(t_elem);
+                    }
                 }
             }
 

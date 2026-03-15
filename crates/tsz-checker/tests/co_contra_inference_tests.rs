@@ -62,3 +62,82 @@ bar(g1, g2);
         "Callable alias unions should keep contravariant inference and avoid TS2345. Actual diagnostics: {relevant:#?}"
     );
 }
+
+/// When the only covariant candidate is `never` (from an empty array) and
+/// contra-candidates exist (from callback parameters), the solver should
+/// use the contra-candidates. This matches tsc's getInferredType logic:
+///   `inferredCovariantType && !(inferredCovariantType.flags & TypeFlags.Never)`
+/// Repro from TypeScript#19576 (neverInference.ts).
+#[test]
+fn never_covariant_falls_through_to_contra_candidates() {
+    let source = r#"
+type Comparator<T> = (x: T, y: T) => number;
+
+interface LinkedList<T> {
+    comparator: Comparator<T>,
+    nodes: { value: T, next: any } | null
+}
+
+declare function compareNumbers(x: number, y: number): number;
+declare function mkList<T>(items: T[], comparator: Comparator<T>): LinkedList<T>;
+
+const list: LinkedList<number> = mkList([], compareNumbers);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Empty array with callback should infer T=number from contra-candidates, not T=never/unknown. Got: {diagnostics:#?}"
+    );
+}
+
+/// Empty array `[]` passed as argument for a generic `T[]` parameter should
+/// be typed as `never[]`, not `unknown[]`. The contextual type parameter
+/// should not pollute the element type of the empty array.
+#[test]
+fn empty_array_in_generic_context_is_never_not_unknown() {
+    let source = r#"
+declare function mkList<T>(items: T[], other: T): T;
+const result: number = mkList([], 42);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Empty array should be never[] (not unknown[]) so T is inferred from second arg. Got: {diagnostics:#?}"
+    );
+}
+
+/// Multiple inference sources with an empty array: T should be inferred from
+/// the non-empty source (f2 repro from TypeScript#19858).
+#[test]
+fn empty_array_with_multiple_inference_sources() {
+    let source = r#"
+declare function f2<a>(as1: a[], as2: a[], cmp: (a1: a, a2: a) => number): void;
+f2([0], [], (a1, a2) => a1 - a2);
+f2([], [0], (a1, a2) => a1 - a2);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Empty array alongside non-empty array should still infer 'a' correctly. Got: {diagnostics:#?}"
+    );
+}
+
+/// When T has no constraint and only covariant candidates are `never`,
+/// and there are no contra-candidates, T should resolve to `never` (not unknown).
+#[test]
+fn only_never_candidates_resolves_to_never() {
+    let source = r#"
+declare function f1<T>(x: T[]): T;
+let a1 = f1([]);
+let check: never = a1;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "f1([]) should infer T=never when there are no contra-candidates. Got: {diagnostics:#?}"
+    );
+}
