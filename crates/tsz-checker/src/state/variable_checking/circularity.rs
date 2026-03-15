@@ -3,6 +3,7 @@
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
@@ -138,5 +139,60 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::FUNCTION_IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_A,
             &[],
         );
+    }
+
+    /// Check if the initializer has any self-references to `sym_id` that are NOT
+    /// inside deferred contexts (getter/setter bodies, function/arrow bodies,
+    /// method bodies, class bodies).
+    ///
+    /// Getter/setter bodies are lazily evaluated — a self-reference inside them
+    /// (e.g., `const a = { get self() { return a; } }`) does not constitute
+    /// a TS7022-worthy circularity because the getter runs after initialization.
+    /// Similarly, function/method/class bodies are deferred.
+    ///
+    /// Returns `true` if there exists at least one self-reference OUTSIDE all
+    /// deferred boundaries (i.e., the circularity is real and TS7022 should fire).
+    pub(super) fn initializer_has_non_deferred_self_reference(
+        &self,
+        node_idx: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check if this node is an identifier referencing the target symbol
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let ref_sym = self
+                .ctx
+                .binder
+                .get_node_symbol(node_idx)
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx));
+            return ref_sym == Some(sym_id);
+        }
+
+        // Stop at deferred boundaries — self-references inside these are benign
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return false;
+        }
+
+        // Recurse into children
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.initializer_has_non_deferred_self_reference(child_idx, sym_id) {
+                return true;
+            }
+        }
+
+        false
     }
 }
