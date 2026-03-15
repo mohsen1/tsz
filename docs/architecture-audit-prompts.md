@@ -496,7 +496,7 @@ The solver's `lib.rs` re-exports 70+ items in a flat namespace. This makes the
 boundary between "safe to use from checker" and "solver-internal" unclear, and
 prevents trait-based API organization that would enable compile-time enforcement.
 
-### Prompt 5.1 — Categorize the Solver's Public API
+### Prompt 5.1 — Categorize the Solver's Public API [DONE]
 
 ```
 Read crates/tsz-solver/src/lib.rs and categorize every `pub use` re-export into
@@ -524,7 +524,7 @@ Output a categorized list with item counts per tier. Identify any Tier 5 items
 that are currently public but shouldn't be.
 ```
 
-### Prompt 5.2 — Design Trait-Based API Modules
+### Prompt 5.2 — Design Trait-Based API Modules [DONE — design embedded in 5.3 implementation]
 
 ```
 Based on the API categorization, design a trait-based organization for the
@@ -546,7 +546,7 @@ For each module, draft:
 This is a DESIGN document only. Output it as a markdown spec. Do NOT write code.
 ```
 
-### Prompt 5.3 — Organize Solver Exports into Modules
+### Prompt 5.3 — Organize Solver Exports into Modules [DONE]
 
 ```
 Restructure crates/tsz-solver/src/lib.rs to organize exports into the module

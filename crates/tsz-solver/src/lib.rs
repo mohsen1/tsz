@@ -11,6 +11,21 @@
 //! - O(1) type equality via interning (`TypeId` comparison)
 //! - Automatic cycle handling via coinductive semantics
 //! - Lazy evaluation - only compute types that are queried
+//!
+//! # API Organization
+//!
+//! The public API is organized into tiered modules:
+//!
+//! - [`type_handles`] — Identity types (`TypeId`, `TypeData`, shapes). Safe for all consumers.
+//! - [`query`] — Read-only type visitors and inspectors. Safe for all consumers.
+//! - [`computation`] — Type relations, evaluation, instantiation, inference.
+//!   Should be accessed through `query_boundaries` in the checker.
+//! - [`construction`] — Type building (`TypeInterner`, factories).
+//!   Should be accessed through `query_boundaries` in the checker.
+//!
+//! Flat re-exports are preserved for backwards compatibility but consumers
+//! should prefer the module-based imports for clarity.
+
 mod caches;
 pub mod canonicalize;
 pub mod classes;
@@ -44,6 +59,113 @@ pub mod visitor {
     pub use crate::visitors::visitor::*;
 }
 mod visitors;
+
+// =============================================================================
+// Tiered API modules — structured access to solver functionality
+// =============================================================================
+
+/// Tier 1: Type identity handles and structural shapes.
+///
+/// These are pure data types with no computation. Safe for any consumer
+/// (checker, emitter, LSP) to import directly.
+pub mod type_handles {
+    pub use crate::types::{
+        CallSignature, CallableShape, CallableShapeId, ConditionalType, FunctionShape,
+        FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
+        MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, ParamInfo,
+        PropertyInfo, PropertyLookup, SymbolRef, TemplateSpan, TupleElement, TupleListId,
+        TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
+        TypePredicate, TypePredicateTarget, Visibility, is_compiler_managed_type,
+    };
+    pub use crate::diagnostics::{
+        DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
+        SubtypeFailureReason,
+    };
+    pub use crate::diagnostics::builders::{
+        DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
+    };
+    pub use crate::diagnostics::format::TypeFormatter;
+}
+
+/// Tier 2: Read-only type visitors and inspectors.
+///
+/// These functions inspect types but don't modify or create them.
+/// Safe for any consumer to import directly.
+pub mod query {
+    pub use crate::visitors::visitor::{
+        application_id, array_element_type, bound_parameter_index, callable_shape_id,
+        collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
+        collect_referenced_types, collect_type_queries, conditional_type_id, contains_error_type,
+        contains_infer_types, contains_this_type, contains_type_matching,
+        contains_type_parameter_named, contains_type_parameters, enum_components, for_each_child,
+        for_each_child_by_id, function_shape_id, has_deferred_conditional_member,
+        index_access_parts, intersection_list_id, intrinsic_kind, is_array_type,
+        is_conditional_type, is_empty_object_type, is_empty_object_type_through_type_constraints,
+        is_enum_type, is_error_type, is_function_type,
+        is_function_type_through_type_constraints, is_generic_application,
+        is_identity_comparable_type, is_index_access_type, is_intersection_type, is_literal_type,
+        is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
+        is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,
+        is_template_literal_type, is_this_type, is_tuple_type, is_type_parameter,
+        is_type_query_type, is_type_reference, is_union_type, keyof_inner_type, lazy_def_id,
+        literal_number, literal_string, literal_value, mapped_type_id,
+        module_namespace_symbol_ref, no_infer_inner_type, object_shape_id,
+        object_with_index_shape_id, readonly_inner_type, recursive_index,
+        string_intrinsic_components, template_literal_id, tuple_list_id, type_param_info,
+        type_query_symbol, union_list_id, unique_symbol_ref, walk_referenced_types,
+    };
+}
+
+/// Tier 3: Type computation — relations, evaluation, instantiation, inference.
+///
+/// These perform type computation and should be accessed through
+/// `query_boundaries` in the checker crate, not imported directly.
+pub mod computation {
+    // Subtype/assignability relations
+    pub use crate::relations::subtype::{
+        AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
+        are_types_structurally_identical, is_subtype_of,
+    };
+    pub use crate::relations::compat::CompatChecker;
+    pub use crate::relations::lawyer::AnyPropagationRules;
+
+    // Evaluation
+    pub use crate::evaluation::evaluate::evaluate_type;
+
+    // Instantiation
+    pub use crate::instantiation::instantiate::{
+        MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_generic,
+        instantiate_type, instantiate_type_preserving_meta, instantiate_type_with_depth_status,
+        substitute_this_type,
+    };
+
+    // Inference
+    pub use crate::inference::infer::InferenceContext;
+
+    // Contextual typing
+    pub use crate::contextual::{
+        ContextualTypeContext, apply_contextual_type, rest_argument_element_type,
+    };
+
+    // Operations
+    pub use crate::operations::{
+        AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
+        MAX_CONSTRAINT_RECURSION_DEPTH, PrimitiveClass,
+        get_contextual_signature_for_arity_with_compat_checker,
+        get_contextual_signature_with_compat_checker,
+    };
+    pub use crate::operations::infer_generic_function;
+}
+
+/// Tier 4: Type construction — building new types.
+///
+/// These create or modify types via the interner. Should be accessed through
+/// `query_boundaries` in the checker crate.
+pub mod construction {
+    pub use crate::intern::TypeInterner;
+    pub use crate::intern::type_factory::*;
+    pub use crate::caches::db::{QueryDatabase, TypeDatabase};
+}
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
 pub use operations::widening;
