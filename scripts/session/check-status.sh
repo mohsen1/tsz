@@ -38,6 +38,29 @@ campaigns=$(grep -E '^  [a-z][a-z-]*:$' "$CAMPAIGNS_FILE" | sed 's/://' | tr -d 
 
 for campaign in $campaigns; do
     branch="campaign/$campaign"
+    progress_file="$SCRIPT_DIR/progress/${campaign}.json"
+
+    # Get progress status if available
+    progress_info=""
+    if [[ -f "$progress_file" ]]; then
+        progress_info=$(python3 -c "
+import json
+with open('$progress_file') as f:
+    data = json.load(f)
+status = data.get('status', '?')
+sessions = data.get('sessions', [])
+total_delta = sum(s.get('delta', 0) for s in sessions)
+num_sessions = len(sessions)
+blocked = data.get('cross_cutting_blockers', [])
+leads = data.get('promising_leads', [])
+parts = [f'status={status}', f'+{total_delta} in {num_sessions}s']
+if blocked:
+    parts.append(f'{len(blocked)} blockers')
+if leads:
+    parts.append(f'{len(leads)} leads')
+print(' | '.join(parts))
+" 2>/dev/null || echo "")
+    fi
 
     # Check if branch exists on remote
     if git -C "$REPO_ROOT" rev-parse --verify "origin/$branch" &>/dev/null 2>&1; then
@@ -49,6 +72,9 @@ for campaign in $campaigns; do
         printf "  %-25s CLAIMED  %s ahead | %s\n" "$campaign" "$commits_ahead" "$last_age"
         if [[ "$COMPACT" != "--compact" ]]; then
             printf "  %-25s          └─ %s\n" "" "$last_msg"
+            if [[ -n "$progress_info" ]]; then
+                printf "  %-25s          └─ progress: %s\n" "" "$progress_info"
+            fi
         fi
     else
         # Check for local branch
@@ -56,6 +82,9 @@ for campaign in $campaigns; do
             printf "  %-25s LOCAL    (not pushed yet)\n" "$campaign"
         else
             printf "  %-25s AVAILABLE\n" "$campaign"
+        fi
+        if [[ -n "$progress_info" ]] && [[ "$COMPACT" != "--compact" ]]; then
+            printf "  %-25s          └─ progress: %s\n" "" "$progress_info"
         fi
     fi
 done
