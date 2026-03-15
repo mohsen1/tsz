@@ -120,7 +120,10 @@ impl BinderState {
     /// Panics if the resolved identifier cache lock is poisoned.
     pub fn merge_lib_contexts_into_binder(&mut self, lib_contexts: &[LibContext]) {
         // Visible globals can change after merge; invalidate identifier resolutions.
-        self.resolved_identifier_cache.write().unwrap().clear();
+        self.resolved_identifier_cache
+            .write()
+            .expect("RwLock not poisoned")
+            .clear();
 
         if lib_contexts.is_empty() {
             return;
@@ -330,6 +333,9 @@ impl BinderState {
     ///
     /// Test-only introspection method for validating caching behavior.
     pub fn resolved_identifier_cache_len(&self) -> usize {
-        self.resolved_identifier_cache.read().unwrap().len()
+        self.resolved_identifier_cache
+            .read()
+            .expect("RwLock not poisoned")
+            .len()
     }
 }

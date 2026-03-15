@@ -274,7 +274,10 @@ impl BinderState {
 
                 // Merge fall-through with return flows
                 self.add_antecedent(return_label, self.current_flow);
-                let return_label = self.return_targets.pop().unwrap();
+                let return_label = self
+                    .return_targets
+                    .pop()
+                    .expect("return_targets pushed before function body binding");
 
                 if let Some(label_node) = self.flow_nodes.get(return_label) {
                     match label_node.antecedent.len() {
@@ -361,7 +364,10 @@ impl BinderState {
 
                 // Merge the fall-through flow with the return label
                 self.add_antecedent(return_label, self.current_flow);
-                let return_label = self.return_targets.pop().unwrap();
+                let return_label = self
+                    .return_targets
+                    .pop()
+                    .expect("return_targets pushed before function body binding");
 
                 // Finalize: if the return label has antecedents, use it as current flow.
                 // This mirrors tsc's finishFlowLabel behavior.
