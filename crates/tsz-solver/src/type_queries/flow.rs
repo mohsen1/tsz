@@ -98,15 +98,7 @@ pub fn extract_predicate_signature(
             }
             None
         }
-        PredicateSignatureKind::Union(members) => {
-            for member in &members {
-                if let Some(sig) = extract_predicate_signature(db, *member) {
-                    return Some(sig);
-                }
-            }
-            None
-        }
-        PredicateSignatureKind::Intersection(members) => {
+        PredicateSignatureKind::Union(members) | PredicateSignatureKind::Intersection(members) => {
             for member in &members {
                 if let Some(sig) = extract_predicate_signature(db, *member) {
                     return Some(sig);

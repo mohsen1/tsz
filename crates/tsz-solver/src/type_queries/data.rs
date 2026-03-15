@@ -375,15 +375,15 @@ fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// `construct_signatures`) or is a constructor Function (`is_constructor`).
 /// For union types, returns true if ANY member is constructor-like.
 pub fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id) {
-        if !db.callable_shape(shape_id).construct_signatures.is_empty() {
-            return true;
-        }
+    if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id)
+        && !db.callable_shape(shape_id).construct_signatures.is_empty()
+    {
+        return true;
     }
-    if let Some(shape_id) = crate::visitor::function_shape_id(db, type_id) {
-        if db.function_shape(shape_id).is_constructor {
-            return true;
-        }
+    if let Some(shape_id) = crate::visitor::function_shape_id(db, type_id)
+        && db.function_shape(shape_id).is_constructor
+    {
+        return true;
     }
     if let Some(members) = get_union_members(db, type_id) {
         return members.iter().any(|&m| is_constructor_like_type(db, m));
