@@ -398,7 +398,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if source_shape.call_signatures.is_empty() {
                             return false;
                         }
-                        let source_sig = source_shape.call_signatures.last().unwrap();
+                        let source_sig = source_shape
+                            .call_signatures
+                            .last()
+                            .expect("call_signatures checked non-empty above");
                         match_params_tuple(&source_sig.params, &source_sig.type_params, bindings)
                     }
                     Some(TypeData::Union(members)) => {
@@ -423,7 +426,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     if source_shape.call_signatures.is_empty() {
                                         return false;
                                     }
-                                    let source_sig = source_shape.call_signatures.last().unwrap();
+                                    let source_sig = source_shape
+                                        .call_signatures
+                                        .last()
+                                        .expect("call_signatures checked non-empty above");
                                     if !match_params_tuple(
                                         &source_sig.params,
                                         &source_sig.type_params,
@@ -498,7 +504,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if source_shape.call_signatures.is_empty() {
                         return false;
                     }
-                    let source_sig = source_shape.call_signatures.last().unwrap();
+                    let source_sig = source_shape
+                        .call_signatures
+                        .last()
+                        .expect("call_signatures checked non-empty above");
                     if has_single_rest_infer {
                         return self.match_rest_infer_tuple(
                             &source_sig.params,

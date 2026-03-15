@@ -1075,11 +1075,17 @@ impl<'a> InferenceContext<'a> {
                     if !state.indices.contains_key(&neighbor) {
                         strongconnect(neighbor, state);
                         let neighbor_low = *state.lowlink.get(&neighbor).unwrap_or(&0);
-                        let var_low = state.lowlink.get_mut(&var).unwrap();
+                        let var_low = state
+                            .lowlink
+                            .get_mut(&var)
+                            .expect("var was inserted into lowlink above");
                         *var_low = (*var_low).min(neighbor_low);
                     } else if state.on_stack.contains(&neighbor) {
                         let neighbor_idx = *state.indices.get(&neighbor).unwrap_or(&0);
-                        let var_low = state.lowlink.get_mut(&var).unwrap();
+                        let var_low = state
+                            .lowlink
+                            .get_mut(&var)
+                            .expect("var was inserted into lowlink above");
                         *var_low = (*var_low).min(neighbor_idx);
                     }
                 }
@@ -1088,7 +1094,10 @@ impl<'a> InferenceContext<'a> {
             if *state.lowlink.get(&var).unwrap_or(&0) == *state.indices.get(&var).unwrap_or(&0) {
                 let mut scc = Vec::new();
                 loop {
-                    let w = state.stack.pop().unwrap();
+                    let w = state
+                        .stack
+                        .pop()
+                        .expect("Tarjan SCC invariant: stack non-empty while processing component");
                     state.on_stack.remove(&w);
                     scc.push(w);
                     if w == var {

@@ -82,8 +82,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 TemplateSpan::Type(_) => {
-                    // Safety: index i always matches evaluated_spans length
-                    let string_values = evaluated_spans[i].as_ref().unwrap();
+                    let string_values = evaluated_spans[i]
+                        .as_ref()
+                        .expect("Type spans always have evaluated values at matching index");
                     let new_size = combinations.len() * string_values.len();
 
                     // Pre-allocate to minimize reallocations during Cartesian product

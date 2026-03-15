@@ -338,7 +338,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     fallback_return: combined_return,
                 }
             } else {
-                failures.into_iter().next().unwrap()
+                failures
+                    .into_iter()
+                    .next()
+                    .expect("failures is non-empty when no constituent is callable")
             }
         } else {
             CallResult::NotCallable {
@@ -428,7 +431,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             CallResult::Success(intersection_result)
         } else if !failures.is_empty() {
             // If we found constructors but they failed matching args, return the failure
-            failures.into_iter().next().unwrap()
+            failures
+                .into_iter()
+                .next()
+                .expect("failures is non-empty when no constituent is callable")
         } else {
             // No constructable members found
             CallResult::NotCallable {

@@ -44,18 +44,15 @@ mod visit_children;
 pub use self::core::LoweringPass;
 
 // Re-exports consumed by submodules via `use super::*`
-use self::core::{MAX_AST_DEPTH, MAX_BINDING_PATTERN_DEPTH, MAX_QUALIFIED_NAME_DEPTH};
-pub(super) use crate::context::emit::EmitContext;
+use self::core::{MAX_BINDING_PATTERN_DEPTH, MAX_QUALIFIED_NAME_DEPTH};
 pub(super) use crate::context::transform::{
-    IdentifierId, ModuleFormat, TransformContext, TransformDirective,
+    IdentifierId, ModuleFormat, TransformDirective,
 };
 pub(super) use crate::transforms::emit_utils;
 pub(super) use std::sync::Arc;
 pub(super) use tsz_common::common::ModuleKind;
-pub(super) use tsz_parser::parser::node::{Node, NodeArena};
+pub(super) use tsz_parser::parser::node::Node;
 pub(super) use tsz_parser::parser::syntax_kind_ext;
 pub(super) use tsz_parser::parser::{NodeIndex, NodeList};
-pub(super) use tsz_parser::syntax::transform_utils::{
-    contains_arguments_reference, contains_this_reference, is_private_identifier,
-};
+pub(super) use tsz_parser::syntax::transform_utils::is_private_identifier;
 pub(super) use tsz_scanner::SyntaxKind;
