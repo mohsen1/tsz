@@ -310,6 +310,26 @@ pub fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if a union type has a direct TypeParameter or Infer member (not nested).
+///
+/// Returns true for `string | T` or `number | infer U`, false for
+/// `string | MyInterface` even if MyInterface contains type parameters internally.
+/// Used to suppress diagnostics when generic type parameters are directly present.
+pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().any(|&m| {
+                matches!(
+                    db.lookup(m),
+                    Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+                )
+            })
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
