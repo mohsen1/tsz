@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
-                    let _had_object_context = prev_context.is_some();
+                    let had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type
                             .or(initializer_context_type)
@@ -251,20 +251,26 @@ impl<'a> CheckerState<'a> {
                         declared_type
                     } else {
                         // Apply bidirectional type inference - use contextual type to narrow the value type
-                        // tsc does NOT widen literal types at object literal
-                        // construction time — it preserves the literal type in
-                        // the "fresh" object type. Widening happens later at the
-                        // point of use (e.g., variable binding via
-                        // `widen_initializer_type_for_mutable_binding`).
-                        // Preserving literals here is important for:
-                        // - Accurate error messages (`"frizzlebizzle"` not `string`)
-                        // - Generic inference (T inferred as `{ x: "hello" }`)
-                        // - Excess property checks against discriminated unions
-                        tsz_solver::apply_contextual_type(
+                        let value_type = tsz_solver::apply_contextual_type(
                             self.ctx.types,
                             value_type,
                             property_context_type,
-                        )
+                        );
+
+                        // Widen literal types for object literal properties.
+                        // Object literal properties are mutable by default, so `{ x: "a" }`
+                        // produces `{ x: string }`. Only preserve literals when:
+                        // - A const assertion is active (`as const`)
+                        // - A contextual type narrows the property to a literal
+                        if !self.ctx.in_const_assertion
+                            && !self.ctx.preserve_literal_types
+                            && property_context_type.is_none()
+                            && !had_object_context
+                        {
+                            self.widen_literal_type(value_type)
+                        } else {
+                            value_type
+                        }
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
@@ -493,7 +499,7 @@ impl<'a> CheckerState<'a> {
 
                     // Set contextual type for shorthand property value
                     let prev_context = self.ctx.contextual_type;
-                    let _had_object_context = prev_context.is_some();
+                    let had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type.or(property_context_type),
                     );
@@ -654,13 +660,21 @@ impl<'a> CheckerState<'a> {
                         declared_type
                     } else {
                         // Apply bidirectional type inference - use contextual type to narrow the value type
-                        // Literal types preserved at construction time — widening
-                        // happens at variable binding (same rationale as named properties).
-                        tsz_solver::apply_contextual_type(
+                        // Apply bidirectional inference and widen (same as named properties)
+                        let value_type = tsz_solver::apply_contextual_type(
                             self.ctx.types,
                             value_type,
                             property_context_type,
-                        )
+                        );
+                        if !self.ctx.in_const_assertion
+                            && !self.ctx.preserve_literal_types
+                            && property_context_type.is_none()
+                            && !had_object_context
+                        {
+                            self.widen_literal_type(value_type)
+                        } else {
+                            value_type
+                        }
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
