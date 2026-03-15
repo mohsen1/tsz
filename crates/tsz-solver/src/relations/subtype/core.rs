@@ -852,12 +852,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // `object` keyword is structurally equivalent to `{}` (empty object).
             // It's assignable to any object type where all properties are optional,
             // since no required properties need to be satisfied.
+            //
+            // However, `object` is NOT assignable to types with index signatures
+            // (e.g., `{ [s: string]: unknown }`). In tsc, `object` lacks an implicit
+            // index signature, so assigning it to `{ [s: string]: T }` fails with
+            // "Index signature for type 'string' is missing in type '{}'".
+            // Note: `{}` IS assignable to indexed types (handled elsewhere), but the
+            // `object` keyword gets stricter treatment in tsc.
             if s_kind == IntrinsicKind::Object {
                 let target_shape = object_shape_id(self.interner, target)
                     .or_else(|| object_with_index_shape_id(self.interner, target));
                 if let Some(t_shape_id) = target_shape {
                     let t_shape = self.interner.object_shape(t_shape_id);
-                    if t_shape.properties.iter().all(|p| p.optional) {
+                    if t_shape.properties.iter().all(|p| p.optional)
+                        && t_shape.string_index.is_none()
+                        && t_shape.number_index.is_none()
+                    {
                         return SubtypeResult::True;
                     }
                 }
