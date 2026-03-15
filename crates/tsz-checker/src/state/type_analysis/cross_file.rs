@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
             let sym_found = self.get_symbol_globally(sym_id);
             let has_type_alias = sym_found.is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
             if has_type_alias {
-                let symbol = sym_found.unwrap();
+                let symbol = sym_found.expect("has_type_alias guard ensures sym_found is Some");
                 tracing::debug!(
                     sym_id = sym_id.0,
                     name = %symbol.escaped_name,
@@ -228,7 +228,7 @@ impl<'a> CheckerState<'a> {
                 .cross_file_symbol_targets
                 .borrow()
                 .get(&sym_id)
-                .unwrap();
+                .expect("needs_cross_file_delegation derived from cross_file_symbol_targets containing sym_id");
             cross_file_idx = Some(file_idx);
         }
 
@@ -632,7 +632,7 @@ impl<'a> CheckerState<'a> {
                 .cross_file_symbol_targets
                 .borrow()
                 .get(&sym_id)
-                .unwrap();
+                .expect("needs_cross_file_delegation derived from cross_file_symbol_targets containing sym_id");
             delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
             delegate_file_idx = Some(file_idx);
         }

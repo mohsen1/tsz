@@ -250,7 +250,7 @@ impl<'a> CheckerState<'a> {
                 {
                     // Variable is captured by a nested function — emit TS7034 at declaration.
                     let decl_name_node =
-                        self.ctx.pending_implicit_any_vars.remove(&sym_id).unwrap();
+                        self.ctx.pending_implicit_any_vars.remove(&sym_id).expect("sym_id was verified present via should_emit_pending_implicit_any_capture_diagnostic");
                     self.ctx.reported_implicit_any_vars.insert(sym_id);
                     if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
                         use crate::diagnostics::diagnostic_codes;

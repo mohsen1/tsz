@@ -1057,7 +1057,10 @@ impl<'a> CheckerState<'a> {
                 let optional = sigs.iter().all(|(_, opt, _)| *opt);
                 let readonly = sigs.iter().any(|(_, _, ro)| *ro);
                 let method_type = if sigs.len() == 1 {
-                    let (sig, _, _) = sigs.into_iter().next().unwrap();
+                    let (sig, _, _) = sigs
+                        .into_iter()
+                        .next()
+                        .expect("sigs.len() == 1 guard ensures at least one element");
                     factory.function(FunctionShape {
                         type_params: sig.type_params,
                         params: sig.params,

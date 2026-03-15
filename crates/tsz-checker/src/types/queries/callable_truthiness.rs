@@ -405,7 +405,8 @@ impl<'a> CheckerState<'a> {
             // For property accesses, use structural chain matching
             self.is_prop_access_in_body_or_chain(location, top_cond, body)
         } else {
-            let sym_id = tested_sym.unwrap();
+            let sym_id =
+                tested_sym.expect("non-property-access path requires tested_sym to be Some");
             self.is_callable_symbol_used(sym_id, location, top_cond, body)
         };
 

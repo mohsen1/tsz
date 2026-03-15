@@ -1314,10 +1314,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if name_opt == Some("default") {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &["default"]);
+            let expr_node = self
+                .ctx
+                .arena
+                .get(type_query.expr_name)
+                .expect("type_query.expr_name node exists");
             self.ctx.error(
-                self.ctx.arena.get(type_query.expr_name).unwrap().pos,
-                self.ctx.arena.get(type_query.expr_name).unwrap().end
-                    - self.ctx.arena.get(type_query.expr_name).unwrap().pos,
+                expr_node.pos,
+                expr_node.end - expr_node.pos,
                 msg,
                 diagnostic_codes::CANNOT_FIND_NAME,
             );

@@ -2348,7 +2348,10 @@ impl<'a> CheckerState<'a> {
             if after >= jsdoc.len() {
                 return true;
             }
-            let next_ch = jsdoc[after..].chars().next().unwrap();
+            let next_ch = jsdoc[after..]
+                .chars()
+                .next()
+                .expect("after < jsdoc.len() checked above");
             if !next_ch.is_ascii_alphanumeric() {
                 return true;
             }

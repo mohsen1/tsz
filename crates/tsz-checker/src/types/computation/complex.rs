@@ -1582,7 +1582,9 @@ impl<'a> CheckerState<'a> {
             // We cannot use collect_js_constructor_this_properties here because
             // get_type_of_node resolves types in the call site context, not the
             // function declaration context.
-            let shape = func_shape.as_ref().unwrap();
+            let shape = func_shape
+                .as_ref()
+                .expect("is_generic guard ensures func_shape is Some");
 
             // Build param name → type map from the function shape
             let param_type_map: FxHashMap<String, TypeId> = func

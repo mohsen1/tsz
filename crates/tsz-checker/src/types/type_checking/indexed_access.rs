@@ -171,7 +171,7 @@ impl<'a> CheckerState<'a> {
 
         let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
         while current.is_some() {
-            let parent_idx = current.unwrap();
+            let parent_idx = current.expect("loop guard ensures current.is_some()");
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };

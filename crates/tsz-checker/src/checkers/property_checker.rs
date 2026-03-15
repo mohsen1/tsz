@@ -75,7 +75,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let (class_idx, is_static) = class_result.unwrap();
+        let (class_idx, is_static) = class_result.expect("early return above handles None case");
 
         // Mark the class member symbol as referenced for unused-variable tracking.
         // Property accesses like `this.x` go through the solver's property resolution
