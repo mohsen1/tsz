@@ -315,7 +315,7 @@ For each migration:
 Commit each file separately for easy review.
 ```
 
-### Prompt 3.5 — Add Diagnostic Centralization Guard
+### Prompt 3.5 — Add Diagnostic Centralization Guard ✅ DONE
 
 ```
 Add an architecture contract test that prevents new push_diagnostic calls from
