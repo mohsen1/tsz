@@ -67,26 +67,34 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
             || k == syntax_kind_ext::FUNCTION_EXPRESSION
             || k == syntax_kind_ext::ARROW_FUNCTION => {}
 
-        // Variable statement
+        // Variable statement — contains one or more VARIABLE_DECLARATION_LIST nodes.
+        // The LET/CONST flags are on the declaration LIST node, not the statement.
         k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
             if let Some(var_stmt) = arena.get_variable(node) {
-                let flags = node.flags as u32;
-                let is_block_scoped =
-                    (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let flags = decl_list_node.flags as u32;
+                    let is_block_scoped =
+                        (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
 
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    if let Some(decl_node) = arena.get(decl_idx)
-                        && let Some(decl) = arena.get_variable_declaration(decl_node)
-                    {
-                        collect_binding_names(
-                            arena,
-                            decl.name,
-                            if is_block_scoped {
-                                &mut info.block_scoped_vars
-                            } else {
-                                &mut info.var_decl_names
-                            },
-                        );
+                    if let Some(decl_list) = arena.get_variable(decl_list_node) {
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = arena.get(decl_idx)
+                                && let Some(decl) = arena.get_variable_declaration(decl_node)
+                            {
+                                collect_binding_names(
+                                    arena,
+                                    decl.name,
+                                    if is_block_scoped {
+                                        &mut info.block_scoped_vars
+                                    } else {
+                                        &mut info.var_decl_names
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
