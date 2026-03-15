@@ -548,19 +548,19 @@ const chars = [...str];  // Should be string[]
 }
 
 #[test]
-fn test_object_rest_not_last_does_not_emit_array_rest_error() {
+fn test_object_rest_not_last_emits_ts2462() {
+    // TypeScript emits TS2462 for object rest patterns where the rest is
+    // not the last element, just like it does for array patterns.
     let source = r#"
 var { ...rest, x } = { x: 1 };
-
-({ ...rest, x } = { x: 1 });
 "#;
 
     let diagnostics = check_source(source);
 
     let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
-    assert_eq!(
-        ts2462_count, 0,
-        "Expected no TS2462 for object rest when it is not an array pattern, got {ts2462_count}"
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for object rest that is not last, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
     );
 }
 

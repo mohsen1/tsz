@@ -1394,17 +1394,30 @@ impl<'a> CheckerState<'a> {
                             .map(|unary| unary.expression)
                     });
                 if let Some(spread_expr) = spread_expr {
-                    // TS2778: The target of an object rest assignment may not be
-                    // an optional property access. E.g. `{ ...obj?.a } = source`
-                    if self.ctx.in_destructuring_target
-                        && self.is_optional_chain_access(spread_expr)
-                    {
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        self.error_at_node(
-                            spread_expr,
-                            diagnostic_messages::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                            diagnostic_codes::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                        );
+                    let mut invalid_rest_target = false;
+                    if self.ctx.in_destructuring_target {
+                        // TS2701: The target of an object rest assignment must be
+                        // a variable or a property access.
+                        // E.g. `{ ...expr + expr } = source` is invalid.
+                        if !self.is_valid_rest_assignment_target(spread_expr) {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                spread_expr,
+                                diagnostic_messages::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
+                                diagnostic_codes::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
+                            );
+                            invalid_rest_target = true;
+                        }
+                        // TS2778: The target of an object rest assignment may not be
+                        // an optional property access. E.g. `{ ...obj?.a } = source`
+                        else if self.is_optional_chain_access(spread_expr) {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                spread_expr,
+                                diagnostic_messages::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                                diagnostic_codes::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                            );
+                        }
                     }
                     // Clear contextual type for call-like spread expressions.
                     // The outer contextual type (e.g., from a destructuring pattern)
@@ -1429,14 +1442,20 @@ impl<'a> CheckerState<'a> {
                     }
                     let spread_type = self.get_type_of_node(spread_expr);
                     self.ctx.contextual_type = prev_ctx_for_spread;
-                    // TS2698: Spread types may only be created from object types
+                    // TS2698: Spread types may only be created from object types.
+                    // Skip when TS2701 was already emitted (invalid rest target) —
+                    // the expression isn't a valid spread source because it's not
+                    // even a valid assignment target.
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
-                    let is_valid_spread =
+                    let is_valid_spread = if invalid_rest_target {
+                        true // suppress TS2698 when TS2701 already reported
+                    } else {
                         crate::query_boundaries::type_computation::access::is_valid_spread_type(
                             self.ctx.types,
                             resolved_spread,
-                        );
+                        )
+                    };
                     if !is_valid_spread {
                         self.report_spread_not_object_type(elem_idx);
                     }
