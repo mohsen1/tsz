@@ -146,6 +146,19 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 if let Some(prop) = self.arena.get_property_decl(node) {
+                    // Set __metadata helper when a decorated property exists
+                    if self.ctx.options.legacy_decorators
+                        && self.ctx.options.emit_decorator_metadata
+                        && prop.modifiers.as_ref().is_some_and(|m| {
+                            m.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
+                    {
+                        self.transforms.helpers_mut().metadata = true;
+                    }
                     if let Some(mods) = &prop.modifiers {
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
@@ -168,6 +181,19 @@ impl<'a> LoweringPass<'a> {
                         })
                     {
                         self.mark_async_helpers();
+                    }
+                    // Set __metadata helper when a decorated method exists
+                    if self.ctx.options.legacy_decorators
+                        && self.ctx.options.emit_decorator_metadata
+                        && method.modifiers.as_ref().is_some_and(|m| {
+                            m.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
+                    {
+                        self.transforms.helpers_mut().metadata = true;
                     }
                     if let Some(mods) = &method.modifiers {
                         for &mod_idx in &mods.nodes {
@@ -367,9 +393,8 @@ impl<'a> LoweringPass<'a> {
                 }
                 if self.ctx.options.legacy_decorators {
                     self.transforms.helpers_mut().decorate = true;
-                    if self.ctx.options.emit_decorator_metadata {
-                        self.transforms.helpers_mut().metadata = true;
-                    }
+                    // Note: __metadata helper is set at the member level, not here,
+                    // to avoid emitting it for class-only decorators without members.
                 }
             }
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
