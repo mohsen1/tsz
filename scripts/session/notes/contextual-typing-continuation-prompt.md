@@ -21,6 +21,8 @@
 **Tests newly passing** (confirmed on latest main):
 - `contextualPropertyOfGenericMappedType.ts` — now passes (fixed by recent main changes)
 - `noCircularitySelfReferentialGetter1/2.ts` — now passes (TS7022 fix from another agent)
+- `classImplementsClass6.ts` — now passes (fix #11: implements clause property recovery)
+- TS7018 batch (fix #12): `arrayBestCommonTypes`, `declarationEmitOverloadedPrivateInference`, `esNextWeakRefs_IterableWeakMap`, `useBeforeDeclaration_propertyAssignment`, `superCallBeforeThisAccessing7`, `commonJSReexport`, `namespaceImportTypeQuery`, `namespaceImportTypeQuery4`, `YieldExpression20_es6`, `TwoInternalModules*` (4 tests), `exportEqualsProperty2`
 
 ## Remaining Failure Breakdown (~1770 tests)
 

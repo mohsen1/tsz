@@ -1859,7 +1859,7 @@ fn unicode_in_identifiers() {
 #[test]
 fn very_long_line() {
     let long_var = "a".repeat(200);
-    let source = format!("const /*x*/{} = 1;", long_var);
+    let source = format!("const /*x*/{long_var} = 1;");
     let mut t = FourslashTest::new(&source);
     t.hover("x").expect_found();
 }
