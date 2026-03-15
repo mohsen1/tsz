@@ -68,8 +68,25 @@ impl TypeInterner {
     }
 
     pub(super) fn normalize_intersection(&self, mut flat: TypeListBuffer) -> TypeId {
-        // Handle special cases early (before sorting)
-        if flat.contains(&TypeId::ERROR) {
+        // Single-pass scan for special sentinel types instead of multiple contains() calls.
+        let mut has_error = false;
+        let mut has_never = false;
+        let mut has_any = false;
+        let mut has_unknown = false;
+        for &id in flat.iter() {
+            if id == TypeId::ERROR {
+                has_error = true;
+                break;
+            }
+            if id == TypeId::NEVER {
+                has_never = true;
+            } else if id == TypeId::ANY {
+                has_any = true;
+            } else if id == TypeId::UNKNOWN {
+                has_unknown = true;
+            }
+        }
+        if has_error {
             return TypeId::ERROR;
         }
         if flat.is_empty() {
@@ -78,16 +95,16 @@ impl TypeInterner {
         if flat.len() == 1 {
             return flat[0];
         }
-        // If any member is `never`, the intersection is `never`
-        if flat.contains(&TypeId::NEVER) {
+        if has_never {
             return TypeId::NEVER;
         }
-        // If any member is `any`, the intersection is `any`
-        if flat.contains(&TypeId::ANY) {
+        if has_any {
             return TypeId::ANY;
         }
-        // Remove `unknown` from intersections (identity element)
-        flat.retain(|id| *id != TypeId::UNKNOWN);
+        // Remove `unknown` from intersections (identity element), only if present
+        if has_unknown {
+            flat.retain(|id| *id != TypeId::UNKNOWN);
+        }
 
         // =========================================================
         // Task #48: Empty Object Rule for Intersections

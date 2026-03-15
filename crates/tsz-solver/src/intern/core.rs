@@ -1282,8 +1282,26 @@ impl TypeInterner {
         flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
 
-        // Handle special cases
-        if flat.contains(&TypeId::ERROR) {
+        // Single-pass scan for special sentinel types instead of multiple contains() calls.
+        // Each contains() is O(N); scanning once is O(N) total instead of O(4N).
+        let mut has_error = false;
+        let mut has_any = false;
+        let mut has_unknown = false;
+        let mut has_never = false;
+        for &id in flat.iter() {
+            if id == TypeId::ERROR {
+                has_error = true;
+                break; // ERROR trumps everything
+            }
+            if id == TypeId::ANY {
+                has_any = true;
+            } else if id == TypeId::UNKNOWN {
+                has_unknown = true;
+            } else if id == TypeId::NEVER {
+                has_never = true;
+            }
+        }
+        if has_error {
             return TypeId::ERROR;
         }
         if flat.is_empty() {
@@ -1292,16 +1310,16 @@ impl TypeInterner {
         if flat.len() == 1 {
             return flat[0];
         }
-        // If any member is `any`, the union is `any`
-        if flat.contains(&TypeId::ANY) {
+        if has_any {
             return TypeId::ANY;
         }
-        // If any member is `unknown`, the union is `unknown`
-        if flat.contains(&TypeId::UNKNOWN) {
+        if has_unknown {
             return TypeId::UNKNOWN;
         }
-        // Remove `never` from unions
-        flat.retain(|id| *id != TypeId::NEVER);
+        // Remove `never` from unions (only scan if we found any)
+        if has_never {
+            flat.retain(|id| *id != TypeId::NEVER);
+        }
         if flat.is_empty() {
             return TypeId::NEVER;
         }
@@ -1354,7 +1372,25 @@ impl TypeInterner {
         flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
 
-        if flat.contains(&TypeId::ERROR) {
+        // Single-pass scan for special sentinel types
+        let mut has_error = false;
+        let mut has_any = false;
+        let mut has_unknown = false;
+        let mut has_never = false;
+        for &id in flat.iter() {
+            if id == TypeId::ERROR {
+                has_error = true;
+                break;
+            }
+            if id == TypeId::ANY {
+                has_any = true;
+            } else if id == TypeId::UNKNOWN {
+                has_unknown = true;
+            } else if id == TypeId::NEVER {
+                has_never = true;
+            }
+        }
+        if has_error {
             return TypeId::ERROR;
         }
         if flat.is_empty() {
@@ -1363,13 +1399,15 @@ impl TypeInterner {
         if flat.len() == 1 {
             return flat[0];
         }
-        if flat.contains(&TypeId::ANY) {
+        if has_any {
             return TypeId::ANY;
         }
-        if flat.contains(&TypeId::UNKNOWN) {
+        if has_unknown {
             return TypeId::UNKNOWN;
         }
-        flat.retain(|id| *id != TypeId::NEVER);
+        if has_never {
+            flat.retain(|id| *id != TypeId::NEVER);
+        }
         if flat.is_empty() {
             return TypeId::NEVER;
         }
