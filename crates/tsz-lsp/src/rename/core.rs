@@ -62,6 +62,24 @@ impl<'a> RenameProvider<'a> {
             return PrepareRenameResult::cannot_rename("You cannot rename this element.");
         }
 
+        // `default` cannot be renamed when used as a declaration name
+        // (parameter, variable, function, class), but CAN be renamed as a
+        // property name in an object literal.
+        if display_name == "default" {
+            let is_property_name = self
+                .arena
+                .get_extended(node_idx)
+                .and_then(|ext| self.arena.get(ext.parent))
+                .is_some_and(|parent| {
+                    parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                        || parent.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                        || parent.kind == syntax_kind_ext::METHOD_DECLARATION
+                });
+            if !is_property_name {
+                return PrepareRenameResult::cannot_rename("You cannot rename this element.");
+            }
+        }
+
         // Check if identifier lives inside node_modules (heuristic)
         if self.file_name.contains("node_modules") {
             return PrepareRenameResult::cannot_rename(
