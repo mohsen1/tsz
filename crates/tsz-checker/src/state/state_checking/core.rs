@@ -873,6 +873,11 @@ impl<'a> CheckerState<'a> {
                         SyntaxKind::OverrideKeyword,
                         "override",
                     );
+                    self.error_if_ts_only_modifier(
+                        &method.modifiers,
+                        SyntaxKind::ConstKeyword,
+                        "const",
+                    );
                     self.error_if_ts_only_type_params(&method.type_parameters);
                     self.error_if_ts_only_type_annotation(method.type_annotation);
                     self.error_if_ts_only_signature_without_body(method.body.is_none(), member_idx);
@@ -896,6 +901,21 @@ impl<'a> CheckerState<'a> {
                         &prop.modifiers,
                         SyntaxKind::AbstractKeyword,
                         "abstract",
+                    );
+                    self.error_if_ts_only_modifier(
+                        &prop.modifiers,
+                        SyntaxKind::ConstKeyword,
+                        "const",
+                    );
+                    self.error_if_ts_only_modifier(
+                        &prop.modifiers,
+                        SyntaxKind::ExportKeyword,
+                        "export",
+                    );
+                    self.error_if_ts_only_modifier(
+                        &prop.modifiers,
+                        SyntaxKind::AsyncKeyword,
+                        "async",
                     );
                     self.error_if_ts_only_type_annotation(prop.type_annotation);
                     self.check_js_grammar_accessibility_modifier(&prop.modifiers, member_idx);
@@ -947,7 +967,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // TS8012: Parameter modifiers (public/private/protected/readonly on constructor params)
+            // TS8012: Parameter modifiers (public/private/protected/readonly/static/export/async on params)
             if let Some(ref modifiers) = param.modifiers {
                 for &mod_idx in &modifiers.nodes {
                     if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
@@ -955,7 +975,10 @@ impl<'a> CheckerState<'a> {
                             k if k == SyntaxKind::PublicKeyword as u16
                                 || k == SyntaxKind::PrivateKeyword as u16
                                 || k == SyntaxKind::ProtectedKeyword as u16
-                                || k == SyntaxKind::ReadonlyKeyword as u16 =>
+                                || k == SyntaxKind::ReadonlyKeyword as u16
+                                || k == SyntaxKind::StaticKeyword as u16
+                                || k == SyntaxKind::ExportKeyword as u16
+                                || k == SyntaxKind::AsyncKeyword as u16 =>
                             {
                                 self.error_at_node(
                                     mod_idx,
