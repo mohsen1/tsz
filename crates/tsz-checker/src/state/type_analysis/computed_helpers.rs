@@ -1643,8 +1643,17 @@ impl<'a> CheckerState<'a> {
                         original_object_type,
                         access.expression,
                     );
+                } else if saw_class_scope {
+                    // TS1111: Private field '#b' must be declared in an enclosing class.
+                    // We're inside a class but the private name was not declared here.
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::PRIVATE_FIELD_MUST_BE_DECLARED_IN_AN_ENCLOSING_CLASS,
+                        &[&property_name],
+                    );
                 } else {
-                    // TS2339: Property does not exist
+                    // TS2339: Property does not exist (outside any class context)
                     self.error_property_not_exist_at(
                         &property_name,
                         original_object_type,
