@@ -562,7 +562,9 @@ impl<'a> IRPrinter<'a> {
                 // so we should NOT use heuristics to guess single-line for generated code.
                 let should_emit_single_line = *is_expression_body || is_source_single_line;
 
+                let has_rest_to_lower = self.target_es5 && parameters.iter().any(|p| p.rest);
                 if !has_defaults
+                    && !has_rest_to_lower
                     && should_emit_single_line
                     && body.len() == 1
                     && match &body[0] {

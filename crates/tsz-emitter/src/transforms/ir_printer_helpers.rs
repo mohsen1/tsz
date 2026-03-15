@@ -74,7 +74,8 @@ impl<'a> IRPrinter<'a> {
         // - there's no source range (synthetic/generated code like abstract accessor transforms).
         // TSC preserves multiline formatting from source but uses single-line for generated code.
         // Exception: IIFE constructors (force_multiline_empty_body) always need multiline.
-        if !has_defaults && body.is_empty() {
+        let has_rest = self.target_es5 && params.iter().any(|p| p.rest);
+        if !has_defaults && !has_rest && body.is_empty() {
             let use_single_line = !force_multiline_empty_body
                 && (is_body_source_single_line || body_source_range.is_none());
             if use_single_line {
@@ -119,6 +120,13 @@ impl<'a> IRPrinter<'a> {
                 self.write("; }");
                 self.write_line();
             }
+        }
+
+        // Emit rest parameter lowering prologue (ES5 only)
+        let has_rest = params.iter().any(|p| p.rest);
+        if has_rest {
+            self.write_indent();
+            self.emit_rest_parameter_prologue(params);
         }
 
         // Emit the rest of the body, handling Comment/TrailingComment nodes.
@@ -210,15 +218,51 @@ impl<'a> IRPrinter<'a> {
     }
 
     pub(super) fn emit_parameters(&mut self, params: &[IRParam]) {
-        for (i, param) in params.iter().enumerate() {
-            if i > 0 {
+        let emit_rest_natively = !self.target_es5;
+        let mut first = true;
+        for param in params {
+            if param.rest && !emit_rest_natively {
+                continue;
+            }
+            if !first {
                 self.write(", ");
             }
+            first = false;
             if param.rest {
                 self.write("...");
             }
             self.write(&param.name);
         }
+    }
+
+    pub(super) fn emit_rest_parameter_prologue(&mut self, params: &[IRParam]) {
+        if !self.target_es5 {
+            return;
+        }
+        let Some(rest) = params.iter().find(|p| p.rest) else {
+            return;
+        };
+        let rest_index = params.iter().filter(|p| !p.rest).count();
+        self.write("var ");
+        self.write(&rest.name);
+        self.write(" = [];");
+        self.write_line();
+        self.write_indent();
+        self.write("for (var _i = ");
+        self.write(&rest_index.to_string());
+        self.write("; _i < arguments.length; _i++) {");
+        self.write_line();
+        self.increase_indent();
+        self.write_indent();
+        self.write(&rest.name);
+        self.write("[_i - ");
+        self.write(&rest_index.to_string());
+        self.write("] = arguments[_i];");
+        self.write_line();
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
     }
 
     pub(super) fn emit_property(&mut self, prop: &IRProperty) {

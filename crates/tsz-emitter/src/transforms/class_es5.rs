@@ -191,6 +191,7 @@ impl<'a> ClassES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_remove_comments(self.remove_comments);
         printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_target_es5(true);
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
         }
