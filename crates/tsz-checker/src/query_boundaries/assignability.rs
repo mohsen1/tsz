@@ -16,12 +16,6 @@ impl RelationFlags {
         tsz_solver::RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
     pub const NO_UNCHECKED_INDEXED_ACCESS: u16 =
         tsz_solver::RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
-    pub const DISABLE_METHOD_BIVARIANCE: u16 =
-        tsz_solver::RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
-    pub const ALLOW_VOID_RETURN: u16 = tsz_solver::RelationCacheKey::FLAG_ALLOW_VOID_RETURN;
-    pub const ALLOW_BIVARIANT_REST: u16 = tsz_solver::RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
-    pub const ALLOW_BIVARIANT_PARAM_COUNT: u16 =
-        tsz_solver::RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT;
 }
 pub(crate) use tsz_solver::type_queries::{
     AssignabilityEvalKind, ExcessPropertiesKind, get_allowed_keys, get_keyof_type,
