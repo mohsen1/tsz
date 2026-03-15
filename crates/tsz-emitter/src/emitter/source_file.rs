@@ -811,21 +811,86 @@ impl<'a> Printer<'a> {
             } else {
                 default_func_exports
             };
-            for name in &default_func_exports {
-                self.write("exports.default = ");
-                self.write(name);
-                self.write(";");
-                self.write_line();
-            }
-            // Emit function exports: exports.compile = compile;
-            // For aliased exports (export { bar as baz }), emit: exports.baz = bar;
-            for (exported_name, local_name) in &func_exports {
-                self.write("exports.");
-                self.write(exported_name);
-                self.write(" = ");
-                self.write(local_name);
-                self.write(";");
-                self.write_line();
+            // Merge default and named function exports, preserving source order.
+            // tsc emits function exports in declaration order, not default-first.
+            {
+                // Build a merged list of (source_position, export_name, local_name)
+                let mut all_func_exports: Vec<(u32, String, String)> = Vec::new();
+                for name in &default_func_exports {
+                    // Find source position of the default function export
+                    let pos = source
+                        .statements
+                        .nodes
+                        .iter()
+                        .find_map(|&idx| {
+                            let node = self.arena.get(idx)?;
+                            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                let export = self.arena.get_export_decl(node)?;
+                                if export.is_default_export {
+                                    let clause = self.arena.get(export.export_clause)?;
+                                    if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                        let func = self.arena.get_function(clause)?;
+                                        let fn_name = self.get_identifier_text_idx(func.name);
+                                        if &fn_name == name {
+                                            return Some(node.pos);
+                                        }
+                                    }
+                                }
+                            }
+                            None
+                        })
+                        .unwrap_or(0);
+                    all_func_exports.push((pos, "default".to_string(), name.clone()));
+                }
+                for (exported_name, local_name) in &func_exports {
+                    let pos = source
+                        .statements
+                        .nodes
+                        .iter()
+                        .find_map(|&idx| {
+                            let node = self.arena.get(idx)?;
+                            match node.kind {
+                                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                    let func = self.arena.get_function(node)?;
+                                    let fn_name = self.get_identifier_text_idx(func.name);
+                                    if &fn_name == local_name {
+                                        Some(node.pos)
+                                    } else {
+                                        None
+                                    }
+                                }
+                                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                                    let export = self.arena.get_export_decl(node)?;
+                                    let clause = self.arena.get(export.export_clause)?;
+                                    if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                        let func = self.arena.get_function(clause)?;
+                                        let fn_name = self.get_identifier_text_idx(func.name);
+                                        if &fn_name == local_name {
+                                            Some(node.pos)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        })
+                        .unwrap_or(0);
+                    all_func_exports.push((pos, exported_name.clone(), local_name.clone()));
+                }
+                // Sort by source position
+                all_func_exports.sort_by_key(|(pos, _, _)| *pos);
+                // Emit in source order
+                for (_, exported_name, local_name) in &all_func_exports {
+                    self.write("exports.");
+                    self.write(exported_name);
+                    self.write(" = ");
+                    self.write(local_name);
+                    self.write(";");
+                    self.write_line();
+                }
             }
             self.ctx.module_state.default_func_export_hoisted = !default_func_exports.is_empty();
 
