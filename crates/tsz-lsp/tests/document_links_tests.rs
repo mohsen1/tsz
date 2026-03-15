@@ -179,3 +179,64 @@ fn test_re_export_with_rename() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].target.as_deref(), Some("./module"));
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_dynamic_import() {
+    let source = r#"const m = import('./dynamic');"#;
+    let links = get_links(source);
+    // Dynamic imports may or may not produce document links depending on implementation
+    // At minimum, should not panic
+    let _ = links;
+}
+
+#[test]
+fn test_import_with_extension() {
+    let source = r#"import { foo } from './utils.ts';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./utils.ts"));
+}
+
+#[test]
+fn test_import_with_index() {
+    let source = r#"import { foo } from './components/index';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./components/index"));
+}
+
+#[test]
+fn test_import_scoped_package() {
+    let source = r#"import { something } from '@scope/package';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("@scope/package"));
+}
+
+#[test]
+fn test_mixed_imports_and_code() {
+    let source = r#"import { a } from './a';
+const x = 1;
+import { b } from './b';
+const y = 2;
+"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 2, "Should find imports mixed with code");
+    assert_eq!(links[0].target.as_deref(), Some("./a"));
+    assert_eq!(links[1].target.as_deref(), Some("./b"));
+}
+
+#[test]
+fn test_link_tooltip_present() {
+    let source = r#"import { foo } from './bar';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert!(
+        links[0].tooltip.is_some(),
+        "Link should have a tooltip for the module specifier"
+    );
+}

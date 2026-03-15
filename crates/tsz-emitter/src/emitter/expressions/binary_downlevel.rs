@@ -596,11 +596,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Capture-emit the left side first so that inner ?? chains allocate
+        // their temp variables before we allocate ours (matching tsc's order).
+        let left_text = self.capture_emit(binary.left);
         let value_temp = self.make_unique_name_hoisted_value();
         self.write("(");
         self.write(&value_temp);
         self.write(" = ");
-        self.emit(binary.left);
+        self.write(&left_text);
         self.write(") !== null && ");
         self.write(&value_temp);
         self.write(" !== void 0 ? ");
@@ -631,11 +634,15 @@ impl<'a> Printer<'a> {
             self.write(" : ");
             self.emit(binary.right);
         } else {
+            // Capture-emit the left side first so that inner ?? chains allocate
+            // their temp variables before we allocate ours. This matches tsc's
+            // bottom-up (innermost-first) temp variable ordering.
+            let left_text = self.capture_emit(binary.left);
             let value_temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&value_temp);
             self.write(" = ");
-            self.emit(binary.left);
+            self.write(&left_text);
             self.write(") !== null && ");
             self.write(&value_temp);
             self.write(" !== void 0 ? ");
