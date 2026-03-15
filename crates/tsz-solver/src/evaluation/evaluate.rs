@@ -978,16 +978,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `number | 1 | 2` → `number` (literals absorbed by primitive)
     /// - `{ a: string } | { a: string; b: number }` → `{ a: string; b: number }`
     fn simplify_union_members(&mut self, members: &mut Vec<TypeId>) {
-        // Union-specific early exits
-        if members.iter().any(|&id| id.is_unknown()) {
-            return;
+        // Single-pass early-exit: check for unknown (skip entirely) and whether all
+        // members are identity-comparable (disjoint, so O(n²) loop finds nothing).
+        let mut all_identity = true;
+        for &id in members.iter() {
+            if id.is_unknown() {
+                return;
+            }
+            if all_identity && !self.interner.is_identity_comparable_type(id) {
+                all_identity = false;
+            }
         }
-        // Skip if all members are identity-comparable — they're disjoint, so the O(n²) loop
-        // would find nothing. The interner's reduce_union_subtypes handles shallow cases.
-        if members
-            .iter()
-            .all(|&id| self.interner.is_identity_comparable_type(id))
-        {
+        if all_identity {
             return;
         }
         // In a union, A <: B means A is redundant (B subsumes it).
@@ -1025,12 +1027,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
-        if members.iter().any(|&id| id.is_any()) {
-            return;
-        }
-
-        if members.iter().any(|&id| self.is_complex_type(id)) {
-            return;
+        // Single-pass early-exit check instead of two separate O(N) scans.
+        for &id in members.iter() {
+            if id.is_any() || self.is_complex_type(id) {
+                return;
+            }
         }
 
         use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
