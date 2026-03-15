@@ -618,6 +618,12 @@ impl<'a> CheckerState<'a> {
         // tsc emits the more specific TS7015 ("index expression is not of type 'number'")
         // for arrays, tuples, enums, or any type with a numeric indexer when the index
         // type is not assignable to number.
+        //
+        // Suppress for for-in variables: `for (var i in arr) { arr[i] }` is a valid
+        // pattern — for-in produces string indices that are numeric at runtime.
+        // tsc does not emit TS7015 (or TS7053) for for-in variables indexing their
+        // iteration target or other arrays.
+        let is_for_in_index = self.is_for_in_variable_identifier(arg_idx);
         // For union types, ALL members must have a number index (resolve_number_index uses
         // find_map which is too permissive — it returns Some if any member matches).
         let resolver =
@@ -631,13 +637,21 @@ impl<'a> CheckerState<'a> {
         } else {
             resolver.resolve_number_index(object_type).is_some()
         };
-        if has_number_index && !self.ctx.types.is_assignable_to(index_type, TypeId::NUMBER) {
+        if has_number_index
+            && !is_for_in_index
+            && !self.ctx.types.is_assignable_to(index_type, TypeId::NUMBER)
+        {
             // tsc reports TS7015 at the index expression (arg_idx), not the full element access.
             self.error_at_node(
                 arg_idx,
                 "Element implicitly has an 'any' type because index expression is not of type 'number'.",
                 diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
             );
+            return;
+        }
+
+        // Suppress TS7053 for for-in variables too — same reason as TS7015 above.
+        if is_for_in_index {
             return;
         }
 
@@ -650,6 +664,62 @@ impl<'a> CheckerState<'a> {
 
         // TS7053 is reported at the full element access expression.
         self.error_at_node(expr_idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
+    }
+
+    /// Check if an identifier node refers to a variable declared in a for-in statement.
+    fn is_for_in_variable_identifier(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        // Resolve to symbol, then find the value declaration
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let decl = symbol.value_declaration;
+        if decl.is_none() {
+            return false;
+        }
+
+        // Check: declaration → parent (VarDeclList) → parent (ForInStatement?)
+        let Some(decl_node) = self.ctx.arena.get(decl) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(vdl_ext) = self.ctx.arena.get_extended(decl) else {
+            return false;
+        };
+        let vdl_idx = vdl_ext.parent;
+        if vdl_idx.is_none() {
+            return false;
+        }
+        let Some(for_ext) = self.ctx.arena.get_extended(vdl_idx) else {
+            return false;
+        };
+        let for_idx = for_ext.parent;
+        if for_idx.is_none() {
+            return false;
+        }
+        let Some(for_node) = self.ctx.arena.get(for_idx) else {
+            return false;
+        };
+        for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
     }
 
     /// TypeScript suppresses TS7053 for `this[...]`/`super[...]` when the class extends an `any` base.
