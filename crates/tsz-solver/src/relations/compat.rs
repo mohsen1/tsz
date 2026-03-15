@@ -1230,14 +1230,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
-        // Private brand incompatibility (TS2322)
-        // Check this before the structural check so we generate the right error
-        if let Some(false) = self.private_brand_assignability_override(source, target) {
-            return Some(SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
-        }
+        // Private brand incompatibility — let the structural subtype check handle
+        // it so the explain path can identify MissingProperty/MissingProperties
+        // (which the rendering layer filters into TS2741/TS2739).  Previously we
+        // short-circuited with TypeMismatch here, but that prevented the structural
+        // check from detecting which concrete properties are missing.
 
         // Empty object target or top-like union `{}` | null | undefined
         if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target)
