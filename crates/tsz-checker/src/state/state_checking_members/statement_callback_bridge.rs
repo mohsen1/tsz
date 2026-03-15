@@ -1324,6 +1324,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // subsequent code blocks, but the error emission happens elsewhere.
     }
 
+    fn get_type_of_case_expression(&mut self, case_expr: NodeIndex, switch_type: TypeId) -> TypeId {
+        // Set the switch expression type as contextual type for the case expression.
+        // In tsc, `getContextualType` returns the switch discriminant type for case
+        // clause expressions. This enables excess property checking (TS2353) when
+        // the case expression is an object literal.
+        let prev_contextual = self.ctx.contextual_type;
+        self.ctx.contextual_type = Some(switch_type);
+        let case_type = self.get_type_of_node(case_expr);
+        self.ctx.contextual_type = prev_contextual;
+        case_type
+    }
+
     fn check_switch_case_comparable(
         &mut self,
         switch_type: TypeId,
@@ -1340,6 +1352,22 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             || case_type == TypeId::UNKNOWN
         {
             return;
+        }
+
+        // Check excess properties for object literal case expressions (TS2353).
+        // In tsc, the switch discriminant type serves as the contextual type for
+        // case expressions. When a case expression is an object literal, tsc checks
+        // for excess properties against the switch type and emits TS2353 instead of
+        // TS2678. If excess property errors are emitted, skip the comparability check.
+        if let Some(case_node) = self.ctx.arena.get(case_expr) {
+            if case_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let diag_count_before = self.ctx.diagnostics.len();
+                self.check_object_literal_excess_properties(case_type, switch_type, case_expr);
+                if self.ctx.diagnostics.len() > diag_count_before {
+                    // Excess property errors were emitted (TS2353); skip TS2678.
+                    return;
+                }
+            }
         }
 
         // Use literal type for the switch expression if available, since
