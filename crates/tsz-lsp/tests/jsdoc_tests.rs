@@ -792,3 +792,195 @@ fn test_jsdoc_for_node_line_comment_not_jsdoc() {
         "Line comment should not be treated as JSDoc, got: {doc}",
     );
 }
+
+// ============================================================================
+// Batch 3: additional edge cases
+// ============================================================================
+
+#[test]
+fn test_parse_jsdoc_implements_tag() {
+    let result = parse_jsdoc("@implements {Iterable}");
+    assert!(!result.tags.is_empty(), "Should parse @implements tag");
+    assert_eq!(result.tags[0].name, "implements");
+}
+
+#[test]
+fn test_parse_jsdoc_extends_tag() {
+    let result = parse_jsdoc("@extends {Base}");
+    assert!(!result.tags.is_empty(), "Should parse @extends tag");
+    assert_eq!(result.tags[0].name, "extends");
+}
+
+#[test]
+fn test_parse_jsdoc_property_tag() {
+    let result = parse_jsdoc("@property {string} name The name property");
+    assert!(!result.tags.is_empty(), "Should parse @property tag");
+    assert_eq!(result.tags[0].name, "property");
+}
+
+#[test]
+fn test_parse_jsdoc_access_tag() {
+    let result = parse_jsdoc("@access protected");
+    assert!(!result.tags.is_empty(), "Should parse @access tag");
+    assert_eq!(result.tags[0].name, "access");
+    assert_eq!(result.tags[0].text, "protected");
+}
+
+#[test]
+fn test_parse_jsdoc_protected_tag() {
+    let result = parse_jsdoc("@protected");
+    assert!(!result.tags.is_empty(), "Should parse @protected tag");
+    assert_eq!(result.tags[0].name, "protected");
+}
+
+#[test]
+fn test_parse_jsdoc_public_tag() {
+    let result = parse_jsdoc("@public");
+    assert!(!result.tags.is_empty(), "Should parse @public tag");
+    assert_eq!(result.tags[0].name, "public");
+}
+
+#[test]
+fn test_parse_jsdoc_internal_tag() {
+    let result = parse_jsdoc("Not for public use.\n@internal");
+    assert_eq!(result.summary, Some("Not for public use.".to_string()));
+    assert!(!result.tags.is_empty());
+    assert_eq!(result.tags[0].name, "internal");
+}
+
+#[test]
+fn test_parse_jsdoc_module_tag() {
+    let result = parse_jsdoc("@module MyModule");
+    assert!(!result.tags.is_empty(), "Should parse @module tag");
+    assert_eq!(result.tags[0].name, "module");
+    assert_eq!(result.tags[0].text, "MyModule");
+}
+
+#[test]
+fn test_parse_jsdoc_summary_with_special_chars() {
+    let result = parse_jsdoc("Handles <T> & \"quoted\" values.");
+    assert_eq!(
+        result.summary,
+        Some("Handles <T> & \"quoted\" values.".to_string())
+    );
+}
+
+#[test]
+fn test_parse_jsdoc_param_name_with_dot_path() {
+    let result = parse_jsdoc("@param {string} options.name The option name");
+    // Dotted param names may be stored as-is or split
+    let _ = &result.params;
+}
+
+#[test]
+fn test_parse_jsdoc_multiple_returns_tags() {
+    let result = parse_jsdoc("@returns The first\n@returns The second");
+    assert_eq!(result.tags.len(), 2);
+    assert_eq!(result.tags[0].name, "returns");
+    assert_eq!(result.tags[1].name, "returns");
+}
+
+#[test]
+fn test_parse_jsdoc_empty_param_tag() {
+    let result = parse_jsdoc("@param");
+    // An @param with no name/description should be handled gracefully
+    assert!(
+        result.params.is_empty(),
+        "Empty @param should produce no params"
+    );
+}
+
+#[test]
+fn test_parse_jsdoc_is_empty_for_summary_only() {
+    let result = parse_jsdoc("Just a summary.");
+    assert!(
+        !result.is_empty(),
+        "ParsedJsdoc with summary should not be empty"
+    );
+}
+
+#[test]
+fn test_parse_jsdoc_fires_tag() {
+    let result = parse_jsdoc("@fires change");
+    assert!(!result.tags.is_empty(), "Should parse @fires tag");
+    assert_eq!(result.tags[0].name, "fires");
+    assert_eq!(result.tags[0].text, "change");
+}
+
+#[test]
+fn test_parse_jsdoc_emits_tag() {
+    let result = parse_jsdoc("@emits data");
+    assert!(!result.tags.is_empty(), "Should parse @emits tag");
+    assert_eq!(result.tags[0].name, "emits");
+}
+
+#[test]
+fn test_parse_jsdoc_generator_tag() {
+    let result = parse_jsdoc("@generator");
+    assert!(!result.tags.is_empty(), "Should parse @generator tag");
+    assert_eq!(result.tags[0].name, "generator");
+}
+
+#[test]
+fn test_jsdoc_for_node_exported_function() {
+    let source = "/** Exported helper */\nexport function helper() { return 1; }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(
+        func_idx.is_some(),
+        "Should find exported function declaration"
+    );
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    // Export may or may not preserve JSDoc association
+    let _ = doc;
+}
+
+#[test]
+fn test_jsdoc_for_node_multiline_jsdoc() {
+    let source =
+        "/**\n * Line one.\n * Line two.\n * @param x The value\n */\nfunction multi(x: number) {}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(func_idx.is_some());
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    assert!(
+        doc.contains("Line one") || doc.contains("Line two"),
+        "Should extract multiline JSDoc content, got: {doc}",
+    );
+}
+
+#[test]
+fn test_jsdoc_for_node_const_variable_let() {
+    let source = "/** Let variable doc */\nlet counter = 0;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let var_decl = find_first_node_of_kind(arena, root, syntax_kind_ext::VARIABLE_DECLARATION);
+    assert!(var_decl.is_some());
+
+    let doc = jsdoc_for_node(arena, root, var_decl.unwrap(), source);
+    assert!(
+        doc.contains("Let variable doc"),
+        "Should extract JSDoc for let variable, got: {doc}",
+    );
+}
+
+#[test]
+fn test_inline_param_jsdocs_method_declaration() {
+    let source = "class Foo { bar(/** the x */ x: number) {} }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let method = find_first_node_of_kind(arena, root, syntax_kind_ext::METHOD_DECLARATION);
+    if let Some(idx) = method {
+        let result = inline_param_jsdocs(arena, root, idx, source);
+        // May or may not find inline docs depending on comment storage
+        let _ = result;
+    }
+}

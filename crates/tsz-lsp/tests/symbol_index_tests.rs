@@ -1123,3 +1123,170 @@ fn test_symbol_flags_to_kind_type_parameter() {
         SymbolKind::TypeParameter
     );
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_add_same_definition_twice_same_location() {
+    let mut index = SymbolIndex::new();
+    let loc = make_location("a.ts", 0, 0, 3);
+    index.add_definition("foo", loc.clone());
+    index.add_definition("foo", loc);
+
+    let defs = index.find_definitions("foo");
+    // Both adds should be recorded (no dedup on location)
+    assert_eq!(defs.len(), 2);
+}
+
+#[test]
+fn test_add_export_same_name_twice_same_file() {
+    let mut index = SymbolIndex::new();
+    index.add_export("a.ts", "foo");
+    index.add_export("a.ts", "foo");
+
+    let exports = index.get_exports("a.ts");
+    // Implementation may or may not deduplicate; just verify no crash
+    assert!(!exports.is_empty());
+}
+
+#[test]
+fn test_stats_after_remove_all_files() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("a.ts", "x", make_location("a.ts", 0, 0, 1));
+    index.add_reference("b.ts", "y", make_location("b.ts", 0, 0, 1));
+    index.add_definition("x", make_location("a.ts", 0, 0, 1));
+    index.add_export("a.ts", "x");
+
+    index.remove_file("a.ts");
+    index.remove_file("b.ts");
+
+    let stats = index.stats();
+    assert_eq!(stats.total_references, 0);
+    assert_eq!(stats.total_definitions, 0);
+    assert_eq!(stats.files_with_exports, 0);
+}
+
+#[test]
+fn test_prefix_search_with_long_prefix() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("handleUserAuthentication", make_location("a.ts", 0, 0, 24));
+    index.add_definition("handleUserRegistration", make_location("a.ts", 1, 0, 22));
+    index.add_definition("handleError", make_location("a.ts", 2, 0, 11));
+
+    let matches = index.get_symbols_with_prefix("handleUser");
+    assert_eq!(matches.len(), 2);
+    assert!(matches.contains(&"handleUserAuthentication".to_string()));
+    assert!(matches.contains(&"handleUserRegistration".to_string()));
+}
+
+#[test]
+fn test_reference_location_data_preserved() {
+    let mut index = SymbolIndex::new();
+    let loc = make_location("module.ts", 5, 10, 15);
+    index.add_reference("module.ts", "myFunc", loc);
+
+    let refs = index.find_references("myFunc");
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].file_path, "module.ts");
+    assert_eq!(refs[0].range.start.line, 5);
+    assert_eq!(refs[0].range.start.character, 10);
+    assert_eq!(refs[0].range.end.character, 15);
+}
+
+#[test]
+fn test_definition_location_data_preserved() {
+    let mut index = SymbolIndex::new();
+    let loc = make_location("types.ts", 12, 4, 20);
+    index.add_definition("MyInterface", loc);
+
+    let defs = index.find_definitions("MyInterface");
+    assert_eq!(defs.len(), 1);
+    assert_eq!(defs[0].file_path, "types.ts");
+    assert_eq!(defs[0].range.start.line, 12);
+    assert_eq!(defs[0].range.start.character, 4);
+    assert_eq!(defs[0].range.end.character, 20);
+}
+
+#[test]
+fn test_remove_file_preserves_other_file_imports() {
+    let mut index = SymbolIndex::new();
+    index.add_import(
+        "a.ts",
+        ImportInfo {
+            local_name: "x".to_string(),
+            source_module: "./shared".to_string(),
+            exported_name: "x".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    index.add_import(
+        "b.ts",
+        ImportInfo {
+            local_name: "y".to_string(),
+            source_module: "./shared".to_string(),
+            exported_name: "y".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+
+    index.remove_file("a.ts");
+
+    // b.ts imports should still exist
+    let b_imports = index.get_imports("b.ts");
+    assert_eq!(b_imports.len(), 1);
+    assert_eq!(b_imports[0].local_name, "y");
+
+    // The shared module should still have b.ts as an importer
+    let importers = index.get_importing_files("./shared");
+    assert_eq!(importers.len(), 1);
+    assert!(importers.contains(&"b.ts".to_string()));
+}
+
+#[test]
+fn test_has_file_after_clear() {
+    let mut index = SymbolIndex::new();
+    index.add_export("a.ts", "foo");
+    assert!(index.has_file("a.ts"));
+
+    index.clear();
+    assert!(!index.has_file("a.ts"));
+}
+
+#[test]
+fn test_symbol_flags_to_kind_set_accessor() {
+    assert_eq!(
+        symbol_flags_to_kind(symbol_flags::SET_ACCESSOR),
+        SymbolKind::Property
+    );
+}
+
+#[test]
+fn test_symbol_flags_to_kind_signature() {
+    // SIGNATURE flags should map to Method or Function
+    let kind = symbol_flags_to_kind(symbol_flags::SIGNATURE);
+    // The exact mapping is implementation-defined; just verify no panic
+    let _ = kind;
+}
+
+#[test]
+fn test_all_definition_names_with_kinds() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("Alpha", make_location("a.ts", 0, 0, 5), SymbolKind::Class);
+    index.add_definition_with_kind("Beta", make_location("b.ts", 0, 0, 4), SymbolKind::Function);
+    index.add_definition("Gamma", make_location("c.ts", 0, 0, 5));
+
+    let names: Vec<&str> = index.all_definition_names().collect();
+    assert_eq!(names.len(), 3);
+    assert!(names.contains(&"Alpha"));
+    assert!(names.contains(&"Beta"));
+    assert!(names.contains(&"Gamma"));
+
+    assert_eq!(index.get_definition_kind("Alpha"), Some(SymbolKind::Class));
+    assert_eq!(
+        index.get_definition_kind("Beta"),
+        Some(SymbolKind::Function)
+    );
+    assert_eq!(index.get_definition_kind("Gamma"), None);
+}
