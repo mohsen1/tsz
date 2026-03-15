@@ -55,8 +55,8 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use tsz_solver::{
-            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectFlags,
-            ObjectShape, PropertyInfo,
+            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectShape,
+            PropertyInfo,
         };
         let factory = self.ctx.types.factory();
 
@@ -366,14 +366,14 @@ impl<'a> CheckerState<'a> {
             factory.callable(shape)
         } else if string_index.is_some() || number_index.is_some() {
             factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,
                 symbol: interface_symbol,
+                ..ObjectShape::default()
             })
         } else if !properties.is_empty() {
-            factory.object_with_flags_and_symbol(properties, ObjectFlags::empty(), interface_symbol)
+            factory.object_with_symbol(properties, interface_symbol)
         } else {
             TypeId::ANY
         };
@@ -604,7 +604,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
         use tracing::trace;
         use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
-        use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
+        use tsz_solver::{CallableShape, ObjectShape};
 
         trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
         let factory = self.ctx.types.factory();
@@ -753,11 +753,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
-                factory.object_with_flags_and_symbol(
-                    properties,
-                    ObjectFlags::empty(),
-                    derived_shape.symbol,
-                )
+                factory.object_with_symbol(properties, derived_shape.symbol)
             }
             (
                 InterfaceMergeKind::Object(derived_shape_id),
@@ -775,11 +771,11 @@ impl<'a> CheckerState<'a> {
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 let result = factory.object_with_index(ObjectShape {
-                    flags: ObjectFlags::empty(),
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
                     symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
                 });
                 tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
                 result
@@ -793,11 +789,11 @@ impl<'a> CheckerState<'a> {
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 factory.object_with_index(ObjectShape {
-                    flags: ObjectFlags::empty(),
                     properties,
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
                     symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
                 })
             }
             (
@@ -809,7 +805,6 @@ impl<'a> CheckerState<'a> {
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties);
                 factory.object_with_index(ObjectShape {
-                    flags: ObjectFlags::empty(),
                     properties,
                     string_index: derived_shape
                         .string_index
@@ -820,6 +815,7 @@ impl<'a> CheckerState<'a> {
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
                     symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
                 })
             }
             // When one side is an intersection (e.g., from global augmentation merging
@@ -1541,7 +1537,7 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::TypeId {
         use crate::query_boundaries::state::type_resolution as query;
         use tsz_solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
-        use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
+        use tsz_solver::{CallableShape, ObjectShape};
 
         let guard_key = (
             module_spec.to_string(),
@@ -1601,11 +1597,10 @@ impl<'a> CheckerState<'a> {
                 let merged_properties =
                     self.merge_properties(&augmentation_members, &base_shape.properties);
                 factory.object_with_index(ObjectShape {
-                    flags: ObjectFlags::empty(),
                     properties: merged_properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
-                    symbol: None,
+                    ..ObjectShape::default()
                 })
             }
             AugmentationTargetKind::Callable(shape_id) => {

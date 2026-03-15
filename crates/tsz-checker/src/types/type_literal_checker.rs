@@ -663,8 +663,7 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-            PropertyInfo,
+            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
         };
         let factory = self.ctx.types.factory();
 
@@ -1112,11 +1111,10 @@ impl<'a> CheckerState<'a> {
 
         if string_index.is_some() || number_index.is_some() {
             return factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,
-                symbol: None,
+                ..ObjectShape::default()
             });
         }
 

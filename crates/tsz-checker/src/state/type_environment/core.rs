@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         use rustc_hash::FxHashMap;
-        use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo};
+        use tsz_solver::{IndexSignature, ObjectShape, PropertyInfo};
 
         let factory = self.ctx.types.factory();
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -121,11 +121,9 @@ impl<'a> CheckerState<'a> {
                 param_name: None,
             });
             return Some(factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties,
-                string_index: None,
                 number_index,
-                symbol: None,
+                ..ObjectShape::default()
             }));
         }
 
