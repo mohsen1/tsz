@@ -67,6 +67,28 @@ impl ParserState {
             self.parse_identifier()
         };
 
+        // TS1434: Dotted names like `Foo.I1` are not valid interface names.
+        // tsc emits "Unexpected keyword or identifier" and "{  expected" at the dotted part.
+        if self.is_token(SyntaxKind::DotToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            // Emit '{' expected at the dot position (tsc expects { after the name)
+            self.parse_error_at_current_token(
+                "'{' expected.",
+                diagnostic_codes::EXPECTED,
+            );
+            // Skip over the dotted name segments (e.g., `.I1`)
+            while self.is_token(SyntaxKind::DotToken) {
+                self.next_token(); // skip '.'
+                if self.is_identifier_or_keyword() {
+                    self.parse_error_at_current_token(
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                    self.next_token(); // skip the identifier
+                }
+            }
+        }
+
         // Parse type parameters: interface IList<T> {}
         let type_parameters = self
             .is_token(SyntaxKind::LessThanToken)
