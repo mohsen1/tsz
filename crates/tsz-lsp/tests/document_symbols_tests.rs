@@ -1316,3 +1316,257 @@ fn test_document_symbols_mixed_declarations() {
     assert_eq!(symbols[5].name, "T");
     assert_eq!(symbols[5].kind, SymbolKind::Struct);
 }
+
+#[test]
+fn test_document_symbols_empty_class() {
+    let source = "class Empty {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Empty");
+    assert_eq!(symbols[0].kind, SymbolKind::Class);
+    assert!(
+        symbols[0].children.is_empty(),
+        "Empty class should have no children"
+    );
+}
+
+#[test]
+fn test_document_symbols_empty_interface() {
+    let source = "interface Empty {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Empty");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+    assert!(
+        symbols[0].children.is_empty(),
+        "Empty interface should have no children"
+    );
+}
+
+#[test]
+fn test_document_symbols_empty_enum() {
+    let source = "enum Empty {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Empty");
+    assert_eq!(symbols[0].kind, SymbolKind::Enum);
+    assert!(
+        symbols[0].children.is_empty(),
+        "Empty enum should have no children"
+    );
+}
+
+#[test]
+fn test_document_symbols_whitespace_only() {
+    let source = "   \n   \n   ";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(
+        symbols.is_empty(),
+        "Whitespace-only file should have no symbols"
+    );
+}
+
+#[test]
+fn test_document_symbols_const_enum_members() {
+    let source = "const enum Direction {\n  Up = 0,\n  Down = 1,\n  Left = 2,\n  Right = 3\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Direction");
+    assert_eq!(symbols[0].children.len(), 4);
+    assert_eq!(symbols[0].children[0].name, "Up");
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::EnumMember);
+}
+
+#[test]
+fn test_document_symbols_class_with_private_protected() {
+    let source = "class Secured {\n  private secret: string;\n  protected guard(): void {}\n  public visible: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].children.len(), 3);
+}
+
+#[test]
+fn test_document_symbols_interface_with_index_and_call() {
+    let source = "interface Indexable {\n  [key: string]: any;\n  (arg: number): void;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Indexable");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_document_symbols_unicode_identifiers() {
+    let source = "const café = 1;\nfunction naïve() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 2);
+    assert_eq!(symbols[0].name, "café");
+    assert_eq!(symbols[1].name, "naïve");
+}
+
+#[test]
+fn test_document_symbols_deeply_nested_namespaces() {
+    let source = "namespace A {\n  namespace B {\n    namespace C {\n      function deep() {}\n    }\n  }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "A");
+    // A has child B
+    assert!(!symbols[0].children.is_empty(), "A should have child B");
+}
+
+#[test]
+fn test_document_symbols_class_with_static_and_instance() {
+    let source = "class Counter {\n  static count: number = 0;\n  value: number;\n  static reset() {}\n  increment() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Counter");
+    assert_eq!(
+        symbols[0].children.len(),
+        4,
+        "Should have 4 children: count, value, reset, increment"
+    );
+}
+
+#[test]
+fn test_document_symbols_multiple_function_overloads() {
+    let source = "function process(x: string): string;\nfunction process(x: number): number;\nfunction process(x: any): any { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    // Should have at least one symbol for 'process'
+    let process_symbols: Vec<_> = symbols.iter().filter(|s| s.name == "process").collect();
+    assert!(
+        !process_symbols.is_empty(),
+        "Should have at least one 'process' symbol"
+    );
+}
+
+#[test]
+fn test_document_symbols_class_implements_multiple() {
+    let source = "interface Readable {}\ninterface Writable {}\nclass Stream implements Readable, Writable {\n  read() {}\n  write() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 3);
+    assert_eq!(symbols[2].name, "Stream");
+    assert_eq!(symbols[2].kind, SymbolKind::Class);
+    assert_eq!(symbols[2].children.len(), 2);
+}
+
+#[test]
+fn test_document_symbols_type_alias_conditional() {
+    let source = "type IsString<T> = T extends string ? true : false;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "IsString");
+    assert_eq!(symbols[0].kind, SymbolKind::Struct);
+}
+
+#[test]
+fn test_document_symbols_type_alias_mapped() {
+    let source = "type Readonly<T> = {\n  readonly [K in keyof T]: T[K];\n};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Readonly");
+    assert_eq!(symbols[0].kind, SymbolKind::Struct);
+}
+
+#[test]
+fn test_document_symbols_single_line_declarations() {
+    let source = "const a = 1; let b = 2; var c = 3;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(
+        symbols.len(),
+        3,
+        "Should find all three variable declarations"
+    );
+    assert_eq!(symbols[0].name, "a");
+    assert_eq!(symbols[0].kind, SymbolKind::Constant);
+    assert_eq!(symbols[1].name, "b");
+    assert_eq!(symbols[2].name, "c");
+}
