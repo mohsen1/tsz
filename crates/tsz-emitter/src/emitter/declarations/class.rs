@@ -1835,13 +1835,13 @@ impl<'a> Printer<'a> {
                             Vec::new(), // trailing_comments filled during class body emission
                         ));
                     } else {
-                        // Non-static field inits use String names for `this.name = val` or
-                        // `this["name"] = val`. Bracket names use a `[` prefix to signal
-                        // bracket notation at emit time. Numeric names are skipped.
+                        // Non-static field inits use String names for `this.name = val`,
+                        // `this["name"] = val`, or `this[0] = val`. Bracket names use
+                        // a `[` prefix to signal bracket notation at emit time.
                         let ident_name = match &name_emit {
                             PropertyNameEmit::Dot(s) => s.clone(),
                             PropertyNameEmit::Bracket(s) => format!("[{s}]"),
-                            _ => continue,
+                            PropertyNameEmit::BracketNumeric(s) => format!("[{s}]"),
                         };
                         let init_end = self
                             .arena
