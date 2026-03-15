@@ -491,7 +491,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         {
                             let arg = expanded_args[idx];
                             let resolved_arg = self.evaluate(arg);
-                            if is_primitive_type(self.interner, resolved_arg) {
+                            // Passthrough for genuine primitives (number, string, boolean, etc.)
+                            // For `any`: only passthrough when the type parameter is constrained
+                            // to array/tuple types (e.g., `Arrayish<T extends unknown[]>`).
+                            // Otherwise, `any` must flow through mapped type expansion to produce
+                            // `{ [x: string]: any }` (matching tsc's behavior for `Objectish<any>`).
+                            let is_any_like = resolved_arg == TypeId::ANY
+                                || resolved_arg == TypeId::UNKNOWN
+                                || resolved_arg == TypeId::NEVER
+                                || resolved_arg == TypeId::ERROR;
+                            let should_passthrough = if is_any_like {
+                                // Check if the type parameter has an array/tuple constraint
+                                tp.constraint.is_some_and(|c| {
+                                    let eval_c = self.evaluate(c);
+                                    matches!(
+                                        self.interner.lookup(eval_c),
+                                        Some(TypeData::Array(_) | TypeData::Tuple(_))
+                                    )
+                                })
+                            } else {
+                                is_primitive_type(self.interner, resolved_arg)
+                            };
+                            if should_passthrough {
                                 if let Some(db) = self.query_db {
                                     db.insert_application_eval_cache(
                                         def_id,
