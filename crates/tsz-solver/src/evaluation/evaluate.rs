@@ -1039,6 +1039,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
+        // Pre-compute property name sets for all members once, avoiding O(N²) FxHashSet
+        // allocations in the inner loop. Each entry is None for non-object types.
+        let prop_names: Vec<Option<FxHashSet<u32>>> = members
+            .iter()
+            .map(|&id| {
+                let mut names = FxHashSet::default();
+                Self::collect_property_names(self.interner, id, &mut names);
+                if names.is_empty() { None } else { Some(names) }
+            })
+            .collect();
+
         // Use mark-and-compact instead of Vec::remove() which is O(N) per removal.
         // Since max size is 25 (from guard above), a u32 bitset avoids heap allocation.
         let len = members.len();
@@ -1058,7 +1069,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
                         checker.is_subtype_of(members[i], members[j])
-                            && !self.has_unique_properties(members[i], members[j])
+                            && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
                         // For intersections: member[j] <: member[i] means member[i] is
@@ -1068,7 +1079,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // This matters for optional properties: {a: string} <: {b?: number}
                         // but {a: string} & {b?: number} must preserve both properties.
                         checker.is_subtype_of(members[j], members[i])
-                            && !self.has_unique_properties(members[i], members[j])
+                            && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                     }
                 };
                 if is_subtype {
@@ -1090,25 +1101,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         members.truncate(write);
     }
 
-    /// Check if `candidate` has any property names that `subsuming` doesn't have.
-    /// Used to prevent incorrect intersection simplification: even if A <: B,
-    /// B should not be removed from A & B if B declares properties missing from A.
-    fn has_unique_properties(&self, candidate: TypeId, subsuming: TypeId) -> bool {
-        // Collect property names from both types
-        let mut candidate_names = FxHashSet::default();
-        let mut subsuming_names = FxHashSet::default();
-        Self::collect_property_names(self.interner, candidate, &mut candidate_names);
-        Self::collect_property_names(self.interner, subsuming, &mut subsuming_names);
-
-        // If candidate has no properties, it can't contribute unique ones
-        if candidate_names.is_empty() {
-            return false;
-        }
-
-        // Check if candidate has any property name not in subsuming
-        candidate_names
-            .iter()
-            .any(|name| !subsuming_names.contains(name))
+    /// Check if `candidate` has any property names that `subsuming` doesn't have,
+    /// using pre-computed property name sets to avoid repeated allocation.
+    fn has_unique_properties_cached(
+        candidate_names: &Option<FxHashSet<u32>>,
+        subsuming_names: &Option<FxHashSet<u32>>,
+    ) -> bool {
+        let Some(candidate) = candidate_names else {
+            return false; // No properties → can't contribute unique ones
+        };
+        let Some(subsuming) = subsuming_names else {
+            return true; // Candidate has properties but subsuming doesn't
+        };
+        candidate.iter().any(|name| !subsuming.contains(name))
     }
 
     /// Collect property name atoms from an object type into the provided set.
