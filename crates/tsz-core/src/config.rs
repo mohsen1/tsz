@@ -1164,6 +1164,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 // TODO: Remove this workaround once non-strict-mode conformance improves.
                 let is_coercible_bool_string = expected_type == "boolean"
                     && key != "isolatedModules"
+                    && key != "allowImportingTsExtensions"
                     && value.is_string()
                     && matches!(
                         value.as_str().unwrap_or("").trim().to_lowercase().as_str(),
@@ -4940,6 +4941,28 @@ mod tests {
         assert!(
             !resolved.checker.isolated_modules,
             "isolatedModules should not be applied from a string-typed boolean value"
+        );
+    }
+
+    #[test]
+    fn test_ts5024_allow_importing_ts_extensions_string_is_not_applied() {
+        let source = r#"{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "module": "esnext",
+    "allowImportingTsExtensions": "true"
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let has_ts5024 = parsed.diagnostics.iter().any(|d| d.code == 5024);
+        assert!(
+            has_ts5024,
+            "Should emit TS5024 for string 'true' on allowImportingTsExtensions"
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.allow_importing_ts_extensions,
+            "allowImportingTsExtensions should not be applied from a string-typed boolean value"
         );
     }
 

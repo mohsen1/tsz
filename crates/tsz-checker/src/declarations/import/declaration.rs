@@ -470,6 +470,11 @@ impl<'a> CheckerState<'a> {
             .get(import_clause_idx)
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
             .is_some_and(|clause| clause.is_type_only);
+        // Track whether TS2846/TS5097 extension diagnostics were emitted.
+        // When these fire, TS2307 from module resolution should be suppressed
+        // (tsc prioritizes extension-specific diagnostics over "cannot find module").
+        let mut emitted_extension_diagnostic = false;
+
         let dts_ext = if module_name.ends_with(".d.ts") {
             Some((".d.ts", ".ts", ".js"))
         } else if module_name.ends_with(".d.mts") {
@@ -500,13 +505,22 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
             );
+            emitted_extension_diagnostic = true;
         }
 
         // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled.
         // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
+        // tsc does not emit TS5097 inside declaration files (.d.ts).
+        // When the resolver reports TS6142 (jsx not set), tsc does not also emit TS5097.
+        let has_jsx_not_set_error = self.ctx.get_resolution_error(module_name).is_some_and(|e| {
+            e.code
+                == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+        });
         if !self.ctx.compiler_options.allow_importing_ts_extensions
             && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && !has_jsx_not_set_error
             && let Some(ext) = ts_extension_suffix(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -520,6 +534,7 @@ impl<'a> CheckerState<'a> {
                     &message,
                     diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
                 );
+            emitted_extension_diagnostic = true;
         }
 
         if self.would_create_cycle(module_name) {
@@ -568,6 +583,15 @@ impl<'a> CheckerState<'a> {
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
                 || error_code == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
             {
+                // When TS2846 or TS5097 was already emitted for this import,
+                // suppress TS2307/TS2792. tsc prioritizes extension-specific
+                // diagnostics over "cannot find module" errors.
+                // Also suppress TS2307 for .d.ts type-only imports — tsc does
+                // not validate module existence for `import type` from .d.ts.
+                if emitted_extension_diagnostic || (is_type_only_import && dts_ext.is_some()) {
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
                 // Node.js built-in modules: suppress TS2307/TS2882 entirely.
                 if is_node_builtin {
                     self.ctx.import_resolution_stack.pop();
