@@ -1963,12 +1963,7 @@ impl<'a> Printer<'a> {
                     &[],
                     &body_info.block_scoped_vars,
                 ) {
-                    self.emit_do_statement_with_capture(
-                        node,
-                        loop_stmt,
-                        &capture_info,
-                        &body_info,
-                    );
+                    self.emit_do_statement_with_capture(node, loop_stmt, &capture_info, &body_info);
                     return;
                 }
             }
