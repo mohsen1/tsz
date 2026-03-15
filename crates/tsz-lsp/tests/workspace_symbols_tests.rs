@@ -899,3 +899,174 @@ fn test_infer_symbol_kind_camel_case() {
         kind
     );
 }
+
+#[test]
+fn test_find_symbols_long_query() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "veryLongSymbolNameThatIsUnusuallyDescriptive",
+        make_location("verbose.ts", 0, 0, 44),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("veryLongSymbolNameThatIsUnusuallyDescriptive");
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].name,
+        "veryLongSymbolNameThatIsUnusuallyDescriptive"
+    );
+}
+
+#[test]
+fn test_find_symbols_partial_middle_match() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "getUserById",
+        make_location("users.ts", 0, 0, 11),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("ById");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "getUserById");
+}
+
+#[test]
+fn test_remove_file_then_readd() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("foo", make_location("a.ts", 0, 0, 3), SymbolKind::Function);
+    index.remove_file("a.ts");
+
+    // Re-add with different location
+    index.add_definition_with_kind("foo", make_location("a.ts", 5, 0, 3), SymbolKind::Variable);
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("foo");
+    assert_eq!(results.len(), 1, "Should find the re-added symbol");
+    assert_eq!(results[0].location.range.start.line, 5);
+}
+
+#[test]
+fn test_remove_nonexistent_file() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("bar", make_location("exists.ts", 0, 0, 3));
+    // Removing a file that was never added should not panic
+    index.remove_file("nonexistent.ts");
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("bar");
+    assert_eq!(results.len(), 1, "Existing symbols should be unaffected");
+}
+
+#[test]
+fn test_infer_symbol_kind_i_prefix_lowercase_second() {
+    // "iPad" starts with I but second char is lowercase 'P' - wait, 'P' is uppercase
+    // "iValue" starts with lowercase 'i', should be Variable, not Interface
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("iValue");
+    assert!(
+        kind == SymbolKind::Variable || kind == SymbolKind::Function,
+        "lowercase 'i' prefix should not be Interface, got: {:?}",
+        kind
+    );
+}
+
+#[test]
+fn test_infer_symbol_kind_all_uppercase_no_underscore() {
+    // "HTTP" is all uppercase but no underscore - may be Class or Constant
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("HTTP");
+    // Either Constant (screaming case) or Class (PascalCase) is acceptable
+    assert!(
+        kind == SymbolKind::Constant || kind == SymbolKind::Class,
+        "All uppercase without underscore should be Constant or Class, got: {:?}",
+        kind
+    );
+}
+
+#[test]
+fn test_find_symbols_many_files_same_name() {
+    let mut index = SymbolIndex::new();
+    for i in 0..10 {
+        index.add_definition_with_kind(
+            "init",
+            make_location(&format!("module{}.ts", i), 0, 0, 4),
+            SymbolKind::Function,
+        );
+    }
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("init");
+    assert_eq!(results.len(), 10, "Should find init in all 10 files");
+    assert!(results.iter().all(|r| r.name == "init"));
+}
+
+#[test]
+fn test_find_symbols_empty_index() {
+    let index = SymbolIndex::new();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("anything");
+    assert!(results.is_empty(), "Empty index should return no results");
+}
+
+#[test]
+fn test_prefix_match_ranked_above_substring() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("renderItem", make_location("a.ts", 0, 0, 10));
+    index.add_definition("prerender", make_location("b.ts", 0, 0, 9));
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("render");
+
+    assert_eq!(results.len(), 2);
+    // Prefix match should come before substring match
+    assert_eq!(
+        results[0].name, "renderItem",
+        "Prefix match should be first"
+    );
+    assert_eq!(
+        results[1].name, "prerender",
+        "Substring match should be second"
+    );
+}
+
+#[test]
+fn test_get_definition_kind_after_remove_file() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("Widget", make_location("w.ts", 0, 0, 6), SymbolKind::Class);
+    index.remove_file("w.ts");
+
+    // After removing the file, the symbol should not be findable
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Widget");
+    assert!(
+        results.is_empty(),
+        "After removing file, symbol should not be found"
+    );
+}
+
+#[test]
+fn test_find_symbols_mixed_case_query_matches() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "XMLParser",
+        make_location("xml.ts", 0, 0, 9),
+        SymbolKind::Class,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+
+    // Mixed case query
+    let results = provider.find_symbols("xmlparser");
+    assert_eq!(
+        results.len(),
+        1,
+        "Case-insensitive search should find XMLParser"
+    );
+    assert_eq!(results[0].name, "XMLParser");
+}
+
+#[test]
+fn test_infer_symbol_kind_underscore_only() {
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("_");
+    assert!(
+        kind == SymbolKind::Variable || kind == SymbolKind::Function,
+        "Single underscore should be Variable or Function, got: {:?}",
+        kind
+    );
+}
