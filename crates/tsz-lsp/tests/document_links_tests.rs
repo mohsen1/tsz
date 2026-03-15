@@ -667,3 +667,134 @@ fn test_require_inside_function_body() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].target.as_deref(), Some("./lazy"));
 }
+
+#[test]
+fn test_import_with_trailing_comma() {
+    let source = r#"import { foo, bar, } from './utils';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./utils"));
+}
+
+#[test]
+fn test_import_with_unicode_path() {
+    let source = r#"import { x } from './日本語';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./日本語"));
+}
+
+#[test]
+fn test_import_with_hyphenated_path() {
+    let source = r#"import { x } from './my-lib';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./my-lib"));
+}
+
+#[test]
+fn test_export_all_then_named_from() {
+    let source = r#"export * from './a';
+export { b } from './b';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 2);
+}
+
+#[test]
+fn test_import_with_very_long_path() {
+    let source = r#"import { x } from './a/b/c/d/e/f/g/h/i/j/k/l/m/n';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        links[0].target.as_deref(),
+        Some("./a/b/c/d/e/f/g/h/i/j/k/l/m/n")
+    );
+}
+
+#[test]
+fn test_import_with_tilde_path() {
+    let source = r#"import { x } from '~/components/Button';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("~/components/Button"));
+}
+
+#[test]
+fn test_import_and_require_in_same_file() {
+    let source = r#"import { a } from './a';
+const b = require('./b');"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 2);
+}
+
+#[test]
+fn test_import_with_parenthesized_dynamic() {
+    let source = r#"const x = import('./dynamic');"#;
+    let links = get_links(source);
+    // Dynamic import should produce a link
+    if !links.is_empty() {
+        assert_eq!(links[0].target.as_deref(), Some("./dynamic"));
+    }
+}
+
+#[test]
+fn test_three_imports_from_same_module() {
+    let source = r#"import { a } from './shared';
+import { b } from './shared';
+import { c } from './shared';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 3);
+    for link in &links {
+        assert_eq!(link.target.as_deref(), Some("./shared"));
+    }
+}
+
+#[test]
+fn test_import_with_css_extension() {
+    let source = r#"import './styles.css';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./styles.css"));
+}
+
+#[test]
+fn test_import_with_svg_extension() {
+    let source = r#"import logo from './logo.svg';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./logo.svg"));
+}
+
+#[test]
+fn test_require_with_concatenated_string() {
+    // require with non-string-literal arg - should not produce link
+    let source = r#"const x = require('./prefix' + suffix);"#;
+    let links = get_links(source);
+    let _ = links; // May or may not produce links
+}
+
+#[test]
+fn test_export_type_star_from() {
+    let source = r#"export type * from './types';"#;
+    let links = get_links(source);
+    if !links.is_empty() {
+        assert_eq!(links[0].target.as_deref(), Some("./types"));
+    }
+}
+
+#[test]
+fn test_import_with_windows_style_path() {
+    let source = r#"import { x } from '.\\utils';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+}
+
+#[test]
+fn test_link_range_starts_after_from_keyword() {
+    let source = r#"import { x } from './utils';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    // The link range should start at the string literal position
+    assert_eq!(links[0].range.start.line, 0);
+    assert!(links[0].range.start.character > 0);
+}

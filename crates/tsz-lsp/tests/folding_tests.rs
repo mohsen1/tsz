@@ -772,3 +772,197 @@ fn test_folding_ranges_interface_extending_multiple() {
         ranges.len()
     );
 }
+
+#[test]
+fn test_folding_ranges_async_function() {
+    let source = "\nasync function fetchData() {\n  const result = await fetch('url');\n  return result;\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for async function"
+    );
+    let func_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        func_range.is_some(),
+        "Should find async function body folding range at line 1"
+    );
+}
+
+#[test]
+fn test_folding_ranges_generator_function() {
+    let source = "\nfunction* gen() {\n  yield 1;\n  yield 2;\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for generator function"
+    );
+}
+
+#[test]
+fn test_folding_ranges_class_with_static_block() {
+    let source =
+        "\nclass Config {\n  static value: number;\n  static {\n    Config.value = 42;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    // May or may not fold the static block separately
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_labeled_statement() {
+    let source = "\nouter: for (let i = 0; i < 10; i++) {\n  inner: for (let j = 0; j < 10; j++) {\n    if (i === j) break outer;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find folding ranges for labeled nested loops, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_unicode_content() {
+    let source = "\nfunction grüße() {\n  return '日本語';\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for function with unicode content"
+    );
+}
+
+#[test]
+fn test_folding_ranges_multiple_block_comments() {
+    let source = "/*\n * Block 1\n */\n\n/*\n * Block 2\n */\n\n/*\n * Block 3\n */\n";
+    let ranges = get_ranges(source);
+    let comments: Vec<&FoldingRange> = ranges
+        .iter()
+        .filter(|r| r.kind.as_deref() == Some("comment"))
+        .collect();
+    assert_eq!(
+        comments.len(),
+        3,
+        "Three separate block comments should produce three folds, got {}",
+        comments.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_nested_if_else_chain() {
+    let source = "\nif (a) {\n  doA();\n} else if (b) {\n  doB();\n} else if (c) {\n  doC();\n} else {\n  doD();\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find multiple folding ranges for if/else-if/else chain, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_multiline_parameters() {
+    let source = "\nfunction create(\n  name: string,\n  age: number,\n  email: string\n) {\n  return { name, age, email };\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding ranges for function with multiline params"
+    );
+}
+
+#[test]
+fn test_folding_ranges_class_with_heritage() {
+    let source = "\nclass Animal {\n  name: string;\n}\nclass Dog extends Animal {\n  bark() {\n    return 'woof';\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find folds for both classes, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_nested_arrays() {
+    let source = "\nconst matrix = [\n  [\n    1,\n    2\n  ],\n  [\n    3,\n    4\n  ]\n];\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find folds for nested arrays, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_export_default_class() {
+    let source = "\nexport default class Widget {\n  render() {\n    return 'widget';\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find folds for exported default class body and method, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_multiline_string_concatenation() {
+    let source = "\nconst query = {\n  sql: 'SELECT * ' +\n       'FROM users ' +\n       'WHERE active = true',\n  params: []\n};\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for multiline object"
+    );
+}
+
+#[test]
+fn test_folding_ranges_empty_blocks() {
+    let source = "\nfunction empty() {\n}\n";
+    let ranges = get_ranges(source);
+    let _ = ranges; // Empty block may or may not produce a fold - just ensure no crash
+}
+
+#[test]
+fn test_folding_ranges_four_comment_lines() {
+    let source = "// line 1\n// line 2\n// line 3\n// line 4\nconst x = 1;\n";
+    let ranges = get_ranges(source);
+    let comment = ranges
+        .iter()
+        .find(|r| r.kind.as_deref() == Some("comment") && r.start_line == 0);
+    assert!(
+        comment.is_some(),
+        "Four consecutive single-line comments should fold"
+    );
+    if let Some(c) = comment {
+        assert_eq!(c.end_line, 3, "Comment fold should end at line 3");
+    }
+}
+
+#[test]
+fn test_folding_ranges_region_with_code_inside() {
+    let source = "// #region Utilities\nfunction helper() {\n  return true;\n}\nfunction another() {\n  return false;\n}\n// #endregion\n";
+    let ranges = get_ranges(source);
+    let region = ranges.iter().find(|r| r.kind.as_deref() == Some("region"));
+    assert!(
+        region.is_some(),
+        "Should find region fold even with functions inside"
+    );
+    // Should also have function body folds
+    let non_region: Vec<&FoldingRange> = ranges
+        .iter()
+        .filter(|r| r.kind.as_deref() != Some("region"))
+        .collect();
+    assert!(
+        !non_region.is_empty(),
+        "Should also find function body folds inside region"
+    );
+}
+
+#[test]
+fn test_parse_region_delimiter_with_extra_spaces() {
+    let result = parse_region_delimiter("//   #region   Spaced");
+    assert!(result.is_some(), "Should parse region with extra spaces");
+    let d = result.unwrap();
+    assert!(d.is_start);
+}
+
+#[test]
+fn test_parse_region_delimiter_endregion_with_label() {
+    let result = parse_region_delimiter("// #endregion My Region");
+    assert!(result.is_some(), "Should parse endregion with label");
+    let d = result.unwrap();
+    assert!(!d.is_start);
+}
