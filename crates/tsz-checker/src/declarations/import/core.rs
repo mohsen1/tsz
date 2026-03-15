@@ -1324,7 +1324,6 @@ impl<'a> CheckerState<'a> {
         let is_node_esm_file =
             self.ctx.compiler_options.module.is_node_module() && self.ctx.file_is_esm == Some(true);
 
-        let mut emitted_ts1203 = false;
         if (is_es_module || is_system_module || is_node_esm_file)
             && !is_preserve
             && !is_declaration_file
@@ -1334,7 +1333,6 @@ impl<'a> CheckerState<'a> {
         {
             for &export_idx in &export_assignment_indices {
                 if !self.is_ambient_declaration(export_idx) {
-                    emitted_ts1203 = true;
                     if is_system_module {
                         self.error_at_node(
                             export_idx,

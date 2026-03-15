@@ -1689,17 +1689,14 @@ impl<'a> CheckerState<'a> {
                             for diag in self.ctx.diagnostics.iter().rev() {
                                 if diag.code
                                     == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                    && let Some(body_node) = self.ctx.arena.get(body)
+                                    && diag.start >= body_node.pos
+                                    && diag.start < body_node.end
                                 {
-                                    if let Some(body_node) = self.ctx.arena.get(body) {
-                                        if diag.start >= body_node.pos
-                                            && diag.start < body_node.end
-                                        {
-                                            self.ctx
-                                                .callback_return_type_errors
-                                                .push(diag.clone());
-                                            break;
-                                        }
-                                    }
+                                    self.ctx
+                                        .callback_return_type_errors
+                                        .push(diag.clone());
+                                    break;
                                 }
                             }
                         }
