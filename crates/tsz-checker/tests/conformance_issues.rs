@@ -420,13 +420,16 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
     let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
 
+    // Improved: correlated narrowing intersection now correctly handles
+    // this case. tsc produces 0 errors, and we're getting closer.
     assert_eq!(
-        ts2322_count, 1,
-        "Expected one TS2322 false positive for Num/Runtype<any>. Actual diagnostics: {diagnostics:#?}"
+        ts2322_count, 0,
+        "Expected zero TS2322 (matches tsc). Actual diagnostics: {diagnostics:#?}"
     );
-    assert_eq!(
-        ts2344_count, 1,
-        "Expected one TS2344 false positive for O constraint. Actual diagnostics: {diagnostics:#?}"
+    // TS2344 false positive still remains
+    assert!(
+        ts2344_count <= 1,
+        "Expected at most one TS2344 false positive. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

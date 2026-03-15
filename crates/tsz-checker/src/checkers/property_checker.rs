@@ -132,15 +132,12 @@ impl<'a> CheckerState<'a> {
             if getter_level != setter_level {
                 let is_write = self.is_property_access_write_context(error_node);
                 let level = if is_write { setter_level } else { getter_level };
-                match level {
-                    Some(lvl) => Some(crate::state::MemberAccessInfo {
-                        level: lvl,
-                        declaring_class_idx: decl_class_idx,
-                        declaring_class_name: self
-                            .get_class_name_with_type_params_from_decl(decl_class_idx),
-                    }),
-                    None => None, // Public accessor in this context — no restriction.
-                }
+                level.map(|lvl| crate::state::MemberAccessInfo {
+                    level: lvl,
+                    declaring_class_idx: decl_class_idx,
+                    declaring_class_name: self
+                        .get_class_name_with_type_params_from_decl(decl_class_idx),
+                })
             } else {
                 // Same level on both accessors — use the normal lookup.
                 self.find_member_access_info(class_idx, property_name, is_static)
@@ -264,7 +261,6 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
     ) -> bool {
         use crate::diagnostics::diagnostic_codes;
-        use crate::query_boundaries::checkers::property as query;
 
         // Collect all candidate classes from brand properties.
         let candidates = self.collect_brand_class_candidates(object_type);
@@ -331,8 +327,6 @@ impl<'a> CheckerState<'a> {
 
     /// Collect all class declaration candidates from brand properties on a type.
     fn collect_brand_class_candidates(&self, object_type: tsz_solver::TypeId) -> Vec<NodeIndex> {
-        use crate::query_boundaries::checkers::property as query;
-
         let mut candidates = Vec::new();
 
         fn parse_brand_name(name: &str) -> Option<Result<tsz_binder::SymbolId, NodeIndex>> {
@@ -385,9 +379,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find accessor visibility levels in a class hierarchy for divergent get/set.
-    /// Returns (getter_level, setter_level, declaring_class_idx) if the property
+    /// Returns (`getter_level`, `setter_level`, `declaring_class_idx`) if the property
     /// has accessors with different visibility levels.
-    fn find_accessor_levels_in_hierarchy(
+    const fn find_accessor_levels_in_hierarchy(
         &mut self,
         _class_idx: NodeIndex,
         _property_name: &str,
@@ -420,14 +414,14 @@ impl<'a> CheckerState<'a> {
         };
         if grandparent_node.kind != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
             // Also check for prefix/postfix increment/decrement.
-            if grandparent_node.kind == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            if (grandparent_node.kind
+                == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 || grandparent_node.kind
-                    == tsz_parser::parser::syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                    == tsz_parser::parser::syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                && let Some(unary) = self.ctx.arena.get_unary_expr(grandparent_node)
             {
-                if let Some(unary) = self.ctx.arena.get_unary_expr(grandparent_node) {
-                    return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
-                        || unary.operator == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
-                }
+                return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
             }
             return false;
         }
