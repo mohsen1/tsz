@@ -1568,10 +1568,10 @@ impl<'a> Printer<'a> {
             }
 
             if !var_names.is_empty() {
-                self.write("var ");
-                self.write(&var_names.join(", "));
-                self.write(";");
-                self.write_line();
+                // Hoist private field vars to the top of the scope (after "use strict"
+                // and CJS preamble), matching tsc behavior. tsc emits all private field
+                // WeakMap/method vars before the first class in the scope.
+                self.hoisted_assignment_temps.extend(var_names);
             }
 
             // Set up the private field map for expression lowering
