@@ -1148,68 +1148,11 @@ impl<'a> CheckerState<'a> {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
                 continue;
             };
-            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                if let Some(spread) = self.ctx.arena.get_spread(element_node)
-                    && let Some(expr_node) = self.ctx.arena.get(spread.expression)
-                    && expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                    && let Some(bin) = self.ctx.arena.get_binary_expr(expr_node)
-                    && bin.operator_token == SyntaxKind::EqualsToken as u16
-                {
-                    self.error_at_node_msg(
-                        element_idx,
-                        diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
-                        &[],
-                    );
-                }
-            }
-        }
-    }
-
-    /// TS1186: A rest element cannot have an initializer.
-    fn check_rest_element_initializer(&mut self, left_idx: NodeIndex) {
-        let Some(left_node) = self.ctx.arena.get(left_idx) else {
-            return;
-        };
-        let elements = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            self.ctx
-                .arena
-                .get_literal_expr(left_node)
-                .map(|lit| &lit.elements.nodes as &[NodeIndex])
-        } else if left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            self.ctx
-                .arena
-                .get_literal_expr(left_node)
-                .map(|lit| &lit.elements.nodes as &[NodeIndex])
-        } else {
-            None
-        };
-        let Some(elements) = elements else { return };
-        for &element_idx in elements {
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind != syntax_kind_ext::SPREAD_ELEMENT
-                && element_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT
-            {
-                continue;
-            }
-            let spread_expr = self
-                .ctx
-                .arena
-                .get_spread(element_node)
-                .map(|s| s.expression)
-                .or_else(|| {
-                    self.ctx
-                        .arena
-                        .get_unary_expr_ex(element_node)
-                        .map(|u| u.expression)
-                });
-            let Some(spread_expr) = spread_expr else {
-                continue;
-            };
-            if let Some(spread_node) = self.ctx.arena.get(spread_expr)
-                && spread_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(bin) = self.ctx.arena.get_binary_expr(spread_node)
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                && let Some(spread) = self.ctx.arena.get_spread(element_node)
+                && let Some(expr_node) = self.ctx.arena.get(spread.expression)
+                && expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(expr_node)
                 && bin.operator_token == SyntaxKind::EqualsToken as u16
             {
                 self.error_at_node_msg(
