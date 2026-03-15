@@ -966,3 +966,65 @@ fn test_parse_region_delimiter_endregion_with_label() {
     let d = result.unwrap();
     assert!(!d.is_start);
 }
+
+#[test]
+fn test_folding_ranges_async_await() {
+    let source = "\nasync function fetch() {\n  await Promise.resolve();\n  return 1;\n}\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_export_default_function() {
+    let source = "\nexport default function() {\n  return 42;\n}\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_class_with_many_methods() {
+    let source = "\nclass Service {\n  a() {}\n  b() {}\n  c() {}\n  d() {}\n  e() {}\n}\n";
+    let ranges = get_ranges(source);
+    assert!(ranges.len() >= 1);
+}
+
+#[test]
+fn test_folding_ranges_chained_method_calls() {
+    let source = "\nconst result = arr\n  .filter(x => x > 0)\n  .map(x => x * 2)\n  .reduce((a, b) => a + b, 0);\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_multiline_string_template() {
+    let source = "\nconst html = `\n  <div>\n    <p>Hello</p>\n  </div>\n`;\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_empty_function_body() {
+    let source = "\nfunction empty() {\n}\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_conditional_expression_multiline() {
+    let source = "\nconst result = condition\n  ? value1\n  : value2;\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_namespace_with_exports() {
+    let source = "\nnamespace API {\n  export function get() {}\n  export function post() {}\n}\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_parse_region_delimiter_empty_string() {
+    let result = parse_region_delimiter("");
+    assert!(result.is_none(), "Empty string is not a region");
+}
