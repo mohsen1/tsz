@@ -183,6 +183,13 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
+    /// Mark helpers needed for async generator functions (async function*).
+    pub(super) const fn mark_async_generator_helpers(&mut self) {
+        let helpers = self.transforms.helpers_mut();
+        helpers.await_helper = true;
+        helpers.async_generator = true;
+    }
+
     pub(super) fn mark_class_helpers(
         &mut self,
         class_node: NodeIndex,

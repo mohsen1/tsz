@@ -669,6 +669,10 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.target_es5 {
             if func.is_async {
                 self.mark_async_helpers();
+                // Async generators (async function*) need additional helpers
+                if func.asterisk_token {
+                    self.mark_async_generator_helpers();
+                }
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if self.function_parameters_need_es5_transform(&func.parameters) {
                 // Mark rest helper if parameters have rest
@@ -947,6 +951,9 @@ impl<'a> LoweringPass<'a> {
         // Check if this is an async function needing lowering (target < ES2017)
         let base_directive = if self.ctx.needs_async_lowering && self.has_async_modifier(idx) {
             self.mark_async_helpers();
+            if func.asterisk_token {
+                self.mark_async_generator_helpers();
+            }
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5
             && self.function_parameters_need_es5_transform(&func.parameters)

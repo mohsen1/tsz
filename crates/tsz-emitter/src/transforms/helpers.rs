@@ -117,6 +117,30 @@ pub const VALUES_HELPER: &str = r#"var __values = (this && this.__values) || fun
     throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
 };"#;
 
+/// Helper code for __await (async generator support)
+pub const AWAIT_HELPER: &str = r#"var __await = (this && this.__await) || function (v) { return this instanceof __await ? (this.v = v, this) : new __await(v); }"#;
+
+/// Helper code for __asyncGenerator (async generator functions)
+pub const ASYNC_GENERATOR_HELPER: &str = r#"var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _arguments, generator) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var g = generator.apply(thisArg, _arguments || []), i, q = [];
+    return i = Object.create((typeof AsyncIterator === "function" ? AsyncIterator : Object).prototype), verb("next"), verb("throw"), verb("return", awaitReturn), i[Symbol.asyncIterator] = function () { return this; }, i;
+    function awaitReturn(f) { return function (v) { return Promise.resolve(v).then(f, reject); }; }
+    function verb(n, f) { if (g[n]) { i[n] = function (v) { return new Promise(function (a, b) { q.push([n, v, a, b]) > 1 || resume(n, v); }); }; if (f) i[n] = f(i[n]); } }
+    function resume(n, v) { try { step(g[n](v)); } catch (e) { settle(q[0][3], e); } }
+    function step(r) { r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r); }
+    function fulfill(value) { resume("next", value); }
+    function reject(value) { resume("throw", value); }
+    function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
+};"#;
+
+/// Helper code for __asyncDelegator (yield* in async generators)
+pub const ASYNC_DELEGATOR_HELPER: &str = r#"var __asyncDelegator = (this && this.__asyncDelegator) || function (o) {
+    var i, p;
+    return i = {}, verb("next"), verb("throw", function (e) { throw e; }), verb("return"), i[Symbol.iterator] = function () { return this; }, i;
+    function verb(n, f) { i[n] = o[n] ? function (v) { return (p = !p) ? { value: __await(o[n](v)), done: false } : f ? f(v) : v; } : f; }
+};"#;
+
 /// Helper code for __asyncValues (for-await-of)
 pub const ASYNC_VALUES_HELPER: &str = r#"var __asyncValues = (this && this.__asyncValues) || function (o) {
     if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
@@ -351,6 +375,9 @@ pub struct HelpersNeeded {
     pub read: bool,
     pub spread_array: bool,
     pub async_values: bool,
+    pub async_generator: bool,
+    pub async_delegator: bool,
+    pub await_helper: bool,
     pub export_star: bool,
     pub import_default: bool,
     pub import_star: bool,
@@ -382,6 +409,9 @@ impl HelpersNeeded {
             || self.read
             || self.spread_array
             || self.async_values
+            || self.async_generator
+            || self.async_delegator
+            || self.await_helper
             || self.export_star
             || self.import_default
             || self.import_star
@@ -440,6 +470,15 @@ impl HelpersNeeded {
         }
         if self.generator {
             names.push("__generator");
+        }
+        if self.await_helper {
+            names.push("__await");
+        }
+        if self.async_generator {
+            names.push("__asyncGenerator");
+        }
+        if self.async_delegator {
+            names.push("__asyncDelegator");
         }
         if self.rest {
             names.push("__rest");
@@ -570,6 +609,19 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     // Priority 6: generator
     if helpers.generator {
         output.push_str(GENERATOR_HELPER);
+        output.push('\n');
+    }
+    // Async generator helpers (after awaiter/generator)
+    if helpers.await_helper {
+        output.push_str(AWAIT_HELPER);
+        output.push('\n');
+    }
+    if helpers.async_generator {
+        output.push_str(ASYNC_GENERATOR_HELPER);
+        output.push('\n');
+    }
+    if helpers.async_delegator {
+        output.push_str(ASYNC_DELEGATOR_HELPER);
         output.push('\n');
     }
     // No priority (come last in tsc order): rest, values, read, spreadArray,
