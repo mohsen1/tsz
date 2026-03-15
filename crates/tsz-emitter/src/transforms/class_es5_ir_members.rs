@@ -56,6 +56,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 let method_name = self.get_method_name_ir(method_data.name);
                 let params = self.extract_parameters(&method_data.parameters);
 
+                // Generate destructuring prologue for binding-pattern parameters
+                let destructuring_prologue =
+                    self.generate_destructuring_prologue(&method_data.parameters, &params);
+
                 // Check if async method (not generator)
                 let is_async = self
                     .arena
@@ -63,10 +67,14 @@ impl<'a> ES5ClassTransformer<'a> {
                     && !method_data.asterisk_token;
 
                 // Capture body source range for single-line detection
-                let body_source_range = self
-                    .arena
-                    .get(method_data.body)
-                    .map(|body_node| (body_node.pos, body_node.end));
+                // If we have destructuring prologue, force multi-line
+                let body_source_range = if destructuring_prologue.is_empty() {
+                    self.arena
+                        .get(method_data.body)
+                        .map(|body_node| (body_node.pos, body_node.end))
+                } else {
+                    None // Force multi-line when destructuring prologue exists
+                };
 
                 let method_body = if is_async {
                     // Async method: use async transformer to build proper generator body
@@ -81,6 +89,12 @@ impl<'a> ES5ClassTransformer<'a> {
                     }]
                 } else {
                     let mut method_body = self.convert_block_body(method_data.body);
+                    // Prepend destructuring prologue
+                    if !destructuring_prologue.is_empty() {
+                        let mut full_body = destructuring_prologue;
+                        full_body.append(&mut method_body);
+                        method_body = full_body;
+                    }
 
                     // Check if method needs `var _this = this;` capture
                     let needs_this_capture = self.constructor_needs_this_capture(method_data.body);
