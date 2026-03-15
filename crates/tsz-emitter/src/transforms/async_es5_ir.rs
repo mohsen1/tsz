@@ -550,12 +550,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::IF_STATEMENT => {
-                self.process_if_statement_in_async(
-                    idx,
-                    cases,
-                    current_statements,
-                    current_label,
-                );
+                self.process_if_statement_in_async(idx, cases, current_statements, current_label);
             }
 
             k if k == syntax_kind_ext::THROW_STATEMENT => {
@@ -570,9 +565,8 @@ impl<'a> AsyncES5Transformer<'a> {
                                 current_statements,
                                 current_label,
                             );
-                            current_statements.push(IRNode::ThrowStatement(Box::new(
-                                IRNode::GeneratorSent,
-                            )));
+                            current_statements
+                                .push(IRNode::ThrowStatement(Box::new(IRNode::GeneratorSent)));
                         } else {
                             let expr = self.expression_to_ir(throw_data.expression);
                             current_statements.push(IRNode::ThrowStatement(Box::new(expr)));
@@ -585,12 +579,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::TRY_STATEMENT => {
-                self.process_try_statement_in_async(
-                    idx,
-                    cases,
-                    current_statements,
-                    current_label,
-                );
+                self.process_try_statement_in_async(idx, cases, current_statements, current_label);
             }
 
             _ => {
@@ -870,10 +859,10 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         }
 
-        let has_catch = try_data.catch_clause.is_some()
-            && self.arena.get(try_data.catch_clause).is_some();
-        let has_finally = try_data.finally_block.is_some()
-            && self.arena.get(try_data.finally_block).is_some();
+        let has_catch =
+            try_data.catch_clause.is_some() && self.arena.get(try_data.catch_clause).is_some();
+        let has_finally =
+            try_data.finally_block.is_some() && self.arena.get(try_data.finally_block).is_some();
 
         // Reserve labels
         let catch_label = if has_catch {
@@ -944,7 +933,8 @@ impl<'a> AsyncES5Transformer<'a> {
             {
                 // Declare catch variable: e_1 = _a.sent()
                 if catch_data.variable_declaration.is_some() {
-                    let catch_var_name = self.get_catch_variable_name(catch_data.variable_declaration);
+                    let catch_var_name =
+                        self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {
                         current_statements.push(IRNode::ExpressionStatement(Box::new(
                             IRNode::BinaryExpr {
@@ -1044,7 +1034,12 @@ impl<'a> AsyncES5Transformer<'a> {
         if node.kind == syntax_kind_ext::BLOCK {
             if let Some(block) = self.arena.get_block(node) {
                 for &stmt_idx in &block.statements.nodes {
-                    self.process_async_statement(stmt_idx, cases, current_statements, current_label);
+                    self.process_async_statement(
+                        stmt_idx,
+                        cases,
+                        current_statements,
+                        current_label,
+                    );
                 }
             }
         } else {
