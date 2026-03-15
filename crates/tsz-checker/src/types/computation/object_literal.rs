@@ -270,6 +270,29 @@ impl<'a> CheckerState<'a> {
                     // Note: TS7008 is NOT emitted for object literal properties.
                     // tsc only emits TS7008 for class properties, property signatures,
                     // auto-accessors, and binary expressions.
+                    // However, TS7018 IS emitted for object literal properties when
+                    // noImplicitAny is on and the property implicitly has 'any' type.
+                    // This happens when:
+                    // - The value is `null` or `undefined` with strictNullChecks off (widens to any)
+                    // - The value has type `any` without a contextual/declared type
+                    if self.ctx.no_implicit_any()
+                        && !self.ctx.in_destructuring_target
+                        && jsdoc_declared_type.is_none()
+                        && property_context_type.is_none()
+                        && prop.initializer != prop.name
+                    {
+                        let is_implicit_any = value_type == TypeId::ANY
+                            || (!self.ctx.strict_null_checks()
+                                && (value_type == TypeId::NULL || value_type == TypeId::UNDEFINED));
+                        if is_implicit_any {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                prop.name,
+                                diagnostic_codes::OBJECT_LITERALS_PROPERTY_IMPLICITLY_HAS_AN_TYPE,
+                                &[&name, "any"],
+                            );
+                        }
+                    }
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
