@@ -2,7 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~93% on 2000-test sample, ~91.4% on 3000-test sample (2026-03-15). All contextual-typing commits merged.
+**Conformance**: ~93% on 2000-test sample, ~91.4% on 3000-test sample, ~87.5% on 5000-test sample (2026-03-15). All contextual-typing commits merged.
+
+**Campaign plateau reached**: After 12 fixes, remaining failures are dominated by deep type system issues, multi-file tests, JSDoc/Salsa, and complex generic inference. No more 1-3 line fixes available in the contextual-typing area. Further gains require work in other campaigns (narrowing, mapped types, JSDoc, parser recovery).
 
 **What was fixed** (12 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
@@ -24,15 +26,17 @@
 - `classImplementsClass6.ts` — now passes (fix #11: implements clause property recovery)
 - TS7018 batch (fix #12): `arrayBestCommonTypes`, `declarationEmitOverloadedPrivateInference`, `esNextWeakRefs_IterableWeakMap`, `useBeforeDeclaration_propertyAssignment`, `superCallBeforeThisAccessing7`, `commonJSReexport`, `namespaceImportTypeQuery`, `namespaceImportTypeQuery4`, `YieldExpression20_es6`, `TwoInternalModules*` (4 tests), `exportEqualsProperty2`
 
-## Remaining Failure Breakdown (~1770 tests)
+## Remaining Failure Breakdown (updated 2026-03-15)
 
-| Category | Count | Difficulty | Notes |
-|----------|-------|-----------|-------|
-| Fingerprint-only (right codes, wrong position/message) | ~620 | Medium | Error message formatting. Bulk changes break as many as they fix. |
-| Pure false positives (expected=[], we emit errors) | ~150 | Medium-Hard | TS2322 (39), TS2339 (23), TS2345 (18), TS7006 (8), TS2741 (6) |
-| False negatives (we emit 0, tsc expects errors) | ~280 | Hard | Multi-file, definite assignment, missing lib types |
-| Code mismatches | ~100 | Medium | TS2322↔TS2345 (4), TS2741↔TS2322 (6), TS2834→TS2835 (5) |
-| Deep type system issues | ~620 | Hard | Subtype checking, narrowing, mapped types, generics |
+On 3000-test sample: 2743 pass (91.4%), ~257 fail. Top error code mismatches:
+- **TS2345**: missing=7, extra=20 — argument type false positives (conditional types, generics)
+- **TS2322**: missing=8, extra=19 — type assignment false positives (deep type system)
+- **TS2339**: missing=10, extra=7 — property access issues (both directions)
+- **TS2323**: missing=7, extra=0 — duplicate export variable (export default merging)
+- **TS2344**: missing=6, extra=0 — constraint satisfaction (lib.dom.d.ts)
+- **TS2741**: missing=2, extra=5 — property missing (rest/spread, intersection)
+
+All remaining categories are "hard" — no more quick wins from contextual-typing campaign.
 
 ## Highest-Impact Next Steps
 
