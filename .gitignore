@@ -30,6 +30,7 @@ coverage/
 # Rust/WASM
 pkg/
 target/
+target-*/
 .target/
 .target-*
 
