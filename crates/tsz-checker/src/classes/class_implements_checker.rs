@@ -974,7 +974,7 @@ impl<'a> CheckerState<'a> {
                             // For overloaded methods, use the combined type from the
                             // class instance type (all overload signatures merged).
                             // For non-overloaded members, use the single declaration type.
-                            let class_member_type = if let Some(&overloaded_type) =
+                            let mut class_member_type = if let Some(&overloaded_type) =
                                 overloaded_member_types.get(&member_name)
                             {
                                 overloaded_type
@@ -986,6 +986,19 @@ impl<'a> CheckerState<'a> {
                                 class_member_types.insert(class_member_idx, computed);
                                 computed
                             };
+                            // Substitute `this` type in class members too — the class method
+                            // may return `this` (polymorphic), which must be replaced with the
+                            // concrete class instance type for a fair comparison against the
+                            // interface member (which has already been this-substituted above).
+                            if let Some(this_type) = class_this_type
+                                && tsz_solver::contains_this_type(self.ctx.types, class_member_type)
+                            {
+                                class_member_type = tsz_solver::substitute_this_type(
+                                    self.ctx.types,
+                                    class_member_type,
+                                    this_type,
+                                );
+                            }
 
                             // Check visibility (TS2420)
                             let sym_flags = self
