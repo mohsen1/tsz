@@ -499,7 +499,9 @@ impl TsProgram {
         // Create new type checker
         // In a full implementation, we'd cache this
         TsTypeChecker::new(
-            self.merged.as_ref().unwrap(),
+            self.merged
+                .as_ref()
+                .expect("merged must be set before creating type checker"),
             std::sync::Arc::clone(&self.type_interner),
             &self.options,
             &self.lib_files,
