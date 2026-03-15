@@ -444,6 +444,43 @@ pub fn extract_type_params_for_call(
     }
 }
 
+/// Get a CallableShape for any callable type (Function or Callable).
+///
+/// For Callable types: returns the shape directly.
+/// For Function types: wraps the function as a single-signature callable.
+/// Returns None for non-callable types.
+///
+/// This unifies the Function/Callable distinction so callers don't need
+/// to handle both variants separately.
+pub fn get_callable_shape_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::types::CallableShape>> {
+    if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id) {
+        return Some(db.callable_shape(shape_id));
+    }
+    if let Some(shape_id) = crate::visitor::function_shape_id(db, type_id) {
+        let func = db.function_shape(shape_id);
+        return Some(std::sync::Arc::new(crate::types::CallableShape {
+            call_signatures: vec![crate::types::CallSignature {
+                type_params: func.type_params.clone(),
+                params: func.params.clone(),
+                this_type: func.this_type,
+                return_type: func.return_type,
+                type_predicate: func.type_predicate.clone(),
+                is_method: func.is_method,
+            }],
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        }));
+    }
+    None
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2319,5 +2356,30 @@ mod tests {
 
         // Non-callable type → None
         assert!(super::extract_type_params_for_call(&interner, TypeId::STRING, 0).is_none());
+    }
+
+    #[test]
+    fn test_get_callable_shape_for_type() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::FunctionShape;
+
+        // Function → wrapped as single-sig callable
+        let fn_type = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let shape = super::get_callable_shape_for_type(&interner, fn_type);
+        assert!(shape.is_some());
+        let shape = shape.unwrap();
+        assert_eq!(shape.call_signatures.len(), 1);
+        assert_eq!(shape.call_signatures[0].return_type, TypeId::STRING);
+
+        // Non-callable → None
+        assert!(super::get_callable_shape_for_type(&interner, TypeId::NUMBER).is_none());
     }
 }
