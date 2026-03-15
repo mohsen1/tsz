@@ -8,9 +8,23 @@
 
 | Fix | Commit | Impact |
 |---|---|---|
-| Mapped type trailing semicolons | `fix(solver): add trailing semicolon to mapped type display` | ~10 tests |
-| Preserve literal types in object literal properties | `fix(checker): preserve literal types in object literal properties` | ~215 tests |
-| **Total reduction** | | **624 → ~399 (36% improvement)** |
+| Mapped type trailing semicolons | `fix(solver): add trailing semicolon to mapped type display` | ~5-10 tests |
+| Union member ordering in diagnostics | `fix(checker): skip annotation text for union types` | ~5-10 tests |
+| **Net improvement** | | **~10-15 tests** |
+
+### Attempted and Reverted
+
+| Fix | Reason for Revert |
+|---|---|
+| Preserve literal types in object literal properties | Causes net regression (~150 fixed but ~170 broken). Literal types propagate through generic inference incorrectly, causing false positive TS2345 errors for index signature and generic call contexts. |
+
+### Architectural Finding: Freshness Model Required
+
+The single highest-impact improvement (~200+ tests) requires implementing tsc's "freshness" model:
+- Object literal types should store BOTH a widened type (for assignability) and a display type (with original literals)
+- The display type is used ONLY in error messages, not for type checking
+- This is how tsc preserves `"frizzlebizzle"` in error messages while using `string` for type checking
+- Implementation requires adding a `display_type` field to `PropertyInfo` or `ObjectShape`, and using it in the error reporter
 
 ### Remaining Root Causes (~399 tests)
 
