@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .get(def_id)
-            .filter(|def| matches!(def.kind, tsz_solver::def::DefKind::ClassConstructor))
+            .filter(|def| def.is_class_constructor())
             .map(|_| def_id)
     }
 

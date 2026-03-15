@@ -194,6 +194,11 @@ impl DefinitionInfo {
         }
     }
 
+    /// Returns `true` if this definition represents a class constructor (static side).
+    pub const fn is_class_constructor(&self) -> bool {
+        matches!(self.kind, DefKind::ClassConstructor)
+    }
+
     /// Create a new interface definition.
     pub fn interface(
         name: Atom,
