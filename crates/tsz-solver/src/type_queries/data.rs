@@ -511,6 +511,29 @@ pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_b
     }
 }
 
+/// Get the raw property type by name from an object shape.
+///
+/// Looks up a named property in an Object or ObjectWithIndex type and returns
+/// its type. Does NOT use full property access resolution — returns the raw
+/// declared type from the shape. Returns None if the type isn't an object or
+/// the property doesn't exist.
+pub fn get_raw_property_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    prop_name: tsz_common::Atom,
+) -> Option<TypeId> {
+    let shape_id = match db.lookup(type_id) {
+        Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+        _ => return None,
+    };
+    let shape = db.object_shape(shape_id);
+    shape
+        .properties
+        .iter()
+        .find(|p| p.name == prop_name)
+        .map(|p| p.type_id)
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2502,5 +2525,60 @@ mod tests {
 
         // Non-object → None
         assert_eq!(super::get_object_symbol(&interner, TypeId::STRING), None);
+    }
+
+    #[test]
+    fn test_get_raw_property_type() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{PropertyInfo, Visibility};
+
+        let name_x = interner.intern_string("x");
+        let name_y = interner.intern_string("y");
+
+        let obj = interner.object(vec![
+            PropertyInfo {
+                name: name_x,
+                type_id: TypeId::STRING,
+                write_type: TypeId::STRING,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            },
+            PropertyInfo {
+                name: name_y,
+                type_id: TypeId::NUMBER,
+                write_type: TypeId::NUMBER,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 1,
+            },
+        ]);
+
+        assert_eq!(
+            super::get_raw_property_type(&interner, obj, name_x),
+            Some(TypeId::STRING)
+        );
+        assert_eq!(
+            super::get_raw_property_type(&interner, obj, name_y),
+            Some(TypeId::NUMBER)
+        );
+
+        // Non-existent property
+        let name_z = interner.intern_string("z");
+        assert_eq!(super::get_raw_property_type(&interner, obj, name_z), None);
+
+        // Non-object type
+        assert_eq!(
+            super::get_raw_property_type(&interner, TypeId::STRING, name_x),
+            None
+        );
     }
 }

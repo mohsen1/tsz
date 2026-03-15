@@ -950,17 +950,11 @@ impl<'a> CheckerState<'a> {
             let never_match = present_property_names.iter().all(|prop_name| {
                 let prop_name_atom = self.ctx.types.intern_string(prop_name);
                 // Look up the raw property type from the member's object shape.
-                let raw_prop_type =
-                    tsz_solver::visitor::object_shape_id(self.ctx.types, resolved_member).and_then(
-                        |shape_id| {
-                            let shape = self.ctx.types.object_shape(shape_id);
-                            shape
-                                .properties
-                                .iter()
-                                .find(|p| p.name == prop_name_atom)
-                                .map(|p| p.type_id)
-                        },
-                    );
+                let raw_prop_type = tsz_solver::type_queries::data::get_raw_property_type(
+                    self.ctx.types,
+                    resolved_member,
+                    prop_name_atom,
+                );
                 match raw_prop_type {
                     Some(type_id) => type_id != TypeId::NEVER,
                     // Property not in object shape; don't eliminate.
