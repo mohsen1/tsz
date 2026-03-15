@@ -132,6 +132,10 @@ pub struct ModuleTransformState {
     /// `exports.A = A;` emission in `export { A }` re-export handling.
     pub iife_exported_names: FxHashSet<String>,
 
+    /// Names whose `exports.X = X;` was already emitted inline after their
+    /// declaration. Used to suppress duplicate emission in `export { X }` clauses.
+    pub inline_exported_names: FxHashSet<String>,
+
     /// Exports whose variable declaration was inlined as `exports.x = val;`
     /// (no local `const/let/var x` exists in output). Used to determine
     /// whether `export default x` should emit `exports.default = exports.x;`

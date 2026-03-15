@@ -897,6 +897,15 @@ impl<'a> Printer<'a> {
         // Between-statement comments are part of the next node's leading trivia.
         // We find each statement's "actual token start" by scanning forward past
         // trivia, then emit all comments before that position.
+        // Pre-scan: collect local names from `export { x, y }` clauses for inline
+        // CJS export assignment. tsc emits `exports.X = X;` right after var/class
+        // declarations, not at the `export { }` clause position.
+        let cjs_deferred_export_names: rustc_hash::FxHashSet<String> = if is_top_level_cjs {
+            self.collect_cjs_deferred_export_names(&source.statements)
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
+
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
@@ -1154,6 +1163,28 @@ impl<'a> Printer<'a> {
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             let emitted_output = self.writer.len() > before_len;
+
+            // CJS: emit inline `exports.X = X;` right after var/class declarations
+            // whose names appear in a later `export { X }` clause. This matches
+            // tsc's interleaved ordering where exports follow their declarations.
+            if emitted_output && !cjs_deferred_export_names.is_empty() {
+                let names = self.get_declaration_export_names(stmt_node);
+                for name in names {
+                    if cjs_deferred_export_names.contains(name.as_str())
+                        && !self.ctx.module_state.iife_exported_names.contains(&name)
+                    {
+                        if !self.writer.is_at_line_start() {
+                            self.write_line();
+                        }
+                        self.write("exports.");
+                        self.write(&name);
+                        self.write(" = ");
+                        self.write(&name);
+                        self.write(";");
+                        self.ctx.module_state.inline_exported_names.insert(name);
+                    }
+                }
+            }
 
             // Track runtime module syntax AFTER emission: if a module-indicating
             // statement actually produced output, it contributes runtime module
@@ -1449,6 +1480,87 @@ impl<'a> Printer<'a> {
         if !values.is_empty() {
             self.const_enum_values.insert(name, values);
         }
+    }
+
+    /// Pre-scan `export { x, y }` clauses (without module specifier) to collect
+    /// local names that need inline `exports.X = X;` after their declarations.
+    fn collect_cjs_deferred_export_names(
+        &self,
+        statements: &tsz_parser::parser::NodeList,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.module_specifier.is_some() {
+                continue;
+            }
+            // Skip `export type { ... }` — type-only exports have no runtime effect
+            if export.is_type_only {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                if let Some(spec_node) = self.arena.get(spec_idx)
+                    && let Some(spec) = self.arena.get_specifier(spec_node)
+                {
+                    if spec.is_type_only {
+                        continue;
+                    }
+                    // Only collect names where export name == local name.
+                    // Renamed exports (`export { C as D }`) are handled
+                    // by the export clause, not inline.
+                    if spec.property_name.is_some() {
+                        continue;
+                    }
+                    let local = self.get_identifier_text_idx(spec.name);
+                    if !local.is_empty() {
+                        names.insert(local);
+                    }
+                }
+            }
+        }
+        // Remove function names — handled by preamble
+        for (name, _) in &self.ctx.module_state.hoisted_func_exports {
+            names.remove(name.as_str());
+        }
+        names
+    }
+
+    /// Get names declared by a statement for inline CJS export.
+    fn get_declaration_export_names(&self, node: &tsz_parser::parser::node::Node) -> Vec<String> {
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = self.arena.get_variable(node) {
+                    return self.collect_variable_names(&var_stmt.declarations);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.arena.get_class(node) {
+                    let name = self.get_identifier_text_idx(class.name);
+                    if !name.is_empty() {
+                        return vec![name];
+                    }
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
     }
 
     pub(super) fn should_defer_for_of_comments(&self, node: &Node) -> bool {

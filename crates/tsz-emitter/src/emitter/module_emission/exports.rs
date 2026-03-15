@@ -645,6 +645,16 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
+                                // Skip names already emitted inline after their declarations.
+                                if self
+                                    .ctx
+                                    .module_state
+                                    .inline_exported_names
+                                    .contains(&export_name)
+                                {
+                                    continue;
+                                }
+
                                 self.write("exports.");
                                 self.write(&export_name);
                                 self.write(" = ");
