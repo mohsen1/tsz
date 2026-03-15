@@ -599,9 +599,13 @@ impl<'a> RenameProvider<'a> {
 
         parts.reverse();
 
-        // For top-level symbols that are exported, prefix with the quoted
-        // module path: '"/path/to/module".SymbolName'
-        if is_top_level && symbol.is_exported {
+        // For top-level symbols with the EXPORT_VALUE flag (directly declared
+        // with `export` keyword, e.g. `export class Foo`, `export default class Foo`),
+        // prefix with the quoted module path: '"/path/to/module".SymbolName'.
+        //
+        // Do NOT qualify symbols that are only `is_exported` — this includes
+        // local names re-exported via `export { x as y }` or `export default f`.
+        if is_top_level && symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
             let module_name = self
                 .file_name
                 .strip_suffix(".d.ts")
@@ -614,11 +618,6 @@ impl<'a> RenameProvider<'a> {
         }
 
         parts.join(".")
-    }
-
-    /// Check if a symbol is a default export.
-    fn is_default_export(&self, symbol: &tsz_binder::Symbol) -> bool {
-        symbol.escaped_name == "default" || symbol.flags & symbol_flags::EXPORT_VALUE != 0
     }
 
     // -----------------------------------------------------------------------
