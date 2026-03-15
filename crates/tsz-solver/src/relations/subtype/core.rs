@@ -424,10 +424,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return result;
                 }
                 // Fallback: the hardcoded apparent shape may lack user-augmented members
-                // (e.g., `interface Number extends ICloneable { }`). Check the registered
+                // (e.g., `interface Number extends ICloneable { }`), or missing iterable
+                // interfaces (e.g., string <: Iterable<string>). Check the registered
                 // boxed type which includes merged heritage from global augmentations.
-                if let Some(s_kind) = intrinsic_kind(self.interner, source)
-                    && let Some(kind) = boxable_intrinsic_kind(s_kind)
+                // Use apparent_primitive_kind to also handle literals (e.g., "test" <: Iterable<string>).
+                if let Some(kind) = self.apparent_primitive_kind(source)
                     && self.is_boxed_primitive_subtype(kind, target)
                 {
                     return SubtypeResult::True;
@@ -467,8 +468,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if result.is_true() {
                     return result;
                 }
-                if let Some(s_kind) = intrinsic_kind(self.interner, source)
-                    && let Some(kind) = boxable_intrinsic_kind(s_kind)
+                if let Some(kind) = self.apparent_primitive_kind(source)
                     && self.is_boxed_primitive_subtype(kind, target)
                 {
                     return SubtypeResult::True;
