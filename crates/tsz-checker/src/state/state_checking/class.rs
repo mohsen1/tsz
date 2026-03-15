@@ -513,6 +513,16 @@ impl<'a> CheckerState<'a> {
 
         self.check_class_declaration(stmt_idx);
 
+        // TS4094: Property of exported anonymous class type may not be private or protected.
+        // When `declaration: true`, anonymous class types in exported positions cannot have
+        // private/protected members represented in .d.ts files.
+        if self.ctx.emit_declarations() && !self.ctx.is_declaration_file() && class.name.is_none() {
+            let is_exported = self.is_class_exported_default(stmt_idx, &class.modifiers);
+            if is_exported {
+                self.report_anonymous_class_private_members(stmt_idx, &class.members);
+            }
+        }
+
         self.check_inherited_properties_against_index_signatures(
             class_instance_type,
             &class.members.nodes,
@@ -1457,6 +1467,44 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if an anonymous class is exported (via export default modifier or parent export node).
+    fn is_class_exported_default(
+        &self,
+        class_idx: NodeIndex,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+        // Check for export + default modifiers on the class itself
+        let has_export = self
+            .ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword);
+        let has_default = self
+            .ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::DefaultKeyword);
+        if has_export && has_default {
+            return true;
+        }
+        // Check if parent is an export default (ExportDeclaration with is_default_export)
+        if let Some(ext) = self.ctx.arena.get_extended(class_idx) {
+            if let Some(parent) = self.ctx.arena.get(ext.parent) {
+                if parent.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    if let Some(export_data) = self.ctx.arena.get_export_decl(parent) {
+                        if export_data.is_default_export {
+                            return true;
+                        }
+                    }
+                }
+                // Also check for ExportAssignment (export = class { ... })
+                if parent.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                    return true;
+                }
+            }
+        }
         false
     }
 }
