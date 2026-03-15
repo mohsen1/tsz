@@ -69,6 +69,14 @@ mod visitors;
 /// These are pure data types with no computation. Safe for any consumer
 /// (checker, emitter, LSP) to import directly.
 pub mod type_handles {
+    pub use crate::diagnostics::builders::{
+        DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
+    };
+    pub use crate::diagnostics::format::TypeFormatter;
+    pub use crate::diagnostics::{
+        DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
+        SubtypeFailureReason,
+    };
     pub use crate::types::{
         CallSignature, CallableShape, CallableShapeId, ConditionalType, FunctionShape,
         FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
@@ -77,14 +85,6 @@ pub mod type_handles {
         TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
         TypePredicate, TypePredicateTarget, Visibility, is_compiler_managed_type,
     };
-    pub use crate::diagnostics::{
-        DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
-        SubtypeFailureReason,
-    };
-    pub use crate::diagnostics::builders::{
-        DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
-    };
-    pub use crate::diagnostics::format::TypeFormatter;
 }
 
 /// Tier 2: Read-only type visitors and inspectors.
@@ -101,16 +101,15 @@ pub mod query {
         for_each_child_by_id, function_shape_id, has_deferred_conditional_member,
         index_access_parts, intersection_list_id, intrinsic_kind, is_array_type,
         is_conditional_type, is_empty_object_type, is_empty_object_type_through_type_constraints,
-        is_enum_type, is_error_type, is_function_type,
-        is_function_type_through_type_constraints, is_generic_application,
-        is_identity_comparable_type, is_index_access_type, is_intersection_type, is_literal_type,
-        is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
-        is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,
-        is_template_literal_type, is_this_type, is_tuple_type, is_type_parameter,
-        is_type_query_type, is_type_reference, is_union_type, keyof_inner_type, lazy_def_id,
-        literal_number, literal_string, literal_value, mapped_type_id,
-        module_namespace_symbol_ref, no_infer_inner_type, object_shape_id,
-        object_with_index_shape_id, readonly_inner_type, recursive_index,
+        is_enum_type, is_error_type, is_function_type, is_function_type_through_type_constraints,
+        is_generic_application, is_identity_comparable_type, is_index_access_type,
+        is_intersection_type, is_literal_type, is_literal_type_through_type_constraints,
+        is_mapped_type, is_module_namespace_type, is_object_like_type,
+        is_object_like_type_through_type_constraints, is_primitive_type, is_template_literal_type,
+        is_this_type, is_tuple_type, is_type_parameter, is_type_query_type, is_type_reference,
+        is_union_type, keyof_inner_type, lazy_def_id, literal_number, literal_string,
+        literal_value, mapped_type_id, module_namespace_symbol_ref, no_infer_inner_type,
+        object_shape_id, object_with_index_shape_id, readonly_inner_type, recursive_index,
         string_intrinsic_components, template_literal_id, tuple_list_id, type_param_info,
         type_query_symbol, union_list_id, unique_symbol_ref, walk_referenced_types,
     };
@@ -122,12 +121,12 @@ pub mod query {
 /// `query_boundaries` in the checker crate, not imported directly.
 pub mod computation {
     // Subtype/assignability relations
+    pub use crate::relations::compat::CompatChecker;
+    pub use crate::relations::lawyer::AnyPropagationRules;
     pub use crate::relations::subtype::{
         AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
         are_types_structurally_identical, is_subtype_of,
     };
-    pub use crate::relations::compat::CompatChecker;
-    pub use crate::relations::lawyer::AnyPropagationRules;
 
     // Evaluation
     pub use crate::evaluation::evaluate::evaluate_type;
@@ -148,13 +147,13 @@ pub mod computation {
     };
 
     // Operations
+    pub use crate::operations::infer_generic_function;
     pub use crate::operations::{
         AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
         MAX_CONSTRAINT_RECURSION_DEPTH, PrimitiveClass,
         get_contextual_signature_for_arity_with_compat_checker,
         get_contextual_signature_with_compat_checker,
     };
-    pub use crate::operations::infer_generic_function;
 }
 
 /// Tier 4: Type construction — building new types.
@@ -162,9 +161,9 @@ pub mod computation {
 /// These create or modify types via the interner. Should be accessed through
 /// `query_boundaries` in the checker crate.
 pub mod construction {
+    pub use crate::caches::db::{QueryDatabase, TypeDatabase};
     pub use crate::intern::TypeInterner;
     pub use crate::intern::type_factory::*;
-    pub use crate::caches::db::{QueryDatabase, TypeDatabase};
 }
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
