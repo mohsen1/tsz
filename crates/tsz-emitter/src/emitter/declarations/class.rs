@@ -1455,21 +1455,14 @@ impl<'a> Printer<'a> {
         }
 
         if !auto_accessor_members.is_empty() && lower_auto_accessors_to_weakmap {
-            let mut has_written = false;
-            self.write("var ");
+            // Hoist auto-accessor storage vars to the top of the scope,
+            // matching tsc behavior (emits all class-related vars before the first class).
             if let Some(alias) = auto_accessor_class_alias.as_ref() {
-                self.write(alias);
-                has_written = true;
+                self.hoisted_assignment_temps.push(alias.clone());
             }
             for (_, storage_name, _, _) in &auto_accessor_members {
-                if has_written {
-                    self.write(", ");
-                }
-                has_written = true;
-                self.write(storage_name);
+                self.hoisted_assignment_temps.push(storage_name.clone());
             }
-            self.write(";");
-            self.write_line();
             self.emit_comments_before_pos(node.pos);
         }
 
