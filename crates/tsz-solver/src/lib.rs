@@ -162,6 +162,7 @@ pub mod computation {
 /// `query_boundaries` in the checker crate.
 pub mod construction {
     pub use crate::caches::db::{QueryDatabase, TypeDatabase};
+    pub use crate::caches::query_cache::QueryCache;
     pub use crate::intern::TypeInterner;
     pub use crate::intern::type_factory::*;
 }
@@ -190,7 +191,9 @@ pub use visitors::visitor::{
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
-pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
+pub use caches::query_cache::{QueryCache, RelationCacheStats};
+// NOTE: RelationCacheProbe is solver-internal. Access via
+// `tsz_solver::caches::query_cache` only within the solver crate.
 pub use canonicalize::*;
 pub use classes::inheritance::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
@@ -242,7 +245,7 @@ pub use types::{
     MappedTypeId, ObjectFlags, ObjectShape, OrderedFloat, ParamInfo, RelationCacheKey,
     TemplateSpan, TupleElement, TupleListId, TypeParamInfo, TypePredicate, TypePredicateTarget,
 };
-pub use unsoundness_audit::*;
+// unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use widening::*;
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.

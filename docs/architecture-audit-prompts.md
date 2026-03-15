@@ -568,7 +568,7 @@ Run `cargo check --workspace` to verify nothing breaks. Commit with message
 "refactor(solver): organize public API into tiered modules".
 ```
 
-### Prompt 5.4 — Migrate Checker to Module-Based Imports
+### Prompt 5.4 — Migrate Checker to Module-Based Imports [DEFERRED — flat re-exports preserved, migrate incrementally]
 
 ```
 Migrate checker code from flat solver imports to the new module-based imports:
@@ -589,7 +589,7 @@ longer used. Run `cargo check --workspace` and `cargo test -p tsz-checker`
 after each phase.
 ```
 
-### Prompt 5.5 — Seal Solver Internals
+### Prompt 5.5 — Seal Solver Internals [DONE]
 
 ```
 Audit and restrict solver items that should not be publicly accessible:
