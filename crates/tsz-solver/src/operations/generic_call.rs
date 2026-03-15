@@ -1586,6 +1586,44 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
                 if !self.checker.is_assignable_to(ty_for_check, constraint_ty) {
+                    // When the inferred type is a TypeParameter whose own constraint
+                    // is structurally equivalent to the target constraint, accept it.
+                    // This handles: K extends keyof S passed to K2 extends keyof S
+                    // where the two keyof S expressions use different TypeParameter
+                    // TypeIds for S (because Store<S> instantiation created a new S).
+                    // When the inferred type is a TypeParameter whose constraint
+                    // is structurally the same as the target constraint, accept it.
+                    // This handles cross-context type parameter identity:
+                    // K extends keyof S passed to K2 extends keyof S where
+                    // the two S params have different TypeIds but same name.
+                    if let Some(crate::TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(ty_for_check)
+                    {
+                        if let Some(tp_constraint) = tp_info.constraint {
+                            // Direct TypeId match
+                            if tp_constraint == constraint_ty {
+                                final_subst.insert(tp.name, ty_for_check);
+                                continue;
+                            }
+                            // Both are keyof <TypeParam> with same-named params
+                            if let (Some(c_inner), Some(t_inner)) = (
+                                crate::visitor::keyof_inner_type(self.interner, tp_constraint),
+                                crate::visitor::keyof_inner_type(self.interner, constraint_ty),
+                            ) {
+                                if let (
+                                    Some(crate::TypeData::TypeParameter(c_tp)),
+                                    Some(crate::TypeData::TypeParameter(t_tp)),
+                                ) =
+                                    (self.interner.lookup(c_inner), self.interner.lookup(t_inner))
+                                {
+                                    if c_tp.name == t_tp.name {
+                                        final_subst.insert(tp.name, ty_for_check);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).
                     let un_widened = infer_ctx.get_literal_candidates(var);
