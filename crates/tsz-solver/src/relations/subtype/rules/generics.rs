@@ -1084,9 +1084,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Homomorphic identity mapped type passthrough: if the body is
-        // `{ [K in keyof T]: T[K] }` and the argument for T is a primitive/any type,
+        // `{ [K in keyof T]: T[K] }` and the argument for T is a genuine primitive type,
         // return the arg directly. This mirrors evaluate_application().
         // Only applies for identity templates (T[K]), not arbitrary ones like Data.
+        // For `any`: only passthrough when the type parameter is constrained to array/tuple.
+        // Otherwise, `any` must flow through mapped type expansion to produce
+        // `{ [x: string]: any }` (matching tsc's behavior for `Objectish<any>`).
         if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body) {
             let mapped = self.interner.mapped_type(mapped_id);
             if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
@@ -1099,7 +1102,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 && matches!(self.interner.lookup(key), Some(TypeData::TypeParameter(kp)) if kp.name == mapped.type_param.name)
             {
                 let arg = app.args[idx];
-                if is_primitive_type(self.interner, arg) {
+                let is_any_like = arg == TypeId::ANY
+                    || arg == TypeId::UNKNOWN
+                    || arg == TypeId::NEVER
+                    || arg == TypeId::ERROR;
+                let should_passthrough = if is_any_like {
+                    tp.constraint.is_some_and(|c| {
+                        matches!(
+                            self.interner.lookup(c),
+                            Some(TypeData::Array(_) | TypeData::Tuple(_))
+                        )
+                    })
+                } else {
+                    is_primitive_type(self.interner, arg)
+                };
+                if should_passthrough {
                     return Some(arg);
                 }
             }

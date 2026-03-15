@@ -329,10 +329,14 @@ impl<'a> CheckerState<'a> {
 
         // Homomorphic identity mapped type passthrough: if the body is
         // `{ [K in keyof T]: T[K] }` (identity mapping) and the argument for T
-        // is a primitive/any type, return the arg directly.
-        // This matches tsc behavior where e.g. `Simple<any>` evaluates to `any`.
+        // is a genuine primitive type, return the arg directly.
+        // This matches tsc behavior where e.g. `Partial<number>` evaluates to `number`.
         // Only applies when the template is `T[K]` — NOT for non-identity templates
         // like `{ [K in keyof T]: Data }` which should produce an index signature.
+        //
+        // For `any` arguments: passthrough only when the type parameter is constrained
+        // to array/tuple types. In tsc, `Arrayish<any>` (T extends unknown[]) produces
+        // an array, but `Objectish<any>` (T extends unknown) produces `{ [x: string]: any }`.
         if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type) {
             let mapped = self.ctx.types.mapped_type(mapped_id);
             if let Some(keyof_source) =
@@ -349,7 +353,26 @@ impl<'a> CheckerState<'a> {
             {
                 let arg = self.evaluate_type_with_env(args[idx]);
                 if tsz_solver::is_primitive_type(self.ctx.types, arg) {
-                    return arg;
+                    // For `any`: only passthrough when the type parameter has an
+                    // array/tuple constraint. Otherwise, `any` must flow through
+                    // mapped type expansion to produce { [x: string]: any }.
+                    let should_passthrough = if arg == TypeId::ANY
+                        || arg == TypeId::UNKNOWN
+                        || arg == TypeId::NEVER
+                        || arg == TypeId::ERROR
+                    {
+                        // Check if the type parameter is constrained to array/tuple
+                        tp.constraint.is_some_and(|c| {
+                            let evaluated_constraint = self.evaluate_type_for_assignability(c);
+                            tsz_solver::is_array_type(self.ctx.types, evaluated_constraint)
+                                || tsz_solver::is_tuple_type(self.ctx.types, evaluated_constraint)
+                        })
+                    } else {
+                        true
+                    };
+                    if should_passthrough {
+                        return arg;
+                    }
                 }
             }
         }
