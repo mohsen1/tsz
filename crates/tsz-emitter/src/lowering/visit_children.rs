@@ -223,10 +223,17 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 if let Some(ctor) = self.arena.get_constructor(node) {
+                    // Skip decorator processing for constructor modifiers.
+                    // Constructor decorators are errors — tsc doesn't emit
+                    // __decorate helpers for them.
                     if let Some(mods) = &ctor.modifiers {
+                        let prev_decorate = self.transforms.helpers().decorate;
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
                         }
+                        // Restore decorate flag — don't let constructor decorators
+                        // trigger helper emission
+                        self.transforms.helpers_mut().decorate = prev_decorate;
                     }
                     for &param_idx in &ctor.parameters.nodes {
                         self.visit(param_idx);
