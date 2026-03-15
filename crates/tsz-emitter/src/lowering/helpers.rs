@@ -1405,6 +1405,112 @@ impl<'a> LoweringPass<'a> {
 
         false
     }
+    /// Infer the function name for a class expression used in named evaluation.
+    /// Looks at the source text context to find the assignment target name.
+    /// Returns the name string for `__setFunctionName(_classThis, name)`.
+    pub(super) fn infer_class_expression_function_name(
+        &self,
+        _class_idx: tsz_parser::parser::NodeIndex,
+        class_node: &tsz_parser::parser::node::Node,
+    ) -> Option<String> {
+        let text: &str = self.arena.source_files.iter().find_map(|sf| {
+            if (class_node.pos as usize) < sf.text.len() {
+                Some(sf.text.as_ref())
+            } else {
+                None
+            }
+        })?;
+        let class_pos = class_node.pos as usize;
+
+        // Look backwards from the class expression to find the assignment context.
+        // We need to scan backwards past decorators (@dec), parentheses, and whitespace.
+        let before = &text[..class_pos.min(text.len())];
+        // Skip backwards past decorators: `@identifier(args)` patterns and `(` grouping
+        let mut scan = before.trim_end();
+        loop {
+            let prev = scan;
+            scan = scan.trim_end();
+            // Skip past `@identifier(...)` or `@identifier` decorator
+            if scan.ends_with(')') {
+                // Find matching `(`
+                let mut depth = 1;
+                let mut p = scan.len() - 2;
+                while p > 0 && depth > 0 {
+                    match scan.as_bytes()[p] {
+                        b')' => depth += 1,
+                        b'(' => depth -= 1,
+                        _ => {}
+                    }
+                    if depth > 0 {
+                        p -= 1;
+                    }
+                }
+                scan = scan[..p].trim_end();
+            }
+            // Skip past `@identifier`
+            if let Some(at_pos) = scan.rfind('@') {
+                let ident = scan[at_pos + 1..].trim();
+                if !ident.is_empty()
+                    && ident
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
+                {
+                    scan = scan[..at_pos].trim_end();
+                }
+            }
+            // Skip opening parentheses
+            while scan.ends_with('(') {
+                scan = scan[..scan.len() - 1].trim_end();
+            }
+            if scan == prev {
+                break;
+            }
+        }
+        let trimmed = scan;
+
+        // Check for `export default` pattern
+        if trimmed.ends_with("default") {
+            let prefix = trimmed[..trimmed.len() - 7].trim_end();
+            if prefix.ends_with("export") {
+                return Some("default".to_string());
+            }
+        }
+
+        // Check for `export =` pattern → empty name
+        if trimmed.ends_with('=') {
+            let prefix = trimmed[..trimmed.len() - 1].trim_end();
+            if prefix.ends_with("export") {
+                return Some(String::new());
+            }
+        }
+
+        // Check for assignment patterns: `NAME =`, `NAME ||=`, `NAME &&=`, `NAME ??=`
+        // Scan backwards past `=`, `||=`, `&&=`, `??=`
+        let assignment_stripped =
+            if trimmed.ends_with("||=") || trimmed.ends_with("&&=") || trimmed.ends_with("??=") {
+                trimmed[..trimmed.len() - 3].trim_end()
+            } else if trimmed.ends_with('=') && !trimmed.ends_with("==") {
+                trimmed[..trimmed.len() - 1].trim_end()
+            } else {
+                return None;
+            };
+
+        // Extract the identifier before the assignment
+        let ident_end = assignment_stripped.len();
+        let ident_start = assignment_stripped
+            .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let name = &assignment_stripped[ident_start..ident_end];
+        if !name.is_empty() && name.as_bytes()[0].is_ascii_alphabetic()
+            || name.starts_with('_')
+            || name.starts_with('$')
+        {
+            Some(name.to_string())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

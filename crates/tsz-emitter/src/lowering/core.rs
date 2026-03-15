@@ -790,7 +790,10 @@ impl<'a> LoweringPass<'a> {
         let needs_es5_transform = self.ctx.target_es5;
         let base_directive = if has_tc39_decorators && !needs_es5_transform {
             // TC39 decorator transform (ES2015+ targets, below ESNext)
-            TransformDirective::TC39Decorators { class_node: idx }
+            TransformDirective::TC39Decorators {
+                class_node: idx,
+                function_name: None,
+            }
         } else if needs_es5_transform {
             // ES5 class transform
             TransformDirective::ES5Class {

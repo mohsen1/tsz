@@ -340,8 +340,15 @@ impl<'a> LoweringPass<'a> {
                     let needs_es5_transform = self.ctx.target_es5;
                     if has_tc39_decorators && !needs_es5_transform {
                         // TC39 decorator transform for class expressions
-                        self.transforms
-                            .insert(idx, TransformDirective::TC39Decorators { class_node: idx });
+                        // Determine function name for __setFunctionName from context
+                        let fn_name = self.infer_class_expression_function_name(idx, node);
+                        self.transforms.insert(
+                            idx,
+                            TransformDirective::TC39Decorators {
+                                class_node: idx,
+                                function_name: fn_name,
+                            },
+                        );
                     } else if needs_es5_transform {
                         self.transforms.insert(
                             idx,
