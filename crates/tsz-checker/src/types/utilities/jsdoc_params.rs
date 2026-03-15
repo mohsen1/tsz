@@ -767,24 +767,6 @@ impl<'a> CheckerState<'a> {
     /// then resolves it to a `TypeId` using the JSDoc type expression parser.
     ///
     /// Handles JSDoc optional parameter syntax:
-    /// - `@param {number} [p]` → `number | undefined`
-    /// - `@param {number} [p=0]` → `number | undefined`
-    /// - `@param {number=} p` → `number | undefined` (= suffix in type)
-    ///
-    /// Handles JSDoc destructured parameter type literals:
-    /// - `@param {Object} opts` + `@param {string} opts.x` → `{ x: string }`
-    /// - `@param {object[]} arr` + `@param {string} arr[].x` → `{ x: string }[]`
-    ///
-    /// Returns `None` if no matching `@param` tag exists or the type can't be resolved.
-    #[allow(dead_code)]
-    pub(crate) fn resolve_jsdoc_param_type(
-        &mut self,
-        jsdoc: &str,
-        param_name: &str,
-    ) -> Option<tsz_solver::TypeId> {
-        self.resolve_jsdoc_param_type_with_pos(jsdoc, param_name, None)
-    }
-
     pub(crate) fn resolve_jsdoc_param_type_with_pos(
         &mut self,
         jsdoc: &str,
@@ -1243,15 +1225,7 @@ impl<'a> CheckerState<'a> {
         rest
     }
 
-    /// Helper to extract a @param type expression (inside {}) if it matches a parameter name.
-    /// Handles nested braces in type expressions like `{{ x: T, y: T}}`.
-    /// Also handles alternate `@param name {type}` syntax (name before type).
-    #[allow(dead_code)]
-    fn extract_jsdoc_param_type_expr(text: &str, param_name: &str) -> Option<String> {
-        Self::extract_jsdoc_param_type_expr_from_param_tag(text, param_name).map(|(expr, _)| expr)
-    }
-
-    /// Like `extract_jsdoc_param_type_expr`, but returns the matching type expression
+    /// Like `extract_jsdoc_param_type_expr_from_param_tag`, but returns the matching type expression
     /// and its byte offset within a full JSDoc block.
     fn extract_jsdoc_param_type_expr_with_span(
         jsdoc: &str,
@@ -1302,8 +1276,8 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Like `extract_jsdoc_param_type_expr`, but returns the matching type expression
-    /// and its byte offset within a JSDoc tag body.
+    /// Extract a @param type expression (inside {}) matching a parameter name,
+    /// returning the expression and its byte offset within the JSDoc tag body.
     fn extract_jsdoc_param_type_expr_from_param_tag(
         text: &str,
         param_name: &str,

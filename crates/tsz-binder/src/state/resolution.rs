@@ -536,23 +536,6 @@ impl BinderState {
     }
 
     /// Inner implementation with cycle detection for module re-exports.
-    #[allow(dead_code)]
-    pub(crate) fn resolve_import_with_reexports_inner(
-        &self,
-        module_specifier: &str,
-        export_name: &str,
-        visited: &mut rustc_hash::FxHashSet<(String, String)>,
-    ) -> Option<SymbolId> {
-        self.resolve_import_with_reexports_inner_type_only(
-            module_specifier,
-            export_name,
-            false,
-            visited,
-        )
-        .map(|(sym_id, _is_type_only)| sym_id)
-    }
-
-    /// Inner implementation with cycle detection for module re-exports.
     fn resolve_import_with_reexports_inner_type_only(
         &self,
         module_specifier: &str,
