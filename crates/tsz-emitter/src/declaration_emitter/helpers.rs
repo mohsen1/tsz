@@ -4697,13 +4697,27 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
-            // Skip setters that have a matching getter (merged into one property)
+            // Handle setters: skip if there's a matching getter (merged),
+            // otherwise emit as writable property with setter parameter type
             if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
                 if let Some(acc) = self.arena.get_accessor(member_node) {
                     if let Some(name) = self.infer_property_name_text(acc.name) {
                         if getter_names.contains(&name) {
-                            continue;
+                            continue; // merged with getter
                         }
+                        // Setter-only: emit as writable property using first param type
+                        let type_text = acc
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&p_idx| self.arena.get(p_idx))
+                            .and_then(|p_node| self.arena.get_parameter(p_node))
+                            .and_then(|param| {
+                                self.infer_fallback_type_text_at(param.type_annotation, depth + 1)
+                            })
+                            .unwrap_or_else(|| "any".to_string());
+                        members.push(format!("{name}: {type_text}"));
+                        continue;
                     }
                 }
             }
