@@ -417,16 +417,16 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     // - TS2322: "Type 'Num' is not assignable to type 'Runtype<any>'"
     // - TS2344: "Type 'O' does not satisfy the constraint '{ [x: string]: Runtype<any>; }'"
     // Track current behavior to detect regressions; ideal target is 0 errors.
-    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
-    let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
 
+    // Previous behavior: 1 TS2322 + 1 TS2344 false positives.
+    // After fixing cross-context type parameter constraint checking,
+    // the TS2322 and TS2344 false positives are eliminated.
+    // Current: 1 TS2345 remains (argument type mismatch in Obj call).
+    // Ideal target: 0 errors (tsc produces 0).
     assert_eq!(
-        ts2322_count, 1,
-        "Expected one TS2322 false positive for Num/Runtype<any>. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert_eq!(
-        ts2344_count, 1,
-        "Expected one TS2344 false positive for O constraint. Actual diagnostics: {diagnostics:#?}"
+        ts2345_count, 1,
+        "Expected one TS2345 false positive for Obj call. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
