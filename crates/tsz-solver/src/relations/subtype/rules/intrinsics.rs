@@ -446,8 +446,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Ask the resolver for the boxed type
-        if let Some(boxed_type) = self.resolver.get_boxed_type(source_kind) {
+        // Ask the resolver for the boxed type, falling back to the interner
+        // when the resolver can't provide it (e.g., type_env borrow conflict).
+        let boxed_type = self
+            .resolver
+            .get_boxed_type(source_kind)
+            .or_else(|| self.interner.get_boxed_type(source_kind));
+        if let Some(boxed_type) = boxed_type {
             // If target is exactly the boxed interface (e.g., Number)
             if target == boxed_type {
                 return true;
@@ -501,22 +506,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             {
                 return true;
             }
-            // Shape-level equivalence check: when both types are ObjectWithIndex shapes
-            // from the same interface but with different interning (e.g., different
-            // [Symbol.iterator] TypeIds due to separate resolution paths), compare by
-            // property names + count as a proxy for interface identity.
-            if let (Some(b_sid), Some(t_sid)) = (
-                object_with_index_shape_id(self.interner, boxed),
-                object_with_index_shape_id(self.interner, target),
-            ) {
+            // Shape-level property check: verify target contains all properties of the
+            // boxed type by name. This handles two cases:
+            // 1. Exact match: same interface resolved through different interning paths
+            //    (e.g., different [Symbol.iterator] TypeIds).
+            // 2. Augmented superset: user augmented a built-in interface with additional
+            //    heritage members (e.g., `interface Number extends ICloneable {}`).
+            //    The boxed type may be resolved from lib declarations only, while the
+            //    target includes augmented heritage members. In this case target has all
+            //    of boxed's properties PLUS the augmentation extras.
+            // Both Object and ObjectWithIndex shapes are checked.
+            let b_sid = object_with_index_shape_id(self.interner, boxed)
+                .or_else(|| object_shape_id(self.interner, boxed));
+            let t_sid = object_with_index_shape_id(self.interner, target)
+                .or_else(|| object_shape_id(self.interner, target));
+            if let (Some(b_sid), Some(t_sid)) = (b_sid, t_sid) {
                 let b_shape = self.interner.object_shape(b_sid);
                 let t_shape = self.interner.object_shape(t_sid);
-                if b_shape.properties.len() == t_shape.properties.len()
+                // Target must have at least as many properties as boxed, and ALL
+                // of boxed's property names must appear in target's properties.
+                if t_shape.properties.len() >= b_shape.properties.len()
+                    && !b_shape.properties.is_empty()
                     && b_shape
                         .properties
                         .iter()
-                        .zip(t_shape.properties.iter())
-                        .all(|(b, t)| b.name == t.name)
+                        .all(|bp| t_shape.properties.iter().any(|tp| tp.name == bp.name))
                 {
                     return true;
                 }
