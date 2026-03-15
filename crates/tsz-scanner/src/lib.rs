@@ -876,3 +876,384 @@ pub fn text_to_keyword(text: &str) -> Option<SyntaxKind> {
 pub fn string_to_token(text: &str) -> SyntaxKind {
     text_to_keyword(text).unwrap_or(SyntaxKind::Identifier)
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── SyntaxKind::try_from_u16 ──────────────────────────────────────
+
+    #[test]
+    fn try_from_u16_valid_range() {
+        assert_eq!(SyntaxKind::try_from_u16(0), Some(SyntaxKind::Unknown));
+        assert_eq!(
+            SyntaxKind::try_from_u16(1),
+            Some(SyntaxKind::EndOfFileToken)
+        );
+        assert_eq!(
+            SyntaxKind::try_from_u16(9),
+            Some(SyntaxKind::NumericLiteral)
+        );
+        assert_eq!(SyntaxKind::try_from_u16(80), Some(SyntaxKind::Identifier));
+        assert_eq!(
+            SyntaxKind::try_from_u16(166),
+            Some(SyntaxKind::DeferKeyword)
+        );
+    }
+
+    #[test]
+    fn try_from_u16_out_of_range() {
+        assert_eq!(SyntaxKind::try_from_u16(167), None);
+        assert_eq!(SyntaxKind::try_from_u16(200), None);
+        assert_eq!(SyntaxKind::try_from_u16(u16::MAX), None);
+    }
+
+    // ── token_is_keyword ──────────────────────────────────────────────
+
+    #[test]
+    fn keyword_classification() {
+        assert!(token_is_keyword(SyntaxKind::BreakKeyword));
+        assert!(token_is_keyword(SyntaxKind::IfKeyword));
+        assert!(token_is_keyword(SyntaxKind::ClassKeyword));
+        assert!(token_is_keyword(SyntaxKind::DeferKeyword)); // last keyword
+        assert!(token_is_keyword(SyntaxKind::AsyncKeyword));
+        assert!(token_is_keyword(SyntaxKind::LetKeyword));
+        assert!(token_is_keyword(SyntaxKind::YieldKeyword));
+
+        assert!(!token_is_keyword(SyntaxKind::Identifier));
+        assert!(!token_is_keyword(SyntaxKind::NumericLiteral));
+        assert!(!token_is_keyword(SyntaxKind::OpenBraceToken));
+        assert!(!token_is_keyword(SyntaxKind::EndOfFileToken));
+    }
+
+    // ── token_is_reserved_word ────────────────────────────────────────
+
+    #[test]
+    fn reserved_word_classification() {
+        // Reserved words: break..with
+        assert!(token_is_reserved_word(SyntaxKind::BreakKeyword));
+        assert!(token_is_reserved_word(SyntaxKind::WithKeyword));
+        assert!(token_is_reserved_word(SyntaxKind::ReturnKeyword));
+        assert!(token_is_reserved_word(SyntaxKind::ClassKeyword));
+
+        // Strict mode reserved words are NOT reserved words
+        assert!(!token_is_reserved_word(SyntaxKind::ImplementsKeyword));
+        assert!(!token_is_reserved_word(SyntaxKind::YieldKeyword));
+        // Contextual keywords are NOT reserved words
+        assert!(!token_is_reserved_word(SyntaxKind::AsyncKeyword));
+        assert!(!token_is_reserved_word(SyntaxKind::TypeKeyword));
+        assert!(!token_is_reserved_word(SyntaxKind::Identifier));
+    }
+
+    // ── token_is_strict_mode_reserved_word ────────────────────────────
+
+    #[test]
+    fn strict_mode_reserved_word_classification() {
+        assert!(token_is_strict_mode_reserved_word(
+            SyntaxKind::ImplementsKeyword
+        ));
+        assert!(token_is_strict_mode_reserved_word(
+            SyntaxKind::InterfaceKeyword
+        ));
+        assert!(token_is_strict_mode_reserved_word(SyntaxKind::LetKeyword));
+        assert!(token_is_strict_mode_reserved_word(SyntaxKind::YieldKeyword));
+
+        assert!(!token_is_strict_mode_reserved_word(
+            SyntaxKind::BreakKeyword
+        ));
+        assert!(!token_is_strict_mode_reserved_word(
+            SyntaxKind::AsyncKeyword
+        ));
+        assert!(!token_is_strict_mode_reserved_word(SyntaxKind::Identifier));
+    }
+
+    // ── token_is_literal ──────────────────────────────────────────────
+
+    #[test]
+    fn literal_classification() {
+        assert!(token_is_literal(SyntaxKind::NumericLiteral));
+        assert!(token_is_literal(SyntaxKind::BigIntLiteral));
+        assert!(token_is_literal(SyntaxKind::StringLiteral));
+        assert!(token_is_literal(SyntaxKind::RegularExpressionLiteral));
+        assert!(token_is_literal(SyntaxKind::NoSubstitutionTemplateLiteral));
+
+        assert!(!token_is_literal(SyntaxKind::TemplateHead));
+        assert!(!token_is_literal(SyntaxKind::Identifier));
+        assert!(!token_is_literal(SyntaxKind::BreakKeyword));
+    }
+
+    // ── token_is_template_literal ─────────────────────────────────────
+
+    #[test]
+    fn template_literal_classification() {
+        assert!(token_is_template_literal(
+            SyntaxKind::NoSubstitutionTemplateLiteral
+        ));
+        assert!(token_is_template_literal(SyntaxKind::TemplateHead));
+        assert!(token_is_template_literal(SyntaxKind::TemplateMiddle));
+        assert!(token_is_template_literal(SyntaxKind::TemplateTail));
+
+        assert!(!token_is_template_literal(SyntaxKind::StringLiteral));
+        assert!(!token_is_template_literal(SyntaxKind::NumericLiteral));
+    }
+
+    // ── token_is_punctuation ──────────────────────────────────────────
+
+    #[test]
+    fn punctuation_classification() {
+        assert!(token_is_punctuation(SyntaxKind::OpenBraceToken));
+        assert!(token_is_punctuation(SyntaxKind::SemicolonToken));
+        assert!(token_is_punctuation(SyntaxKind::PlusToken));
+        assert!(token_is_punctuation(SyntaxKind::EqualsToken));
+        assert!(token_is_punctuation(SyntaxKind::CaretEqualsToken)); // last punctuation
+
+        assert!(!token_is_punctuation(SyntaxKind::Identifier));
+        assert!(!token_is_punctuation(SyntaxKind::NumericLiteral));
+        assert!(!token_is_punctuation(SyntaxKind::BreakKeyword));
+    }
+
+    // ── token_is_assignment_operator ──────────────────────────────────
+
+    #[test]
+    fn assignment_operator_classification() {
+        assert!(token_is_assignment_operator(SyntaxKind::EqualsToken));
+        assert!(token_is_assignment_operator(SyntaxKind::PlusEqualsToken));
+        assert!(token_is_assignment_operator(
+            SyntaxKind::AsteriskAsteriskEqualsToken
+        ));
+        assert!(token_is_assignment_operator(SyntaxKind::BarBarEqualsToken));
+        assert!(token_is_assignment_operator(
+            SyntaxKind::QuestionQuestionEqualsToken
+        ));
+        assert!(token_is_assignment_operator(SyntaxKind::CaretEqualsToken));
+
+        assert!(!token_is_assignment_operator(SyntaxKind::PlusToken));
+        assert!(!token_is_assignment_operator(SyntaxKind::EqualsEqualsToken));
+        assert!(!token_is_assignment_operator(SyntaxKind::Identifier));
+    }
+
+    // ── token_is_trivia ──────────────────────────────────────────────
+
+    #[test]
+    fn trivia_classification() {
+        assert!(token_is_trivia(SyntaxKind::SingleLineCommentTrivia));
+        assert!(token_is_trivia(SyntaxKind::MultiLineCommentTrivia));
+        assert!(token_is_trivia(SyntaxKind::NewLineTrivia));
+        assert!(token_is_trivia(SyntaxKind::WhitespaceTrivia));
+        assert!(token_is_trivia(SyntaxKind::ShebangTrivia));
+        assert!(token_is_trivia(SyntaxKind::ConflictMarkerTrivia));
+        assert!(token_is_trivia(SyntaxKind::NonTextFileMarkerTrivia));
+
+        assert!(!token_is_trivia(SyntaxKind::Unknown));
+        assert!(!token_is_trivia(SyntaxKind::EndOfFileToken));
+        assert!(!token_is_trivia(SyntaxKind::NumericLiteral));
+    }
+
+    // ── token_is_identifier_or_keyword ────────────────────────────────
+
+    #[test]
+    fn identifier_or_keyword_classification() {
+        assert!(token_is_identifier_or_keyword(SyntaxKind::Identifier));
+        assert!(token_is_identifier_or_keyword(SyntaxKind::BreakKeyword));
+        assert!(token_is_identifier_or_keyword(SyntaxKind::AsyncKeyword));
+        assert!(token_is_identifier_or_keyword(SyntaxKind::DeferKeyword));
+        // PrivateIdentifier is between Identifier and keywords
+        assert!(token_is_identifier_or_keyword(
+            SyntaxKind::PrivateIdentifier
+        ));
+
+        assert!(!token_is_identifier_or_keyword(SyntaxKind::NumericLiteral));
+        assert!(!token_is_identifier_or_keyword(SyntaxKind::OpenBraceToken));
+        assert!(!token_is_identifier_or_keyword(SyntaxKind::EndOfFileToken));
+    }
+
+    // ── text_to_keyword / keyword_to_text roundtrip ───────────────────
+
+    #[test]
+    fn text_to_keyword_all_reserved_words() {
+        let cases = [
+            ("break", SyntaxKind::BreakKeyword),
+            ("case", SyntaxKind::CaseKeyword),
+            ("class", SyntaxKind::ClassKeyword),
+            ("const", SyntaxKind::ConstKeyword),
+            ("function", SyntaxKind::FunctionKeyword),
+            ("if", SyntaxKind::IfKeyword),
+            ("return", SyntaxKind::ReturnKeyword),
+            ("this", SyntaxKind::ThisKeyword),
+            ("typeof", SyntaxKind::TypeOfKeyword),
+            ("var", SyntaxKind::VarKeyword),
+            ("void", SyntaxKind::VoidKeyword),
+            ("while", SyntaxKind::WhileKeyword),
+            ("with", SyntaxKind::WithKeyword),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(
+                text_to_keyword(text),
+                Some(expected),
+                "text_to_keyword({text:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn text_to_keyword_contextual_keywords() {
+        let cases = [
+            ("async", SyntaxKind::AsyncKeyword),
+            ("await", SyntaxKind::AwaitKeyword),
+            ("type", SyntaxKind::TypeKeyword),
+            ("declare", SyntaxKind::DeclareKeyword),
+            ("abstract", SyntaxKind::AbstractKeyword),
+            ("as", SyntaxKind::AsKeyword),
+            ("satisfies", SyntaxKind::SatisfiesKeyword),
+            ("keyof", SyntaxKind::KeyOfKeyword),
+            ("infer", SyntaxKind::InferKeyword),
+            ("readonly", SyntaxKind::ReadonlyKeyword),
+            ("override", SyntaxKind::OverrideKeyword),
+            ("defer", SyntaxKind::DeferKeyword),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(
+                text_to_keyword(text),
+                Some(expected),
+                "text_to_keyword({text:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn text_to_keyword_non_keywords() {
+        assert_eq!(text_to_keyword("foo"), None);
+        assert_eq!(text_to_keyword("bar"), None);
+        assert_eq!(text_to_keyword(""), None);
+        assert_eq!(text_to_keyword("IF"), None); // case sensitive
+        assert_eq!(text_to_keyword("Class"), None); // case sensitive
+    }
+
+    #[test]
+    fn keyword_to_text_roundtrip() {
+        // Every keyword should roundtrip: text_to_keyword(keyword_to_text(k)) == Some(k)
+        let keywords = [
+            SyntaxKind::BreakKeyword,
+            SyntaxKind::CaseKeyword,
+            SyntaxKind::CatchKeyword,
+            SyntaxKind::ClassKeyword,
+            SyntaxKind::ConstKeyword,
+            SyntaxKind::IfKeyword,
+            SyntaxKind::ReturnKeyword,
+            SyntaxKind::AsyncKeyword,
+            SyntaxKind::AwaitKeyword,
+            SyntaxKind::TypeKeyword,
+            SyntaxKind::LetKeyword,
+            SyntaxKind::YieldKeyword,
+            SyntaxKind::DeferKeyword,
+            SyntaxKind::SatisfiesKeyword,
+        ];
+        for kw in keywords {
+            let text = keyword_to_text_static(kw).expect("keyword should have text");
+            let roundtripped = text_to_keyword(text);
+            assert_eq!(
+                roundtripped,
+                Some(kw),
+                "roundtrip failed for {kw:?} -> {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keyword_to_text_non_keywords() {
+        assert_eq!(keyword_to_text_static(SyntaxKind::Identifier), None);
+        assert_eq!(keyword_to_text_static(SyntaxKind::NumericLiteral), None);
+        assert_eq!(keyword_to_text_static(SyntaxKind::OpenBraceToken), None);
+    }
+
+    // ── punctuation_to_text_static ────────────────────────────────────
+
+    #[test]
+    fn punctuation_to_text_basics() {
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::OpenBraceToken),
+            Some("{")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::CloseBraceToken),
+            Some("}")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::SemicolonToken),
+            Some(";")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::DotDotDotToken),
+            Some("...")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::EqualsGreaterThanToken),
+            Some("=>")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::QuestionQuestionToken),
+            Some("??")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::AsteriskAsteriskToken),
+            Some("**")
+        );
+        assert_eq!(
+            punctuation_to_text_static(SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken),
+            Some(">>>=")
+        );
+    }
+
+    #[test]
+    fn punctuation_to_text_non_punctuation() {
+        assert_eq!(punctuation_to_text_static(SyntaxKind::Identifier), None);
+        assert_eq!(punctuation_to_text_static(SyntaxKind::BreakKeyword), None);
+    }
+
+    // ── string_to_token ───────────────────────────────────────────────
+
+    #[test]
+    fn string_to_token_keywords_and_identifiers() {
+        assert_eq!(string_to_token("if"), SyntaxKind::IfKeyword);
+        assert_eq!(string_to_token("class"), SyntaxKind::ClassKeyword);
+        assert_eq!(string_to_token("async"), SyntaxKind::AsyncKeyword);
+        assert_eq!(string_to_token("myVariable"), SyntaxKind::Identifier);
+        assert_eq!(string_to_token("_foo"), SyntaxKind::Identifier);
+        assert_eq!(string_to_token("$bar"), SyntaxKind::Identifier);
+    }
+
+    // ── SyntaxKind constants ──────────────────────────────────────────
+
+    #[test]
+    fn syntax_kind_constants_are_consistent() {
+        assert!(SyntaxKind::FIRST_KEYWORD as u16 <= SyntaxKind::LAST_KEYWORD as u16);
+        assert!(SyntaxKind::FIRST_PUNCTUATION as u16 <= SyntaxKind::LAST_PUNCTUATION as u16);
+        assert!(SyntaxKind::FIRST_LITERAL_TOKEN as u16 <= SyntaxKind::LAST_LITERAL_TOKEN as u16);
+        assert!(SyntaxKind::FIRST_TEMPLATE_TOKEN as u16 <= SyntaxKind::LAST_TEMPLATE_TOKEN as u16);
+        assert!(SyntaxKind::FIRST_RESERVED_WORD as u16 <= SyntaxKind::LAST_RESERVED_WORD as u16);
+
+        // Verify boundary relationships
+        assert_eq!(SyntaxKind::FIRST_TOKEN, SyntaxKind::Unknown);
+        assert_eq!(SyntaxKind::LAST_TOKEN, SyntaxKind::DeferKeyword);
+        assert_eq!(SyntaxKind::FIRST_KEYWORD, SyntaxKind::BreakKeyword);
+        assert_eq!(SyntaxKind::LAST_KEYWORD, SyntaxKind::DeferKeyword);
+    }
+
+    // ── KIND_BY_VALUE table consistency ───────────────────────────────
+
+    #[test]
+    fn kind_by_value_table_is_identity() {
+        // Every entry in KIND_BY_VALUE should match its index
+        for (i, &kind) in KIND_BY_VALUE.iter().enumerate() {
+            assert_eq!(
+                kind as u16, i as u16,
+                "KIND_BY_VALUE[{i}] = {:?} (value {}), expected value {i}",
+                kind, kind as u16
+            );
+        }
+    }
+}
