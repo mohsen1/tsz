@@ -47,9 +47,9 @@ impl<'a> Printer<'a> {
             && is_hoisted_declaration
             && !self.ctx.module_state.default_func_export_hoisted;
         if hoisted_inline {
-            self.write("exports.default = ");
+            self.write_export_binding_start("default");
             self.write_identifier_by_id(names[0]);
-            self.write(";");
+            self.write_export_binding_end();
             self.write_line();
         }
 
@@ -89,19 +89,23 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
         if is_default {
-            self.write("exports.default = ");
+            self.write_export_binding_start("default");
             self.write_identifier_by_id(names[0]);
-            self.write(";");
+            self.write_export_binding_end();
         } else {
             for (i, name) in names.iter().enumerate() {
                 if i > 0 {
                     self.write_line();
                 }
-                self.write("exports.");
+                let name_str = self
+                    .arena
+                    .identifiers
+                    .get(*name as usize)
+                    .map(|id| id.escaped_text.clone())
+                    .unwrap_or_default();
+                self.write_export_binding_start(&name_str);
                 self.write_identifier_by_id(*name);
-                self.write(" = ");
-                self.write_identifier_by_id(*name);
-                self.write(";");
+                self.write_export_binding_end();
             }
         }
         self.write_line();
@@ -151,14 +155,18 @@ impl<'a> Printer<'a> {
         self.anonymous_default_export_name = Some("default_1".to_string());
         if is_function {
             // Function: exports.default before declaration (functions hoist)
-            self.write("exports.default = default_1;");
+            self.write_export_binding_start("default");
+            self.write("default_1");
+            self.write_export_binding_end();
             self.write_line();
             self.emit_node_default(node, idx);
         } else {
             // Class/other: declaration first, then exports.default
             self.emit_node_default(node, idx);
             self.write_line();
-            self.write("exports.default = default_1;");
+            self.write_export_binding_start("default");
+            self.write("default_1");
+            self.write_export_binding_end();
         }
         self.anonymous_default_export_name = prev;
     }
@@ -169,9 +177,13 @@ impl<'a> Printer<'a> {
     ) where
         F: FnMut(&mut Self),
     {
-        self.write("exports.default = ");
+        self.write_export_binding_start("default");
         emit_inner(self);
-        self.write_semicolon();
+        if self.in_system_execute_body {
+            self.write(");");
+        } else {
+            self.write_semicolon();
+        }
         self.write_line();
     }
 
@@ -217,9 +229,9 @@ impl<'a> Printer<'a> {
             self.write(&es5_output);
         }
         self.write_line();
-        self.write("exports.default = ");
+        self.write_export_binding_start("default");
         self.write(&temp_name);
-        self.write(";");
+        self.write_export_binding_end();
         self.write_line();
     }
 
@@ -557,17 +569,26 @@ impl<'a> Printer<'a> {
                 {
                     let ident = self.get_identifier_text_idx(export_assign.expression);
                     if self.ctx.module_state.inlined_var_exports.contains(&ident) {
-                        self.write("exports.default = exports.");
-                        self.write(&ident);
-                        self.write(";");
+                        self.write_export_binding_start("default");
+                        if self.in_system_execute_body {
+                            self.write(&ident);
+                        } else {
+                            self.write("exports.");
+                            self.write(&ident);
+                        }
+                        self.write_export_binding_end();
                         self.write_line();
                         return;
                     }
                 }
-                self.write("exports.default = ");
+                self.write_export_binding_start("default");
             }
             self.emit_expression(export_assign.expression);
-            self.write_semicolon();
+            if !export_assign.is_export_equals && self.in_system_execute_body {
+                self.write(");");
+            } else {
+                self.write_semicolon();
+            }
         } else {
             // ES6: export = expr (not valid ES6, but emit as export default)
             //      export default expr → export default expr;
