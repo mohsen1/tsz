@@ -316,6 +316,8 @@ pub enum TransformDirective {
     TC39Decorators {
         /// Original class node index
         class_node: NodeIndex,
+        /// Function name for named evaluation (__setFunctionName) of class expressions
+        function_name: Option<String>,
     },
 
     /// Chain multiple transforms (composition)

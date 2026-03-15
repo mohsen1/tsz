@@ -66,6 +66,7 @@ enum EmitDirective {
     ES5SuperCall,
     TC39Decorators {
         class_node: NodeIndex,
+        function_name: Option<String>,
     },
     ModuleWrapper {
         format: crate::context::transform::ModuleFormat,
@@ -172,8 +173,12 @@ impl<'a> Printer<'a> {
                 format: *format,
                 dependencies: std::sync::Arc::clone(dependencies),
             },
-            TransformDirective::TC39Decorators { class_node } => EmitDirective::TC39Decorators {
+            TransformDirective::TC39Decorators {
+                class_node,
+                function_name,
+            } => EmitDirective::TC39Decorators {
                 class_node: *class_node,
+                function_name: function_name.clone(),
             },
             TransformDirective::Chain(directives) => {
                 let mut flattened = Vec::new();
@@ -770,8 +775,11 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            EmitDirective::TC39Decorators { class_node } => {
-                self.emit_tc39_decorators(node, idx, class_node);
+            EmitDirective::TC39Decorators {
+                class_node,
+                function_name,
+            } => {
+                self.emit_tc39_decorators(node, idx, class_node, function_name.as_deref());
             }
 
             EmitDirective::Chain(directives) => {
@@ -853,6 +861,7 @@ impl<'a> Printer<'a> {
         node: &tsz_parser::parser::node::Node,
         _idx: NodeIndex,
         class_node: NodeIndex,
+        function_name: Option<&str>,
     ) {
         use crate::transforms::es_decorators::TC39DecoratorEmitter;
 
@@ -867,8 +876,10 @@ impl<'a> Printer<'a> {
         // For class expressions, emit as expression (no `let C = ` wrapper)
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
             emitter.set_expression_mode(true);
-            // Try to determine the function name from the assignment context
-            if let Some(ref name) = self.anonymous_default_export_name {
+            // Use function name from the directive (determined during lowering)
+            if let Some(name) = function_name {
+                emitter.set_function_name(name.to_string());
+            } else if let Some(ref name) = self.anonymous_default_export_name {
                 emitter.set_function_name(name.clone());
             } else if let Some(ref name) = self.pending_commonjs_class_export_name {
                 emitter.set_function_name(name.clone());
@@ -1038,8 +1049,11 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            EmitDirective::TC39Decorators { class_node } => {
-                self.emit_tc39_decorators(node, idx, *class_node);
+            EmitDirective::TC39Decorators {
+                class_node,
+                function_name,
+            } => {
+                self.emit_tc39_decorators(node, idx, *class_node, function_name.as_deref());
             }
             EmitDirective::Chain(directives) => {
                 self.emit_chained_directives(node, idx, directives.as_slice());
@@ -1408,8 +1422,11 @@ impl<'a> Printer<'a> {
                 // Transform super(...) to _super.call(this, ...)
                 self.emit_super_call_es5(node);
             }
-            EmitDirective::TC39Decorators { class_node } => {
-                self.emit_tc39_decorators(node, idx, *class_node);
+            EmitDirective::TC39Decorators {
+                class_node,
+                function_name,
+            } => {
+                self.emit_tc39_decorators(node, idx, *class_node, function_name.as_deref());
             }
             EmitDirective::ModuleWrapper {
                 format,
