@@ -276,14 +276,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 priority,
                             );
 
-                            // Infer template (T) from property value types
+                            // Infer template (T) from property value types.
+                            // Use MappedType priority so candidates from multiple properties
+                            // are combined via union, matching tsc's PriorityImpliesCombination
+                            // which includes MappedTypeConstraint. Without this, inference from
+                            // `{ [P in K]: T }` picks only the first property's type as T
+                            // instead of creating a union of all property types.
+                            let mapped_priority = crate::types::InferencePriority::MappedType;
                             for prop in &source_obj.properties {
                                 self.constrain_types(
                                     ctx,
                                     var_map,
                                     prop.type_id,
                                     mapped.template,
-                                    priority,
+                                    mapped_priority,
                                 );
                             }
                             return;
@@ -2451,7 +2457,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target: &ObjectShape,
-        priority: crate::types::InferencePriority,
+        _priority: crate::types::InferencePriority,
     ) {
         let string_index = target.string_index.as_ref();
         let number_index = target.number_index.as_ref();
@@ -2459,6 +2465,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if string_index.is_none() && number_index.is_none() {
             return;
         }
+
+        // Use MappedType priority so that candidates from multiple properties are
+        // combined via union. This matches tsc's behavior: for `{ [x: string]: T }`,
+        // calling with `{ a: number, b: string }` should infer T = number | string.
+        // Without combination priority, common supertype picks only the first type.
+        let idx_priority = crate::types::InferencePriority::MappedType;
 
         for (i, prop) in source_props.iter().enumerate() {
             let prop_type = self.optional_property_type(prop);
@@ -2471,12 +2483,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ctx.add_index_signature_candidate_with_index(
                         var,
                         prop_type,
-                        priority,
+                        idx_priority,
                         property_index,
                         false,
                     );
                 } else {
-                    self.constrain_types(ctx, var_map, prop_type, number_idx.value_type, priority);
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        prop_type,
+                        number_idx.value_type,
+                        idx_priority,
+                    );
                 }
             }
 
@@ -2485,12 +2503,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ctx.add_index_signature_candidate_with_index(
                         var,
                         prop_type,
-                        priority,
+                        idx_priority,
                         property_index,
                         false,
                     );
                 } else {
-                    self.constrain_types(ctx, var_map, prop_type, string_idx.value_type, priority);
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        prop_type,
+                        string_idx.value_type,
+                        idx_priority,
+                    );
                 }
             }
         }

@@ -1038,6 +1038,22 @@ impl<'a> FlowAnalyzer<'a> {
                                         })
                                     });
                                 let narrowing_base = declared_type.unwrap_or(initial_type);
+                                // For const declarations with enum types: if the assigned
+                                // type is a member of the enum, narrow directly to the
+                                // member type. This enables flow narrowing for patterns like
+                                // `const e: E = E.ONE` where e should have type E.ONE.
+                                // Only applies to const (not var/let) to avoid changing
+                                // mutable variable semantics.
+                                if self.is_const_variable_declaration(flow.node)
+                                    && tsz_solver::visitor::enum_components(
+                                        self.interner,
+                                        narrowing_base,
+                                    )
+                                    .is_some()
+                                    && self.is_assignable_to(assigned_type, narrowing_base)
+                                {
+                                    return assigned_type;
+                                }
                                 self.narrow_assignment(narrowing_base, assigned_type)
                             }
                         } else {

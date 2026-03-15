@@ -716,6 +716,18 @@ impl TypeResolver for TypeEnvironment {
         Self::get_enum_parent(self, member_def_id)
     }
 
+    fn is_enum_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> bool {
+        use crate::visitors::visitor_extract::enum_components;
+        if let Some((def_id, _)) = enum_components(interner, type_id) {
+            // A full enum type's DefId is NOT registered as a member (key) in enum_parents.
+            // Member DefIds ARE keys in enum_parents (mapping to their parent DefId).
+            // So if the DefId is NOT a member, it's the parent enum type.
+            !self.enum_parents.contains_key(&def_id.0)
+        } else {
+            false
+        }
+    }
+
     fn is_user_enum_def(&self, _def_id: DefId) -> bool {
         // TypeEnvironment doesn't have access to binder symbol information
         false
