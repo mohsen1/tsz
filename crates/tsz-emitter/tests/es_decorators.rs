@@ -56,9 +56,10 @@ fn test_class_decorator_produces_iife() {
         output.contains("let Foo = (() => {"),
         "Expected IIFE wrapper for decorated class.\nOutput:\n{output}"
     );
+    // In ES2015 decorator mode, the class is anonymous (name set via __setFunctionName)
     assert!(
-        output.contains("class Foo"),
-        "Expected class name in output.\nOutput:\n{output}"
+        output.contains("var Foo = _classThis = class"),
+        "Expected class variable assignment in output.\nOutput:\n{output}"
     );
 }
 
@@ -224,13 +225,16 @@ fn test_decorated_class_emits_constructor() {
 }
 
 #[test]
-fn test_decorated_class_without_constructor_gets_default_constructor() {
+fn test_decorated_class_without_constructor_omits_constructor() {
+    // tsc does NOT inject a default constructor for class-only decorators.
+    // A constructor is only emitted when there are instance member decorators
+    // that need __runInitializers in the constructor body.
     let source = "@sealed class Foo { }";
     let output = emit_decorator(source);
 
     assert!(
-        output.contains("constructor()"),
-        "Expected default constructor when class has no constructor.\nOutput:\n{output}"
+        !output.contains("constructor()"),
+        "Class-only decorators should not inject a default constructor.\nOutput:\n{output}"
     );
 }
 
