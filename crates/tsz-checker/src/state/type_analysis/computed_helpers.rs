@@ -280,6 +280,53 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For mapped types, check if the constraint references the alias being
+        // defined (via keyof or directly).  This catches non-generic self-referencing
+        // mapped type aliases like `type Recurse = { [K in keyof Recurse]: Recurse[K] }`.
+        if let Some(mapped_info) =
+            tsz_solver::type_queries::get_mapped_type(self.ctx.types, resolved_type)
+        {
+            let constraint = mapped_info.constraint;
+            // Check constraint directly and also its keyof inner type
+            let refs_to_check: Vec<TypeId> = {
+                let mut v = vec![constraint];
+                if let Some(inner) = keyof_inner_type(self.ctx.types, constraint) {
+                    v.push(inner);
+                }
+                v
+            };
+            for ref_type in refs_to_check {
+                if let Some(def_id) =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ref_type)
+                    && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
+                    && self.ctx.symbol_resolution_set.contains(&target_sym_id)
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(target_sym_id)
+                        .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                {
+                    // Mark all aliases on stack between target and current as circular.
+                    let mut found_target = false;
+                    for &stack_sym in &self.ctx.symbol_resolution_stack {
+                        if stack_sym == target_sym_id {
+                            found_target = true;
+                        }
+                        if found_target {
+                            let is_alias = self.ctx.binder.get_symbol(stack_sym).is_some_and(|s| {
+                                s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                            });
+                            if is_alias {
+                                self.ctx.circular_type_aliases.insert(stack_sym);
+                            }
+                        }
+                    }
+                    self.ctx.circular_type_aliases.insert(target_sym_id);
+                    return true;
+                }
+            }
+        }
+
         let evaluated = match classify_for_traversal(self.ctx.types, resolved_type) {
             TypeTraversalKind::Application { .. }
             | TypeTraversalKind::Conditional(_)
@@ -420,6 +467,101 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if a non-generic type alias with a mapped type body is circular.
+    /// Walks the type alias body AST to find type references that resolve back
+    /// to the alias being defined or to another non-generic type alias that
+    /// references this one (mutual recursion).
+    ///
+    /// This covers patterns like:
+    /// - `type Recurse = { [K in keyof Recurse]: Recurse[K] }` (self)
+    /// - `type A = { [K in keyof B]: B[K] }; type B = { [K in keyof A]: A[K] }` (mutual)
+    pub(crate) fn is_non_generic_mapped_type_circular(
+        &mut self,
+        sym_id: SymbolId,
+        type_node: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        // Only applies when the body IS a mapped type
+        if node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return false;
+        }
+        // Walk the type body AST and check if any type reference resolves to
+        // a non-generic type alias that participates in a cycle with sym_id.
+        self.ast_contains_circular_type_ref(type_node, sym_id, &mut FxHashSet::default())
+    }
+
+    /// Recursive AST walk to find type references that close a cycle back to `target_sym`.
+    fn ast_contains_circular_type_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        target_sym: SymbolId,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // If this is an identifier or type reference, check if it resolves to the target
+        if node.kind == SyntaxKind::Identifier as u16
+            || node.kind == syntax_kind_ext::TYPE_REFERENCE
+        {
+            let ident_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx
+                    .arena
+                    .get_type_ref(node)
+                    .map(|tr| tr.type_name)
+                    .unwrap_or(NodeIndex::NONE)
+            } else {
+                node_idx
+            };
+            if let Some(ident_node) = self.ctx.arena.get(ident_idx)
+                && let Some(ident) = self.ctx.arena.get_identifier(ident_node)
+            {
+                let name = self.ctx.arena.resolve_identifier_text(ident);
+                if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(&name) {
+                    if ref_sym_id == target_sym {
+                        return true;
+                    }
+                    // For mutual recursion: check if this alias's body references
+                    // the target (one hop). Only for non-generic type aliases.
+                    if visited.insert(ref_sym_id)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(ref_sym_id)
+                        && symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                    {
+                        // Check if this alias has type parameters (non-generic only)
+                        for &decl_idx in &symbol.declarations {
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                && decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
+                                && type_alias.type_parameters.is_none()
+                            {
+                                if self.ast_contains_circular_type_ref(
+                                    type_alias.type_node,
+                                    target_sym,
+                                    visited,
+                                ) {
+                                    // Mark the intermediate alias as circular too
+                                    self.ctx.circular_type_aliases.insert(ref_sym_id);
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Recurse into children
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.ast_contains_circular_type_ref(child_idx, target_sym, visited) {
+                return true;
+            }
+        }
         false
     }
 

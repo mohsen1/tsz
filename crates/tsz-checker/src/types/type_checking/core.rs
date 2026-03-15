@@ -1953,6 +1953,37 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check if the constraint references a circular type alias
+        // (e.g., `type Recurse = { [K in keyof Recurse]: ... }` — K's constraint
+        // is `keyof Recurse` which circularly references the enclosing alias).
+        // During the checking pass, `circular_type_aliases` has been populated by
+        // the resolution pass, so we check it instead of the resolution stack.
+        let constraint_refs_circular_alias = {
+            let mut refs_to_check = vec![constraint_type];
+            if let Some(inner) = tsz_solver::keyof_inner_type(self.ctx.types, constraint_type) {
+                refs_to_check.push(inner);
+            }
+            refs_to_check.iter().any(|&ref_type| {
+                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ref_type)
+                    .and_then(|def_id| self.ctx.def_to_symbol.borrow().get(&def_id).copied())
+                    .is_some_and(|target_sym| self.ctx.circular_type_aliases.contains(&target_sym))
+            })
+        };
+        if constraint_refs_circular_alias {
+            let message = format!("Type parameter '{name}' has a circular constraint.");
+            self.ctx.error(
+                constraint_pos,
+                constraint_end - constraint_pos,
+                message,
+                2313,
+            );
+            self.ctx.type_parameter_scope.remove(&name);
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
+            }
+            return;
+        }
+
         // Evaluate to resolve Lazy/Application types before checking validity.
         let evaluated = self.evaluate_type_with_env(constraint_type);
 
