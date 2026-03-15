@@ -56,6 +56,23 @@ impl BinderState {
         None
     }
 
+    /// Get the declared name from a declaration node (ClassDeclaration,
+    /// FunctionDeclaration, etc.) by looking up its `name` child identifier.
+    pub(crate) fn get_declaration_name<'a>(
+        arena: &'a NodeArena,
+        idx: NodeIndex,
+    ) -> Option<&'a str> {
+        let node = arena.get(idx)?;
+        // Try class/function declarations which have a `name` field
+        if let Some(class) = arena.get_class(node) {
+            return Self::get_identifier_name(arena, class.name);
+        }
+        if let Some(func) = arena.get_function(node) {
+            return Self::get_identifier_name(arena, func.name);
+        }
+        None
+    }
+
     pub(crate) fn collect_binding_identifiers(
         arena: &NodeArena,
         idx: NodeIndex,

@@ -3940,9 +3940,4 @@ unusedTypeParametersWithTrivia4
 unusedVariableInForLoop7FS
 whiteSpaceBeforeReturnTypeFormatting
 completionListInComments3
-renameForDefaultExport04
-renameForDefaultExport05
-renameForDefaultExport06
-renameForDefaultExport07
-renameForDefaultExport08
 renameForAliasingExport02
