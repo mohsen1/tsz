@@ -30,10 +30,13 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            // Count function/arrow function boundaries
+            // Count function/arrow/getter/setter boundaries — super() inside
+            // any of these is NOT a direct constructor-level super call
             if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                 || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
                 function_depth += 1;
             }
