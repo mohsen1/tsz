@@ -94,7 +94,13 @@ impl<'a> RenameProvider<'a> {
         let (kind, kind_modifiers, full_display_name) = self.symbol_info(node_idx, symbol_id);
 
         let start = self.line_map.offset_to_position(node.pos, self.source_text);
-        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        // Use the display_name length for the trigger span end, not node.end.
+        // Some nodes (e.g., DefaultKeyword in property assignments) have an end
+        // that extends past the identifier into trailing punctuation like `:`.
+        let trigger_end = node.pos + display_name.len() as u32;
+        let end = self
+            .line_map
+            .offset_to_position(trigger_end.min(node.end), self.source_text);
 
         PrepareRenameResult {
             can_rename: true,
