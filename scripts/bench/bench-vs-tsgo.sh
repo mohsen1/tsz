@@ -364,7 +364,7 @@ check_prerequisites() {
     echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
     echo -e "   Binary: $TSZ"
     echo -e "   Size: $(ls -lh "$TSZ" | awk '{print $5}')"
-    echo -e "   Built: $(stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1)"
+    echo -e "   Built: $(stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1 || stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || echo 'unknown')"
     
     # Check/install tsgo
     ensure_tsgo
