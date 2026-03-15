@@ -1472,17 +1472,6 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                         );
                     }
-                } else {
-                    // tsc emits TS2528 for non-class duplicate default exports
-                    // (e.g., `export default function() {}` + `export default {}`)
-                    for &export_idx in &export_default_indices {
-                        let anchor = self.get_default_export_anchor(export_idx);
-                        self.error_at_node(
-                            anchor,
-                            diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                        );
-                    }
                 }
             }
         }
