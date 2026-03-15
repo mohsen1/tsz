@@ -239,6 +239,18 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .flatten()
                 {
+                    // When called without pre-computed param_types (None path),
+                    // don't overwrite a parameter type that was already cached by
+                    // get_type_of_function (which computes types from initializer
+                    // expressions in JS files). Only overwrite if the existing
+                    // cached type is absent or is a placeholder (ERROR).
+                    if param_types.is_none() {
+                        if let Some(&existing) = self.ctx.symbol_types.get(&sym_id) {
+                            if existing != TypeId::ERROR {
+                                continue;
+                            }
+                        }
+                    }
                     self.cache_symbol_type(sym_id, type_id);
                 }
             }
