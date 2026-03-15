@@ -1953,6 +1953,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
         }
 
+        // Collect all nested merge pairs across all symbols in this file,
+        // then process them AFTER all symbols have their data populated.
+        // This is critical because HashMap iteration order is random — if a
+        // parent symbol is processed before its children, the children won't
+        // have their exports populated yet, making recursive merge ineffective.
+        let mut all_nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
+
         for (old_id, &new_id) in &id_remap {
             // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
             if result.lib_symbol_ids.contains(old_id) {
@@ -2080,49 +2087,84 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 }
             }
 
-            // Deferred pass: merge nested symbols (e.g., nested namespace Utils)
-            // outside the get_mut borrow scope above
-            for (existing_id, source_id) in nested_merges {
-                // Collect data from source symbol first
-                let merge_data = global_symbols.get(source_id).map(|src| {
-                    (
-                        src.flags,
-                        src.declarations.clone(),
-                        src.value_declaration,
-                        src.exports.as_ref().cloned(),
-                        src.members.as_ref().cloned(),
-                    )
-                });
-                if let Some((src_flags, src_decls, src_val_decl, src_exports, src_members)) =
-                    merge_data
-                    && let Some(dst) = global_symbols.get_mut(existing_id)
-                {
-                    let can_merge = can_merge_symbols_cross_file(dst.flags, src_flags);
-                    if !can_merge {
-                        continue;
+            // Collect nested merges for processing AFTER all symbols are populated
+            all_nested_merges.extend(nested_merges);
+        }
+
+        // Process all nested merges now that every symbol has its data populated.
+        // Uses a work queue to handle arbitrarily deep nesting (e.g.,
+        // namespace A.B.C.D declared across files needs recursive merge).
+        while let Some((existing_id, source_id)) = all_nested_merges.pop() {
+            // Collect data from source symbol first
+            let merge_data = global_symbols.get(source_id).map(|src| {
+                (
+                    src.flags,
+                    src.declarations.clone(),
+                    src.value_declaration,
+                    src.exports.as_ref().cloned(),
+                    src.members.as_ref().cloned(),
+                )
+            });
+            if let Some((src_flags, src_decls, src_val_decl, src_exports, src_members)) = merge_data
+                && let Some(dst) = global_symbols.get_mut(existing_id)
+            {
+                let can_merge = can_merge_symbols_cross_file(dst.flags, src_flags);
+                if !can_merge {
+                    continue;
+                }
+                dst.flags |= src_flags;
+                // Propagate declaration_arenas from source to destination
+                // so the checker can find declarations from the merged file
+                for &decl_idx in &src_decls {
+                    let cloned_arenas: Option<Vec<Arc<NodeArena>>> = declaration_arenas
+                        .get(&(source_id, decl_idx))
+                        .map(|a| a.iter().cloned().collect());
+                    if let Some(arenas) = cloned_arenas {
+                        let target = declaration_arenas
+                            .entry((existing_id, decl_idx))
+                            .or_default();
+                        for arena in arenas {
+                            target.push(arena);
+                        }
                     }
-                    dst.flags |= src_flags;
-                    append_unique_declarations(&mut dst.declarations, &src_decls);
-                    if dst.value_declaration.is_none() && !src_val_decl.is_none() {
-                        dst.value_declaration = src_val_decl;
-                    }
-                    if let Some(src_exp) = src_exports {
-                        let dst_exp = dst
-                            .exports
-                            .get_or_insert_with(|| Box::new(SymbolTable::new()));
-                        for (ename, &esym) in src_exp.iter() {
-                            if !dst_exp.has(ename) {
-                                dst_exp.set(ename.clone(), esym);
+                }
+                // Also propagate symbol_arenas if source has one
+                let cloned_arena = symbol_arenas.get(&source_id).cloned();
+                if let Some(arena) = cloned_arena {
+                    symbol_arenas.entry(existing_id).or_insert(arena);
+                }
+                append_unique_declarations(&mut dst.declarations, &src_decls);
+                if dst.value_declaration.is_none() && !src_val_decl.is_none() {
+                    dst.value_declaration = src_val_decl;
+                }
+                if let Some(src_exp) = src_exports {
+                    let dst_exp = dst
+                        .exports
+                        .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                    for (ename, &esym) in src_exp.iter() {
+                        if !dst_exp.has(ename) {
+                            dst_exp.set(ename.clone(), esym);
+                        } else {
+                            // Both sides export the same name — queue recursive merge
+                            let existing_export_id = dst_exp.get(ename).unwrap();
+                            if existing_export_id != esym {
+                                all_nested_merges.push((existing_export_id, esym));
                             }
                         }
                     }
-                    if let Some(src_mem) = src_members {
-                        let dst_mem = dst
-                            .members
-                            .get_or_insert_with(|| Box::new(SymbolTable::new()));
-                        for (mname, &msym) in src_mem.iter() {
-                            if !dst_mem.has(mname) {
-                                dst_mem.set(mname.clone(), msym);
+                }
+                if let Some(src_mem) = src_members {
+                    let dst_mem = dst
+                        .members
+                        .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                    for (mname, &msym) in src_mem.iter() {
+                        if !dst_mem.has(mname) {
+                            dst_mem.set(mname.clone(), msym);
+                        } else {
+                            // Both sides have the same member — queue recursive merge
+                            let existing_member_id = dst_mem.get(mname).unwrap();
+                            if existing_member_id != msym {
+                                all_nested_merges.push((existing_member_id, msym));
                             }
                         }
                     }
