@@ -672,7 +672,22 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
             }
-            // Methods and accessors are always context-sensitive — skip them
+            // Methods with all params annotated are not context-sensitive
+            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && !is_contextually_sensitive(self, elem_idx)
+                && let Some(method) = self.ctx.arena.get_method_decl(elem_node)
+                    && let Some(name) = self.property_name_for_error(method.name)
+                {
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    // Use get_type_of_function for methods — get_type_of_node
+                    // doesn't handle METHOD_DECLARATION as expression nodes.
+                    let value_type = self.get_type_of_function(elem_idx);
+                    self.ctx.contextual_type = prev_context;
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                }
+            // Accessors are always context-sensitive — skip them
         }
 
         if properties.is_empty() {
@@ -833,7 +848,7 @@ impl<'a> CheckerState<'a> {
                 let prev_context = self.ctx.contextual_type;
                 self.ctx.contextual_type = Some(target_prop_type);
                 let diag_len = self.ctx.diagnostics.len();
-                let value_type = self.get_type_of_node(elem_idx);
+                let value_type = self.get_type_of_function(elem_idx);
                 self.ctx.diagnostics.truncate(diag_len);
                 self.ctx.contextual_type = prev_context;
 
