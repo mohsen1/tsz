@@ -811,7 +811,35 @@ impl<'a> CheckerState<'a> {
         if result_types.is_empty() {
             return declared_type;
         }
-        tsz_solver::utils::union_or_single(self.ctx.types, result_types)
+        let correlated = tsz_solver::utils::union_or_single(self.ctx.types, result_types);
+
+        // Combine correlated narrowing with flow narrowing (e.g., truthiness check).
+        // When `declared_type` (the flow-narrowed type) differs from the original
+        // symbol type, both narrowings are active and we need their intersection.
+        // Example: `if (payload) { if (kind === 'A') { ... } }` where:
+        //   - flow narrows payload: number|undefined|string|undefined → number|string
+        //   - correlated narrows payload: → number|undefined
+        //   - combined: → number
+        if correlated != declared_type
+            && let Some(c_members) = union_members_for_type(self.ctx.types, correlated)
+        {
+            let n_members = union_members_for_type(self.ctx.types, declared_type);
+            let filtered: Vec<_> = c_members
+                .iter()
+                .filter(|&&c| {
+                    if let Some(ref n_members) = n_members {
+                        n_members.contains(&c)
+                    } else {
+                        c == declared_type
+                    }
+                })
+                .copied()
+                .collect();
+            if !filtered.is_empty() && filtered.len() < c_members.len() {
+                return tsz_solver::utils::union_or_single(self.ctx.types, filtered);
+            }
+        }
+        correlated
     }
 
     /// Get the symbol for an identifier node.
