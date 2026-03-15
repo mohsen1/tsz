@@ -28,7 +28,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Result of conditional type evaluation
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ConditionalResult {
+pub(crate) enum ConditionalResult {
     /// The condition was resolved to a definite type
     Resolved(TypeId),
     /// The condition could not be resolved (deferred)
@@ -38,7 +38,7 @@ pub enum ConditionalResult {
 
 /// Maximum number of unique types to track in the visiting set.
 /// Prevents unbounded memory growth in pathological cases.
-pub const MAX_VISITING_SET_SIZE: usize = 10_000;
+pub(crate) const MAX_VISITING_SET_SIZE: usize = 10_000;
 
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
@@ -77,7 +77,7 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
 }
 
 /// Array methods that return any (used for apparent type computation).
-pub const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
+pub(crate) const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
     "concat",
     "filter",
     "flat",
@@ -103,9 +103,9 @@ pub const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
     "reduceRight",
 ];
 /// Array methods that return boolean.
-pub const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
+pub(crate) const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
 /// Array methods that return number.
-pub const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
+pub(crate) const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
     "findIndex",
     "findLastIndex",
     "indexOf",
@@ -114,9 +114,9 @@ pub const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
     "unshift",
 ];
 /// Array methods that return void.
-pub const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
+pub(crate) const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
 /// Array methods that return string.
-pub const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
+pub(crate) const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
 
 impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
