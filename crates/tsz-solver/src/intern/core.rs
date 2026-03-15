@@ -367,14 +367,14 @@ impl TypeInterner {
     /// `DefinitionStore`. The params use `OnceLock` since they don't contain
     /// `DefIds` and are stable across checkers.
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
-        *self.array_base_type.write().unwrap() = Some(type_id);
+        *self.array_base_type.write().expect("RwLock not poisoned") = Some(type_id);
         let _ = self.array_base_type_params.set(params);
     }
 
     /// Get the global Array base type, if it has been set.
     #[inline]
     pub fn get_array_base_type(&self) -> Option<TypeId> {
-        *self.array_base_type.read().unwrap()
+        *self.array_base_type.read().expect("RwLock not poisoned")
     }
 
     /// Get the type parameters for the global Array base type, if it has been set.

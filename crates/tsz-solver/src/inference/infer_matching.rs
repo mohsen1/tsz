@@ -442,15 +442,21 @@ impl<'a> InferenceContext<'a> {
 
             // If both have rest params, infer the rest element types
             if source_rest && target_rest {
-                let source_param = source_params.next().unwrap();
-                let target_param = target_params.next().unwrap();
+                let source_param = source_params
+                    .next()
+                    .expect("source_rest flag guarantees next element");
+                let target_param = target_params
+                    .next()
+                    .expect("target_rest flag guarantees next element");
                 self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
                 break;
             }
 
             // If source has rest param, infer all remaining target params into it
             if source_rest {
-                let source_param = source_params.next().unwrap();
+                let source_param = source_params
+                    .next()
+                    .expect("source_rest flag guarantees next element");
                 for target_param in target_params.by_ref() {
                     self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
                 }
@@ -459,7 +465,9 @@ impl<'a> InferenceContext<'a> {
 
             // If target has rest param, infer all remaining source params into it
             if target_rest {
-                let target_param = target_params.next().unwrap();
+                let target_param = target_params
+                    .next()
+                    .expect("target_rest flag guarantees next element");
 
                 // CRITICAL: Check if target rest param is a type parameter (like A extends any[])
                 // If so, we need to infer it as a TUPLE of all remaining source params,
