@@ -253,3 +253,95 @@ namespace X.Y {
         ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2540_as_const_object_method_this_readonly() {
+    // When an object literal is declared `as const`, `this` inside methods
+    // should see readonly properties.  Assigning to `this.x` must produce
+    // TS2540 ("Cannot assign to 'x' because it is a read-only property"),
+    // not TS2322 ("Type '20' is not assignable to type '10'").
+    let diags = check_source_diagnostics(
+        r#"
+let o = { x: 10, foo() { this.x = 20 } } as const;
+"#,
+    );
+    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    assert_eq!(
+        ts2540.len(),
+        1,
+        "Expected 1 TS2540 for readonly property assignment via this in as-const object, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    // Must NOT emit TS2322 — the readonly check takes precedence.
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected no TS2322 when TS2540 (readonly) applies, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2540_as_const_object_method_this_readonly_no_false_positive() {
+    // Reading from `this.x` inside an as-const method should NOT produce
+    // any error — only writes should trigger TS2540.
+    let diags = check_source_diagnostics(
+        r#"
+let o = { x: 10, foo() { return this.x } } as const;
+"#,
+    );
+    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    assert_eq!(
+        ts2540.len(),
+        0,
+        "Expected no TS2540 for readonly property read, got: {:?}",
+        ts2540.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2540_as_const_nested_method_this_readonly() {
+    // Multiple properties in an as-const object with a method that assigns
+    // to different properties should all produce TS2540.
+    let diags = check_source_diagnostics(
+        r#"
+let o = {
+    x: 10,
+    y: "hello",
+    foo() {
+        this.x = 20;
+        this.y = "world";
+    }
+} as const;
+"#,
+    );
+    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    assert_eq!(
+        ts2540.len(),
+        2,
+        "Expected 2 TS2540 for readonly property assignments in as-const method, got codes: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts2540_without_const_assertion() {
+    // Without `as const`, properties are mutable, so `this.x = 20` should
+    // NOT produce TS2540.
+    let diags = check_source_diagnostics(
+        r#"
+let o = { x: 10, foo() { this.x = 20 } };
+"#,
+    );
+    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    assert_eq!(
+        ts2540.len(),
+        0,
+        "Expected no TS2540 without as-const, got: {:?}",
+        ts2540.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
