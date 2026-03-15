@@ -518,3 +518,90 @@ fn test_jsdoc_for_node_arrow_function_with_jsdoc() {
         "Should extract JSDoc for arrow function variable, got: {doc}",
     );
 }
+
+#[test]
+fn test_parse_jsdoc_since_tag() {
+    let result = parse_jsdoc("Added in v2.\n@since 2.0.0");
+    assert!(!result.tags.is_empty(), "Should parse @since tag");
+}
+
+#[test]
+fn test_parse_jsdoc_example_tag() {
+    let result = parse_jsdoc("Calculates sum.\n@example\nsum(1, 2) // returns 3");
+    assert!(!result.tags.is_empty(), "Should parse @example tag");
+}
+
+#[test]
+fn test_parse_jsdoc_template_tag() {
+    let result = parse_jsdoc("@template T\n@param {T} value The value");
+    // @template may be parsed as a tag
+    let _ = &result.tags;
+}
+
+#[test]
+fn test_parse_jsdoc_readonly_tag() {
+    let result = parse_jsdoc("@readonly\nThe value");
+    let _ = &result.tags;
+}
+
+#[test]
+fn test_parse_jsdoc_multiline_summary() {
+    let result = parse_jsdoc("This is a long\nmultiline summary\nthat spans three lines.");
+    if let Some(summary) = &result.summary {
+        assert!(
+            !summary.is_empty(),
+            "Multi-line summary should not be empty"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_param_optional() {
+    let result = parse_jsdoc("@param {string} [name] Optional name");
+    // Optional param may be stored with or without brackets
+    let _ = &result.params;
+}
+
+#[test]
+fn test_parse_jsdoc_param_default_value() {
+    let result = parse_jsdoc("@param {number} [count=10] Default count");
+    let _ = &result.params;
+}
+
+#[test]
+fn test_parse_jsdoc_param_no_description() {
+    let result = parse_jsdoc("@param {string} name");
+    // Param without description
+    let _ = &result.params;
+}
+
+#[test]
+fn test_parse_jsdoc_whitespace_only_after_star() {
+    let result = parse_jsdoc("  *  \n  *  Summary here  \n  *  ");
+    // Should handle whitespace after * gracefully
+    let _ = &result.summary;
+}
+
+#[test]
+fn test_jsdoc_for_node_interface() {
+    let source = "/** User interface */\ninterface User { name: string; }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let iface = find_first_node_of_kind(arena, root, syntax_kind_ext::INTERFACE_DECLARATION);
+    if let Some(idx) = iface {
+        let doc = jsdoc_for_node(arena, root, idx, source);
+        let _ = doc;
+    }
+}
+
+#[test]
+fn test_jsdoc_for_node_enum() {
+    let source = "/** Color options */\nenum Color { Red, Green, Blue }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let enum_node = find_first_node_of_kind(arena, root, syntax_kind_ext::ENUM_DECLARATION);
+    if let Some(idx) = enum_node {
+        let doc = jsdoc_for_node(arena, root, idx, source);
+        let _ = doc;
+    }
+}

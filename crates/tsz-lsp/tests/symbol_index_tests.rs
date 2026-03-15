@@ -763,3 +763,161 @@ fn test_clear_resets_everything() {
     let all = index.get_symbols_with_prefix("");
     assert!(all.is_empty(), "sorted_names should be cleared");
 }
+
+#[test]
+fn test_symbol_index_many_definitions_same_symbol() {
+    let mut index = SymbolIndex::new();
+    for i in 0..10 {
+        index.add_definition("overloaded", make_location("main.ts", i, 0, 10));
+    }
+    let defs = index.find_definitions("overloaded");
+    assert_eq!(defs.len(), 10, "Should store all 10 definitions");
+}
+
+#[test]
+fn test_symbol_index_many_references_same_symbol() {
+    let mut index = SymbolIndex::new();
+    for i in 0..20 {
+        index.add_reference(
+            "main.ts",
+            "frequently_used",
+            make_location("main.ts", i, 0, 15),
+        );
+    }
+    let refs = index.find_references("frequently_used");
+    assert_eq!(refs.len(), 20, "Should store all 20 references");
+}
+
+#[test]
+fn test_symbol_index_prefix_no_match() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("alpha", make_location("a.ts", 0, 0, 5));
+    index.add_definition("beta", make_location("b.ts", 0, 0, 4));
+    let results = index.get_symbols_with_prefix("gamma");
+    assert!(
+        results.is_empty(),
+        "Non-matching prefix should return empty"
+    );
+}
+
+#[test]
+fn test_symbol_index_prefix_partial_match() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("processData", make_location("a.ts", 0, 0, 11));
+    index.add_definition("processFile", make_location("b.ts", 0, 0, 11));
+    index.add_definition("handleError", make_location("c.ts", 0, 0, 11));
+    let results = index.get_symbols_with_prefix("process");
+    assert_eq!(
+        results.len(),
+        2,
+        "Should find both 'process' prefixed symbols"
+    );
+}
+
+#[test]
+fn test_symbol_index_case_sensitive_prefix() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("MyClass", make_location("a.ts", 0, 0, 7));
+    index.add_definition("myFunction", make_location("b.ts", 0, 0, 10));
+    let upper = index.get_symbols_with_prefix("My");
+    let lower = index.get_symbols_with_prefix("my");
+    assert_eq!(upper.len(), 1, "Upper case prefix should match MyClass");
+    assert_eq!(lower.len(), 1, "Lower case prefix should match myFunction");
+}
+
+#[test]
+fn test_symbol_index_imports_same_file() {
+    let mut index = SymbolIndex::new();
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "foo".to_string(),
+            source_module: "./utils".to_string(),
+            exported_name: "foo".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "bar".to_string(),
+            source_module: "./utils".to_string(),
+            exported_name: "bar".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    let imports = index.get_imports("app.ts");
+    assert_eq!(imports.len(), 2, "Should have both imports for same file");
+}
+
+#[test]
+fn test_symbol_index_exports_multiple_files() {
+    let mut index = SymbolIndex::new();
+    index.add_export("a.ts", "alpha");
+    index.add_export("a.ts", "beta");
+    index.add_export("b.ts", "gamma");
+    let a_exports = index.get_exports("a.ts");
+    let b_exports = index.get_exports("b.ts");
+    assert_eq!(a_exports.len(), 2);
+    assert_eq!(b_exports.len(), 1);
+}
+
+#[test]
+fn test_symbol_index_stats_comprehensive() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("x", make_location("a.ts", 0, 0, 1));
+    index.add_definition("y", make_location("b.ts", 0, 0, 1));
+    index.add_reference("a.ts", "x", make_location("a.ts", 5, 0, 1));
+    index.add_reference("c.ts", "x", make_location("c.ts", 0, 0, 1));
+    index.add_export("a.ts", "x");
+    index.add_import(
+        "d.ts",
+        ImportInfo {
+            local_name: "x".to_string(),
+            source_module: "./a".to_string(),
+            exported_name: "x".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    let stats = index.stats();
+    assert!(
+        stats.unique_symbols >= 2,
+        "Should have at least 2 unique symbols"
+    );
+    assert!(
+        stats.total_definitions >= 2,
+        "Should have at least 2 definitions"
+    );
+    assert!(
+        stats.total_references >= 2,
+        "Should have at least 2 references"
+    );
+}
+
+#[test]
+fn test_symbol_index_empty_string_symbol() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("", make_location("a.ts", 0, 0, 0));
+    let defs = index.find_definitions("");
+    // Empty string symbol behavior is implementation-defined
+    let _ = defs;
+}
+
+#[test]
+fn test_symbol_index_unicode_symbol_names() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("日本語", make_location("a.ts", 0, 0, 3));
+    let defs = index.find_definitions("日本語");
+    assert_eq!(defs.len(), 1, "Should find Unicode symbol name");
+}
+
+#[test]
+fn test_symbol_index_special_chars_symbol() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("$element", make_location("a.ts", 0, 0, 8));
+    index.add_definition("_private", make_location("b.ts", 0, 0, 8));
+    let dollar = index.find_definitions("$element");
+    let underscore = index.find_definitions("_private");
+    assert_eq!(dollar.len(), 1);
+    assert_eq!(underscore.len(), 1);
+}

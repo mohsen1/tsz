@@ -1071,3 +1071,248 @@ fn test_document_symbols_multiple_interfaces() {
     assert_eq!(symbols[1].name, "B");
     assert_eq!(symbols[1].kind, SymbolKind::Interface);
 }
+
+// =========================================================================
+// Additional tests for document symbols
+// =========================================================================
+
+#[test]
+fn test_document_symbols_function_expression_variable() {
+    let source = "const fn1 = function() {};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "fn1");
+    assert_eq!(symbols[0].kind, SymbolKind::Constant);
+}
+
+#[test]
+fn test_document_symbols_multiple_classes() {
+    let source = "class A {}\nclass B {}\nclass C {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 3);
+    assert_eq!(symbols[0].name, "A");
+    assert_eq!(symbols[1].name, "B");
+    assert_eq!(symbols[2].name, "C");
+    for sym in &symbols {
+        assert_eq!(sym.kind, SymbolKind::Class);
+    }
+}
+
+#[test]
+fn test_document_symbols_class_with_multiple_methods() {
+    let source = "class Calc {\n  add() {}\n  sub() {}\n  mul() {}\n  div() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Calc");
+    assert_eq!(symbols[0].children.len(), 4);
+    let names: Vec<&str> = symbols[0]
+        .children
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert!(names.contains(&"add"));
+    assert!(names.contains(&"sub"));
+    assert!(names.contains(&"mul"));
+    assert!(names.contains(&"div"));
+}
+
+#[test]
+fn test_document_symbols_enum_with_string_initializers() {
+    let source = "enum Fruit {\n  Apple = 'apple',\n  Banana = 'banana'\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Fruit");
+    assert_eq!(symbols[0].kind, SymbolKind::Enum);
+    assert_eq!(symbols[0].children.len(), 2);
+    assert_eq!(symbols[0].children[0].name, "Apple");
+    assert_eq!(symbols[0].children[1].name, "Banana");
+}
+
+#[test]
+fn test_document_symbols_interface_with_optional_members() {
+    let source = "interface Options {\n  verbose?: boolean;\n  output?: string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Options");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+    assert_eq!(symbols[0].children.len(), 2);
+    assert_eq!(symbols[0].children[0].name, "verbose");
+    assert_eq!(symbols[0].children[1].name, "output");
+}
+
+#[test]
+fn test_document_symbols_generic_function() {
+    let source = "function identity<T>(x: T): T { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "identity");
+    assert_eq!(symbols[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_document_symbols_generic_class() {
+    let source = "class Box<T> {\n  value: T;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Box");
+    assert_eq!(symbols[0].kind, SymbolKind::Class);
+    assert_eq!(symbols[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].name, "value");
+}
+
+#[test]
+fn test_document_symbols_generic_interface() {
+    let source = "interface Comparable<T> {\n  compareTo(other: T): number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Comparable");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+    assert_eq!(symbols[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].name, "compareTo");
+}
+
+#[test]
+fn test_document_symbols_multiple_function_declarations() {
+    let source = "function a() {}\nfunction b() {}\nfunction c() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 3);
+    assert_eq!(symbols[0].name, "a");
+    assert_eq!(symbols[1].name, "b");
+    assert_eq!(symbols[2].name, "c");
+    for sym in &symbols {
+        assert_eq!(sym.kind, SymbolKind::Function);
+    }
+}
+
+#[test]
+fn test_document_symbols_class_extends() {
+    let source = "class Animal {}\nclass Dog extends Animal {\n  bark() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 2);
+    assert_eq!(symbols[0].name, "Animal");
+    assert_eq!(symbols[1].name, "Dog");
+    assert_eq!(symbols[1].children.len(), 1);
+    assert_eq!(symbols[1].children[0].name, "bark");
+}
+
+#[test]
+fn test_document_symbols_interface_extends() {
+    let source = "interface Base { x: number; }\ninterface Derived extends Base { y: number; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 2);
+    assert_eq!(symbols[0].name, "Base");
+    assert_eq!(symbols[1].name, "Derived");
+    assert_eq!(symbols[1].kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_document_symbols_class_with_index_signature() {
+    let source = "class Dict {\n  [key: string]: any;\n  get(key: string) { return this[key]; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Dict");
+    assert_eq!(symbols[0].kind, SymbolKind::Class);
+    // Should have at least the get method as a child
+    assert!(
+        symbols[0].children.iter().any(|c| c.name == "get"),
+        "Should have 'get' method as child"
+    );
+}
+
+#[test]
+fn test_document_symbols_mixed_declarations() {
+    let source =
+        "const x = 1;\nfunction f() {}\nclass C {}\ninterface I {}\nenum E { A }\ntype T = string;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 6);
+    assert_eq!(symbols[0].name, "x");
+    assert_eq!(symbols[0].kind, SymbolKind::Constant);
+    assert_eq!(symbols[1].name, "f");
+    assert_eq!(symbols[1].kind, SymbolKind::Function);
+    assert_eq!(symbols[2].name, "C");
+    assert_eq!(symbols[2].kind, SymbolKind::Class);
+    assert_eq!(symbols[3].name, "I");
+    assert_eq!(symbols[3].kind, SymbolKind::Interface);
+    assert_eq!(symbols[4].name, "E");
+    assert_eq!(symbols[4].kind, SymbolKind::Enum);
+    assert_eq!(symbols[5].name, "T");
+    assert_eq!(symbols[5].kind, SymbolKind::Struct);
+}
