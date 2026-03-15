@@ -794,12 +794,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Conditional expressions: fresh if both branches produce fresh types
+        // Conditional expressions: fresh if either branch produces a fresh type.
+        // E.g., `cond ? true : undefined` has a fresh `true` branch, so the
+        // result type `true | undefined` should be widened to `boolean | undefined`.
         if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
         {
             return self.is_fresh_literal_expression(cond.when_true)
-                && self.is_fresh_literal_expression(cond.when_false);
+                || self.is_fresh_literal_expression(cond.when_false);
         }
 
         // Object and array literals need widening (property types get widened)

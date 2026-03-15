@@ -162,19 +162,6 @@ fn widen_type_cached(
             }
 
             if changed {
-                eprintln!(
-                    "@@@ widen_type_cached: widening object shape_id={}, {} props changed",
-                    shape_id.0,
-                    new_props.len()
-                );
-                for (old, new) in shape.properties.iter().zip(new_props.iter()) {
-                    if old.type_id != new.type_id {
-                        eprintln!(
-                            "@@@   prop changed: old_type={} new_type={}",
-                            old.type_id.0, new.type_id.0
-                        );
-                    }
-                }
                 let widened_type_id =
                     // If we have index signatures, we must preserve them using object_with_index
                     if shape.string_index.is_some() || shape.number_index.is_some() {
@@ -199,11 +186,6 @@ fn widen_type_cached(
                         .get_display_properties(shape_id)
                         .map(|p| p.as_ref().clone())
                         .unwrap_or_else(|| shape.properties.clone());
-                    eprintln!(
-                        "@@@ store_display_properties: new_shape_id={}, {} props",
-                        new_shape_id.0,
-                        display_props.len()
-                    );
                     db.store_display_properties(new_shape_id, display_props);
                 }
 
