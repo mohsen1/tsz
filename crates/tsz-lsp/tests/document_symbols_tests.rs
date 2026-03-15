@@ -631,3 +631,443 @@ fn test_document_symbols_ranges_are_valid() {
     assert!(sym.range.start.line <= sym.selection_range.start.line);
     assert!(sym.range.end.line >= sym.selection_range.end.line);
 }
+
+// =========================================================================
+// Additional coverage tests
+// =========================================================================
+
+#[test]
+fn test_document_symbols_module_declaration() {
+    let source = "module MyModule {\n  export function init() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "MyModule");
+    assert_eq!(symbols[0].kind, SymbolKind::Module);
+    assert_eq!(symbols[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].name, "init");
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_document_symbols_abstract_class_with_abstract_method() {
+    let source = "abstract class Shape {\n  abstract area(): number;\n  concrete() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Shape");
+    assert_eq!(symbols[0].kind, SymbolKind::Class);
+    assert!(
+        symbols[0].kind_modifiers.contains("abstract"),
+        "Expected 'abstract' modifier on class"
+    );
+    assert_eq!(symbols[0].children.len(), 2);
+    assert_eq!(symbols[0].children[0].name, "area");
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::Method);
+    assert_eq!(symbols[0].children[1].name, "concrete");
+}
+
+#[test]
+fn test_document_symbols_static_property() {
+    let source = "class Config {\n  static readonly MAX = 100;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].children.len(), 1);
+    let prop = &symbols[0].children[0];
+    assert_eq!(prop.name, "MAX");
+    assert_eq!(prop.kind, SymbolKind::Property);
+    assert!(
+        prop.kind_modifiers.contains("static"),
+        "Expected 'static' in kind_modifiers, got: '{}'",
+        prop.kind_modifiers
+    );
+    assert!(
+        prop.kind_modifiers.contains("readonly"),
+        "Expected 'readonly' in kind_modifiers, got: '{}'",
+        prop.kind_modifiers
+    );
+}
+
+#[test]
+fn test_document_symbols_private_method() {
+    let source = "class Foo {\n  private secret() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].children.len(), 1);
+    let method = &symbols[0].children[0];
+    assert_eq!(method.name, "secret");
+    assert_eq!(method.kind, SymbolKind::Method);
+    assert!(
+        method.kind_modifiers.contains("private"),
+        "Expected 'private' in kind_modifiers, got: '{}'",
+        method.kind_modifiers
+    );
+}
+
+#[test]
+fn test_document_symbols_protected_property() {
+    let source = "class Base {\n  protected value: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    let prop = &symbols[0].children[0];
+    assert_eq!(prop.name, "value");
+    assert!(
+        prop.kind_modifiers.contains("protected"),
+        "Expected 'protected' in kind_modifiers, got: '{}'",
+        prop.kind_modifiers
+    );
+}
+
+#[test]
+fn test_document_symbols_const_enum() {
+    let source = "const enum Direction { Up, Down }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Direction");
+    assert_eq!(symbols[0].kind, SymbolKind::Enum);
+    assert!(
+        symbols[0].kind_modifiers.contains("const"),
+        "Expected 'const' modifier on const enum, got: '{}'",
+        symbols[0].kind_modifiers
+    );
+    assert_eq!(symbols[0].children.len(), 2);
+}
+
+#[test]
+fn test_document_symbols_declare_module() {
+    let source = "declare module 'my-module' {\n  export function foo(): void;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].kind, SymbolKind::Module);
+    assert!(
+        symbols[0].kind_modifiers.contains("declare"),
+        "Expected 'declare' modifier on declare module"
+    );
+}
+
+#[test]
+fn test_document_symbols_export_default_class() {
+    let source = "export default class Widget {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(!symbols.is_empty(), "Should produce at least one symbol");
+    // Should have export,default modifiers
+    let sym = &symbols[0];
+    assert!(
+        sym.kind_modifiers.contains("export") && sym.kind_modifiers.contains("default"),
+        "Expected 'export,default' modifiers, got: '{}'",
+        sym.kind_modifiers
+    );
+}
+
+#[test]
+fn test_document_symbols_export_default_function() {
+    let source = "export default function main() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(!symbols.is_empty(), "Should produce at least one symbol");
+    let sym = &symbols[0];
+    assert!(
+        sym.kind_modifiers.contains("export") && sym.kind_modifiers.contains("default"),
+        "Expected 'export,default' modifiers, got: '{}'",
+        sym.kind_modifiers
+    );
+}
+
+#[test]
+fn test_document_symbols_async_function() {
+    let source = "async function fetchData() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "fetchData");
+    assert_eq!(symbols[0].kind, SymbolKind::Function);
+    assert_eq!(symbols[0].detail, Some("async".to_string()));
+}
+
+#[test]
+fn test_document_symbols_export_async_function() {
+    let source = "export async function load() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "load");
+    assert_eq!(symbols[0].detail, Some("async".to_string()));
+    assert!(symbols[0].kind_modifiers.contains("export"));
+}
+
+#[test]
+fn test_document_symbols_nested_namespace() {
+    let source = "namespace A {\n  namespace B {\n    function inner() {}\n  }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "A");
+    assert_eq!(symbols[0].kind, SymbolKind::Module);
+    assert_eq!(symbols[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].name, "B");
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::Module);
+    assert_eq!(symbols[0].children[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].children[0].name, "inner");
+}
+
+#[test]
+fn test_document_symbols_let_variable_modifier() {
+    let source = "let counter = 0;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "counter");
+    assert_eq!(symbols[0].kind, SymbolKind::Variable);
+    assert!(
+        symbols[0].kind_modifiers.contains("let"),
+        "Expected 'let' in kind_modifiers, got: '{}'",
+        symbols[0].kind_modifiers
+    );
+}
+
+#[test]
+fn test_document_symbols_export_let_variable() {
+    let source = "export let count = 0;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "count");
+    assert_eq!(symbols[0].kind, SymbolKind::Variable);
+    assert!(symbols[0].kind_modifiers.contains("export"));
+    assert!(symbols[0].kind_modifiers.contains("let"));
+}
+
+#[test]
+fn test_document_symbols_var_variable() {
+    let source = "var legacy = true;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "legacy");
+    assert_eq!(symbols[0].kind, SymbolKind::Variable);
+}
+
+#[test]
+fn test_document_symbols_export_type_alias() {
+    let source = "export type ID = string;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "ID");
+    assert_eq!(symbols[0].kind, SymbolKind::Struct);
+    assert!(symbols[0].kind_modifiers.contains("export"));
+}
+
+#[test]
+fn test_document_symbols_declare_function() {
+    let source = "declare function readFile(path: string): string;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "readFile");
+    assert_eq!(symbols[0].kind, SymbolKind::Function);
+    assert!(symbols[0].kind_modifiers.contains("declare"));
+}
+
+#[test]
+fn test_document_symbols_declare_class() {
+    let source = "declare class Buffer {\n  length: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Buffer");
+    assert_eq!(symbols[0].kind, SymbolKind::Class);
+    assert!(symbols[0].kind_modifiers.contains("declare"));
+    assert_eq!(symbols[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].name, "length");
+}
+
+#[test]
+fn test_document_symbols_export_enum() {
+    let source = "export enum Status { Active, Inactive }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Status");
+    assert_eq!(symbols[0].kind, SymbolKind::Enum);
+    assert!(symbols[0].kind_modifiers.contains("export"));
+    assert_eq!(symbols[0].children.len(), 2);
+}
+
+#[test]
+fn test_document_symbols_nested_function_in_function() {
+    let source = "function outer() {\n  function inner() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "outer");
+    assert_eq!(symbols[0].kind, SymbolKind::Function);
+    // Nested functions inside function body should be collected as children
+    assert_eq!(
+        symbols[0].children.len(),
+        1,
+        "Should have nested function as child"
+    );
+    assert_eq!(symbols[0].children[0].name, "inner");
+    assert_eq!(symbols[0].children[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_document_symbols_export_interface() {
+    let source = "export interface Config {\n  host: string;\n  port: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Config");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+    assert!(symbols[0].kind_modifiers.contains("export"));
+    assert_eq!(symbols[0].children.len(), 2);
+}
+
+#[test]
+fn test_document_symbols_constructor_container_name() {
+    let source = "class Service {\n  constructor() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    let ctor = symbols[0]
+        .children
+        .iter()
+        .find(|c| c.kind == SymbolKind::Constructor);
+    assert!(ctor.is_some());
+    assert_eq!(ctor.unwrap().name, "constructor");
+    assert_eq!(ctor.unwrap().container_name, Some("Service".to_string()));
+}
+
+#[test]
+fn test_document_symbols_multiple_interfaces() {
+    let source = "interface A { x: number; }\ninterface B { y: string; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 2);
+    assert_eq!(symbols[0].name, "A");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+    assert_eq!(symbols[1].name, "B");
+    assert_eq!(symbols[1].kind, SymbolKind::Interface);
+}
