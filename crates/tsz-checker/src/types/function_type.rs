@@ -1068,7 +1068,23 @@ impl<'a> CheckerState<'a> {
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
+
+                // When the return context is (or references) a const type parameter,
+                // enable const assertion mode so array/object literals in the callback
+                // body are inferred as readonly tuples/readonly objects. This matches
+                // tsc's behavior where `const` type parameter context flows down into
+                // callback returns during inference.
+                let prev_const_assertion = self.ctx.in_const_assertion;
+                if !self.ctx.in_const_assertion {
+                    if let Some(ret_ctx) = return_context {
+                        let has_const_tp = self.return_context_has_const_type_param(ret_ctx);
+                        if has_const_tp {
+                            self.ctx.in_const_assertion = true;
+                        }
+                    }
+                }
                 let inferred = self.infer_return_type_from_body(idx, body, return_context);
+                self.ctx.in_const_assertion = prev_const_assertion;
                 return_type = jsdoc_return_context.unwrap_or(inferred);
 
                 if let Some(instance_type) = js_constructor_instance_type
@@ -1946,6 +1962,23 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(function_type)
+    }
+
+    /// Check if a return context type is or references a const type parameter.
+    /// Used to propagate const context into callback bodies during generic inference.
+    fn return_context_has_const_type_param(&self, ret_ctx: TypeId) -> bool {
+        // Direct check: is the return context itself a const type parameter?
+        if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, ret_ctx) {
+            if tp_info.is_const {
+                return true;
+            }
+        }
+
+        // General check: does the return context reference any const type parameter?
+        let referenced = tsz_solver::collect_referenced_types(self.ctx.types, ret_ctx);
+        referenced.into_iter().any(|ty| {
+            tsz_solver::type_param_info(self.ctx.types, ty).is_some_and(|info| info.is_const)
+        })
     }
 }
 
