@@ -947,3 +947,247 @@ fn test_semantic_tokens_class_implements_interface_ref() {
     assert!(class_token.is_some(), "Should have token for Data class");
     assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
 }
+
+// =========================================================================
+// Additional tests for expanded coverage (batch 2)
+// =========================================================================
+
+#[test]
+fn test_semantic_tokens_multiline_function() {
+    let source = "function multi(\n  a: number,\n  b: string\n) {\n  return a;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "multi" function at (0, 9)
+    let fn_token = find_token_at(&decoded, 0, 9);
+    assert!(fn_token.is_some(), "Should have token for multi");
+    assert_eq!(fn_token.unwrap().0, SemanticTokenType::Function as u32);
+
+    // "a" parameter at (1, 2)
+    let a_token = find_token_at(&decoded, 1, 2);
+    assert!(a_token.is_some(), "Should have token for parameter a");
+    assert_eq!(a_token.unwrap().0, SemanticTokenType::Parameter as u32);
+
+    // "b" parameter at (2, 2)
+    let b_token = find_token_at(&decoded, 2, 2);
+    assert!(b_token.is_some(), "Should have token for parameter b");
+    assert_eq!(b_token.unwrap().0, SemanticTokenType::Parameter as u32);
+}
+
+#[test]
+fn test_semantic_tokens_interface_extends() {
+    let source = "interface Base {}\ninterface Child extends Base {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Base" interface at (0, 10)
+    let base_token = find_token_at(&decoded, 0, 10);
+    assert!(base_token.is_some(), "Should have token for Base");
+    assert_eq!(base_token.unwrap().0, SemanticTokenType::Interface as u32);
+
+    // "Child" interface at (1, 10)
+    let child_token = find_token_at(&decoded, 1, 10);
+    assert!(child_token.is_some(), "Should have token for Child");
+    assert_eq!(child_token.unwrap().0, SemanticTokenType::Interface as u32);
+}
+
+#[test]
+fn test_semantic_tokens_enum_member_reference() {
+    let source = "enum Dir { Up, Down }\nconst d = Dir.Up;";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Dir" enum at (0, 5)
+    let dir_token = find_token_at(&decoded, 0, 5);
+    assert!(dir_token.is_some(), "Should have token for Dir");
+    assert_eq!(dir_token.unwrap().0, SemanticTokenType::Enum as u32);
+
+    // Should have tokens on both lines
+    assert!(
+        decoded.iter().any(|t| t.0 == 1),
+        "Should have tokens on line 1"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_generic_class() {
+    let source = "class Container<T> {\n  value: T;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Container" class at (0, 6)
+    let class_token = find_token_at(&decoded, 0, 6);
+    assert!(class_token.is_some(), "Should have token for Container");
+    assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
+
+    // "T" type parameter at (0, 16)
+    let tp_token = find_token_at(&decoded, 0, 16);
+    assert!(tp_token.is_some(), "Should have token for T");
+    assert_eq!(tp_token.unwrap().0, SemanticTokenType::TypeParameter as u32);
+}
+
+#[test]
+fn test_semantic_tokens_generic_interface() {
+    let source = "interface Pair<A, B> {\n  first: A;\n  second: B;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Pair" interface at (0, 10)
+    let iface_token = find_token_at(&decoded, 0, 10);
+    assert!(iface_token.is_some(), "Should have token for Pair");
+    assert_eq!(iface_token.unwrap().0, SemanticTokenType::Interface as u32);
+
+    // "A" type parameter at (0, 15)
+    let a_tp = find_token_at(&decoded, 0, 15);
+    assert!(a_tp.is_some(), "Should have token for type param A");
+    assert_eq!(a_tp.unwrap().0, SemanticTokenType::TypeParameter as u32);
+
+    // "B" type parameter at (0, 18)
+    let b_tp = find_token_at(&decoded, 0, 18);
+    assert!(b_tp.is_some(), "Should have token for type param B");
+    assert_eq!(b_tp.unwrap().0, SemanticTokenType::TypeParameter as u32);
+}
+
+#[test]
+fn test_semantic_tokens_multiple_classes() {
+    let source = "class A {}\nclass B {}\nclass C {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    let class_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Class as u32)
+        .collect();
+    assert!(
+        class_tokens.len() >= 3,
+        "Should have at least 3 class tokens, got {}",
+        class_tokens.len()
+    );
+}
+
+#[test]
+fn test_semantic_tokens_multiple_interfaces() {
+    let source = "interface X {}\ninterface Y {}\ninterface Z {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    let iface_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Interface as u32)
+        .collect();
+    assert!(
+        iface_tokens.len() >= 3,
+        "Should have at least 3 interface tokens, got {}",
+        iface_tokens.len()
+    );
+}
+
+#[test]
+fn test_semantic_tokens_builder_modifiers_bitmask() {
+    let mut builder = SemanticTokensBuilder::new();
+    let modifiers = semantic_token_modifiers::DECLARATION
+        | semantic_token_modifiers::READONLY
+        | semantic_token_modifiers::STATIC;
+    builder.push(0, 0, 5, SemanticTokenType::Variable, modifiers);
+    let data = builder.build();
+
+    assert_eq!(data.len(), 5);
+    assert_eq!(
+        data[4], modifiers,
+        "Should preserve combined modifiers bitmask"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_builder_three_tokens_same_line() {
+    let mut builder = SemanticTokensBuilder::new();
+    builder.push(0, 0, 1, SemanticTokenType::Variable, 0);
+    builder.push(0, 5, 2, SemanticTokenType::Function, 0);
+    builder.push(0, 10, 3, SemanticTokenType::Class, 0);
+    let data = builder.build();
+
+    assert_eq!(data.len(), 15);
+    // First: deltaLine=0, deltaStart=0
+    assert_eq!(data[0], 0);
+    assert_eq!(data[1], 0);
+    // Second: deltaLine=0, deltaStart=5 (5-0)
+    assert_eq!(data[5], 0);
+    assert_eq!(data[6], 5);
+    // Third: deltaLine=0, deltaStart=5 (10-5)
+    assert_eq!(data[10], 0);
+    assert_eq!(data[11], 5);
+}
+
+#[test]
+fn test_semantic_tokens_type_alias_with_generics() {
+    let source = "type Result<T, E> = { ok: T } | { err: E };";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Result" at (0, 5) - Type
+    let type_token = find_token_at(&decoded, 0, 5);
+    assert!(type_token.is_some(), "Should have token for Result");
+    assert_eq!(type_token.unwrap().0, SemanticTokenType::Type as u32);
+
+    // "T" at (0, 12)
+    let t_token = find_token_at(&decoded, 0, 12);
+    assert!(t_token.is_some(), "Should have token for T");
+    assert_eq!(t_token.unwrap().0, SemanticTokenType::TypeParameter as u32);
+
+    // "E" at (0, 15)
+    let e_token = find_token_at(&decoded, 0, 15);
+    assert!(e_token.is_some(), "Should have token for E");
+    assert_eq!(e_token.unwrap().0, SemanticTokenType::TypeParameter as u32);
+}
+
+#[test]
+fn test_semantic_tokens_const_enum_members() {
+    let source = "const enum Status {\n  Active = 1,\n  Inactive = 2,\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Find enum members
+    let enum_member_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::EnumMember as u32)
+        .collect();
+    assert!(
+        enum_member_tokens.len() >= 2,
+        "Should have at least 2 enum member tokens, got {}",
+        enum_member_tokens.len()
+    );
+}
+
+#[test]
+fn test_semantic_tokens_class_with_multiple_methods() {
+    let source = "class Api {\n  get() {}\n  post() {}\n  put() {}\n  del() {}\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    let method_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Method as u32)
+        .collect();
+    assert!(
+        method_tokens.len() >= 4,
+        "Should have at least 4 method tokens, got {}",
+        method_tokens.len()
+    );
+}
+
+#[test]
+fn test_semantic_tokens_nested_class() {
+    let source = "class Outer {\n  inner() {\n    class Inner {}\n  }\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    let class_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Class as u32)
+        .collect();
+    assert!(
+        class_tokens.len() >= 2,
+        "Should have at least 2 class tokens (Outer + Inner), got {}",
+        class_tokens.len()
+    );
+}
