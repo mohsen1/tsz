@@ -368,7 +368,29 @@ impl<'a> Printer<'a> {
         let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
         let field_inits = std::mem::take(&mut self.pending_class_field_inits);
 
+        // Preserve invalid modifiers on constructors for error recovery (tsc behavior).
+        // e.g., `static constructor() {}` or `export constructor() {}` are errors
+        // but tsc preserves the keywords in the JS output.
+        if let Some(ref mods) = ctor.modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    match mod_node.kind {
+                        k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
+                        k if k == SyntaxKind::ExportKeyword as u16 => self.write("export "),
+                        _ => {}
+                    }
+                }
+            }
+        }
         self.write("constructor");
+        // Emit type parameters for error recovery (e.g., `constructor<T>() {}`)
+        if let Some(ref type_params) = ctor.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.write("<");
+                self.emit_comma_separated(&type_params.nodes);
+                self.write(">");
+            }
+        }
         // Map opening `(` to its source position
         let open_paren_pos = {
             self.map_token_after(node.pos, node.end, b'(');
