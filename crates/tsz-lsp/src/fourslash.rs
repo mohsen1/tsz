@@ -53,7 +53,7 @@ impl DefinitionResult {
     /// Assert that definition(s) were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
-            self.locations.is_some() && !self.locations.as_ref().unwrap().is_empty(),
+            self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected definition to be found, but got none"
         );
         self
@@ -201,7 +201,7 @@ impl ReferencesResult {
     /// Assert references were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
-            self.locations.is_some() && !self.locations.as_ref().unwrap().is_empty(),
+            self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected references, but found none"
         );
         self
@@ -667,7 +667,7 @@ impl DocumentHighlightResult {
     /// Assert highlights were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
-            self.highlights.is_some() && !self.highlights.as_ref().unwrap().is_empty(),
+            self.highlights.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected document highlights, but found none"
         );
         self
@@ -792,7 +792,7 @@ impl CodeActionsResult {
     /// Assert code actions were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
-            self.actions.is_some() && !self.actions.as_ref().unwrap().is_empty(),
+            self.actions.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected code actions, but found none"
         );
         self
@@ -932,7 +932,7 @@ impl TypeDefinitionResult {
     /// Assert that type definition(s) were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
-            self.locations.is_some() && !self.locations.as_ref().unwrap().is_empty(),
+            self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected type definition to be found, but got none"
         );
         self
@@ -1000,7 +1000,7 @@ impl ImplementationResult {
     /// Assert that implementation(s) were found.
     pub fn expect_found(&self) -> &Self {
         assert!(
-            self.locations.is_some() && !self.locations.as_ref().unwrap().is_empty(),
+            self.locations.as_ref().is_some_and(|v| !v.is_empty()),
             "Expected implementations to be found, but got none"
         );
         self
