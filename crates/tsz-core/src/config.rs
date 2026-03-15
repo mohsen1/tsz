@@ -3028,8 +3028,12 @@ pub fn resolve_lib_files_with_options(
         return Ok(Vec::new());
     }
 
-    let lib_dir = default_lib_dir()?;
-    resolve_lib_files_from_dir_with_options(lib_list, follow_references, &lib_dir)
+    match default_lib_dir() {
+        Ok(lib_dir) => {
+            resolve_lib_files_from_dir_with_options(lib_list, follow_references, &lib_dir)
+        }
+        Err(_) => resolve_lib_files_from_embedded(lib_list, follow_references),
+    }
 }
 
 pub fn resolve_lib_files_from_dir_with_options(
@@ -3125,8 +3129,13 @@ fn apply_explicit_lib_aliases(lib_list: &[String]) -> Vec<String> {
 /// This means `--target es5` loads lib.d.ts -> dom -> es2015 (transitively),
 /// which is exactly what tsc does (verified with `tsc --target es5 --listFiles`).
 pub fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
-    let lib_dir = default_lib_dir()?;
-    resolve_default_lib_files_from_dir(target, &lib_dir)
+    match default_lib_dir() {
+        Ok(lib_dir) => resolve_default_lib_files_from_dir(target, &lib_dir),
+        Err(_) => {
+            let root_lib = default_lib_name_for_target(target);
+            resolve_lib_files_from_embedded(&[root_lib.to_string()], true)
+        }
+    }
 }
 
 pub fn resolve_default_lib_files_from_dir(
@@ -3295,6 +3304,82 @@ fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Sentinel directory used for embedded lib paths when no physical lib directory exists.
+/// The parallel pipeline checks basenames against embedded libs, so the directory
+/// component is irrelevant — it just needs to be a valid path prefix.
+const EMBEDDED_LIB_DIR: &str = "/embedded-lib";
+
+/// Resolve lib files using embedded (compiled-in) lib content.
+/// Fallback when no physical TypeScript lib directory is available.
+fn resolve_lib_files_from_embedded(
+    lib_list: &[String],
+    follow_references: bool,
+) -> Result<Vec<PathBuf>> {
+    if lib_list.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let lib_map = build_lib_map_from_embedded();
+    let embedded_dir = Path::new(EMBEDDED_LIB_DIR);
+    let mut resolved = Vec::new();
+    let mut pending: VecDeque<String> = lib_list
+        .iter()
+        .map(|value| normalize_lib_name(value))
+        .collect();
+    let mut visited = FxHashSet::default();
+
+    while let Some(lib_name) = pending.pop_front() {
+        if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
+            continue;
+        }
+
+        let filename = match lib_map.get(lib_name.as_str()) {
+            Some(f) => *f,
+            None => {
+                return Err(anyhow!(
+                    "unsupported compilerOptions.lib '{}' (not found in embedded libs)",
+                    lib_name,
+                ));
+            }
+        };
+        resolved.push(embedded_dir.join(filename));
+
+        if follow_references {
+            if let Some(content) = crate::embedded_libs::get_lib_content(filename) {
+                for reference in extract_lib_references(content) {
+                    pending.push_back(reference);
+                }
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+/// Build a lib-name → filename map from embedded libs.
+/// Mirrors `build_lib_map` but uses compiled-in filenames instead of directory listing.
+fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
+    let mut map = FxHashMap::default();
+    for filename in crate::embedded_libs::all_lib_filenames() {
+        if !filename.ends_with(".d.ts") {
+            continue;
+        }
+        let stem = filename.trim_end_matches(".d.ts");
+        let stem = stem.strip_suffix(".generated").unwrap_or(stem);
+        let key = stem.strip_prefix("lib.").unwrap_or(stem);
+        map.insert(key, filename);
+    }
+    // In npm-installed TypeScript, `lib.d.ts` is the ES5+DOM bundle (equivalent
+    // to `es5.full.d.ts` in the source tree). The default target name for ES3/ES5
+    // is "lib", so we need this alias for the embedded fallback to work.
+    if !map.contains_key("lib") {
+        if let Some(&es5_full) = map.get("es5.full") {
+            map.insert("lib", es5_full);
+        }
+    }
+    map
 }
 
 fn build_lib_map(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> {
