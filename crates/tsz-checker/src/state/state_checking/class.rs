@@ -397,8 +397,13 @@ impl<'a> CheckerState<'a> {
         // Collect class name
         let class_name = self.get_class_name_from_decl(stmt_idx);
 
-        // Save previous enclosing class and set current
+        // Save previous enclosing class and set current.
+        // Push the outer class onto the chain so protected access checks can
+        // walk up to find the correct enclosing class in the inheritance hierarchy.
         let prev_enclosing_class = self.ctx.enclosing_class.take();
+        if let Some(ref prev) = prev_enclosing_class {
+            self.ctx.enclosing_class_chain.push(prev.class_idx);
+        }
         self.ctx.enclosing_class = Some(EnclosingClassInfo {
             name: class_name,
             class_idx: stmt_idx,
@@ -534,8 +539,11 @@ impl<'a> CheckerState<'a> {
         // TypedPropertyDescriptor must be available
         self.check_decorator_global_types(&class.members.nodes);
 
-        // Restore previous enclosing class
+        // Restore previous enclosing class and pop the chain
         self.ctx.enclosing_class = prev_enclosing_class;
+        if self.ctx.enclosing_class.is_some() {
+            self.ctx.enclosing_class_chain.pop();
+        }
 
         self.pop_type_parameters(type_param_updates);
 
@@ -594,6 +602,9 @@ impl<'a> CheckerState<'a> {
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
 
         let prev_enclosing_class = self.ctx.enclosing_class.take();
+        if let Some(ref prev) = prev_enclosing_class {
+            self.ctx.enclosing_class_chain.push(prev.class_idx);
+        }
         self.ctx.enclosing_class = Some(EnclosingClassInfo {
             name: class_name,
             class_idx,
@@ -674,6 +685,9 @@ impl<'a> CheckerState<'a> {
         self.check_decorator_global_types(&class.members.nodes);
 
         self.ctx.enclosing_class = prev_enclosing_class;
+        if self.ctx.enclosing_class.is_some() {
+            self.ctx.enclosing_class_chain.pop();
+        }
 
         self.pop_type_parameters(type_param_updates);
     }
