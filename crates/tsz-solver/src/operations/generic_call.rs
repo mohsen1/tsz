@@ -1728,18 +1728,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             instantiated_params
                 .into_iter()
-                .map(|param| {
-                    let normalized =
-                        self.normalize_inferred_placeholder_type(param.type_id, &final_arg_subst);
-                    // Evaluate to resolve conditional type Applications like
-                    // Relax<ElChildren> → string | undefined after instantiation.
-                    let evaluated = self.interner.evaluate_type(normalized);
-                    ParamInfo {
-                        name: param.name,
-                        type_id: evaluated,
-                        optional: param.optional,
-                        rest: param.rest,
-                    }
+                .map(|param| ParamInfo {
+                    name: param.name,
+                    type_id: self
+                        .normalize_inferred_placeholder_type(param.type_id, &final_arg_subst),
+                    optional: param.optional,
+                    rest: param.rest,
                 })
                 .collect()
         };
