@@ -157,6 +157,16 @@ in PRs. Splitting by logical category would improve all three.
 - [x] Fix `error_reporter/core.rs` boundary violation — resolved upstream (code path simplified)
 - [x] Clean up `allow(unused_imports)` in `lowering/mod.rs` — replaced with `pub(super)` re-exports
 - [x] Investigate `loop_capture` module — confirmed actively used by `statements.rs`
+- [x] Split `member_access.rs` (2038 LOC) to stay under 2000-line limit
+- [x] Fix `assignability_checker.rs` (2001 LOC) to stay under 2000-line limit
+- [x] Replace all production `unwrap()` with `expect()` messages across all crates
+  - tsz-solver: 29 calls, tsz-binder: 13 calls, tsz-checker: ~35 calls,
+    tsz-emitter: ~47 calls, tsz-core: 16 calls, tsz-lsp: 4 calls,
+    tsz-cli: 3 calls, tsz-wasm: 1 call
+- [x] Tighten `pub` to `pub(crate)` for solver-internal items (evaluation constants,
+  inference types, unused re-exports)
+- [x] Remove dead code: unused `ConditionalResult`, `MAX_VISITING_SET_SIZE`,
+  dead `InferenceContext` re-export from lib.rs
 
 ### Tier 2: Near-term (maintainability)
 - [ ] Split `evaluate_tests.rs` (42K lines) into category files
