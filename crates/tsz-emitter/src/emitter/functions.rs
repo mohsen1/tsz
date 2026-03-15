@@ -531,6 +531,10 @@ impl<'a> Printer<'a> {
         } else {
             node.end
         };
+        // Increment function_scope_depth BEFORE parameters so that async arrow
+        // functions in parameter defaults see the correct scope depth (enables
+        // `__awaiter(this, ...)` instead of `__awaiter(void 0, ...)`)
+        self.function_scope_depth += 1;
         self.emit_function_parameters_with_trailing_comments(
             &func.parameters.nodes,
             open_paren_pos,
@@ -546,7 +550,6 @@ impl<'a> Printer<'a> {
         // Push temp scope and block scope for function body - each function gets fresh variables.
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
-        self.function_scope_depth += 1;
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         // Save/restore declared_namespace_names so enum/namespace names from the
