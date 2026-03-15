@@ -281,7 +281,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let file_name = self.ctx.file_name.clone();
         for (j, (name, decl_idx, use_list_anchor)) in params.iter().enumerate() {
             if used[j] {
                 continue;
@@ -294,15 +293,7 @@ impl<'a> CheckerState<'a> {
                     name_node.pos
                 };
                 let length = name_node.end.saturating_sub(name_node.pos);
-                self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
-                    file: file_name.clone(),
-                    start,
-                    length,
-                    message_text: format!("'{name}' is declared but its value is never read."),
-                    category: crate::diagnostics::DiagnosticCategory::Error,
-                    code: crate::diagnostics::diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
-                    related_information: Vec::new(),
-                });
+                self.error_declared_but_never_read(name, start, length);
             }
         }
     }

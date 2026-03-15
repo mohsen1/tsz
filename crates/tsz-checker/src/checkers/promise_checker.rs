@@ -194,14 +194,8 @@ impl<'a> CheckerState<'a> {
         // Emit TS2318 if Promise is not found, regardless of noLib setting.
         // TSC emits this error even with noLib: true when async functions are used.
         if !self.ctx.has_name_in_lib("Promise") {
-            use tsz_binder::lib_loader;
-            self.ctx
-                .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                    "Promise",
-                    self.ctx.file_name.clone(),
-                    0,
-                    0,
-                ));
+            let file_name = self.ctx.file_name.clone();
+            self.error_global_type_missing_at_position("Promise", file_name, 0, 0);
         }
     }
 
