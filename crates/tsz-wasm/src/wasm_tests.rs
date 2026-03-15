@@ -365,3 +365,36 @@ fn test_language_service_hover_and_definition_contracts() {
             .all(|d| d.get("fileName").is_some() || d.is_object())
     );
 }
+
+#[test]
+fn test_byte_offset_to_utf16_conversion() {
+    use crate::wasm_api::program::TsProgram;
+
+    // ASCII-only: byte offset = UTF-16 offset
+    assert_eq!(TsProgram::byte_offset_to_utf16("hello world", 5), 5);
+    assert_eq!(TsProgram::byte_offset_to_utf16("hello world", 0), 0);
+
+    // Em dash (U+2014) is 3 bytes in UTF-8 but 1 UTF-16 code unit
+    // "ab—cd" = [61 62 E2 80 94 63 64] (7 bytes, 5 chars)
+    let s = "ab\u{2014}cd";
+    assert_eq!(s.len(), 7); // 7 UTF-8 bytes
+    assert_eq!(s.chars().count(), 5); // 5 characters
+    assert_eq!(TsProgram::byte_offset_to_utf16(s, 0), 0); // before 'a'
+    assert_eq!(TsProgram::byte_offset_to_utf16(s, 2), 2); // before em dash
+    assert_eq!(TsProgram::byte_offset_to_utf16(s, 5), 3); // after em dash (byte 5 = char 3)
+    assert_eq!(TsProgram::byte_offset_to_utf16(s, 6), 4); // after 'c'
+    assert_eq!(TsProgram::byte_offset_to_utf16(s, 7), 5); // end
+
+    // Supplementary character (U+1F600, emoji) is 4 bytes UTF-8, 2 UTF-16 code units
+    let s2 = "a\u{1F600}b";
+    assert_eq!(s2.len(), 6); // 1 + 4 + 1 = 6 UTF-8 bytes
+    assert_eq!(TsProgram::byte_offset_to_utf16(s2, 0), 0);
+    assert_eq!(TsProgram::byte_offset_to_utf16(s2, 1), 1); // after 'a'
+    assert_eq!(TsProgram::byte_offset_to_utf16(s2, 5), 3); // after emoji (2 UTF-16 units)
+    assert_eq!(TsProgram::byte_offset_to_utf16(s2, 6), 4); // end
+
+    // byte_length_to_utf16
+    assert_eq!(TsProgram::byte_length_to_utf16(s, 0, 2), 2); // "ab"
+    assert_eq!(TsProgram::byte_length_to_utf16(s, 2, 3), 1); // em dash span (3 bytes = 1 char)
+    assert_eq!(TsProgram::byte_length_to_utf16(s, 5, 2), 2); // "cd"
+}
