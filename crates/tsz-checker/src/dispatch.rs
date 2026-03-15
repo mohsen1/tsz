@@ -1178,7 +1178,26 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     if let Some(jsdoc_type) =
                         self.checker.jsdoc_type_annotation_for_node_direct(idx)
                     {
+                        // Set contextual type before evaluating the inner expression,
+                        // mirroring `as` expression behavior. This allows arrow
+                        // functions and object literals inside JSDoc @type casts
+                        // to receive contextual typing (prevents false TS7006).
+                        let prev_contextual_type = self.checker.ctx.contextual_type;
+                        let prev_contextual_is_assertion =
+                            self.checker.ctx.contextual_type_is_assertion;
+                        if self.checker.argument_needs_contextual_type(
+                            self.checker
+                                .ctx
+                                .arena
+                                .skip_parenthesized_and_assertions(paren.expression),
+                        ) {
+                            self.checker.ctx.contextual_type = Some(jsdoc_type);
+                            self.checker.ctx.contextual_type_is_assertion = true;
+                        }
                         let expr_type = self.checker.get_type_of_node(paren.expression);
+                        self.checker.ctx.contextual_type = prev_contextual_type;
+                        self.checker.ctx.contextual_type_is_assertion =
+                            prev_contextual_is_assertion;
                         // TS2352: Check if conversion may be a mistake (same as `as` expressions)
                         self.checker.ensure_relation_input_ready(expr_type);
                         self.checker.ensure_relation_input_ready(jsdoc_type);
