@@ -56,8 +56,16 @@ impl<'a> CheckerState<'a> {
 
                     let atom = self.ctx.types.intern_string(&name_str);
 
-                    let mut element_type =
-                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data);
+                    // When the parent type is `unknown` (e.g. from a rest type
+                    // parameter constraint `Args extends unknown[]`), skip
+                    // property lookup to avoid a false TS2339.  The binding
+                    // pattern is synthesising a contextual type here, not
+                    // validating existing properties.
+                    let mut element_type = if parent_type == TypeId::UNKNOWN {
+                        TypeId::ANY
+                    } else {
+                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
+                    };
 
                     if element_data.initializer.is_some() {
                         // Set contextual type for initializers so that:
@@ -122,8 +130,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(element_data) = self.ctx.arena.get_binding_element(element_node) {
-                    let mut element_type =
-                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data);
+                    let mut element_type = if parent_type == TypeId::UNKNOWN {
+                        TypeId::ANY
+                    } else {
+                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
+                    };
 
                     if element_data.initializer.is_some() {
                         // Set contextual type for function-like initializers
@@ -219,6 +230,20 @@ mod binding_contextual_type_tests {
         assert!(
             !codes.contains(&7006),
             "Function expr param in binding should not be implicit any: {codes:?}"
+        );
+    }
+
+    /// Destructuring from `unknown` parent type (e.g. rest type param
+    /// constraint) must not emit false TS2339.
+    #[test]
+    fn inferred_rest_type_no_false_ts2339() {
+        let codes = check_source_codes(
+            "function wrap<Args extends unknown[]>(_: (...args: Args) => void) {}
+             wrap(({ cancelable } = {}) => {});",
+        );
+        assert!(
+            !codes.contains(&2339),
+            "Should not emit TS2339 for destructured param with default from unknown rest type: {codes:?}"
         );
     }
 }
