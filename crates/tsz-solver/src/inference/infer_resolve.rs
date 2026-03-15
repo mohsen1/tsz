@@ -376,12 +376,20 @@ impl<'a> InferenceContext<'a> {
         } else {
             filtered_no_never.iter().map(|c| c.type_id).collect()
         };
+        // Match tsc's PriorityImpliesCombination = ReturnType | MappedTypeConstraint | LiteralKeyof.
+        // When candidates come from these priority levels, they are combined via union
+        // (getUnionType) rather than common supertype. This is critical for mapped types:
+        // `makeRecord<T, K extends string>(obj: { [P in K]: T })` called with
+        // `{ a: Box<number>, b: Box<string> }` should infer T = Box<number> | Box<string>,
+        // not just Box<number>.
         let priority_implies_combination = filtered_no_never
             .first()
             .map(|c| {
                 matches!(
                     c.priority,
-                    InferencePriority::ReturnType | InferencePriority::LowPriority
+                    InferencePriority::ReturnType
+                        | InferencePriority::LowPriority
+                        | InferencePriority::MappedType
                 )
             })
             .unwrap_or(false);
