@@ -318,13 +318,21 @@ impl<'a> LoweringPass<'a> {
                         let needs_prop_key = self.class_has_computed_decorated_member(class_data);
                         let needs_set_function_name =
                             self.class_has_private_decorated_member(class_data);
+                        let has_class_decorators =
+                            class_data.modifiers.as_ref().is_some_and(|mods| {
+                                mods.nodes.iter().any(|&mod_idx| {
+                                    self.arena
+                                        .get(mod_idx)
+                                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                                })
+                            });
                         let helpers = self.transforms.helpers_mut();
                         helpers.es_decorate = true;
                         helpers.run_initializers = true;
                         if needs_prop_key {
                             helpers.prop_key = true;
                         }
-                        if needs_set_function_name {
+                        if needs_set_function_name || has_class_decorators {
                             helpers.set_function_name = true;
                         }
                     }

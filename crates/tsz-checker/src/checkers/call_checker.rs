@@ -1416,8 +1416,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .diagnostics
                             .truncate(first_pass_diagnostics_checkpoint);
-                        self.ctx.emitted_diagnostics = saved_emitted_diagnostics.clone();
-                        self.ctx.emitted_ts2454_errors = initial_ts2454_errors.clone();
+                        self.ctx.emitted_diagnostics = saved_emitted_diagnostics;
+                        self.ctx.emitted_ts2454_errors = initial_ts2454_errors;
                         self.ctx.node_types = Default::default();
                         refresh_all_args(self);
 

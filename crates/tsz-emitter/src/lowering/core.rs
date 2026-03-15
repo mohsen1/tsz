@@ -763,13 +763,22 @@ impl<'a> LoweringPass<'a> {
         if has_tc39_decorators {
             let needs_prop_key = self.class_has_computed_decorated_member(class);
             let needs_set_function_name = self.class_has_private_decorated_member(class);
+            // __setFunctionName is needed when there are class-level decorators
+            // (ES2015 emits it as a separate statement in the IIFE)
+            let has_class_decorators = class.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
             let helpers = self.transforms.helpers_mut();
             helpers.es_decorate = true;
             helpers.run_initializers = true;
             if needs_prop_key {
                 helpers.prop_key = true;
             }
-            if needs_set_function_name {
+            if needs_set_function_name || has_class_decorators {
                 helpers.set_function_name = true;
             }
         }
