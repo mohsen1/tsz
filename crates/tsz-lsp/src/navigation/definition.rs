@@ -498,31 +498,210 @@ impl<'a> GoToDefinition<'a> {
             return Some(member_id);
         }
 
-        // For instances: resolve the variable's type by checking its declarations
-        // If the expression resolves to a variable (e.g., var x = new Foo()),
-        // look at the initializer to find the class and its members.
+        // For instances: resolve the variable's type by checking its declarations.
+        // Handles multiple patterns:
+        //   1. `var x = new Foo()` → look at the class from the new expression
+        //   2. `const x: Foo = ...` → look at the type annotation
+        //   3. `function f(x: Foo) { x.member }` → look at the parameter type
         for &decl_idx in &expr_symbol.declarations {
-            if let Some(decl_node) = self.arena.get(decl_idx)
-                && decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                && let Some(var_data) = self.arena.get_variable_declaration(decl_node)
-            {
-                // Check if the initializer is `new ClassName()`
-                if var_data.initializer.is_some()
-                    && let Some(init_node) = self.arena.get(var_data.initializer)
-                    && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
-                {
-                    // The new expression's first child is the class name
-                    if let Some(new_data) = self.arena.get_call_expr(init_node) {
-                        // Resolve the class name
-                        let mut walker2 = ScopeWalker::new(self.arena, self.binder);
-                        if let Some(class_symbol_id) =
-                            walker2.resolve_node(root, new_data.expression)
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                // Handle variable declarations
+                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                    if let Some(var_data) = self.arena.get_variable_declaration(decl_node) {
+                        // Try type annotation first (e.g., `const x: MyInterface = ...`)
+                        if let Some(member_id) = self.resolve_member_from_type_annotation(
+                            root,
+                            var_data.type_annotation,
+                            member_name,
+                        ) {
+                            return Some(member_id);
+                        }
+
+                        // Fallback: check if the initializer is `new ClassName()`
+                        if var_data.initializer.is_some()
+                            && let Some(init_node) = self.arena.get(var_data.initializer)
+                            && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
                         {
-                            let class_symbol = self.binder.symbols.get(class_symbol_id)?;
-                            if let Some(ref members) = class_symbol.members
-                                && let Some(member_id) = members.get(member_name)
+                            if let Some(new_data) = self.arena.get_call_expr(init_node) {
+                                let mut walker2 = ScopeWalker::new(self.arena, self.binder);
+                                if let Some(class_symbol_id) =
+                                    walker2.resolve_node(root, new_data.expression)
+                                {
+                                    let class_symbol = self.binder.symbols.get(class_symbol_id)?;
+                                    if let Some(ref members) = class_symbol.members
+                                        && let Some(member_id) = members.get(member_name)
+                                    {
+                                        return Some(member_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Handle parameter declarations (e.g., `function f(x: Foo) { x.member }`)
+                if decl_node.kind == syntax_kind_ext::PARAMETER {
+                    if let Some(param_data) = self.arena.get_parameter(decl_node) {
+                        if let Some(member_id) = self.resolve_member_from_type_annotation(
+                            root,
+                            param_data.type_annotation,
+                            member_name,
+                        ) {
+                            return Some(member_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a member name from a type annotation node.
+    ///
+    /// Given a type annotation like `Foo` in `const x: Foo`, resolves `Foo` to its
+    /// symbol and looks up the member name in its members or exports tables.
+    /// Also walks interface/class declaration AST nodes to find member declarations
+    /// that may not be stored in the binder's `members` table.
+    fn resolve_member_from_type_annotation(
+        &self,
+        root: NodeIndex,
+        type_annotation: NodeIndex,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        if !type_annotation.is_some() {
+            return None;
+        }
+        let type_node = self.arena.get(type_annotation)?;
+
+        // If the annotation is a TypeReference (e.g., `Foo` or `Foo<T>`),
+        // extract the type name and resolve it
+        let type_name_idx = if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = self.arena.get_type_ref(type_node)?;
+            type_ref.type_name
+        } else if type_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            // Plain identifier used as type (rare but possible)
+            type_annotation
+        } else {
+            return None;
+        };
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let type_symbol_id = walker.resolve_node(root, type_name_idx)?;
+        let type_symbol = self.binder.symbols.get(type_symbol_id)?;
+
+        // Look up in members table (class instance members)
+        if let Some(ref members) = type_symbol.members
+            && let Some(member_id) = members.get(member_name)
+        {
+            return Some(member_id);
+        }
+
+        // Look up in exports table (enum members, namespace exports)
+        if let Some(ref exports) = type_symbol.exports
+            && let Some(member_id) = exports.get(member_name)
+        {
+            return Some(member_id);
+        }
+
+        // Walk the type's declarations to find interface/class member declarations
+        // directly from the AST (the binder may not have populated `members` for interfaces)
+        for &decl_idx in &type_symbol.declarations {
+            if let Some(member_id) = self.find_member_in_declaration(decl_idx, member_name) {
+                return Some(member_id);
+            }
+        }
+
+        None
+    }
+
+    /// Walk a declaration node (interface/class) to find a named member.
+    fn find_member_in_declaration(
+        &self,
+        decl_idx: NodeIndex,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        use tsz_scanner::SyntaxKind;
+
+        let decl_node = self.arena.get(decl_idx)?;
+
+        // Interface declaration: walk member signatures
+        if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            let iface = self.arena.get_interface(decl_node)?;
+            for &member_idx in &iface.members.nodes {
+                let member_node = self.arena.get(member_idx)?;
+                let name_idx = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
+                        self.arena.get_signature(member_node).map(|s| s.name)
+                    }
+                    k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                        self.arena.get_signature(member_node).map(|s| s.name)
+                    }
+                    _ => None,
+                };
+                if let Some(name_idx) = name_idx
+                    && name_idx.is_some()
+                    && let Some(name_node) = self.arena.get(name_idx)
+                    && name_node.kind == SyntaxKind::Identifier as u16
+                {
+                    let pos = name_node.pos as usize;
+                    let end = name_node.end as usize;
+                    if end <= self.source_text.len() && pos < end {
+                        let raw_text = &self.source_text[pos..end];
+                        let text = raw_text.trim_end_matches(|c: char| {
+                            !c.is_alphanumeric() && c != '_' && c != '$'
+                        });
+                        if text == member_name {
+                            if let Some(sym_id) = self.binder.node_symbols.get(&name_idx.0).copied()
                             {
-                                return Some(member_id);
+                                return Some(sym_id);
+                            }
+                            if let Some(sym_id) =
+                                self.binder.node_symbols.get(&member_idx.0).copied()
+                            {
+                                return Some(sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Class declaration: walk class members (backup for non-binder-tracked members)
+        if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            let class = self.arena.get_class(decl_node)?;
+            for &member_idx in &class.members.nodes {
+                let member_node = self.arena.get(member_idx)?;
+                let name_idx = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    self.arena.get_property_decl(member_node).map(|p| p.name)
+                } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    self.arena.get_method_decl(member_node).map(|m| m.name)
+                } else {
+                    None
+                };
+                if let Some(name_idx) = name_idx
+                    && name_idx.is_some()
+                    && let Some(name_node) = self.arena.get(name_idx)
+                    && name_node.kind == SyntaxKind::Identifier as u16
+                {
+                    let pos = name_node.pos as usize;
+                    let end = name_node.end as usize;
+                    if end <= self.source_text.len() && pos < end {
+                        let raw_text = &self.source_text[pos..end];
+                        let text = raw_text.trim_end_matches(|c: char| {
+                            !c.is_alphanumeric() && c != '_' && c != '$'
+                        });
+                        if text == member_name {
+                            if let Some(sym_id) = self.binder.node_symbols.get(&name_idx.0).copied()
+                            {
+                                return Some(sym_id);
+                            }
+                            if let Some(sym_id) =
+                                self.binder.node_symbols.get(&member_idx.0).copied()
+                            {
+                                return Some(sym_id);
                             }
                         }
                     }
@@ -539,8 +718,173 @@ impl<'a> GoToDefinition<'a> {
         root: NodeIndex,
         node_idx: NodeIndex,
     ) -> Option<Vec<Location>> {
-        let member_symbol_id = self.try_resolve_member_access(root, node_idx)?;
-        self.locations_from_symbol(member_symbol_id)
+        // First try symbol-based resolution
+        if let Some(member_symbol_id) = self.try_resolve_member_access(root, node_idx) {
+            if let Some(locations) = self.locations_from_symbol(member_symbol_id) {
+                return Some(locations);
+            }
+        }
+        // Then try direct AST-based resolution (for interface members without SymbolIds)
+        self.try_resolve_member_access_from_ast(root, node_idx)
+    }
+
+    /// Resolve member access directly to AST locations without requiring SymbolId.
+    /// This handles interface members that the binder doesn't track in `node_symbols`.
+    fn try_resolve_member_access_from_ast(
+        &self,
+        root: NodeIndex,
+        node_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let ext = self.arena.get_extended(node_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(parent_node)?;
+        if access.name_or_argument != node_idx {
+            return None;
+        }
+
+        let node = self.arena.get(node_idx)?;
+        let member_name = &self.source_text[node.pos as usize..node.end as usize];
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let expr_symbol_id = walker.resolve_node(root, access.expression)?;
+        let expr_symbol = self.binder.symbols.get(expr_symbol_id)?;
+
+        // For instances: resolve the variable's type annotation
+        for &decl_idx in &expr_symbol.declarations {
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                let type_annotation = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                    self.arena
+                        .get_variable_declaration(decl_node)
+                        .map(|v| v.type_annotation)
+                } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+                    self.arena
+                        .get_parameter(decl_node)
+                        .map(|p| p.type_annotation)
+                } else {
+                    None
+                };
+
+                if let Some(type_ann) = type_annotation
+                    && type_ann.is_some()
+                {
+                    if let Some(loc) =
+                        self.find_member_location_from_type(root, type_ann, member_name)
+                    {
+                        return Some(vec![loc]);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find a member's location directly from a type annotation, returning an AST-based Location.
+    fn find_member_location_from_type(
+        &self,
+        root: NodeIndex,
+        type_annotation: NodeIndex,
+        member_name: &str,
+    ) -> Option<Location> {
+        let type_node = self.arena.get(type_annotation)?;
+        let type_name_idx = if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = self.arena.get_type_ref(type_node)?;
+            type_ref.type_name
+        } else if type_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            type_annotation
+        } else {
+            return None;
+        };
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let type_symbol_id = walker.resolve_node(root, type_name_idx)?;
+        let type_symbol = self.binder.symbols.get(type_symbol_id)?;
+
+        for &decl_idx in &type_symbol.declarations {
+            if let Some(loc) = self.find_member_location_in_declaration(decl_idx, member_name) {
+                return Some(loc);
+            }
+        }
+
+        None
+    }
+
+    /// Find the AST location of a named member within an interface/class declaration.
+    /// Returns a Location directly from the member's name node, bypassing the symbol table.
+    fn find_member_location_in_declaration(
+        &self,
+        decl_idx: NodeIndex,
+        member_name: &str,
+    ) -> Option<Location> {
+        use tsz_scanner::SyntaxKind;
+
+        let decl_node = self.arena.get(decl_idx)?;
+
+        let members_list = if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            Some(self.arena.get_interface(decl_node)?.members.nodes.clone())
+        } else if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            Some(self.arena.get_class(decl_node)?.members.nodes.clone())
+        } else {
+            None
+        }?;
+
+        for &member_idx in &members_list {
+            let member_node = self.arena.get(member_idx)?;
+            let name_idx = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_SIGNATURE
+                    || k == syntax_kind_ext::METHOD_SIGNATURE =>
+                {
+                    self.arena.get_signature(member_node).map(|s| s.name)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    self.arena.get_property_decl(member_node).map(|p| p.name)
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.arena.get_method_decl(member_node).map(|m| m.name)
+                }
+                _ => None,
+            };
+
+            if let Some(name_idx) = name_idx
+                && name_idx.is_some()
+                && let Some(name_node) = self.arena.get(name_idx)
+                && name_node.kind == SyntaxKind::Identifier as u16
+            {
+                let pos = name_node.pos as usize;
+                let end = name_node.end as usize;
+                if end <= self.source_text.len() && pos < end {
+                    // Extract just the identifier text (the name node span may
+                    // include trailing punctuation like `:` or `?` in signatures)
+                    let raw_text = &self.source_text[pos..end];
+                    let ident_text = raw_text
+                        .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '$');
+                    if ident_text == member_name {
+                        let start_pos = self
+                            .line_map
+                            .offset_to_position(member_node.pos, self.source_text);
+                        let end_pos = self
+                            .line_map
+                            .offset_to_position(member_node.end, self.source_text);
+                        return Some(Location {
+                            file_path: self.file_name.clone(),
+                            range: Range::new(start_pos, end_pos),
+                        });
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Check if a resolved symbol is a class/interface member being referenced as a bare
