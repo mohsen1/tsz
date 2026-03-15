@@ -39,7 +39,9 @@ impl<'a> Completions<'a> {
             let line_prefix = &self.source_text[line_start..i];
             if line_prefix.contains("//") {
                 // Check that the // is not inside a string
-                let comment_pos = line_prefix.find("//").unwrap();
+                let comment_pos = line_prefix
+                    .find("//")
+                    .expect("guarded by line_prefix.contains(\"//\")");
                 if comment_pos == 0 && line_prefix.starts_with("////") {
                     // Ignore fourslash test line prefixes.
                 } else {
