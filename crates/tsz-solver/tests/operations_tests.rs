@@ -6283,14 +6283,9 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // With index signature inference creating unions (matching tsc's getCommonSupertype),
-    // conflicting candidates for U resolve to a union (string | number), so the call
-    // succeeds. T gets a single candidate (string). Return type is [T, U] = [string, string | number].
-    assert_ne!(
-        result,
-        TypeId::ERROR,
-        "Call should succeed with union inference for index signatures"
-    );
+    // Index signature candidates use union semantics: T and U get unions of all
+    // matching property types, so the call succeeds (no assignability failure).
+    assert_ne!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -6365,14 +6360,9 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // With index signature inference creating unions (matching tsc's getCommonSupertype),
-    // conflicting candidates for U resolve to a union (string | number), so the call
-    // succeeds rather than failing with ERROR.
-    assert_ne!(
-        result,
-        TypeId::ERROR,
-        "Call should succeed with union inference for index signatures"
-    );
+    // Index signature candidates use union semantics, so U gets the union
+    // of all matching property types. The call succeeds.
+    assert_ne!(result, TypeId::ERROR);
 }
 
 // DELETED: test_infer_generic_property_from_source_index_signature

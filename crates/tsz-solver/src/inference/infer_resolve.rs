@@ -411,11 +411,19 @@ impl<'a> InferenceContext<'a> {
                 )
             })
             .unwrap_or(false);
-        let has_index_signature_candidates = filtered_no_never
+        // When ALL candidates come from index signature inference (e.g.,
+        // {a: string, b: number} → {[key: string]: T}), use union semantics.
+        // The index signature T represents the union of all property value types.
+        // tsc handles this via getCommonSupertype's fallback to getUnionType when
+        // no single supertype exists, but only for this pattern — for direct
+        // parameter inference (e.g., f<T>(x: T, y: T) called as f(1, "")),
+        // tsc picks the first non-superseded candidate.
+        let all_from_index_signatures = filtered_no_never
             .iter()
-            .any(|candidate| candidate.from_index_signature);
-        let resolved = if priority_implies_combination {
-            // Union: used for return type inference and low-priority contexts
+            .all(|candidate| candidate.from_index_signature);
+        let resolved = if priority_implies_combination || all_from_index_signatures {
+            // Union: used for return type inference, low-priority contexts,
+            // and index signature inference
             self.best_common_type(&candidate_types)
         } else {
             // Common supertype: used for NakedTypeVariable and other direct inference.
