@@ -40,18 +40,5 @@ pub(crate) fn construct_return_type_for_display(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
-    match tsz_solver::type_queries::classify_for_instance_type(db, type_id) {
-        InstanceTypeKind::Callable(shape_id) => {
-            tsz_solver::type_queries::get_construct_return_type_union(db, shape_id)
-        }
-        InstanceTypeKind::Function(shape_id) => {
-            let shape = db.function_shape(shape_id);
-            if shape.is_constructor {
-                Some(shape.return_type)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+    tsz_solver::type_queries::data::construct_return_type_for_type(db, type_id)
 }
