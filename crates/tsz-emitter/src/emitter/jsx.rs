@@ -135,11 +135,30 @@ impl<'a> Printer<'a> {
         self.write(&fragment_factory);
         self.write(", null");
 
-        // Children
+        // Children — use multiline when multiple children or any child is a JSX element
         let filtered_children = self.collect_jsx_children(&children);
-        self.emit_jsx_children_interleaved(&children, &filtered_children, JsxChildSep::CommaSpace);
-
+        let has_jsx_child = filtered_children.iter().any(|&idx| {
+            self.arena.get(idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::JSX_ELEMENT
+                    || n.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || n.kind == syntax_kind_ext::JSX_FRAGMENT
+            })
+        });
+        let multiline = filtered_children.len() > 1 || has_jsx_child;
+        if multiline {
+            self.write(",");
+            self.increase_indent();
+        }
+        let sep = if multiline {
+            JsxChildSep::CommaNewline
+        } else {
+            JsxChildSep::CommaSpace
+        };
+        self.emit_jsx_children_interleaved(&children, &filtered_children, sep);
         self.write(")");
+        if multiline {
+            self.decrease_indent();
+        }
     }
 
     /// Emit `factory(tag, props, ...children)`
@@ -172,8 +191,16 @@ impl<'a> Printer<'a> {
             self.emit_jsx_attrs_as_object(&attrs_info.attrs);
         }
 
-        // Children — tsc formats multiple children on separate indented lines
-        let multiline_children = filtered_children.len() > 1;
+        // Children — tsc formats children on separate indented lines when there are
+        // multiple children OR when any child is itself a JSX element (nested createElement).
+        let has_jsx_child = filtered_children.iter().any(|&idx| {
+            self.arena.get(idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::JSX_ELEMENT
+                    || n.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || n.kind == syntax_kind_ext::JSX_FRAGMENT
+            })
+        });
+        let multiline_children = filtered_children.len() > 1 || has_jsx_child;
         if multiline_children {
             self.write(",");
             self.increase_indent();
