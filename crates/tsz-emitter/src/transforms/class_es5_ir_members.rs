@@ -8,7 +8,7 @@ use crate::transforms::ir::{IRMethodName, IRNode, IRParam, IRPropertyDescriptor}
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::is_private_identifier;
+use tsz_parser::syntax::transform_utils::{contains_this_reference, is_private_identifier};
 use tsz_scanner::SyntaxKind;
 
 use super::{ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text};
@@ -450,6 +450,31 @@ impl<'a> ES5ClassTransformer<'a> {
             false
         });
 
+        // Check if any static property initializer or static block uses `this`.
+        // If so, we need to emit `var _a; _a = ClassName;` and replace `this` with `_a`.
+        // Note: `this` in static methods/getters/setters stays as `this` (they have their own
+        // `this` binding at call time). Only property initializers and static blocks need aliasing.
+        let needs_class_alias =
+            self.static_members_need_class_alias(&class_data.members);
+
+        let class_alias: Option<String> = if needs_class_alias {
+            Some("_a".to_string())
+        } else {
+            None
+        };
+
+        // Emit `var _a; _a = ClassName;` if needed
+        if let Some(ref alias) = class_alias {
+            body.push(IRNode::VarDecl {
+                name: alias.clone().into(),
+                initializer: None,
+            });
+            body.push(IRNode::expr_stmt(IRNode::assign(
+                IRNode::id(alias.clone()),
+                IRNode::id(self.class_name.clone()),
+            )));
+        }
+
         let mut deferred_static_blocks = Vec::new();
 
         // First pass: collect static accessors by name to combine getter/setter pairs
@@ -597,11 +622,18 @@ impl<'a> ES5ClassTransformer<'a> {
                         ),
                     };
 
+                    // Use class alias for the initializer value if needed
+                    let value = if let Some(ref alias) = class_alias {
+                        self.convert_expression_static_with_class_alias(
+                            prop_data.initializer,
+                            alias,
+                        )
+                    } else {
+                        self.convert_expression_static(prop_data.initializer)
+                    };
+
                     // ClassName.prop = value;
-                    body.push(IRNode::expr_stmt(IRNode::assign(
-                        target,
-                        self.convert_expression_static(prop_data.initializer),
-                    )));
+                    body.push(IRNode::expr_stmt(IRNode::assign(target, value)));
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // Static block: wrap in IIFE to preserve block scoping
@@ -610,7 +642,13 @@ impl<'a> ES5ClassTransformer<'a> {
                         .statements
                         .nodes
                         .iter()
-                        .map(|&stmt_idx| self.convert_statement_static(stmt_idx))
+                        .map(|&stmt_idx| {
+                            if let Some(ref alias) = class_alias {
+                                self.convert_statement_static_with_class_alias(stmt_idx, alias)
+                            } else {
+                                self.convert_statement_static(stmt_idx)
+                            }
+                        })
                         .collect();
 
                     let iife = IRNode::StaticBlockIIFE { statements };
@@ -718,5 +756,61 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         IRMethodName::Identifier(String::new().into())
+    }
+
+    /// Check if any static property initializer or static block uses `this`.
+    /// Returns true if a class alias is needed (i.e. `var _a; _a = ClassName;`).
+    ///
+    /// Note: `this` in static methods/getters/setters does NOT need aliasing because
+    /// regular functions have their own `this` binding. Only static property initializer
+    /// expressions and static block statement bodies need `this` → `_a` substitution.
+    fn static_members_need_class_alias(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let Some(prop_data) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                // Only static properties with initializers
+                if !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                {
+                    continue;
+                }
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
+                if prop_data.initializer.is_none() {
+                    continue;
+                }
+                // Check if the initializer expression contains `this`
+                if contains_this_reference(self.arena, prop_data.initializer) {
+                    return true;
+                }
+            } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                // Check if the static block body contains `this`
+                if let Some(block_data) = self.arena.get_block(member_node) {
+                    for &stmt_idx in &block_data.statements.nodes {
+                        if contains_this_reference(self.arena, stmt_idx) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 }

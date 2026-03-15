@@ -963,6 +963,11 @@ impl<'a> AstToIr<'a> {
             } else {
                 None
             };
+
+            // Regular function expressions have their own `this`, so we must
+            // clear the class alias (it should NOT substitute `this` inside).
+            let prev_alias = self.current_class_alias.take();
+
             let body = if func.body.is_none() {
                 vec![]
             } else if let Some(body_node) = self.arena.get(func.body)
@@ -977,6 +982,10 @@ impl<'a> AstToIr<'a> {
             } else {
                 vec![]
             };
+
+            // Restore previous alias
+            self.current_class_alias.set(prev_alias);
+
             IRNode::FunctionExpr {
                 name: name.map(Into::into),
                 parameters: params,

@@ -449,3 +449,112 @@ class A {
     );
     assert!(output.contains("var A = /** @class */ (function ()"));
 }
+
+#[test]
+fn test_static_this_class_alias_in_property_initializer() {
+    let source = r#"class CC {
+            static a = 1;
+            static b = this.a + 1;
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    // Should have var _a; and _a = CC;
+    assert!(
+        output.contains("var _a;"),
+        "Should declare class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = CC;"),
+        "Should assign class to alias.\nOutput:\n{output}"
+    );
+    // this.a should become _a.a
+    assert!(
+        output.contains("_a.a + 1"),
+        "this should be replaced with _a in static property initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_this_class_alias_in_static_block() {
+    let source = r#"class Foo {
+            static b = 1;
+            static {
+                this.b;
+            }
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    // Should have var _a; and _a = Foo;
+    assert!(
+        output.contains("var _a;"),
+        "Should declare class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = Foo;"),
+        "Should assign class to alias.\nOutput:\n{output}"
+    );
+    // this.b inside static block should become _a.b
+    assert!(
+        output.contains("_a.b"),
+        "this should be replaced with _a in static block.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_this_not_replaced_in_static_method() {
+    // `this` in static methods should stay as `this` because regular
+    // functions have their own `this` binding.
+    let source = r#"class DD {
+            static c = 2;
+            static d = this.c + 1;
+            static ff = function () { this.c + 1 }
+            static foo () {
+                return this.c + 1;
+            }
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    // Static property initializer: this → _a
+    assert!(
+        output.contains("_a.c + 1"),
+        "this should be replaced with _a in static property initializer.\nOutput:\n{output}"
+    );
+    // Static method body: this stays as this
+    assert!(
+        output.contains("return this.c + 1"),
+        "this should stay as this in static method body.\nOutput:\n{output}"
+    );
+    // Function expression in property initializer: this stays as this
+    assert!(
+        output.contains("function () { this.c + 1; }"),
+        "this should stay as this inside function expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_no_class_alias_when_no_this_in_static_members() {
+    // If there's no `this` in static members, no class alias should be generated
+    let source = r#"class Simple {
+            static a = 1;
+            static b = 2;
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    // No class alias needed
+    assert!(
+        !output.contains("var _a"),
+        "Should not declare class alias when this is not used in static members.\nOutput:\n{output}"
+    );
+}
