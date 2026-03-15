@@ -158,9 +158,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         // starts with a keyword at our cursor position
         let keyword_kind = self.get_keyword_at_offset(offset);
 
-        keyword_kind?;
-
-        let kw = keyword_kind.unwrap();
+        let kw = keyword_kind?;
 
         match kw {
             SyntaxKind::IfKeyword | SyntaxKind::ElseKeyword => {
@@ -1016,7 +1014,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         let before_trimmed_lower = before_trimmed.to_lowercase();
         let words: Vec<&str> = before_trimmed_lower.split_whitespace().collect();
         if !words.is_empty() {
-            let last_word = words.last().unwrap();
+            let last_word = words.last().expect("guarded by !words.is_empty()");
             if *last_word == "var"
                 || *last_word == "let"
                 || *last_word == "const"
