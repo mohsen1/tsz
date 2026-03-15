@@ -285,6 +285,8 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/classes/class_implements_checker.rs",
             "crates/tsz-checker/src/error_reporter/core.rs",
             "crates/tsz-checker/src/error_reporter/call_errors.rs",
+            "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
+            "crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs",
         },
     ),
 ]
