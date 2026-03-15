@@ -29,7 +29,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [█████████████████░░░] 85.8% (10,791/12,581 tests)
+Progress: [█████████████████░░░] 85.9% (10,809/12,581 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -43,8 +43,8 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [█████████████████░░░] 84.0% (11,366 / 13,526 tests)
-Declaration: [██████████████░░░░░░] 70.1% (1,163 / 1,660 tests)
+JavaScript:  [█████████████████░░░] 84.6% (11,446 / 13,526 tests)
+Declaration: [██████████████░░░░░░] 70.6% (1,171 / 1,659 tests)
 ```
 <!-- EMIT_END -->
 
@@ -55,7 +55,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [███████░░░░░░░░░░░░░] 38.6% (2,530 / 6,564 tests)
+Progress: [████████████████████] 99.2% (1,389 / 1,400 tests)
 ```
 <!-- FOURSLASH_END -->
 
