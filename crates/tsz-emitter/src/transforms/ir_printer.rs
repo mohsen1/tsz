@@ -643,7 +643,16 @@ impl<'a> IRPrinter<'a> {
                 self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {
+                // Wrap function expressions in parens when in statement position
+                // to prevent ambiguity with function declarations.
+                let needs_paren = matches!(expr.as_ref(), IRNode::FunctionExpr { .. });
+                if needs_paren {
+                    self.write("(");
+                }
                 self.emit_node(expr);
+                if needs_paren {
+                    self.write(")");
+                }
                 self.write(";");
             }
             IRNode::ReturnStatement(expr) => {
