@@ -778,7 +778,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2462: A rest element must be last in a destructuring pattern.
-                if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN && i < elements_len - 1 {
+                // Applies to both array and object binding patterns.
+                if i < elements_len - 1 {
                     let diag_node = if is_declarative_pattern {
                         self.ctx
                             .arena
