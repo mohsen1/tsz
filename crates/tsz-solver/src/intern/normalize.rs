@@ -1096,24 +1096,28 @@ impl TypeInterner {
         if len <= 1 {
             return;
         }
-        let mut keep = vec![true; len];
+        // Use a u64 bitset instead of heap-allocated Vec<bool>.
+        // Safe because callers guard len (partitions are always small subsets of
+        // the already-guarded union, and the direct caller caps at 25 members).
+        debug_assert!(len <= 64, "reduce_union_subtypes_quadratic: len={len} > 64");
+        let mut keep: u64 = (1u64 << len) - 1; // all bits set
         for i in 0..len {
-            if !keep[i] {
+            if keep & (1u64 << i) == 0 {
                 continue;
             }
             for j in 0..len {
-                if i == j || !keep[j] {
+                if i == j || keep & (1u64 << j) == 0 {
                     continue;
                 }
                 if self.is_subtype_shallow(flat[i], flat[j]) {
-                    keep[i] = false;
+                    keep &= !(1u64 << i);
                     break;
                 }
             }
         }
         let mut write = 0;
         for read in 0..len {
-            if keep[read] {
+            if keep & (1u64 << read) != 0 {
                 flat[write] = flat[read];
                 write += 1;
             }
@@ -1133,21 +1137,22 @@ impl TypeInterner {
             return;
         }
 
-        // Mark redundant elements, then compact in one pass.
-        // This avoids O(n) Vec::remove() per element (which shifts all subsequent items).
+        // Mark redundant elements using a u64 bitset (max 25 members from guard above),
+        // then compact in one pass. Avoids heap allocation for the keep-set.
         let len = flat.len();
-        let mut keep = vec![true; len];
+        debug_assert!(len <= 64, "reduce_intersection_subtypes: len={len} > 64");
+        let mut keep: u64 = (1u64 << len) - 1; // all bits set
         for i in 0..len {
-            if !keep[i] {
+            if keep & (1u64 << i) == 0 {
                 continue;
             }
             for j in 0..len {
-                if i == j || !keep[j] {
+                if i == j || keep & (1u64 << j) == 0 {
                     continue;
                 }
                 // If j is a subtype of i, i is the supertype and redundant in an intersection
                 if self.is_subtype_shallow(flat[j], flat[i]) {
-                    keep[i] = false;
+                    keep &= !(1u64 << i);
                     break;
                 }
             }
@@ -1155,7 +1160,7 @@ impl TypeInterner {
         // Compact: retain only non-redundant elements
         let mut write = 0;
         for read in 0..len {
-            if keep[read] {
+            if keep & (1u64 << read) != 0 {
                 flat[write] = flat[read];
                 write += 1;
             }
