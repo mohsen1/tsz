@@ -210,6 +210,18 @@ impl ParserState {
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
             let start_pos = self.token_pos();
+
+            // Check for mapped type member: [identifier in ...] (TS 4.1+)
+            if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start()
+            {
+                let member = self.parse_mapped_type_member();
+                if member.is_some() {
+                    members.push(member);
+                }
+                self.parse_type_member_separator_with_asi();
+                continue;
+            }
+
             let member = self.parse_type_member(true);
             if member.is_some() {
                 members.push(member);
