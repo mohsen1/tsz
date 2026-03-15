@@ -907,12 +907,12 @@ impl LspServer {
                 file_name,
                 file.source_text(),
             );
-            if let Some(refs) = provider.find_references(file.root(), position) {
-                if let Some(first) = refs.first() {
-                    return Ok(serde_json::json!({
-                        "range": Self::range_to_json(&first.range),
-                    }));
-                }
+            if let Some(refs) = provider.find_references(file.root(), position)
+                && let Some(first) = refs.first()
+            {
+                return Ok(serde_json::json!({
+                    "range": Self::range_to_json(&first.range),
+                }));
             }
         }
         Ok(Value::Null)
@@ -1230,9 +1230,8 @@ impl LspServer {
                     .iter()
                     .map(|h| {
                         let kind = match h.kind {
-                            tsz::lsp::InlayHintKind::Type => 1,
+                            tsz::lsp::InlayHintKind::Type | tsz::lsp::InlayHintKind::Generic => 1,
                             tsz::lsp::InlayHintKind::Parameter => 2,
-                            tsz::lsp::InlayHintKind::Generic => 1, // Treat as Type
                         };
                         let mut hint = serde_json::json!({
                             "position": Self::position_to_json(&h.position),
