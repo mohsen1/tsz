@@ -410,9 +410,12 @@ impl<'a> CheckerState<'a> {
             None
         } else {
             match classification {
-                query::CallSignaturesKind::Callable(shape_id) => {
-                    let shape = self.ctx.types.callable_shape(shape_id);
-                    (shape.call_signatures.len() > 1).then(|| shape.call_signatures.clone())
+                query::CallSignaturesKind::Callable(_) => {
+                    // Delegate to solver query for overload detection
+                    tsz_solver::type_queries::data::get_overload_call_signatures(
+                        self.ctx.types,
+                        callee_type_for_resolution,
+                    )
                 }
                 query::CallSignaturesKind::MultipleSignatures(signatures) => {
                     (signatures.len() > 1).then_some(signatures)
