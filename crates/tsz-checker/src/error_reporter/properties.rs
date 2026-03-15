@@ -142,7 +142,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
-        use tsz_solver::type_queries;
+        
 
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
         // This prevents cascading errors when accessing properties on error types.
@@ -167,25 +167,9 @@ impl<'a> CheckerState<'a> {
         // The deep nesting case occurs with concrete unions like `string | MyArr`
         // where MyArr extends Array<string> -- the resolved object shape may contain
         // type parameters from the generic base, but the union itself is concrete.
-        if type_queries::is_union_type(self.ctx.types, type_id) {
-            let has_direct_type_param = if let Some(tsz_solver::TypeData::Union(list_id)) =
-                self.ctx.types.lookup(type_id)
-            {
-                let members = self.ctx.types.type_list(list_id);
-                members.iter().any(|&m| {
-                    matches!(
-                        self.ctx.types.lookup(m),
-                        Some(
-                            tsz_solver::TypeData::TypeParameter(_) | tsz_solver::TypeData::Infer(_)
-                        )
-                    )
-                })
-            } else {
-                false
-            };
-            if has_direct_type_param {
-                return;
-            }
+        if tsz_solver::type_queries::data::union_has_direct_type_parameter(self.ctx.types, type_id)
+        {
+            return;
         }
 
         // When a class extends `any`, tsc treats unknown member accesses as `any`
