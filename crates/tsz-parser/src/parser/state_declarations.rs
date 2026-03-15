@@ -1212,16 +1212,15 @@ impl ParserState {
                     }
                     self.parse_optional(SyntaxKind::CommaToken);
                     continue;
-                } else {
-                    let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
-                        || self.is_token(SyntaxKind::StringLiteral)
-                        || self.is_token(SyntaxKind::NumericLiteral)
-                        || self.is_token(SyntaxKind::BigIntLiteral)
-                        || self.is_token(SyntaxKind::PrivateIdentifier)
-                        || self.is_identifier_or_keyword();
-                    if starts_member {
-                        continue;
-                    }
+                }
+                let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
+                    || self.is_token(SyntaxKind::StringLiteral)
+                    || self.is_token(SyntaxKind::NumericLiteral)
+                    || self.is_token(SyntaxKind::BigIntLiteral)
+                    || self.is_token(SyntaxKind::PrivateIdentifier)
+                    || self.is_identifier_or_keyword();
+                if starts_member {
+                    continue;
                 }
 
                 // Skip to next comma, closing brace, or EOF to recover

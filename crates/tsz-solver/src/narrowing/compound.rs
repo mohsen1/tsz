@@ -342,10 +342,9 @@ impl<'a> NarrowingContext<'a> {
         if source_type == TypeId::UNKNOWN {
             if keep_nullish {
                 return self.db.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
-            } else {
-                let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
-                return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
             }
+            let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
+            return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
         }
 
         let (non_nullish, null_part) = super::utils::split_nullish_type(self.db, source_type);
