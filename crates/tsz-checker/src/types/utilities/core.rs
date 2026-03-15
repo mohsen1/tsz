@@ -467,30 +467,8 @@ impl<'a> CheckerState<'a> {
             db: &dyn tsz_solver::TypeDatabase,
             ty: TypeId,
         ) -> bool {
-            fn is_constructor_like_context(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
-                if let Some(shape_id) = tsz_solver::callable_shape_id(db, ty) {
-                    let shape = db.callable_shape(shape_id);
-                    if !shape.construct_signatures.is_empty() {
-                        return true;
-                    }
-                }
-                if let Some(shape_id) = tsz_solver::visitor::function_shape_id(db, ty) {
-                    let shape = db.function_shape(shape_id);
-                    if shape.is_constructor {
-                        return true;
-                    }
-                }
-                false
-            }
-
-            if let Some(members) = tsz_solver::type_queries::get_union_members(db, ty) {
-                return members
-                    .iter()
-                    .copied()
-                    .any(|member| is_constructor_like_context(db, member));
-            }
-
-            false
+            // Delegate to solver query: checks if any union member is constructor-like
+            tsz_solver::type_queries::data::is_constructor_like_type(db, ty)
         }
 
         if tsz_solver::is_union_type(self.ctx.types, expected)

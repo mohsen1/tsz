@@ -369,6 +369,28 @@ fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if a type (or any union member) is constructor-like.
+///
+/// Returns true when the type has construct signatures (Callable with
+/// `construct_signatures`) or is a constructor Function (`is_constructor`).
+/// For union types, returns true if ANY member is constructor-like.
+pub fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id) {
+        if !db.callable_shape(shape_id).construct_signatures.is_empty() {
+            return true;
+        }
+    }
+    if let Some(shape_id) = crate::visitor::function_shape_id(db, type_id) {
+        if db.function_shape(shape_id).is_constructor {
+            return true;
+        }
+    }
+    if let Some(members) = get_union_members(db, type_id) {
+        return members.iter().any(|&m| is_constructor_like_type(db, m));
+    }
+    false
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2158,5 +2180,61 @@ mod tests {
             super::construct_return_type_for_type(&interner, TypeId::STRING),
             None
         );
+    }
+
+    #[test]
+    fn test_is_constructor_like_type() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{CallSignature, CallableShape, FunctionShape};
+
+        // Constructor function
+        let fn_ctor = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: true,
+            is_method: false,
+        });
+        assert!(super::is_constructor_like_type(&interner, fn_ctor));
+
+        // Regular function — not constructor-like
+        let fn_regular = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        assert!(!super::is_constructor_like_type(&interner, fn_regular));
+
+        // Callable with construct signature
+        let callable_ctor = interner.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::OBJECT,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        assert!(super::is_constructor_like_type(&interner, callable_ctor));
+
+        // Union containing a constructor — should be constructor-like
+        let union_with_ctor = interner.union(vec![TypeId::STRING, fn_ctor]);
+        assert!(super::is_constructor_like_type(&interner, union_with_ctor));
+
+        // Plain type — not constructor-like
+        assert!(!super::is_constructor_like_type(&interner, TypeId::STRING));
     }
 }
