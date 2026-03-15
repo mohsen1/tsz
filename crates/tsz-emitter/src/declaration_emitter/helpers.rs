@@ -4826,11 +4826,18 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     // Use the COMPUTED_PROPERTY_NAME node's source slice.
                     // The node.end may extend past `]` into trailing `:`
-                    // (the property colon), so trim it to avoid `::`.
+                    // (property colon) or `(` (getter/method params), so
+                    // trim to the closing `]` to avoid `::` or `(` leaking.
                     if let Some(mut s) = self.get_source_slice(node.pos, node.end) {
-                        while s.ends_with(':') {
-                            s.pop();
-                            s = s.trim_end().to_string();
+                        // Find the last `]` and truncate after it
+                        if let Some(bracket_pos) = s.rfind(']') {
+                            s.truncate(bracket_pos + 1);
+                        } else {
+                            // No brackets — trim trailing punctuation
+                            while s.ends_with(':') || s.ends_with('(') {
+                                s.pop();
+                                s = s.trim_end().to_string();
+                            }
                         }
                         if !s.is_empty() {
                             return Some(s);
