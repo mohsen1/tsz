@@ -173,14 +173,13 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self.ctx.binder.get_symbol(init_sym_id)
             && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
             && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+            && let Some(enum_obj) = self.enum_object_type(init_sym_id)
         {
-            if let Some(enum_obj) = self.enum_object_type(init_sym_id) {
-                let def_id = self.ctx.get_or_create_def_id(init_sym_id);
-                self.ctx
-                    .definition_store
-                    .register_type_to_def(enum_obj, def_id);
-                return enum_obj;
-            }
+            let def_id = self.ctx.get_or_create_def_id(init_sym_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(enum_obj, def_id);
+            return enum_obj;
         }
 
         fallback_type
