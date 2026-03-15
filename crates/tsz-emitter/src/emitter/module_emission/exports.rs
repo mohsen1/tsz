@@ -644,6 +644,7 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {}
                 k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {}
                 // export default <expression> - emit as exports.default = expr;
+                // In System modules, use exports_1("default", expr) instead.
                 _ => {
                     // `export default X` — use `exports.X` only when the variable
                     // was inlined (`exports.x = val;` with no local declaration),
@@ -661,9 +662,15 @@ impl<'a> Printer<'a> {
                             return;
                         }
                     }
-                    self.write("exports.default = ");
-                    self.emit(export.export_clause);
-                    self.write_semicolon();
+                    if self.in_system_execute_body {
+                        self.write("exports_1(\"default\", ");
+                        self.emit(export.export_clause);
+                        self.write(");");
+                    } else {
+                        self.write("exports.default = ");
+                        self.emit(export.export_clause);
+                        self.write_semicolon();
+                    }
                 }
             }
         }
