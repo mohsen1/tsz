@@ -498,6 +498,19 @@ pub fn get_overload_call_signatures(
     None
 }
 
+/// Get the symbol associated with an object type's shape.
+///
+/// Returns the `SymbolId` from the ObjectShape for Object or ObjectWithIndex
+/// types. Returns None for non-object types or objects without a symbol.
+pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            db.object_shape(shape_id).symbol
+        }
+        _ => None,
+    }
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2457,5 +2470,39 @@ mod tests {
 
         // Non-callable → None
         assert!(super::get_overload_call_signatures(&interner, TypeId::STRING).is_none());
+    }
+
+    #[test]
+    fn test_get_object_symbol() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, Visibility};
+
+        let sym = tsz_binder::SymbolId(42);
+
+        // Object with symbol
+        let obj_with_sym = interner.intern(TypeData::Object(interner.intern_object_shape(
+            ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: vec![PropertyInfo {
+                    name: interner.intern_string("x"),
+                    type_id: TypeId::STRING,
+                    write_type: TypeId::STRING,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                }],
+                string_index: None,
+                number_index: None,
+                symbol: Some(sym),
+            },
+        )));
+        assert_eq!(super::get_object_symbol(&interner, obj_with_sym), Some(sym));
+
+        // Non-object → None
+        assert_eq!(super::get_object_symbol(&interner, TypeId::STRING), None);
     }
 }
