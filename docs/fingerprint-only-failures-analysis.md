@@ -12,6 +12,22 @@
 | Preserve literal types in object literal properties | `fix(checker): preserve literal types in object literal properties` | ~215 tests |
 | **Total reduction** | | **624 → ~399 (36% improvement)** |
 
+### Remaining Root Causes (~399 tests)
+
+After fixes, the remaining fingerprint-only failures break down into:
+
+1. **Type name resolution** (~100 tests): Class/interface types displayed as expanded object shapes instead of their declared names (e.g., `Error` shown as `{ name: string; message: string; ... }`). Root cause: `DefinitionStore` doesn't map all class/interface TypeIds back to their names.
+
+2. **Generic type inference display** (~80 tests): The type used in error messages is the inferred/instantiated type instead of the source type (e.g., `Action<{ type: "FOO" | "bar" }>` instead of `Action<{ type: "FOO" }>`). Root cause: type evaluation produces a different result than tsc for some generic instantiations.
+
+3. **Parser error positioning** (~50 tests): Parser recovery produces diagnostics at different line/column than tsc.
+
+4. **Flow analysis/narrowing** (~50 tests): Optional chain narrowing and definite assignment differ from tsc.
+
+5. **Call signature display** (~40 tests): Overloaded functions and generic constraints formatted differently.
+
+6. **Miscellaneous** (~80 tests): Various other diagnostic span and message differences.
+
 ---
 
 ## Executive Summary
