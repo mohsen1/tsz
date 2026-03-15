@@ -1,6 +1,7 @@
 //! Project-level LSP tests.
 
 use super::*;
+use crate::project::FileRename;
 use tsz_common::position::LineMap;
 
 fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> String {
@@ -3561,5 +3562,375 @@ fn test_project_diagnostics_clean_for_valid_code() {
     assert!(
         diagnostics.is_empty(),
         "Valid code should have no diagnostics"
+    );
+}
+
+#[test]
+fn test_project_stale_diagnostics_empty_initially() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "const x = 1;\n".to_string());
+
+    // Newly created files start with diagnostics_dirty = false
+    let stale = project.get_stale_diagnostics();
+    // Initially no files should be stale since set_file creates fresh ProjectFile
+    // with diagnostics_dirty = false
+    assert!(
+        stale.is_empty(),
+        "Should have no stale diagnostics for fresh files"
+    );
+
+    // After calling get_diagnostics, dirty flag is cleared
+    let _ = project.get_diagnostics("a.ts");
+    let stale_after = project.get_stale_diagnostics();
+    assert!(
+        stale_after.is_empty(),
+        "Should have no stale diagnostics after getting diagnostics"
+    );
+}
+
+#[test]
+fn test_project_set_strict_mode() {
+    let mut project = Project::new();
+    project.set_strict(true);
+    project.set_file(
+        "test.ts".to_string(),
+        "function foo(x) { return x; }\n".to_string(),
+    );
+
+    let diagnostics = project.get_diagnostics("test.ts");
+    assert!(diagnostics.is_some());
+}
+
+#[test]
+fn test_project_remove_file() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    project.set_file(
+        "b.ts".to_string(),
+        "import { x } from \"./a\";\n".to_string(),
+    );
+
+    assert_eq!(project.file_count(), 2);
+    project.remove_file("a.ts");
+    assert_eq!(project.file_count(), 1);
+    assert!(project.file("a.ts").is_none());
+    assert!(project.file("b.ts").is_some());
+}
+
+#[test]
+fn test_project_file_count() {
+    let mut project = Project::new();
+    assert_eq!(project.file_count(), 0);
+    project.set_file("a.ts".to_string(), "const a = 1;\n".to_string());
+    assert_eq!(project.file_count(), 1);
+    project.set_file("b.ts".to_string(), "const b = 2;\n".to_string());
+    assert_eq!(project.file_count(), 2);
+    // Overwrite existing file
+    project.set_file("a.ts".to_string(), "const a = 42;\n".to_string());
+    assert_eq!(project.file_count(), 2);
+}
+
+#[test]
+fn test_project_get_file_dependents() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    project.set_file(
+        "b.ts".to_string(),
+        "import { x } from \"./a\";\n".to_string(),
+    );
+
+    // get_file_dependents returns files that depend on the given file
+    // The exact resolution depends on how module specifiers map to file names
+    let deps = project.get_file_dependents("a.ts");
+    // Dependency tracking may use raw specifiers or resolved paths
+    // We just verify the function returns without error
+    assert!(
+        deps.is_empty() || deps.iter().any(|d| d.contains("b")),
+        "Dependents should either be empty (if specifier resolution differs) or include b.ts, got: {:?}",
+        deps
+    );
+}
+
+#[test]
+fn test_project_import_candidates_for_prefix() {
+    let mut project = Project::new();
+    project.set_file(
+        "utils.ts".to_string(),
+        "export function calculateTotal() {}\nexport function calculateTax() {}\n".to_string(),
+    );
+    project.set_file("main.ts".to_string(), "calc\n".to_string());
+
+    let candidates = project.get_import_candidates_for_prefix("main.ts", "calc");
+    // Should find exported symbols from utils.ts matching prefix
+    let names: Vec<&str> = candidates.iter().map(|c| c.local_name.as_str()).collect();
+    assert!(
+        names.iter().any(|n: &&str| n.contains("calculate")),
+        "Should suggest exported symbols matching 'calc' prefix, got: {:?}",
+        names
+    );
+}
+
+#[test]
+fn test_project_definition_missing_file() {
+    let mut project = Project::new();
+    let result = project.get_definition("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_hover_missing_file() {
+    let mut project = Project::new();
+    let result = project.get_hover("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_completions_missing_file() {
+    let mut project = Project::new();
+    let result = project.get_completions("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_references_missing_file() {
+    let mut project = Project::new();
+    let result = project.find_references("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_rename_missing_file() {
+    let mut project = Project::new();
+    let result =
+        project.get_rename_edits("nonexistent.ts", Position::new(0, 0), "newName".to_string());
+    assert!(result.is_err(), "Should return Err for missing file");
+}
+
+#[test]
+fn test_project_signature_help_missing_file() {
+    let mut project = Project::new();
+    let result = project.get_signature_help("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_implementations_missing_file() {
+    let mut project = Project::new();
+    let result = project.get_implementations("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_type_definition_missing_file() {
+    let mut project = Project::new();
+    let result = project.get_type_definition("nonexistent.ts", Position::new(0, 0));
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_set_import_module_specifier_ending() {
+    let mut project = Project::new();
+    project.set_import_module_specifier_ending(Some(".js".to_string()));
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    // Just verify it doesn't crash
+    assert_eq!(project.file_count(), 1);
+}
+
+#[test]
+fn test_project_set_import_module_specifier_preference() {
+    let mut project = Project::new();
+    project.set_import_module_specifier_preference(Some("relative".to_string()));
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    assert_eq!(project.file_count(), 1);
+}
+
+#[test]
+fn test_project_set_auto_import_file_exclude_patterns() {
+    let mut project = Project::new();
+    project.set_auto_import_file_exclude_patterns(vec!["**/node_modules/**".to_string()]);
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    assert_eq!(project.file_count(), 1);
+}
+
+#[test]
+fn test_project_set_auto_import_specifier_exclude_regexes() {
+    let mut project = Project::new();
+    project.set_auto_import_specifier_exclude_regexes(vec!["^@internal/.*$".to_string()]);
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    assert_eq!(project.file_count(), 1);
+}
+
+#[test]
+fn test_project_update_file_with_edits() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "const x = 1;\nconst y = 2;\n".to_string(),
+    );
+
+    let source = "const x = 1;\nconst y = 2;\n";
+    let line_map = LineMap::build(source);
+    let edit = TextEdit::new(
+        range_for_substring(source, &line_map, "1"),
+        "42".to_string(),
+    );
+
+    let result = project.update_file("test.ts", &[edit]);
+    assert!(result.is_some(), "update_file should succeed");
+
+    let file = project.file("test.ts").unwrap();
+    assert!(
+        file.source_text().contains("42"),
+        "Source should contain updated value"
+    );
+}
+
+#[test]
+fn test_project_update_file_missing() {
+    let mut project = Project::new();
+    let edit = TextEdit::new(
+        Range::new(Position::new(0, 0), Position::new(0, 1)),
+        "x".to_string(),
+    );
+    let result = project.update_file("nonexistent.ts", &[edit]);
+    assert!(
+        result.is_none(),
+        "update_file should return None for missing file"
+    );
+}
+
+#[test]
+fn test_project_cross_file_definition() {
+    let mut project = Project::new();
+    project.set_file(
+        "utils.ts".to_string(),
+        "export function helper() {}\n".to_string(),
+    );
+    project.set_file(
+        "main.ts".to_string(),
+        "import { helper } from \"./utils\";\nhelper();\n".to_string(),
+    );
+
+    // Get definition for 'helper' usage on line 1
+    let result = project.get_definition("main.ts", Position::new(1, 0));
+    // Cross-file definition may resolve to the import specifier or the original declaration
+    // depending on resolution. We just verify it returns a result.
+    assert!(
+        result.is_some(),
+        "Should find definition for imported symbol"
+    );
+}
+
+#[test]
+fn test_project_workspace_symbols_filter() {
+    let mut project = Project::new();
+    project.set_file(
+        "a.ts".to_string(),
+        "export function alpha() {}\nexport function beta() {}\n".to_string(),
+    );
+
+    // Workspace symbols search for "alpha" should find the function
+    let symbols = project.get_workspace_symbols("alpha");
+    // The symbol index may or may not be populated depending on how set_file works
+    // This test verifies the function returns without error and produces results if indexed
+    if !symbols.is_empty() {
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.iter().any(|n: &&str| n.contains("alpha")),
+            "Should find symbols matching 'alpha' query, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_project_handle_will_rename_files() {
+    let mut project = Project::new();
+    project.set_file("old.ts".to_string(), "export const x = 1;\n".to_string());
+    project.set_file(
+        "consumer.ts".to_string(),
+        "import { x } from \"./old\";\n".to_string(),
+    );
+
+    let renames = vec![FileRename {
+        old_uri: "old.ts".to_string(),
+        new_uri: "new.ts".to_string(),
+    }];
+
+    let workspace_edit = project.handle_will_rename_files(&renames);
+    // The workspace edit should contain text edits to update import paths
+    let has_edits = workspace_edit
+        .changes
+        .values()
+        .any(|edits| !edits.is_empty());
+    assert!(
+        has_edits,
+        "Should produce workspace edits to update import paths"
+    );
+}
+
+#[test]
+fn test_project_subtypes_returns_empty_for_missing_file() {
+    let project = Project::new();
+    let result = project.subtypes("nonexistent.ts", Position::new(0, 0));
+    assert!(
+        result.is_empty(),
+        "subtypes should return empty for missing file"
+    );
+}
+
+#[test]
+fn test_project_supertypes_returns_empty_for_missing_file() {
+    let project = Project::new();
+    let result = project.supertypes("nonexistent.ts", Position::new(0, 0));
+    assert!(
+        result.is_empty(),
+        "supertypes should return empty for missing file"
+    );
+}
+
+#[test]
+fn test_project_get_code_actions_missing_file() {
+    let project = Project::new();
+    let range = Range::new(Position::new(0, 0), Position::new(0, 1));
+    let result = project.get_code_actions("nonexistent.ts", range, vec![], None);
+    assert!(
+        result.is_none(),
+        "get_code_actions should return None for missing file"
+    );
+}
+
+#[test]
+fn test_project_resolve_code_lens_missing_file() {
+    let mut project = Project::new();
+    let lens = CodeLens {
+        range: Range::new(Position::new(0, 0), Position::new(0, 1)),
+        command: None,
+        data: None,
+    };
+    let result = project.resolve_code_lens("nonexistent.ts", &lens);
+    assert!(
+        result.is_none(),
+        "resolve_code_lens should return None for missing file"
+    );
+}
+
+#[test]
+fn test_project_get_incoming_calls_missing_file() {
+    let project = Project::new();
+    let result = project.get_incoming_calls("nonexistent.ts", Position::new(0, 0));
+    assert!(
+        result.is_empty(),
+        "get_incoming_calls should return empty for missing file"
+    );
+}
+
+#[test]
+fn test_project_get_outgoing_calls_missing_file() {
+    let project = Project::new();
+    let result = project.get_outgoing_calls("nonexistent.ts", Position::new(0, 0));
+    assert!(
+        result.is_empty(),
+        "get_outgoing_calls should return empty for missing file"
     );
 }

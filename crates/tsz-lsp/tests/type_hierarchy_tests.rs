@@ -454,3 +454,176 @@ fn test_prepare_uri_is_set() {
     assert!(item.is_some());
     assert_eq!(item.unwrap().uri, "file:///test.ts");
 }
+
+#[test]
+fn test_supertypes_with_extends() {
+    let source = "class Animal {}\nclass Dog extends Animal {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Dog" (line 1, col 6)
+    let pos = Position::new(1, 6);
+    let supertypes = provider.supertypes(root, pos);
+    // Dog extends Animal, so supertypes should include Animal
+    assert!(
+        supertypes.iter().any(|s| s.name == "Animal"),
+        "Dog's supertypes should include Animal, got: {:?}",
+        supertypes.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_supertypes_no_extends() {
+    let source = "class Standalone {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 6);
+    let supertypes = provider.supertypes(root, pos);
+    assert!(
+        supertypes.is_empty(),
+        "Class without extends should have no supertypes"
+    );
+}
+
+#[test]
+fn test_subtypes_with_extends() {
+    let source = "class Base {}\nclass Child extends Base {}\nclass Other extends Base {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Base" (line 0, col 6)
+    let pos = Position::new(0, 6);
+    let subtypes = provider.subtypes(root, pos);
+    // Base has two subtypes: Child and Other
+    let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"Child"),
+        "Base subtypes should include Child, got: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"Other"),
+        "Base subtypes should include Other, got: {:?}",
+        names
+    );
+}
+
+#[test]
+fn test_prepare_on_abstract_class() {
+    let source = "abstract class Shape {\n  abstract area(): number;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 15);
+    let item = provider.prepare(root, pos);
+    assert!(
+        item.is_some(),
+        "Should prepare hierarchy for abstract class"
+    );
+    assert_eq!(item.unwrap().name, "Shape");
+}
+
+#[test]
+fn test_interface_supertypes_with_extends() {
+    let source = "interface Printable { print(): void; }\ninterface Loggable extends Printable { log(): void; }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Loggable" (line 1, col 10)
+    let pos = Position::new(1, 10);
+    let supertypes = provider.supertypes(root, pos);
+    assert!(
+        supertypes.iter().any(|s| s.name == "Printable"),
+        "Loggable's supertypes should include Printable"
+    );
+}
+
+#[test]
+fn test_prepare_on_non_declaration() {
+    let source = "const x = 42;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at a variable, not a class/interface
+    let pos = Position::new(0, 6);
+    let item = provider.prepare(root, pos);
+    assert!(
+        item.is_none(),
+        "Should not prepare hierarchy for a variable"
+    );
+}
+
+#[test]
+fn test_class_implements_interface_supertypes() {
+    let source =
+        "interface Runnable { run(): void; }\nclass Task implements Runnable {\n  run() {}\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "Task" (line 1, col 6)
+    let pos = Position::new(1, 6);
+    let supertypes = provider.supertypes(root, pos);
+    // Task implements Runnable
+    assert!(
+        supertypes.iter().any(|s| s.name == "Runnable"),
+        "Task's supertypes should include Runnable, got: {:?}",
+        supertypes.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+}
