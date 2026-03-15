@@ -4,6 +4,7 @@ use crate::types::{
     CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, TupleElement,
 };
 
+#[allow(clippy::duplicate_mod)]
 #[path = "common/mod.rs"]
 mod common;
 use common::create_test_interner;

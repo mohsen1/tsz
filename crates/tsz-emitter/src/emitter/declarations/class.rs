@@ -77,12 +77,13 @@ fn class_has_self_references(
             _ => continue,
         };
 
-        if let Some((start, end)) = body_span {
-            if start < end && end <= src.len() {
-                let body_text = &src[start..end];
-                if text_contains_identifier(body_text, class_name) {
-                    return true;
-                }
+        if let Some((start, end)) = body_span
+            && start < end
+            && end <= src.len()
+        {
+            let body_text = &src[start..end];
+            if text_contains_identifier(body_text, class_name) {
+                return true;
             }
         }
     }
@@ -112,7 +113,7 @@ fn text_contains_identifier(text: &str, name: &str) -> bool {
     false
 }
 
-fn is_ident_char(b: u8) -> bool {
+const fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
 }
 
@@ -1514,15 +1515,15 @@ impl<'a> Printer<'a> {
 
             // Private accessor function vars
             for accessor in &private_accessors {
-                if let Some(ref name) = accessor.get_var_name {
-                    if accessor.getter_body.is_some() {
-                        var_names.push(name.clone());
-                    }
+                if let Some(ref name) = accessor.get_var_name
+                    && accessor.getter_body.is_some()
+                {
+                    var_names.push(name.clone());
                 }
-                if let Some(ref name) = accessor.set_var_name {
-                    if accessor.setter_body.is_some() {
-                        var_names.push(name.clone());
-                    }
+                if let Some(ref name) = accessor.set_var_name
+                    && accessor.setter_body.is_some()
+                {
+                    var_names.push(name.clone());
                 }
             }
 
@@ -1840,8 +1841,9 @@ impl<'a> Printer<'a> {
                         // a `[` prefix to signal bracket notation at emit time.
                         let ident_name = match &name_emit {
                             PropertyNameEmit::Dot(s) => s.clone(),
-                            PropertyNameEmit::Bracket(s) => format!("[{s}]"),
-                            PropertyNameEmit::BracketNumeric(s) => format!("[{s}]"),
+                            PropertyNameEmit::Bracket(s) | PropertyNameEmit::BracketNumeric(s) => {
+                                format!("[{s}]")
+                            }
                         };
                         let init_end = self
                             .arena

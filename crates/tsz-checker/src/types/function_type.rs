@@ -1574,8 +1574,9 @@ impl<'a> CheckerState<'a> {
                     // (already unwrapped). We must unwrap the actual type too so
                     // the assignability check compares T vs T, not Promise<T> vs T.
                     let actual_return = if is_async_for_context {
-                        self.unwrap_promise_type(actual_return)
-                            .unwrap_or(actual_return)
+                        // Use union-aware unwrapping so `[0] | Promise<never>`
+                        // becomes `[0] | never` = `[0]`, not kept as-is.
+                        self.unwrap_async_return_type_for_body(actual_return)
                     } else {
                         actual_return
                     };

@@ -10,6 +10,7 @@
 
 use crate::types::*;
 
+#[allow(clippy::duplicate_mod)]
 #[path = "common/mod.rs"]
 mod common;
 use common::create_test_interner;
