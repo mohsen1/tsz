@@ -345,6 +345,13 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            // Static blocks: scan the block itself (its pos..end covers all statements)
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                if self.subtree_has_private_field_read(member_idx) {
+                    return true;
+                }
+                continue;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_read(body)
             {
@@ -363,6 +370,13 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            // Static blocks: scan the block itself
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                if self.subtree_has_private_field_write(member_idx) {
+                    return true;
+                }
+                continue;
+            }
             if let Some(body) = self.get_member_body(member_node)
                 && self.subtree_has_private_field_write(body)
             {
