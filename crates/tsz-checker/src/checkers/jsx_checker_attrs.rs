@@ -710,7 +710,7 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
-        display_target: &str,
+        _display_target: &str,
     ) {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -728,29 +728,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if the failure is a weak type violation (TS2559).
-        // When the target type has only optional properties (a "weak type") and the source
-        // shares no common property names, tsc emits TS2559 instead of TS2322.
-        {
-            let analysis = self.analyze_assignability_failure(spread_type, props_type);
-            if matches!(
-                analysis.failure_reason,
-                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-            ) {
-                let source_str = self.format_type(spread_type);
-                let message = crate::diagnostics::format_message(
-                    crate::diagnostics::diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                    &[&source_str, display_target],
-                );
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    tag_name_idx,
-                    &message,
-                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                );
-                return;
-            }
-        }
+        // tsc does NOT emit TS2559 (weak type / no common properties) for JSX spread
+        // attributes. Extra properties in spreads are silently ignored — only per-property
+        // type mismatches (TS2322) are checked below. Skipping weak type detection here
+        // matches tsc behavior.
 
         // Resolve the spread type to extract its properties
         let resolved_spread = self.evaluate_type_with_env(spread_type);
@@ -758,7 +739,6 @@ impl<'a> CheckerState<'a> {
 
         // tsc uses the component's props type name (e.g., "PoisonedProp") for TS2322
         // in spread attribute checking, NOT the full intersection with IntrinsicAttributes.
-        // The full intersection display_target is only used for TS2559 (weak type).
         let props_display = self.format_type(props_type);
 
         let Some(spread_shape) =
