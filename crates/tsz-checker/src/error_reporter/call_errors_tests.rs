@@ -62,6 +62,70 @@ fn emits_ts2349_without_strict_null_checks() {
 }
 
 #[test]
+fn emits_ts6234_not_ts2721_for_generic_getter_returning_null() {
+    // When a generic class has a getter that returns null, calling it should
+    // emit TS6234 (not callable because it's a get accessor), not TS2721
+    // (cannot invoke object which is possibly null). The getter accessor
+    // diagnostic takes priority over the nullish diagnostic.
+    let diagnostics = check_source_with_strict_null(
+        r#"
+class C<T, U> {
+    x: T;
+    get y() {
+        return null;
+    }
+    set y(v: U) { }
+    fn() { return this; }
+    constructor(public a: T, private b: U) { }
+}
+var c = new C(1, '');
+var r6 = c.y();
+"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&6234),
+        "Expected TS6234 for calling getter `c.y()`, got: {:?}",
+        codes
+    );
+    assert!(
+        !codes.contains(&2721),
+        "Should NOT emit TS2721 for calling getter on generic class, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn emits_ts6234_for_non_generic_getter_call() {
+    // Non-generic class: calling a getter should emit TS6234
+    let diagnostics = check_source_with_strict_null(
+        r#"
+class C {
+    x: string;
+    get y() {
+        return 1;
+    }
+    set y(v) { }
+    constructor(public a: number, private b: number) { }
+}
+var c = new C(1, 2);
+var r6 = c.y();
+"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&6234),
+        "Expected TS6234 for calling getter `c.y()`, got: {:?}",
+        codes
+    );
+    assert!(
+        !codes.contains(&2721) && !codes.contains(&2349),
+        "Should NOT emit TS2721 or TS2349 for getter call, got: {:?}",
+        codes
+    );
+}
+
+#[test]
 fn emits_ts2722_for_optional_method_call() {
     // When an optional method is called without optional chaining,
     // its type includes undefined, so TS2722 should be emitted.
