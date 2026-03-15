@@ -22567,7 +22567,7 @@ declare module "pkg" {
 /// Test TS2456: Circular type alias detection
 ///
 /// TODO: Circular type alias detection (TS2456) is not yet implemented.
-/// Currently no diagnostic is emitted. When implemented, update to assert TS2456 is present.
+/// TS2456 should fire for circular type alias references.
 #[test]
 fn test_circular_type_alias_ts2456() {
     use crate::checker::diagnostics::diagnostic_codes;
@@ -22606,15 +22606,15 @@ declare let x: Recurse;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // TODO: Should have TS2456 error for circular type alias once detection is implemented
+    // TS2456 is now implemented - verify it fires for circular type alias
     let has_ts2456 = checker
         .ctx
         .diagnostics
         .iter()
         .any(|d| d.code == diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF);
     assert!(
-        !has_ts2456,
-        "TS2456 detection not yet implemented, expected no TS2456 but got: {:?}",
+        has_ts2456,
+        "Expected TS2456 for circular type alias. Got: {:?}",
         checker.ctx.diagnostics
     );
 }
