@@ -163,6 +163,16 @@ impl<'a> Printer<'a> {
             self.increase_indent();
             self.emit_param_prologue(&param_transforms);
 
+            // Capture `arguments` if the body references it.
+            // tsc emits: var arguments_1 = arguments;
+            // placed before return __awaiter(...) so the generator closure
+            // can access the original arguments object.
+            let body_captures_arguments = tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body);
+            if body_captures_arguments {
+                self.write("var arguments_1 = arguments;");
+                self.write_line();
+            }
+
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_indent_level(self.writer.indent_level() + 1);

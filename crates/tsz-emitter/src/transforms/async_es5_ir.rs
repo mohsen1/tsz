@@ -64,6 +64,8 @@ pub struct AsyncTransformState {
     pub in_async_body: bool,
     /// Whether any await expressions were found (determines if we need switch/case)
     pub has_await: bool,
+    /// Whether the body references `arguments` (needs `var arguments_1 = arguments;`)
+    pub captures_arguments: bool,
 }
 
 impl AsyncTransformState {
@@ -76,6 +78,7 @@ impl AsyncTransformState {
         self.label_counter = 0;
         self.in_async_body = false;
         self.has_await = false;
+        self.captures_arguments = false;
     }
 
     /// Get the next label number
@@ -113,7 +116,7 @@ pub mod opcodes {
 pub struct AsyncES5Transformer<'a> {
     pub(crate) arena: &'a NodeArena,
     source_text: Option<&'a str>,
-    state: AsyncTransformState,
+    pub(crate) state: AsyncTransformState,
     helpers_needed: HelpersNeeded,
 }
 
@@ -197,6 +200,11 @@ impl<'a> AsyncES5Transformer<'a> {
         // Check if body contains await
         let has_await = self.body_contains_await(body_idx);
         self.state.has_await = has_await;
+
+        // Check if body references `arguments`
+        let captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        self.state.captures_arguments = captures_arguments;
 
         if recover_await_default {
             let mut generated = String::new();
@@ -541,6 +549,50 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
             }
 
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.process_if_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
+            k if k == syntax_kind_ext::THROW_STATEMENT => {
+                if let Some(throw_data) = self.arena.get_return_statement(node) {
+                    if self.contains_await_recursive(throw_data.expression) {
+                        // throw await expr; -> yield expr, then throw _a.sent()
+                        if super::emit_utils::is_await_expression(self.arena, throw_data.expression)
+                        {
+                            self.process_await_expression(
+                                throw_data.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            );
+                            current_statements.push(IRNode::ThrowStatement(Box::new(
+                                IRNode::GeneratorSent,
+                            )));
+                        } else {
+                            let expr = self.expression_to_ir(throw_data.expression);
+                            current_statements.push(IRNode::ThrowStatement(Box::new(expr)));
+                        }
+                    } else {
+                        let expr = self.expression_to_ir(throw_data.expression);
+                        current_statements.push(IRNode::ThrowStatement(Box::new(expr)));
+                    }
+                }
+            }
+
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                self.process_try_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
             _ => {
                 // Pass through other statements as-is
                 let ir = self.statement_to_ir(idx);
@@ -681,6 +733,322 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: init,
                 });
             }
+        }
+    }
+
+    // =========================================================================
+    // Control flow statement processing for async state machine
+    // =========================================================================
+
+    /// Process an if statement inside an async function body.
+    ///
+    /// When neither branch contains await, falls through to raw IR emission.
+    /// When branches contain await, generates proper state machine labels.
+    fn process_if_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(if_stmt) = self.arena.get_if_statement(node) else {
+            return;
+        };
+
+        let then_has_await = self.contains_await_recursive(if_stmt.then_statement);
+        let else_has_await = if_stmt.else_statement.is_some()
+            && self.contains_await_recursive(if_stmt.else_statement);
+
+        if !then_has_await && !else_has_await {
+            // No await in either branch -- emit as-is
+            let ir = self.statement_to_ir(idx);
+            current_statements.push(ir);
+            return;
+        }
+
+        let has_else = if_stmt.else_statement.is_some()
+            && self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
+
+        // Reserve labels for else branch and end
+        let else_label = self.state.next_label();
+        let end_label = if has_else {
+            self.state.next_label()
+        } else {
+            else_label
+        };
+
+        // Emit: if (!(condition)) return [3 /*break*/, else_label];
+        let target_label = if has_else { else_label } else { end_label };
+        let cond_ir = self.expression_to_ir(if_stmt.expression);
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".to_string().into(),
+                operand: Box::new(cond_ir),
+            }),
+            target_label,
+        });
+
+        // Process then branch
+        self.process_block_or_statement_in_async(
+            if_stmt.then_statement,
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        if has_else {
+            // Emit: return [3 /*break*/, end_label]; at end of then branch
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::BREAK,
+                    value: Some(Box::new(IRNode::NumericLiteral(
+                        end_label.to_string().into(),
+                    ))),
+                    comment: Some("break".to_string().into()),
+                },
+            ))));
+
+            // Flush current case and start else branch
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+            *current_label = else_label;
+
+            // Process else branch
+            self.process_block_or_statement_in_async(
+                if_stmt.else_statement,
+                cases,
+                current_statements,
+                current_label,
+            );
+        }
+
+        // Flush current case and start end label
+        if !current_statements.is_empty() {
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        }
+        *current_label = end_label;
+    }
+
+    /// Process a try/catch/finally statement inside an async function body.
+    ///
+    /// When none of the blocks contain await, falls through to raw IR emission.
+    /// When blocks contain await, generates proper state machine labels with
+    /// try/catch/finally opcodes.
+    fn process_try_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(try_data) = self.arena.get_try(node) else {
+            return;
+        };
+
+        let try_has_await = self.contains_await_recursive(try_data.try_block);
+        let catch_has_await = self.contains_await_recursive(try_data.catch_clause);
+        let finally_has_await = self.contains_await_recursive(try_data.finally_block);
+
+        if !try_has_await && !catch_has_await && !finally_has_await {
+            // No await in any block -- emit as-is
+            let ir = self.statement_to_ir(idx);
+            current_statements.push(ir);
+            return;
+        }
+
+        let has_catch = try_data.catch_clause.is_some()
+            && self.arena.get(try_data.catch_clause).is_some();
+        let has_finally = try_data.finally_block.is_some()
+            && self.arena.get(try_data.finally_block).is_some();
+
+        // Reserve labels
+        let catch_label = if has_catch {
+            Some(self.state.next_label())
+        } else {
+            None
+        };
+        let finally_label = if has_finally {
+            Some(self.state.next_label())
+        } else {
+            None
+        };
+        let end_label = self.state.next_label();
+
+        // Build try-op instruction: _a.trys.push([currentLabel, catchLabel, finallyLabel, endLabel])
+        let mut try_op_labels = vec![IRNode::NumericLiteral(current_label.to_string().into())];
+        if let Some(cl) = catch_label {
+            try_op_labels.push(IRNode::NumericLiteral(cl.to_string().into()));
+        }
+        if let Some(fl) = finally_label {
+            if catch_label.is_none() {
+                try_op_labels.push(IRNode::Undefined); // placeholder for missing catch
+            }
+            try_op_labels.push(IRNode::NumericLiteral(fl.to_string().into()));
+        }
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::CallExpr {
+            callee: Box::new(IRNode::PropertyAccess {
+                object: Box::new(IRNode::PropertyAccess {
+                    object: Box::new(IRNode::Identifier("_a".to_string().into())),
+                    property: "trys".to_string().into(),
+                }),
+                property: "push".to_string().into(),
+            }),
+            arguments: vec![IRNode::ArrayLiteral(try_op_labels)],
+        })));
+
+        // Process try block
+        self.process_block_or_statement_in_async(
+            try_data.try_block,
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        // Break to finally or end
+        let jump_target = finally_label.unwrap_or(end_label);
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::BREAK,
+                value: Some(Box::new(IRNode::NumericLiteral(
+                    jump_target.to_string().into(),
+                ))),
+                comment: Some("break".to_string().into()),
+            },
+        ))));
+
+        // Catch block
+        if let Some(cl) = catch_label {
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+            *current_label = cl;
+
+            // Extract catch variable name
+            if let Some(catch_node) = self.arena.get(try_data.catch_clause)
+                && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
+            {
+                // Declare catch variable: e_1 = _a.sent()
+                if catch_data.variable_declaration.is_some() {
+                    let catch_var_name = self.get_catch_variable_name(catch_data.variable_declaration);
+                    if !catch_var_name.is_empty() {
+                        current_statements.push(IRNode::ExpressionStatement(Box::new(
+                            IRNode::BinaryExpr {
+                                left: Box::new(IRNode::Identifier(catch_var_name.into())),
+                                operator: "=".to_string().into(),
+                                right: Box::new(IRNode::ElementAccess {
+                                    object: Box::new(IRNode::Identifier("_a".to_string().into())),
+                                    index: Box::new(IRNode::NumericLiteral("1".to_string().into())),
+                                }),
+                            },
+                        )));
+                    }
+                }
+
+                // Process catch block body
+                self.process_block_or_statement_in_async(
+                    catch_data.block,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
+            // Break to finally or end
+            let jump_target = finally_label.unwrap_or(end_label);
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::BREAK,
+                    value: Some(Box::new(IRNode::NumericLiteral(
+                        jump_target.to_string().into(),
+                    ))),
+                    comment: Some("break".to_string().into()),
+                },
+            ))));
+        }
+
+        // Finally block
+        if let Some(fl) = finally_label {
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+            *current_label = fl;
+
+            // Process finally block body
+            self.process_block_or_statement_in_async(
+                try_data.finally_block,
+                cases,
+                current_statements,
+                current_label,
+            );
+
+            // End finally: return [7]
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::END_FINALLY,
+                    value: None,
+                    comment: Some("endfinally".to_string().into()),
+                },
+            ))));
+        }
+
+        // Flush and start end label
+        if !current_statements.is_empty() {
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        }
+        *current_label = end_label;
+    }
+
+    /// Get the catch variable name from a variable declaration index
+    fn get_catch_variable_name(&self, var_decl_idx: NodeIndex) -> String {
+        if let Some(var_node) = self.arena.get(var_decl_idx)
+            && let Some(var_decl) = self.arena.get_variable_declaration(var_node)
+        {
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, var_decl.name)
+        } else {
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, var_decl_idx)
+        }
+    }
+
+    /// Process either a block or single statement in async context.
+    /// Used by if/else and try/catch to handle both `{ ... }` and single-statement branches.
+    fn process_block_or_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::BLOCK {
+            if let Some(block) = self.arena.get_block(node) {
+                for &stmt_idx in &block.statements.nodes {
+                    self.process_async_statement(stmt_idx, cases, current_statements, current_label);
+                }
+            }
+        } else {
+            self.process_async_statement(idx, cases, current_statements, current_label);
         }
     }
 

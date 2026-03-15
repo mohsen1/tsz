@@ -1196,6 +1196,17 @@ impl<'a> IRPrinter<'a> {
                 self.write("_a.label");
             }
 
+            IRNode::IfBreak {
+                condition,
+                target_label,
+            } => {
+                self.write("if (");
+                self.emit_node(condition);
+                self.write(") return [3 /*break*/, ");
+                self.write(&target_label.to_string());
+                self.write("];");
+            }
+
             // Private Field Helpers
             IRNode::PrivateFieldGet {
                 receiver,
