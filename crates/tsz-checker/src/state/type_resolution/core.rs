@@ -1683,6 +1683,19 @@ impl<'a> CheckerState<'a> {
                     self.ctx.leave_recursion();
                     return self.type_reference_symbol_type(target_sym_id);
                 }
+
+                // For synthetic default exports whose value_declaration is a property
+                // access expression (e.g., `export default C.B` where B is both a
+                // static property and an interface), resolve the type meaning of the
+                // property access.
+                if target_flags & symbol_flags::EXPORT_VALUE != 0 {
+                    if let Some(type_id) =
+                        self.resolve_default_export_property_type_meaning(target_sym_id)
+                    {
+                        self.ctx.leave_recursion();
+                        return type_id;
+                    }
+                }
             }
         }
 
@@ -1696,6 +1709,92 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(result);
         self.ctx.leave_recursion();
         result
+    }
+
+    /// Resolve the type meaning of a synthetic default export whose `value_declaration`
+    /// is a property access expression.
+    ///
+    /// For `export default C.B` where `C` is a class/namespace and `B` is both a
+    /// static property and a type (interface/type alias), the default export carries
+    /// the value meaning (`number`).  When the import is used as a type reference,
+    /// we need the type meaning (the interface `C.B`).
+    fn resolve_default_export_property_type_meaning(
+        &mut self,
+        target_sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect();
+
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(target_sym_id, &lib_binders)?;
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return None;
+        }
+
+        // Find the arena containing the value declaration (may be cross-file).
+        let file_idx = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&target_sym_id)
+            .copied();
+        let arena: &NodeArena = if let Some(file_idx) = file_idx {
+            self.ctx.get_arena_for_file(file_idx as u32)
+        } else {
+            self.ctx.arena
+        };
+
+        let node = arena.get(value_decl)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = arena.get_access_expr(node)?;
+        let name_node = arena.get(access.name_or_argument)?;
+        let name_ident = arena.get_identifier(name_node)?;
+        let member_name = &name_ident.escaped_text;
+
+        // Resolve the base expression (e.g., `C`) to its symbol.
+        let base_node = arena.get(access.expression)?;
+        let base_ident = arena.get_identifier(base_node)?;
+        let base_name = &base_ident.escaped_text;
+
+        // Look up the base symbol in the source file's binder.
+        let source_binder = if let Some(file_idx) = file_idx {
+            self.ctx.get_binder_for_file(file_idx)?
+        } else {
+            self.ctx.binder
+        };
+
+        let base_sym_id = source_binder.file_locals.get(base_name)?;
+        let base_symbol = source_binder.get_symbol_with_libs(base_sym_id, &lib_binders)?;
+
+        // Look for a TYPE-flagged member in the base's exports.
+        let exports = base_symbol.exports.as_ref()?;
+        let member_sym_id = exports.get(member_name)?;
+        let member_symbol = source_binder.get_symbol_with_libs(member_sym_id, &lib_binders)?;
+        if member_symbol.flags
+            & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
+            == 0
+        {
+            return None;
+        }
+
+        // Record cross-file symbol tracking if necessary.
+        if let Some(file_idx) = file_idx {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(member_sym_id, file_idx);
+        }
+
+        Some(self.type_reference_symbol_type(member_sym_id))
     }
 
     /// Compute the interface structural type from declarations, bypassing `get_type_of_symbol`.
