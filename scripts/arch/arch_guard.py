@@ -28,15 +28,9 @@ CHECKS = [
         {
             "exclude_dirs": {"query_boundaries", "tests"},
             "exclude_files": {
-                # TODO: refactor these to use solver query helpers
-                "crates/tsz-checker/src/types/computation/helpers.rs",
+                # These files use .lookup() in tracing::trace! macros for debug output only
                 "crates/tsz-checker/src/types/computation/call.rs",
                 "crates/tsz-checker/src/types/computation/complex.rs",
-                "crates/tsz-checker/src/types/computation/object_literal.rs",
-                "crates/tsz-checker/src/error_reporter/operator_errors.rs",
-                "crates/tsz-checker/src/error_reporter/core.rs",
-                "crates/tsz-checker/src/error_reporter/properties.rs",
-                "crates/tsz-checker/src/checkers/generic_checker.rs",
             },
         },
     ),
@@ -86,10 +80,7 @@ CHECKS = [
         re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
         {
             "exclude_dirs": {"query_boundaries", "tests"},
-            "exclude_files": {
-                # TODO: refactor to use query boundary helpers
-                "crates/tsz-checker/src/types/computation/object_literal.rs",
-            },
+            "exclude_files": set(),
             "ignore_comment_lines": True,
         },
     ),
@@ -210,15 +201,7 @@ CHECKS = [
         re.compile(r"\buse\s+tsz_solver::.*TypeData\b|\bTypeData::"),
         {
             "exclude_dirs": {"tsz-solver", "tsz-lowering", "tsz-core", "tests"},
-            "exclude_files": {
-                # TODO: refactor these to use solver query helpers
-                "crates/tsz-checker/src/types/computation/complex.rs",
-                "crates/tsz-checker/src/types/computation/object_literal.rs",
-                "crates/tsz-checker/src/error_reporter/operator_errors.rs",
-                "crates/tsz-checker/src/error_reporter/core.rs",
-                "crates/tsz-checker/src/error_reporter/properties.rs",
-                "crates/tsz-checker/src/checkers/generic_checker.rs",
-            },
+            "exclude_files": set(),
             "ignore_comment_lines": True,
         },
     ),
