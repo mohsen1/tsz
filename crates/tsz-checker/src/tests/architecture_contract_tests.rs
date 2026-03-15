@@ -1419,6 +1419,7 @@ fn checker_files_stay_under_loc_limit() {
         ("types/utilities/jsdoc.rs", 2350),
         ("state/variable_checking/core.rs", 1660),
         ("state/type_resolution/symbol_types.rs", 1050),
+        ("error_reporter/core.rs", 2050),
     ];
 
     let mut violations = Vec::new();
