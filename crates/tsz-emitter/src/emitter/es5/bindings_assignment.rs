@@ -818,6 +818,32 @@ impl<'a> Printer<'a> {
             String::new()
         };
 
+        // For empty patterns ({} = a, [] = a), just emit the right-hand side
+        // so it's evaluated for side effects.
+        let is_empty_pattern = match left_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self
+                .arena
+                .get_literal_expr(left_node)
+                .is_some_and(|lit| lit.elements.nodes.is_empty()),
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
+                .arena
+                .get_literal_expr(left_node)
+                .is_some_and(|lit| lit.elements.nodes.is_empty()),
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => self
+                .arena
+                .get_binding_pattern(left_node)
+                .is_some_and(|p| p.elements.nodes.is_empty()),
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => self
+                .arena
+                .get_binding_pattern(left_node)
+                .is_some_and(|p| p.elements.nodes.is_empty()),
+            _ => false,
+        };
+        if is_empty_pattern {
+            self.emit(right_idx);
+            return;
+        }
+
         let use_inline_source = !is_simple && !needs_temp;
         let mut first = !needs_temp;
 
