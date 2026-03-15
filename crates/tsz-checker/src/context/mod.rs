@@ -456,6 +456,11 @@ pub struct CheckerContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Set of already-emitted diagnostics (start, code) for deduplication.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Callback return-type TS2322 diagnostics that were emitted during
+    /// function body checking but may be pruned by arg collection filters.
+    /// Stored separately so they can be restored after pruning and used to
+    /// suppress the outer TS2345 argument mismatch.
+    pub callback_return_type_errors: Vec<Diagnostic>,
     /// Set of modules that have already had TS2307 emitted (prevents duplicate emissions).
     pub modules_with_ts2307_emitted: FxHashSet<String>,
 
