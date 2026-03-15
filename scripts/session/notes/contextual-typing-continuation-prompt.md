@@ -74,6 +74,7 @@
 
 ## Dead Ends (don't re-investigate)
 
+- **Conditional expression literal widening** (`defaultParameterAddsUndefinedWithStrictNullChecks.ts`): `is_fresh_literal_expression` uses `&&` for conditionals (both branches must be fresh). Changing to `||` fixes parameter widening (`cond ? true : undefined` → `boolean | undefined`) but doesn't fix TS2367 — the comparison overlap check uses a DIFFERENT type resolution path that still sees the pre-widened `true`. Net -1 conformance. The real fix requires making TS2367's operand type resolution use widened types.
 - **Bulk `Array<X>` → `X[]` formatting**: tsc uses BOTH formats (108 fingerprints contain `Array<`). Changing all breaks as many tests as it fixes. Evaluating all Application types before formatting also net-negative.
 - **Method sensitivity inside object literals**: Changing methods from "always sensitive" to "check params" inside the OBJECT_LITERAL branch of `is_contextually_sensitive` breaks contextual typing for methods. Only the TOP-LEVEL can check params.
 - **`has_conflicting_literal_bases` for objects**: Objects don't have primitive bases, so the heuristic doesn't apply. The mapped type inference issue for objects is about constraint COLLECTION, not resolution.
