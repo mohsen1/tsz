@@ -1176,7 +1176,7 @@ impl<'a> CheckerState<'a> {
     /// - `export = X` is not used when there are also other exported elements (TS2309)
     /// - There are not multiple `export = X` statements (TS2300)
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
-        use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
         let mut export_default_indices: Vec<NodeIndex> = Vec::new();
@@ -1462,15 +1462,14 @@ impl<'a> CheckerState<'a> {
                 if has_function && has_class {
                     self.emit_function_class_default_merge_errors(&export_default_indices);
                 } else {
-                    // tsc emits TS2323 "Cannot redeclare exported variable 'default'"
-                    // for most duplicate default export cases. TS2528 is only used
-                    // for specific overload/merge conflicts.
+                    // tsc emits TS2528 "A module cannot have multiple default exports"
+                    // for most duplicate default export cases.
                     for &export_idx in &export_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
                             anchor,
-                            "Cannot redeclare exported variable 'default'.",
-                            diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                            diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                            diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                         );
                     }
                 }
