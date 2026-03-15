@@ -861,6 +861,9 @@ impl<'a> Printer<'a> {
         // At ES2022+, use `static { }` blocks for decorator application.
         // At ES2015, use IIFE pattern with comma expressions.
         emitter.set_use_static_blocks(!self.ctx.needs_es2022_lowering);
+        if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
+            emitter.set_tslib_prefix(true);
+        }
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
