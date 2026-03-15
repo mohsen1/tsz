@@ -809,6 +809,17 @@ impl<'a> CheckerState<'a> {
                             // one) so mutually-recursive methods can resolve `this.other()`.
                             let mut this_props: Vec<PropertyInfo> =
                                 properties.values().cloned().collect();
+                            // When inside a const assertion (`as const`), the
+                            // final object will have all properties marked
+                            // readonly.  The synthetic `this` type for methods
+                            // is created before `apply_const_assertion` runs,
+                            // so we must propagate the readonly modifier here
+                            // to emit TS2540 instead of TS2322.
+                            if self.ctx.in_const_assertion {
+                                for prop in &mut this_props {
+                                    prop.readonly = true;
+                                }
+                            }
                             let current_method_name_atom = self.ctx.types.intern_string(&name);
                             for &method_name_atom in &obj_all_method_names {
                                 if !this_props.iter().any(|p| p.name == method_name_atom) {
@@ -904,7 +915,7 @@ impl<'a> CheckerState<'a> {
                                         type_id: placeholder_method_type,
                                         write_type: placeholder_method_type,
                                         optional: false,
-                                        readonly: false,
+                                        readonly: self.ctx.in_const_assertion,
                                         is_method: true,
                                         is_class_prototype: false,
                                         visibility: Visibility::Public,
