@@ -9,6 +9,36 @@ use tsz_solver::{CallSignature, CallableShape, ObjectShape, TupleElement, TypeDa
 
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
 
+/// Re-export of the solver's property access result type.
+///
+/// Wraps `tsz_solver::operations::property::PropertyAccessResult`.
+/// This is the result enum returned by property access evaluation in the solver.
+pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
+
+/// Re-export of the solver's type substitution mapping.
+///
+/// Wraps `tsz_solver::TypeSubstitution`.
+/// Used to build type parameter -> type argument mappings for instantiation.
+pub(crate) use tsz_solver::TypeSubstitution;
+
+/// Re-export of the solver's call resolution result type.
+///
+/// Wraps `tsz_solver::CallResult`.
+/// This is the result enum returned by call/new expression resolution.
+pub(crate) use tsz_solver::CallResult;
+
+/// Thin wrapper around `tsz_solver::instantiate_type`.
+///
+/// Applies a `TypeSubstitution` to a type, producing a new type with type
+/// parameters replaced by their corresponding type arguments.
+pub(crate) fn instantiate_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &tsz_solver::TypeSubstitution,
+) -> TypeId {
+    tsz_solver::instantiate_type(db, type_id, substitution)
+}
+
 pub(crate) fn callable_shape_for_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,

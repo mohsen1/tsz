@@ -1,6 +1,28 @@
 use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
+
+/// Boundary-safe flag constants for relation cache keys.
+///
+/// Wraps the flag constants from `tsz_solver::RelationCacheKey` without exposing
+/// the internal `RelationCacheKey` struct itself. Checker code should use these
+/// constants when constructing relation policy flags (e.g., in `pack_relation_flags`).
+pub(crate) struct RelationFlags;
+
+impl RelationFlags {
+    pub const STRICT_NULL_CHECKS: u16 = tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+    pub const STRICT_FUNCTION_TYPES: u16 = tsz_solver::RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    pub const EXACT_OPTIONAL_PROPERTY_TYPES: u16 =
+        tsz_solver::RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+    pub const NO_UNCHECKED_INDEXED_ACCESS: u16 =
+        tsz_solver::RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+    pub const DISABLE_METHOD_BIVARIANCE: u16 =
+        tsz_solver::RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
+    pub const ALLOW_VOID_RETURN: u16 = tsz_solver::RelationCacheKey::FLAG_ALLOW_VOID_RETURN;
+    pub const ALLOW_BIVARIANT_REST: u16 = tsz_solver::RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
+    pub const ALLOW_BIVARIANT_PARAM_COUNT: u16 =
+        tsz_solver::RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT;
+}
 pub(crate) use tsz_solver::type_queries::{
     AssignabilityEvalKind, ExcessPropertiesKind, get_allowed_keys, get_keyof_type,
     get_string_literal_value, get_union_members, is_keyof_type, is_type_parameter_like,
