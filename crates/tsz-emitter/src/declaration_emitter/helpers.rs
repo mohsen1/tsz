@@ -6112,8 +6112,17 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(interner) = self.type_interner
                 {
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
-                        self.write(if self.source_is_js_file { ": " } else { " = " });
-                        self.write(&Self::format_literal_initializer(&lit, interner));
+                        let formatted = Self::format_literal_initializer(&lit, interner);
+                        // Infinity/-Infinity must use type annotation syntax (`: Infinity`)
+                        // not initializer syntax (`= Infinity`) in DTS, since they are
+                        // runtime values, not literal types that can be const initializers.
+                        let is_infinity = formatted == "Infinity" || formatted == "-Infinity";
+                        if is_infinity || self.source_is_js_file {
+                            self.write(": ");
+                        } else {
+                            self.write(" = ");
+                        }
+                        self.write(&formatted);
                         return;
                     }
 
