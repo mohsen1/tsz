@@ -123,6 +123,8 @@ fn is_invalid_index_type_inner(
     }
 
     let is_invalid = match db.lookup(type_id) {
+        // Note: Symbol is NOT invalid — TypeScript 4.4+ allows symbol as an index type.
+        // UniqueSymbol is also valid (used for computed properties like obj[Symbol.iterator]).
         Some(TypeData::Intrinsic(kind)) => matches!(
             kind,
             crate::IntrinsicKind::Void
@@ -132,7 +134,6 @@ fn is_invalid_index_type_inner(
                 | crate::IntrinsicKind::Bigint
                 | crate::IntrinsicKind::Object
                 | crate::IntrinsicKind::Function
-                | crate::IntrinsicKind::Symbol
         ),
         Some(TypeData::Literal(value)) => matches!(
             value,
