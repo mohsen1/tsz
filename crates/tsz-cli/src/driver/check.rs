@@ -86,6 +86,26 @@ fn post_process_checker_diagnostics(
         });
     }
 
+    // For JS files, suppress checker-emitted TS1xxx grammar codes that tsc
+    // does NOT emit for JavaScript files. tsc's grammar checks (emitted via
+    // grammarErrorOnNode) are suppressed for TypeScript-only constructs in JS
+    // files because its parser handles them leniently. Our parser doesn't
+    // distinguish JS vs TS, so checker-side grammar errors leak through.
+    // Only keep TS1xxx codes that tsc is known to emit for JS files.
+    if is_js {
+        checker_diagnostics.retain(|diag| {
+            if (1000..2000).contains(&diag.code) {
+                return is_ts1xxx_allowed_in_js(diag.code);
+            }
+            // Also suppress checker-emitted grammar codes outside the 1xxx range
+            // that tsc doesn't emit for JS files.
+            if is_checker_grammar_code_suppressed_in_js(diag.code) {
+                return false;
+            }
+            true
+        });
+    }
+
     if program_has_real_syntax_errors {
         checker_diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
@@ -838,12 +858,40 @@ pub(super) fn collect_diagnostics(
                 .map(|d| d.start)
                 .collect();
             let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
+            let is_js = is_js_file(Path::new(&file.file_name));
             let mut file_diagnostics = Vec::new();
-            for parse_diagnostic in filtered_parse_diagnostics {
-                file_diagnostics.push(parse_diagnostic_to_checker(
+            // For JS files, suppress TypeScript-grammar parser diagnostics.
+            // tsc's parser is lenient with TypeScript-only syntax in JS files.
+            // Keep only parser diagnostics that tsc also emits for JS, and
+            // convert TS1162 (optional object member) to TS8009 for methods.
+            if is_js {
+                let source_text = file
+                    .arena
+                    .get_source_file_at(file.source_file)
+                    .map(|sf| sf.text.as_ref());
+                // First, convert specific codes (e.g. TS1162 -> TS8009)
+                convert_js_parse_diagnostics_to_ts8xxx(
+                    &file.parse_diagnostics,
                     &file.file_name,
-                    parse_diagnostic,
-                ));
+                    &mut file_diagnostics,
+                    source_text,
+                );
+                // Then, keep allowed parser diagnostics from the filtered list.
+                for parse_diagnostic in &filtered_parse_diagnostics {
+                    if is_ts1xxx_allowed_in_js(parse_diagnostic.code) {
+                        file_diagnostics.push(parse_diagnostic_to_checker(
+                            &file.file_name,
+                            parse_diagnostic,
+                        ));
+                    }
+                }
+            } else {
+                for parse_diagnostic in filtered_parse_diagnostics {
+                    file_diagnostics.push(parse_diagnostic_to_checker(
+                        &file.file_name,
+                        parse_diagnostic,
+                    ));
+                }
             }
             // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
             if options.skip_lib_check && is_declaration_file(&file.file_name) {
@@ -868,6 +916,13 @@ pub(super) fn collect_diagnostics(
                 );
 
                 file_diagnostics.extend(checker_diagnostics);
+            }
+
+            // Final JS-specific filter: remove any remaining grammar codes that
+            // tsc doesn't emit for JS files. Both the parser and checker can
+            // produce these codes; this catch-all ensures they don't leak through.
+            if is_js {
+                file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
             }
 
             // Apply @ts-expect-error / @ts-ignore directive suppression.
@@ -1154,12 +1209,41 @@ pub(super) fn check_file_for_parallel<'a>(
         .map(|d| d.start)
         .collect();
     let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
+    let is_js = is_js_file(Path::new(&file.file_name));
 
-    // Collect parse diagnostics
-    let mut file_diagnostics: Vec<Diagnostic> = filtered_parse_diagnostics
-        .into_iter()
-        .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
-        .collect();
+    // For JS files, suppress parser diagnostics. tsc's parser is lenient
+    // with TypeScript-only syntax in JS files (it parses but does not emit
+    // errors). The checker emits TS8xxx codes instead. Our parser doesn't
+    // distinguish JS vs TS, so we suppress parser diagnostics here.
+    // Some parser diagnostics are converted to their TS8xxx equivalents.
+    // Use raw (unfiltered) diagnostics for conversion.
+    let mut file_diagnostics: Vec<Diagnostic> = if is_js {
+        let source_text = file
+            .arena
+            .get_source_file_at(file.source_file)
+            .map(|sf| sf.text.as_ref());
+        let mut diags = Vec::new();
+        convert_js_parse_diagnostics_to_ts8xxx(
+            &file.parse_diagnostics,
+            &file.file_name,
+            &mut diags,
+            source_text,
+        );
+        for parse_diagnostic in &filtered_parse_diagnostics {
+            if is_ts1xxx_allowed_in_js(parse_diagnostic.code) {
+                diags.push(parse_diagnostic_to_checker(
+                    &file.file_name,
+                    parse_diagnostic,
+                ));
+            }
+        }
+        diags
+    } else {
+        filtered_parse_diagnostics
+            .into_iter()
+            .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
+            .collect()
+    };
 
     // Note: We always run checking for all files (JS and TS).
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
@@ -1181,6 +1265,12 @@ pub(super) fn check_file_for_parallel<'a>(
         );
 
         file_diagnostics.extend(checker_diagnostics);
+    }
+
+    // Final JS-specific filter: remove any remaining grammar codes that
+    // tsc doesn't emit for JS files.
+    if is_js {
+        file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
     // Apply @ts-expect-error / @ts-ignore directive suppression.

@@ -929,6 +929,48 @@ pub(super) const fn export_type_prefix(is_type_only: bool) -> &'static str {
     if is_type_only { "type:" } else { "" }
 }
 
+/// Convert specific parser diagnostics to TS8xxx equivalents for JS files.
+/// tsc's parser is lenient with TypeScript-only syntax in JS files, so some
+/// parser errors should be converted to TS8xxx checker equivalents rather
+/// than being suppressed entirely.
+pub(super) fn convert_js_parse_diagnostics_to_ts8xxx(
+    parse_diagnostics: &[ParseDiagnostic],
+    file_name: &str,
+    out: &mut Vec<Diagnostic>,
+    source_text: Option<&str>,
+) {
+    for diag in parse_diagnostics {
+        match diag.code {
+            // TS1162 ("An object member cannot be declared optional.") ->
+            // TS8009 ("The '?' modifier can only be used in TypeScript files.")
+            // tsc's parser accepts `?` on object members in JS files; the checker
+            // emits TS8009 only for method-like optionals (e.g., `m?()`), not for
+            // property optionals (e.g., `prop?: val`). We distinguish by checking
+            // if `(` follows the `?`.
+            1162 => {
+                let is_method_optional = source_text.is_some_and(|src| {
+                    let after_q = (diag.start + diag.length) as usize;
+                    // Skip whitespace after `?` and check for `(`
+                    src.get(after_q..)
+                        .map(|s| s.trim_start().starts_with('(') || s.trim_start().starts_with('<'))
+                        .unwrap_or(false)
+                });
+                if is_method_optional {
+                    out.push(Diagnostic::error(
+                        file_name.to_string(),
+                        diag.start,
+                        diag.length,
+                        "The '?' modifier can only be used in TypeScript files.".to_string(),
+                        8009,
+                    ));
+                }
+            }
+            // All other parser diagnostics are suppressed for JS files.
+            _ => {}
+        }
+    }
+}
+
 pub(super) fn parse_diagnostic_to_checker(
     file_name: &str,
     diagnostic: &ParseDiagnostic,
@@ -1017,6 +1059,65 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
+    )
+}
+
+/// TS1xxx codes that tsc is known to emit for JavaScript files.
+/// tsc's parser is lenient with TypeScript-only syntax in JS files and its
+/// checker grammar checks (`grammarErrorOnNode`) are suppressed for TS-only
+/// constructs. Only these TS1xxx codes are legitimately emitted for JS.
+pub(super) fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
+    matches!(
+        code,
+        1003 // Identifier expected
+        | 1014 // A rest parameter must be last in a parameter list
+        | 1016 // A required parameter cannot follow an optional parameter
+        | 1064 // The return type of an async function must be 'void' or 'Promise<T>'
+        | 1069 // Unexpected token; expected type parameter
+        | 1092 // Type parameters cannot appear on a constructor declaration
+        | 1093 // Type annotation cannot appear on a constructor declaration
+        | 1098 // Type parameter list cannot be empty
+        | 1100 // Invalid use of 'arguments' in strict mode
+        | 1101 // 'with' statements are not allowed in strict mode
+        | 1102 // SyntaxError (strict mode binding)
+        | 1104 // A 'continue' statement can only be used within an enclosing iteration statement
+        | 1105 // A 'break' statement can only be used within an enclosing iteration statement
+        | 1107 // Jump target cannot cross function boundary
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1111 // Private field must be declared in an enclosing class
+        | 1139 // Can not use 'JSDoc' type in TS
+        | 1196 // Catch clause variable type annotation
+        | 1206 // Decorators are not valid here
+        | 1210 // Code contained in a class is evaluated in strict mode
+        | 1215 // Identifier expected; 'await' is a reserved word
+        | 1223 // Constructor implementation is missing
+        | 1228 // A type predicate is only allowed in return type position
+        | 1262 // Identifier expected; 'await' at top level
+        | 1273 // '@typedef' tag should either have a type annotation or be followed by '@property' or '@member' tags
+        | 1274 // JSDoc '@typedef' tag should either have a type annotation or be followed by '@property' or '@member' tags
+        | 1277 // 'JSDoc' types may only appear in type positions
+        | 1308 // 'await' expressions are only allowed within async functions
+        | 1344 // Not all code paths return a value / unreachable code
+        | 1359 // Identifier expected; 'await' is reserved in async
+        | 1360 // '@satisfies' types can only be used in type positions
+        | 1382 // Unexpected token
+        | 1464 // Import assertion/attribute
+        | 1470 // 'import.meta' outside module
+        | 1473 // Module declaration names
+        | 1479 // This syntax is only allowed when 'allowImportingTsExtensions'
+        | 1489 // Duplicate identifier
+    )
+}
+
+/// Checker-emitted grammar codes outside the TS1xxx range that should be
+/// suppressed for JS files. tsc doesn't emit these for JavaScript because
+/// its parser handles the constructs leniently.
+pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool {
+    matches!(
+        code,
+        17012 // '{0}' is not a valid meta-property for keyword '{1}'
+        | 18016 // Private identifiers are not allowed outside class bodies
     )
 }
 
