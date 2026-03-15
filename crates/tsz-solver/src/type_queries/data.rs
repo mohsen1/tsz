@@ -2479,27 +2479,25 @@ mod tests {
 
         let sym = tsz_binder::SymbolId(42);
 
-        // Object with symbol
-        let obj_with_sym = interner.intern(TypeData::Object(interner.intern_object_shape(
-            ObjectShape {
-                flags: ObjectFlags::empty(),
-                properties: vec![PropertyInfo {
-                    name: interner.intern_string("x"),
-                    type_id: TypeId::STRING,
-                    write_type: TypeId::STRING,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                }],
-                string_index: None,
-                number_index: None,
-                symbol: Some(sym),
-            },
-        )));
+        // Object with symbol — use object_with_index to comply with intern quarantine
+        let obj_with_sym = interner.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: vec![PropertyInfo {
+                name: interner.intern_string("x"),
+                type_id: TypeId::STRING,
+                write_type: TypeId::STRING,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            }],
+            string_index: None,
+            number_index: None,
+            symbol: Some(sym),
+        });
         assert_eq!(super::get_object_symbol(&interner, obj_with_sym), Some(sym));
 
         // Non-object → None
