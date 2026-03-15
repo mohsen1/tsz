@@ -1564,6 +1564,22 @@ impl<'a> CheckerState<'a> {
                     // RHS evaluates to `any` or `any[]` — check if it came from
                     // an explicitly-typed source (e.g., a parameter with @param {any}).
                     // If so, the member's `any` type is explicit, not implicit.
+                    //
+                    // Also treat `this.z = this.y` (property access on `this`) as
+                    // explicit: the property type comes from the constructor, so the
+                    // `any` is due to incomplete prototype-method `this` context, not
+                    // a genuinely untyped source. tsc does not emit TS7008 here.
+                    if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+                        && rhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && let Some(rhs_access) = self.ctx.arena.get_access_expr(rhs_node)
+                        && self
+                            .ctx
+                            .arena
+                            .get(rhs_access.expression)
+                            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
+                    {
+                        any_is_explicit = true;
+                    }
                     if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
                         && rhs_node.kind == SyntaxKind::Identifier as u16
                         && let Some(sym_id) =
