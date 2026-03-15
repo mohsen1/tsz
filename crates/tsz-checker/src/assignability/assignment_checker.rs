@@ -939,17 +939,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS1186: Check for rest elements with initializers in destructuring assignments.
-        // Note: check_rest_element_initializer was removed during merge cleanup.
-        // The diagnostic is still emitted by the parser for rest elements with initializers.
+        if is_destructuring {
+            self.check_rest_element_initializer(left_idx);
+        }
 
-        // Check readonly first — when the target is readonly (TS2540/TS2542),
-        // tsc suppresses the assignability check (TS2322) for the same target.
-        // The "cannot assign to readonly" error is more specific and sufficient.
-        let is_readonly_target = if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx)
-        } else {
-            false
-        };
+        // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
+        // the assignability check from running. TypeScript emits both readonly
+        // errors AND type mismatch errors (e.g., TS2542 + TS2322).
+        if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx);
+        }
 
         if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
             return right_type;
@@ -960,8 +959,7 @@ impl<'a> CheckerState<'a> {
             // skip the whole-object assignability check. tsc processes each
             // property/element individually, which correctly handles private
             // members and other access-controlled properties.
-            // Also skip when the target was readonly (TS2540/TS2542 already emitted).
-            let mut check_assignability = !is_destructuring && !is_readonly_target;
+            let mut check_assignability = !is_destructuring;
 
             if is_destructuring {
                 self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
@@ -1141,18 +1139,61 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
 
-        // TS1186: Check ALL spread elements for initializers (not just non-last).
-        // In assignment destructuring, `[...x = a]` parses as `...(x = a)`.
-        for &element_idx in &array_lit.elements.nodes {
+    /// TS1186: A rest element cannot have an initializer.
+    ///
+    /// In assignment destructuring, `[...x = a] = b` is parsed as a spread of
+    /// the assignment expression `x = a`. TypeScript detects this and emits
+    /// TS1186 when the spread expression is a binary `=` assignment.
+    fn check_rest_element_initializer(&mut self, left_idx: NodeIndex) {
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+
+        let elements = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            self.ctx
+                .arena
+                .get_literal_expr(left_node)
+                .map(|lit| &lit.elements.nodes as &[NodeIndex])
+        } else if left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            self.ctx
+                .arena
+                .get_literal_expr(left_node)
+                .map(|lit| &lit.elements.nodes as &[NodeIndex])
+        } else {
+            None
+        };
+
+        let Some(elements) = elements else { return };
+        for &element_idx in elements {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
                 continue;
             };
-            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread) = self.ctx.arena.get_spread(element_node)
-                && let Some(expr_node) = self.ctx.arena.get(spread.expression)
-                && expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(bin) = self.ctx.arena.get_binary_expr(expr_node)
+            // Check spread elements and spread assignments
+            if element_node.kind != syntax_kind_ext::SPREAD_ELEMENT
+                && element_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                continue;
+            }
+            let spread_expr = self
+                .ctx
+                .arena
+                .get_spread(element_node)
+                .map(|s| s.expression)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_unary_expr_ex(element_node)
+                        .map(|u| u.expression)
+                });
+            let Some(spread_expr) = spread_expr else {
+                continue;
+            };
+            // If the spread expression is a binary assignment (x = a), emit TS1186
+            if let Some(spread_node) = self.ctx.arena.get(spread_expr)
+                && spread_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(spread_node)
                 && bin.operator_token == SyntaxKind::EqualsToken as u16
             {
                 self.error_at_node_msg(
@@ -1164,6 +1205,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    // =========================================================================
+    // Arithmetic Operand Validation
+    // =========================================================================
+
+    /// Check if an operand type is valid for arithmetic operations.
+    ///
+    /// Returns true if the type is number, bigint, any, or an enum type.
+    /// This is used to validate operands for TS2362/TS2363 errors.
     fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
         use tsz_solver::BinaryOpEvaluator;
 
@@ -1340,16 +1389,15 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
 
-        // Check readonly first — suppress TS2322 when TS2540/TS2542 fires.
-        let is_readonly_target = if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx)
-        } else {
-            false
-        };
+        // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
+        // assignability checks. TypeScript emits both errors.
+        if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx);
+        }
 
         // Track whether an operator error was emitted so we can suppress cascading TS2322.
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
-        let mut emitted_operator_error = is_const || is_function_assignment || is_readonly_target;
+        let mut emitted_operator_error = is_const || is_function_assignment;
 
         let op_str = match operator {
             k if k == SyntaxKind::PlusEqualsToken as u16 => "+",
