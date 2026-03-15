@@ -1711,7 +1711,7 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             } else {
-                use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
+                use tsz_solver::{IndexSignature, ObjectShape};
                 if !string_index_types.is_empty() {
                     // A computed string-key member makes the object open to arbitrary
                     // string property access. Match tsc by widening the string index
@@ -1741,19 +1741,17 @@ impl<'a> CheckerState<'a> {
                     None
                 };
 
-                let flags = if has_spread {
-                    ObjectFlags::empty()
-                } else {
-                    ObjectFlags::FRESH_LITERAL
-                };
-
-                self.ctx.types.factory().object_with_index(ObjectShape {
-                    flags,
+                let mut shape = ObjectShape {
                     properties,
                     string_index,
                     number_index,
-                    symbol: None,
-                })
+                    ..ObjectShape::default()
+                };
+                if !has_spread {
+                    shape.mark_fresh_literal();
+                }
+
+                self.ctx.types.factory().object_with_index(shape)
             }
         };
 

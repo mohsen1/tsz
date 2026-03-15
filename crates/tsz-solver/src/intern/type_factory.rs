@@ -129,6 +129,20 @@ impl<'db> TypeFactory<'db> {
             .object_with_flags_and_symbol(properties, flags, symbol)
     }
 
+    /// Create a non-fresh object type with nominal identity (symbol).
+    ///
+    /// Use this instead of `object_with_flags_and_symbol(props, ObjectFlags::empty(), sym)`
+    /// so callers don't need to import `ObjectFlags`.
+    #[inline]
+    pub fn object_with_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.db
+            .object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol)
+    }
+
     #[inline]
     pub fn function(&self, shape: FunctionShape) -> TypeId {
         self.db.function(shape)
