@@ -502,3 +502,132 @@ fn test_document_symbols_multiple_exports() {
         );
     }
 }
+
+#[test]
+fn test_document_symbols_enum_with_members() {
+    let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Color");
+    assert_eq!(symbols[0].kind, SymbolKind::Enum);
+    assert_eq!(
+        symbols[0].children.len(),
+        3,
+        "Enum should have 3 member children"
+    );
+}
+
+#[test]
+fn test_document_symbols_interface_with_methods() {
+    let source = "interface Shape {\n  area(): number;\n  perimeter(): number;\n  name: string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Shape");
+    assert_eq!(symbols[0].kind, SymbolKind::Interface);
+    assert!(
+        symbols[0].children.len() >= 2,
+        "Interface should have at least 2 child symbols"
+    );
+}
+
+#[test]
+fn test_document_symbols_namespace() {
+    let source =
+        "namespace MyApp {\n  export function init() {}\n  export const VERSION = '1.0';\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "MyApp");
+    assert!(
+        symbols[0].children.len() >= 1,
+        "Namespace should have children"
+    );
+}
+
+#[test]
+fn test_document_symbols_type_alias() {
+    let source = "type StringOrNumber = string | number;\ntype Callback = (x: number) => void;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 2);
+    let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"StringOrNumber"));
+    assert!(names.contains(&"Callback"));
+}
+
+#[test]
+fn test_document_symbols_nested_classes() {
+    let source = "class Outer {\n  static Inner = class {\n    method() {}\n  };\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Outer");
+    assert!(
+        !symbols[0].children.is_empty(),
+        "Outer should have children"
+    );
+}
+
+#[test]
+fn test_document_symbols_getter_setter() {
+    let source = "class Store {\n  get value() { return 0; }\n  set value(v: number) {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Store");
+    // Should have getter and setter as children
+    assert!(
+        symbols[0].children.len() >= 2,
+        "Should have getter and setter, got {} children",
+        symbols[0].children.len()
+    );
+}
+
+#[test]
+fn test_document_symbols_ranges_are_valid() {
+    let source = "function hello() {\n  return 'world';\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    let sym = &symbols[0];
+    // Full range should encompass selection range
+    assert!(sym.range.start.line <= sym.selection_range.start.line);
+    assert!(sym.range.end.line >= sym.selection_range.end.line);
+}
