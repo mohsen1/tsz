@@ -8,13 +8,11 @@
 //! result in the exact same `TypeId`. If a test fails, it means canonicalization is
 //! broken and O(1) equality is not achieved.
 
-use crate::intern::TypeInterner;
 use crate::types::*;
 
-/// Helper to create a test interner
-fn create_test_interner() -> TypeInterner {
-    TypeInterner::new()
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::create_test_interner;
 
 #[test]
 fn test_union_order_independence_basic() {

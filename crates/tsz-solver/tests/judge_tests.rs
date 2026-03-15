@@ -1,13 +1,12 @@
 use super::*;
-use crate::TypeInterner;
 use crate::def::DefId;
 use crate::types::{
     CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, TupleElement,
 };
 
-fn create_test_interner() -> TypeInterner {
-    TypeInterner::new()
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::create_test_interner;
 
 #[test]
 fn test_is_subtype_identity() {
