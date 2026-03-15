@@ -1255,6 +1255,15 @@ impl<'a> Completions<'a> {
             {
                 return Some(current);
             }
+            // Stop at regular function boundaries — `function() {}` resets
+            // `this` binding, so `this.` inside a function expression/declaration
+            // doesn't refer to the enclosing class.
+            // Arrow functions do NOT reset `this`, so we continue past them.
+            if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            {
+                return None;
+            }
             let ext = self.arena.get_extended(current)?;
             current = ext.parent;
         }

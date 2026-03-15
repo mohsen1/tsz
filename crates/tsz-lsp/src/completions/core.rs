@@ -237,11 +237,22 @@ impl<'a> Completions<'a> {
         let member_target = self
             .member_completion_target(node_idx, offset)
             .or_else(|| self.marker_comment_member_completion_target(offset));
-        if let Some(expr_idx) = member_target
-            && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
-            && !items.is_empty()
-        {
-            return Some(items);
+        if let Some(expr_idx) = member_target {
+            if let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
+                && !items.is_empty()
+            {
+                return Some(items);
+            }
+            // If member completions returned empty for `this.`, don't fall
+            // through to global completions — `this` in a non-class context
+            // should have no completions.
+            if self
+                .arena
+                .get(expr_idx)
+                .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
+            {
+                return None;
+            }
         }
         if let Some(items) = self.get_typeof_query_parameter_completions(node_idx, offset)
             && !items.is_empty()
