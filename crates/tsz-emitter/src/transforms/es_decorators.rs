@@ -304,12 +304,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
             } else {
                 out.push_str(&format!("{i1}return class {class_name}"));
             }
+        } else if class_name.is_empty() {
+            out.push_str(&format!("{i1}return {class_alias} = class"));
         } else {
-            if class_name.is_empty() {
-                out.push_str(&format!("{i1}return {class_alias} = class"));
-            } else {
-                out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
-            }
+            out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
         }
         if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
             out.push_str(&format!(" extends {extends_text}"));
