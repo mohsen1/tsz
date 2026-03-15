@@ -925,18 +925,18 @@ impl<'a> CheckerState<'a> {
             self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
-        let is_readonly = if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx)
-        } else {
-            false
-        };
+        // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
+        // the assignability check from running. TypeScript emits both readonly
+        // errors AND type mismatch errors (e.g., TS2542 + TS2322).
+        if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx);
+        }
 
-        if !is_const && !is_readonly && self.is_js_namespace_enum_rebind_assignment_target(left_idx)
-        {
+        if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
             return right_type;
         }
 
-        if !is_const && !is_readonly && left_type != TypeId::ANY {
+        if !is_const && left_type != TypeId::ANY {
             // For destructuring assignments (both object and array patterns),
             // skip the whole-object assignability check. tsc processes each
             // property/element individually, which correctly handles private
@@ -1307,15 +1307,15 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
 
-        let is_readonly = if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx)
-        } else {
-            false
-        };
+        // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
+        // assignability checks. TypeScript emits both errors.
+        if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx);
+        }
 
         // Track whether an operator error was emitted so we can suppress cascading TS2322.
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
-        let mut emitted_operator_error = is_const || is_readonly || is_function_assignment;
+        let mut emitted_operator_error = is_const || is_function_assignment;
 
         let op_str = match operator {
             k if k == SyntaxKind::PlusEqualsToken as u16 => "+",
