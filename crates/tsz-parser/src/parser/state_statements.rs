@@ -1464,13 +1464,13 @@ impl ParserState {
                     break;
                 }
 
-                // No ASI - emit ',' expected for the unexpected token.
-                // Advance past it and continue the loop so that
-                // `can_start_decl` can emit TS1134 "Variable declaration expected"
-                // if the following token isn't a valid declaration start (matching tsc).
+                // No ASI - emit ',' expected for the unexpected token and stop.
+                // We break instead of continuing to avoid cascading TS1134 errors
+                // when the recovery eats into what tsc treats as a separate statement.
+                // Example: `var b = new C0 32, '';` - tsc emits only TS1005 at `32`.
                 self.error_comma_expected();
                 self.next_token();
-                continue;
+                break;
             }
 
             // After comma, check if next token can start another declaration.
