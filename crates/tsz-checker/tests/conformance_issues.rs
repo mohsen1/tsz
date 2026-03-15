@@ -6139,12 +6139,94 @@ c2 = c;
         has_error(&relevant_diagnostics, 2720),
         "Expected TS2720 for implementing class A, got: {relevant_diagnostics:#?}"
     );
+    // TSC emits TS2741 for `c2 = c`: the structural check finds that `x` is missing
+    // from `C` (which only implements A's public interface). The private brand is
+    // filtered out, leaving `x` as the single missing required property.
     assert!(
         relevant_diagnostics.iter().any(|(code, message)| {
-            *code == 2322
-                && message.contains("Property 'x' is private in type 'A' but not in type 'C'.")
+            *code == 2741 && message.contains("Property 'x' is missing in type 'C'")
         }),
-        "Expected TS2322 for assigning C to C2 after failed implements-class check, got: {relevant_diagnostics:#?}"
+        "Expected TS2741 for assigning C to C2 (missing private member x), got: {relevant_diagnostics:#?}"
+    );
+}
+
+/// Regression test: when a class without private members is assigned to a class that extends
+/// a class with private members, we should emit TS2741 (missing property) for each non-brand
+/// missing property — not TS2322 (generic not-assignable).
+///
+/// Guards the compat.rs explain_failure path: private brand short-circuit must not prevent
+/// the structural subtype checker from finding concrete missing properties.
+#[test]
+fn test_class_private_brand_filtered_to_single_property_emits_ts2741() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    private secret = 42;
+    getValue(): number { return this.secret; }
+}
+class Impl {
+    getValue(): number { return 0; }
+}
+class Sub extends Base {}
+declare var impl_var: Impl;
+declare var sub_var: Sub;
+sub_var = impl_var;
+        ",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        relevant
+            .iter()
+            .any(|(code, msg)| { *code == 2741 && msg.contains("Property 'secret' is missing") }),
+        "Expected TS2741 for missing private member after brand filtering, got: {relevant:#?}"
+    );
+    // Must NOT emit TS2322 for this case
+    assert!(
+        !relevant
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("not assignable")),
+        "Should not emit TS2322 when TS2741 is appropriate, got: {relevant:#?}"
+    );
+}
+
+/// Regression test: when assigning a plain class to a class that extends a class with
+/// multiple private members and multiple public members, MissingProperties should be
+/// emitted (TS2739) after filtering out private brands.
+#[test]
+fn test_class_private_brand_filtered_to_multiple_properties_emits_ts2739() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Base {
+    private p1 = 1;
+    private p2 = 2;
+    a: number = 0;
+    b: string = '';
+}
+class Plain {}
+class Sub extends Base {}
+declare var plain: Plain;
+declare var sub: Sub;
+sub = plain;
+        ",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        relevant.iter().any(|(code, msg)| {
+            *code == 2739 && msg.contains("missing the following properties")
+        }),
+        "Expected TS2739 for multiple missing properties after brand filtering, got: {relevant:#?}"
     );
 }
 
