@@ -417,9 +417,12 @@ impl<'a> Printer<'a> {
     ) {
         let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
 
+        // Do/while loops have no init vars — body vars get fresh scope inside IIFE
+        let empty_params: Vec<String> = Vec::new();
+
         self.emit_loop_function(
             &loop_fn_name,
-            &capture_info.captured_vars,
+            &empty_params,
             loop_stmt.statement,
             body_info,
             &[],
@@ -444,7 +447,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_loop_call(&loop_fn_name, &capture_info.captured_vars, body_info);
+        self.emit_loop_call(&loop_fn_name, &empty_params, body_info);
 
         self.decrease_indent();
         self.write("} while (");

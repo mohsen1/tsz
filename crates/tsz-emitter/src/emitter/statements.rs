@@ -1292,6 +1292,28 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // ES5: Check if closures capture body-scoped let/const variables
+        if self.ctx.target_es5 {
+            let body_info =
+                super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
+            if !body_info.block_scoped_vars.is_empty() {
+                if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
+                    self.arena,
+                    loop_stmt.statement,
+                    &[],
+                    &body_info.block_scoped_vars,
+                ) {
+                    self.emit_while_statement_with_capture(
+                        node,
+                        loop_stmt,
+                        &capture_info,
+                        &body_info,
+                    );
+                    return;
+                }
+            }
+        }
+
         self.write("while (");
         self.emit(loop_stmt.condition);
         // Map closing `)` — scan backward from body start
@@ -1929,6 +1951,28 @@ impl<'a> Printer<'a> {
         let Some(loop_stmt) = self.arena.get_loop(node) else {
             return;
         };
+
+        // ES5: Check if closures capture body-scoped let/const variables
+        if self.ctx.target_es5 {
+            let body_info =
+                super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
+            if !body_info.block_scoped_vars.is_empty() {
+                if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
+                    self.arena,
+                    loop_stmt.statement,
+                    &[],
+                    &body_info.block_scoped_vars,
+                ) {
+                    self.emit_do_statement_with_capture(
+                        node,
+                        loop_stmt,
+                        &capture_info,
+                        &body_info,
+                    );
+                    return;
+                }
+            }
+        }
 
         self.write("do");
         let body_is_block = self
