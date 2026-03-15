@@ -441,7 +441,7 @@ fn test_export_default_function_changes_signature() {
     // Defensive: just ensure no panic and we get valid signatures
     assert!(
         sig_a.0 != 0 || sig_b.0 != 0,
-        "At least one signature should be non-zero"
+        "At least one signature should be non-zero for default function"
     );
 }
 

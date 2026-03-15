@@ -673,3 +673,177 @@ fn test_file_count_with_self_import() {
         "Self-importing file should be counted once"
     );
 }
+
+// =========================================================================
+// Additional tests to reach 50
+// =========================================================================
+
+#[test]
+fn test_remove_file_then_readd() {
+    let mut graph = DependencyGraph::new();
+    graph.add_dependency("a.ts", "b.ts");
+    graph.remove_file("a.ts");
+
+    // Re-add the same dependency
+    graph.add_dependency("a.ts", "b.ts");
+    assert!(graph.get_dependencies("a.ts").unwrap().contains("b.ts"));
+    assert!(graph.get_dependents("b.ts").unwrap().contains("a.ts"));
+}
+
+#[test]
+fn test_update_file_single_dep_to_many() {
+    let mut graph = DependencyGraph::new();
+    graph.update_file("app.ts", &["a.ts".to_string()]);
+    assert_eq!(graph.get_dependencies("app.ts").unwrap().len(), 1);
+
+    graph.update_file(
+        "app.ts",
+        &[
+            "a.ts".to_string(),
+            "b.ts".to_string(),
+            "c.ts".to_string(),
+            "d.ts".to_string(),
+        ],
+    );
+    assert_eq!(graph.get_dependencies("app.ts").unwrap().len(), 4);
+}
+
+#[test]
+fn test_three_node_cycle_all_affected_from_any() {
+    let mut graph = DependencyGraph::new();
+    graph.add_dependency("a.ts", "b.ts");
+    graph.add_dependency("b.ts", "c.ts");
+    graph.add_dependency("c.ts", "a.ts");
+
+    // From any node in the cycle, all 3 should be affected
+    for start in &["a.ts", "b.ts", "c.ts"] {
+        let affected = graph.get_affected_files(start);
+        assert_eq!(
+            affected.len(),
+            3,
+            "All nodes in cycle should be affected when {} changes",
+            start
+        );
+    }
+}
+
+#[test]
+fn test_parallel_chains_no_cross_contamination() {
+    let mut graph = DependencyGraph::new();
+    // Chain 1: a1 -> b1 -> c1
+    graph.add_dependency("a1.ts", "b1.ts");
+    graph.add_dependency("b1.ts", "c1.ts");
+    // Chain 2: a2 -> b2 -> c2
+    graph.add_dependency("a2.ts", "b2.ts");
+    graph.add_dependency("b2.ts", "c2.ts");
+
+    let affected = graph.get_affected_files("c1.ts");
+    assert!(affected.contains(&"a1.ts".to_string()));
+    assert!(affected.contains(&"b1.ts".to_string()));
+    assert!(!affected.contains(&"a2.ts".to_string()));
+    assert!(!affected.contains(&"b2.ts".to_string()));
+}
+
+#[test]
+fn test_remove_last_dependent_cleans_up() {
+    let mut graph = DependencyGraph::new();
+    graph.add_dependency("a.ts", "shared.ts");
+
+    // Remove the only dependent
+    graph.remove_file("a.ts");
+
+    // shared.ts should have no dependents
+    assert!(
+        graph.get_dependents("shared.ts").is_none(),
+        "shared.ts should have no dependents after removing its only dependent"
+    );
+}
+
+#[test]
+fn test_update_file_removes_stale_dependents_precisely() {
+    let mut graph = DependencyGraph::new();
+    // a.ts and b.ts both import shared.ts
+    graph.add_dependency("a.ts", "shared.ts");
+    graph.add_dependency("b.ts", "shared.ts");
+
+    // Now a.ts stops importing shared.ts
+    graph.update_file("a.ts", &[]);
+
+    // shared.ts should still have b.ts as dependent
+    let dependents = graph.get_dependents("shared.ts").unwrap();
+    assert_eq!(dependents.len(), 1);
+    assert!(dependents.contains("b.ts"));
+}
+
+#[test]
+fn test_diamond_with_extra_leaf() {
+    let mut graph = DependencyGraph::new();
+    // Diamond: a -> b, a -> c, b -> d, c -> d
+    // Plus extra leaf: e -> d
+    graph.add_dependency("a.ts", "b.ts");
+    graph.add_dependency("a.ts", "c.ts");
+    graph.add_dependency("b.ts", "d.ts");
+    graph.add_dependency("c.ts", "d.ts");
+    graph.add_dependency("e.ts", "d.ts");
+
+    let affected = graph.get_affected_files("d.ts");
+    assert_eq!(affected.len(), 4); // a, b, c, e
+    assert!(affected.contains(&"e.ts".to_string()));
+    assert!(affected.contains(&"a.ts".to_string()));
+}
+
+#[test]
+fn test_contains_file_both_sides() {
+    let mut graph = DependencyGraph::new();
+    graph.add_dependency("importer.ts", "imported.ts");
+
+    // Both the importer and imported file should be "contained"
+    assert!(graph.contains_file("importer.ts"));
+    assert!(graph.contains_file("imported.ts"));
+}
+
+#[test]
+fn test_clear_followed_by_contains() {
+    let mut graph = DependencyGraph::new();
+    graph.add_dependency("a.ts", "b.ts");
+    graph.clear();
+
+    assert!(!graph.contains_file("a.ts"));
+    assert!(!graph.contains_file("b.ts"));
+    assert_eq!(graph.file_count(), 0);
+}
+
+#[test]
+fn test_get_dependencies_returns_none_for_unknown_file() {
+    let graph = DependencyGraph::new();
+    assert!(
+        graph.get_dependencies("nonexistent.ts").is_none(),
+        "Unknown file should return None for dependencies"
+    );
+}
+
+#[test]
+fn test_get_dependents_returns_none_for_unknown_file() {
+    let graph = DependencyGraph::new();
+    assert!(
+        graph.get_dependents("nonexistent.ts").is_none(),
+        "Unknown file should return None for dependents"
+    );
+}
+
+#[test]
+fn test_update_file_with_duplicate_imports() {
+    let mut graph = DependencyGraph::new();
+    // Provide duplicate imports in the list
+    graph.update_file(
+        "a.ts",
+        &["b.ts".to_string(), "b.ts".to_string(), "c.ts".to_string()],
+    );
+
+    // Should deduplicate: a.ts depends on b.ts and c.ts
+    let deps = graph.get_dependencies("a.ts").unwrap();
+    assert!(deps.contains("b.ts"));
+    assert!(deps.contains("c.ts"));
+    // b.ts should have exactly 1 dependent (a.ts), not 2
+    assert_eq!(graph.get_dependents("b.ts").unwrap().len(), 1);
+}
