@@ -990,6 +990,27 @@ pub fn get_construct_return_type_union(
     Some(crate::utils::union_or_single(db, returns))
 }
 
+/// Get the construct return type from any type (Callable or Function constructor).
+///
+/// For Callable types, returns the union of all construct signature return types.
+/// For Function types marked as constructors, returns the return type.
+/// Returns None for non-constructable types.
+pub fn construct_return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    use crate::type_queries::extended_constructors::InstanceTypeKind;
+    match crate::type_queries::classify_for_instance_type(db, type_id) {
+        InstanceTypeKind::Callable(shape_id) => get_construct_return_type_union(db, shape_id),
+        InstanceTypeKind::Function(shape_id) => {
+            let shape = db.function_shape(shape_id);
+            if shape.is_constructor {
+                Some(shape.return_type)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Get the function shape for a function type.
 ///
 /// Returns None if the type is not a Function.
@@ -2073,5 +2094,69 @@ mod tests {
 
         // Non-object type returns empty
         assert!(super::collect_callable_property_types(&interner, TypeId::STRING).is_empty());
+    }
+
+    #[test]
+    fn test_construct_return_type_for_type() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{CallSignature, CallableShape, FunctionShape};
+
+        // Function constructor
+        let fn_ctor = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_constructor: true,
+            is_method: false,
+        });
+        assert_eq!(
+            super::construct_return_type_for_type(&interner, fn_ctor),
+            Some(TypeId::STRING)
+        );
+
+        // Non-constructor function → None
+        let fn_regular = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        assert_eq!(
+            super::construct_return_type_for_type(&interner, fn_regular),
+            None
+        );
+
+        // Callable with construct signature
+        let callable = interner.callable(CallableShape {
+            call_signatures: vec![],
+            construct_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::BOOLEAN,
+                type_predicate: None,
+                is_method: false,
+            }],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        assert_eq!(
+            super::construct_return_type_for_type(&interner, callable),
+            Some(TypeId::BOOLEAN)
+        );
+
+        // Non-constructable type → None
+        assert_eq!(
+            super::construct_return_type_for_type(&interner, TypeId::STRING),
+            None
+        );
     }
 }
