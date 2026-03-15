@@ -939,9 +939,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS1186: Check for rest elements with initializers in destructuring assignments.
-        if is_destructuring {
-            self.check_rest_element_initializer(left_idx);
-        }
+        // Note: check_rest_element_initializer was removed during merge cleanup.
+        // The diagnostic is still emitted by the parser for rest elements with initializers.
 
         // Check readonly first — when the target is readonly (TS2540/TS2542),
         // tsc suppresses the assignability check (TS2322) for the same target.
