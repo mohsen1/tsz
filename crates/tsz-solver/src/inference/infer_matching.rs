@@ -100,19 +100,17 @@ impl<'a> InferenceContext<'a> {
         // Resolve Lazy types before structural dispatch. Lazy(DefId) types are
         // opaque references that the inference engine can't match structurally.
         // Resolve them to their underlying types so inference can see the structure.
-        if let Some(TypeData::Lazy(def_id)) = source_key {
-            if let Some(resolved) = self.resolve_lazy_for_inference(def_id, source)
-                && resolved != source
-            {
-                return self.infer_from_types(resolved, target, priority);
-            }
+        if let Some(TypeData::Lazy(def_id)) = source_key
+            && let Some(resolved) = self.resolve_lazy_for_inference(def_id, source)
+            && resolved != source
+        {
+            return self.infer_from_types(resolved, target, priority);
         }
-        if let Some(TypeData::Lazy(def_id)) = target_key {
-            if let Some(resolved) = self.resolve_lazy_for_inference(def_id, target)
-                && resolved != target
-            {
-                return self.infer_from_types(source, resolved, priority);
-            }
+        if let Some(TypeData::Lazy(def_id)) = target_key
+            && let Some(resolved) = self.resolve_lazy_for_inference(def_id, target)
+            && resolved != target
+        {
+            return self.infer_from_types(source, resolved, priority);
         }
 
         // Case 3: Structural recursion - match based on type structure
@@ -359,6 +357,15 @@ impl<'a> InferenceContext<'a> {
         Ok(())
     }
 
+    /// Resolve a `Lazy(DefId)` type for inference purposes.
+    ///
+    /// Returns the resolved type if available, or `None` if the resolver isn't present
+    /// or the `DefId` can't be resolved.
+    fn resolve_lazy_for_inference(&self, def_id: DefId, _original: TypeId) -> Option<TypeId> {
+        let resolver = self.resolver?;
+        resolver.resolve_lazy(def_id, self.interner)
+    }
+
     /// Try to expand a `TypeApplication` target into its instantiated body.
     ///
     /// For type aliases like `type Spec<T> = { [P in keyof T]: ... }`, this expands
@@ -372,14 +379,6 @@ impl<'a> InferenceContext<'a> {
     /// - Type parameters or body can't be resolved
     /// - Application expansion depth limit is exceeded (prevents infinite recursion
     ///   for recursive type aliases)
-    /// Resolve a Lazy(DefId) type for inference purposes.
-    /// Returns the resolved type if available, or None if the resolver isn't present
-    /// or the DefId can't be resolved.
-    fn resolve_lazy_for_inference(&self, def_id: DefId, _original: TypeId) -> Option<TypeId> {
-        let resolver = self.resolver?;
-        resolver.resolve_lazy(def_id, self.interner)
-    }
-
     fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
         let resolver = self.resolver?;
         let app = self.interner.type_application(app_id);
