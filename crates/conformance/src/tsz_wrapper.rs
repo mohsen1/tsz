@@ -148,11 +148,11 @@ pub fn prepare_test_dir(
                 if let Some(parent) = link_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                // Create symlink (Unix only)
-                #[cfg(unix)]
-                {
-                    let _ = std::os::unix::fs::symlink(&source_path, &link_path);
-                }
+                // Copy file instead of symlinking to match tsc's VFS behavior.
+                // tsc's test harness creates separate file instances for symlinked paths,
+                // so each copy gets its own SymbolIds and private brands, which is needed
+                // for TS2322 diagnostics on classes with private members.
+                let _ = std::fs::copy(&source_path, &link_path);
             }
         }
     }
