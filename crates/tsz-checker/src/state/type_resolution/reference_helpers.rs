@@ -1,0 +1,465 @@
+//! Type reference resolution helpers: array types, simple type references,
+//! type parameter extraction, and class instance type construction.
+
+use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
+use tsz_binder::{SymbolId, symbol_flags};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    /// Resolve `Array<T>`, `ReadonlyArray<T>`, or `ConcatArray<T>` without explicit type arguments.
+    pub(crate) fn resolve_array_type_reference(
+        &mut self,
+        name: &str,
+        type_name_idx: NodeIndex,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+        if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
+            return type_id;
+        }
+        if !self.ctx.has_lib_loaded() {
+            self.error_cannot_find_global_type(name, type_name_idx);
+            if let Some(args) = &type_ref.type_arguments {
+                for &arg_idx in &args.nodes {
+                    let _ = self.get_type_from_type_node(arg_idx);
+                }
+            }
+            return TypeId::ERROR;
+        }
+        let elem_type = type_ref
+            .type_arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+            .map_or(TypeId::ERROR, |idx| self.get_type_from_type_node(idx));
+        let array_type = factory.array(elem_type);
+        if name == "ReadonlyArray" {
+            factory.readonly_type(array_type)
+        } else {
+            array_type
+        }
+    }
+
+    /// Resolve a simple (non-array-like, non-primitive) type reference without type arguments.
+    /// Handles generic validation, default type arguments, and error reporting.
+    pub(crate) fn resolve_simple_type_reference(
+        &mut self,
+        idx: NodeIndex,
+        type_name_idx: NodeIndex,
+        name: &str,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+        if name != "Array" && name != "ReadonlyArray" && name != "ConcatArray" {
+            match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(sym_id) => {
+                    self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
+                    if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
+                        self.prime_lib_type_params(name);
+                    }
+                    if self.symbol_is_namespace_only(sym_id) {
+                        self.error_namespace_used_as_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    let mut type_params = self.get_type_params_for_symbol(sym_id);
+                    if type_params.is_empty() {
+                        type_params =
+                            self.extract_declared_type_params_for_reference_symbol(sym_id, name);
+                        if !type_params.is_empty() {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx.insert_def_type_params(def_id, type_params.clone());
+                        }
+                    }
+                    let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
+                    if required_count > 0 {
+                        // tsc uses the original declaration name, not the local alias.
+                        // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
+                        // Resolve through aliases to get the target symbol's name.
+                        let resolved_name = {
+                            let mut visited_aliases = Vec::new();
+                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                                .and_then(|target| {
+                                    self.get_symbol_globally(target)
+                                        .map(|s| s.escaped_name.clone())
+                                })
+                                .unwrap_or_else(|| name.to_string())
+                        };
+                        let display_name = Self::format_generic_display_name_with_interner(
+                            &resolved_name,
+                            &type_params,
+                            self.ctx.types,
+                        );
+                        if required_count < type_params.len() {
+                            // TS2707: Generic type 'X<T, U, V>' requires between N and M type arguments.
+                            let min_str = required_count.to_string();
+                            let max_str = type_params.len().to_string();
+                            self.error_at_node_msg(
+                                idx,
+                                crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                                &[&display_name, &min_str, &max_str],
+                            );
+                        } else {
+                            self.error_generic_type_requires_type_arguments_at(
+                                &display_name,
+                                required_count,
+                                idx,
+                            );
+                        }
+                        // tsc returns errorType when a generic type is used without
+                        // required type arguments. This prevents cascading errors
+                        // like TS2454 on variables with erroneous type annotations.
+                        return TypeId::ERROR;
+                    }
+                    // Apply default type arguments if no explicit args were provided
+                    if type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_none_or(|args| args.nodes.is_empty())
+                    {
+                        let has_defaults = type_params.iter().any(|p| p.default.is_some());
+                        if has_defaults {
+                            let default_args: Vec<TypeId> = type_params
+                                .iter()
+                                .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
+                                .collect();
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            // Resolve the type alias body so its type params and body
+                            // are registered in type_env. Without this, Application
+                            // expansion via try_expand_application fails because
+                            // resolve_lazy(def_id) returns None (body not registered).
+                            // This is critical for cross-file generic constraints like
+                            // `TBase extends Constructor` where Constructor<T = {}>.
+                            let _ = self.get_type_of_symbol(sym_id);
+                            let base_type_id = factory.lazy(def_id);
+                            return factory.application(base_type_id, default_args);
+                        }
+                    }
+                }
+                TypeSymbolResolution::ValueOnly(_) => {
+                    self.error_value_only_type_at(name, type_name_idx);
+                    return TypeId::ERROR;
+                }
+                TypeSymbolResolution::NotFound => {}
+            }
+        }
+
+        // Create DefIds for type aliases (enables DefId-based resolution)
+        if let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position(type_name_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+        {
+            let _def_id = self.ctx.get_or_create_def_id(sym_id);
+        }
+
+        if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
+            return type_id;
+        }
+        if let Some(type_id) = self.resolve_global_jsdoc_typedef_type(name) {
+            return type_id;
+        }
+        if name == "await" {
+            self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+            return TypeId::ERROR;
+        }
+        if self.is_known_global_type_name(name) {
+            self.error_cannot_find_global_type(name, type_name_idx);
+            return TypeId::ERROR;
+        }
+        if self.is_unresolved_import_symbol(type_name_idx) {
+            return TypeId::ANY;
+        }
+        self.error_cannot_find_name_at(name, type_name_idx);
+        TypeId::ERROR
+    }
+
+    pub(crate) fn extract_declared_type_params_for_reference_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+            return Vec::new();
+        };
+        let declarations = symbol.declarations.clone();
+
+        for &decl_idx in &declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                if let Some(name_node) = self.ctx.arena.get(type_alias.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text != expected_name
+                {
+                    continue;
+                }
+                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    return params;
+                }
+            }
+
+            if let Some(iface) = self.ctx.arena.get_interface(node) {
+                if let Some(name_node) = self.ctx.arena.get(iface.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text != expected_name
+                {
+                    continue;
+                }
+                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    return params;
+                }
+            }
+
+            if let Some(class) = self.ctx.arena.get_class(node) {
+                if let Some(name_node) = self.ctx.arena.get(class.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text != expected_name
+                {
+                    continue;
+                }
+                let (params, updates) = self.push_type_parameters(&class.type_parameters);
+                self.pop_type_parameters(updates);
+                if !params.is_empty() {
+                    return params;
+                }
+            }
+        }
+
+        Vec::new()
+    }
+
+    pub(crate) fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
+        let lib_binders = self.get_lib_binders();
+        if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            if symbol.flags & symbol_flags::ALIAS != 0 {
+                let mut visited = Vec::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                    && target_sym_id != sym_id
+                {
+                    return self.symbol_is_namespace_only(target_sym_id);
+                }
+            }
+
+            let is_namespace = (symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                != 0;
+            let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+            return is_namespace && !has_type;
+        }
+        false
+    }
+
+    pub(crate) fn should_resolve_recursive_type_alias(
+        &self,
+        sym_id: SymbolId,
+        type_args: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        if !self.ctx.symbol_resolution_set.contains(&sym_id) {
+            return true;
+        }
+        if self.ctx.symbol_resolution_stack.last().copied() != Some(sym_id) {
+            return true;
+        }
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+
+        // Check if this is a type alias (original behavior)
+        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            return self.type_args_match_alias_params(sym_id, type_args);
+        }
+
+        // For classes and interfaces, allow recursive references in type parameter constraints
+        // Don't force eager resolution - this prevents false cycle detection for patterns like:
+        // class C<T extends C<T>>
+        // interface I<T extends I<T>>
+        if symbol.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE) != 0 {
+            // Only resolve if we're not in a direct self-reference scenario
+            // The symbol_resolution_stack check above handles direct recursion
+            return false;
+        }
+
+        // For other symbol types, use type args matching
+        self.type_args_match_alias_params(sym_id, type_args)
+    }
+
+    pub(crate) fn type_args_match_alias_params(
+        &self,
+        sym_id: SymbolId,
+        type_args: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+            return false;
+        }
+
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
+        };
+        if decl_idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(type_alias) = self.ctx.arena.get_type_alias(node) else {
+            return false;
+        };
+        let Some(type_params) = &type_alias.type_parameters else {
+            return false;
+        };
+        if type_params.nodes.len() != type_args.nodes.len() {
+            return false;
+        }
+
+        for (&param_idx, &arg_idx) in type_params.nodes.iter().zip(type_args.nodes.iter()) {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return false;
+            };
+            let Some(param_name) = self
+                .ctx
+                .arena
+                .get(param.name)
+                .and_then(|node| self.ctx.arena.get_identifier(node))
+                .map(|ident| ident.escaped_text.as_str())
+            else {
+                return false;
+            };
+
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                return false;
+            };
+            if arg_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                let Some(arg_ref) = self.ctx.arena.get_type_ref(arg_node) else {
+                    return false;
+                };
+                if arg_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|list| !list.nodes.is_empty())
+                {
+                    return false;
+                }
+                let Some(arg_name_node) = self.ctx.arena.get(arg_ref.type_name) else {
+                    return false;
+                };
+                let Some(arg_ident) = self.ctx.arena.get_identifier(arg_name_node) else {
+                    return false;
+                };
+                if arg_ident.escaped_text != param_name {
+                    return false;
+                }
+            } else if arg_node.kind == SyntaxKind::Identifier as u16 {
+                let Some(arg_ident) = self.ctx.arena.get_identifier(arg_node) else {
+                    return false;
+                };
+                if arg_ident.escaped_text != param_name {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+            return Some(instance_type);
+        }
+        self.class_instance_type_with_params_from_symbol(sym_id)
+            .map(|(instance_type, _)| instance_type)
+    }
+
+    pub(crate) fn class_instance_type_with_params_from_symbol(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
+        };
+        if decl_idx.is_none() {
+            return None;
+        }
+        if let Some(class) = self.ctx.arena.get_class_at(decl_idx) {
+            let canonical_sym = self.ctx.binder.get_node_symbol(decl_idx);
+            let active_class_sym = canonical_sym.unwrap_or(sym_id);
+            // Check if we're already resolving this class - return fallback to break cycle.
+            // Return a Lazy(DefId) placeholder so that the parameter type remains
+            // dynamically resolvable.  During class building the Lazy resolves to
+            // the partial instance type via class_instance_type_cache; after
+            // building completes it resolves to the final type via
+            // symbol_instance_types.
+            if self.ctx.class_instance_resolution_set.contains(&sym_id)
+                || canonical_sym
+                    .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym))
+            {
+                let fallback = self.ctx.create_lazy_type_ref(active_class_sym);
+                return Some((fallback, Vec::new()));
+            }
+
+            let (params, updates) = self.push_type_parameters(&class.type_parameters);
+            if let Some(&instance_type) = self
+                .ctx
+                .symbol_instance_types
+                .get(&sym_id)
+                .or_else(|| self.ctx.symbol_instance_types.get(&active_class_sym))
+            {
+                self.pop_type_parameters(updates);
+                return Some((instance_type, params));
+            }
+
+            let instance_type = self.get_class_instance_type(decl_idx, class);
+            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
+            if active_class_sym != sym_id {
+                self.ctx
+                    .symbol_instance_types
+                    .insert(active_class_sym, instance_type);
+            }
+
+            // Register the class instance type in the TypeEnvironment immediately
+            // so that Lazy(DefId) fallbacks (created by the recursion guard above)
+            // can resolve via resolve_lazy during property access checks.
+            let def_id = self.ctx.get_or_create_def_id(active_class_sym);
+            if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                env.insert_class_instance_type(def_id, instance_type);
+            }
+
+            self.pop_type_parameters(updates);
+            return Some((instance_type, params));
+        }
+
+        // Cross-file fallback: class declaration is not in the current arena.
+        // Delegate to a child checker with the symbol's arena.
+        self.delegate_cross_arena_class_instance_type(sym_id)
+    }
+}

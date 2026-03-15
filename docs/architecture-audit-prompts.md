@@ -117,7 +117,7 @@ CLAUDE.md mandates "Checker files should stay under ~2000 LOC" but 14 files
 exceed this limit, with the largest at 2476 lines. These monoliths accumulate
 logic that should be factored into focused submodules.
 
-### Prompt 2.1 — Profile the Worst Offenders
+### Prompt 2.1 — Profile the Worst Offenders ✅ DONE
 
 ```
 For each of the following files that exceed 2000 LOC, analyze their internal
@@ -139,7 +139,7 @@ For each file, output:
 Do NOT make any code changes. This is analysis only.
 ```
 
-### Prompt 2.2 — Split type_resolution/core.rs
+### Prompt 2.2 — Split type_resolution/core.rs ✅ DONE
 
 ```
 Split crates/tsz-checker/src/state/type_resolution/core.rs (2476 lines) into
@@ -165,7 +165,7 @@ Commit with message "refactor(checker): split type_resolution/core.rs into
 focused submodules".
 ```
 
-### Prompt 2.3 — Split types/computation/complex.rs
+### Prompt 2.3 — Split types/computation/complex.rs ✅ DONE
 
 ```
 Split crates/tsz-checker/src/types/computation/complex.rs (2419 lines) into
@@ -186,7 +186,7 @@ Commit with message "refactor(checker): split types/computation/complex.rs into
 focused submodules".
 ```
 
-### Prompt 2.4 — Split function_type.rs and variable_checking/core.rs
+### Prompt 2.4 — Split function_type.rs and variable_checking/core.rs ✅ DONE
 
 ```
 Split these two files into focused submodules:
@@ -206,7 +206,7 @@ Rules: each file under 1000 LOC, complete function groups, cargo check after
 each move, cargo test at end. Commit each file split separately.
 ```
 
-### Prompt 2.5 — Add LOC Budget Enforcement
+### Prompt 2.5 — Add LOC Budget Enforcement ✅ DONE
 
 ```
 Add a test in crates/tsz-checker/src/tests/architecture_contract_tests.rs that
@@ -234,7 +234,7 @@ The architecture requires diagnostics to flow through `error_reporter/` for
 consistent formatting and solver-reason-based generation. But 13 calls in 7
 files bypass this, creating ad-hoc diagnostic paths.
 
-### Prompt 3.1 — Catalog All Bypass Diagnostics
+### Prompt 3.1 — Catalog All Bypass Diagnostics ✅ DONE
 
 ```
 Find every call to push_diagnostic (or ctx.push_diagnostic, self.ctx.push_diagnostic,
@@ -251,7 +251,7 @@ For each call, document:
 Output a table. Do NOT make code changes.
 ```
 
-### Prompt 3.2 — Identify Missing error_reporter Methods
+### Prompt 3.2 — Identify Missing error_reporter Methods ✅ DONE
 
 ```
 Based on the bypass diagnostic catalog, identify which diagnostics have NO
@@ -269,7 +269,7 @@ corresponding error_reporter method. For each missing method:
 Output the proposed method signatures as a list. Do NOT implement yet.
 ```
 
-### Prompt 3.3 — Implement Missing error_reporter Methods
+### Prompt 3.3 — Implement Missing error_reporter Methods ✅ DONE
 
 ```
 Implement the missing error_reporter methods identified in the previous analysis.
@@ -290,7 +290,7 @@ Run `cargo check -p tsz-checker` after each method. Commit with message
 "feat(checker): add error_reporter methods for uncentralized diagnostics".
 ```
 
-### Prompt 3.4 — Migrate Bypass Callers to error_reporter
+### Prompt 3.4 — Migrate Bypass Callers to error_reporter ✅ DONE
 
 ```
 For each of the 13 direct push_diagnostic calls outside error_reporter/,
@@ -315,7 +315,7 @@ For each migration:
 Commit each file separately for easy review.
 ```
 
-### Prompt 3.5 — Add Diagnostic Centralization Guard
+### Prompt 3.5 — Add Diagnostic Centralization Guard ✅ DONE
 
 ```
 Add an architecture contract test that prevents new push_diagnostic calls from

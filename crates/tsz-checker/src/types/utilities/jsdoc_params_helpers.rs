@@ -159,7 +159,6 @@ impl<'a> CheckerState<'a> {
 
             // TS1109: Check for malformed @import tags (bare @import or missing module specifier)
             {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let comment_text = &source_text
                     [comment.pos as usize..(comment.end as usize).min(source_text.len())];
                 let mut search_from = 0;
@@ -201,27 +200,19 @@ impl<'a> CheckerState<'a> {
                     let joined = joined.trim();
 
                     if joined.is_empty() {
-                        self.ctx
-                            .push_diagnostic(crate::diagnostics::Diagnostic::error(
-                                self.ctx.file_name.clone(),
-                                comment.pos + after_import as u32,
-                                1,
-                                diagnostic_messages::EXPRESSION_EXPECTED,
-                                diagnostic_codes::EXPRESSION_EXPECTED,
-                            ));
+                        self.error_expression_expected_at_position(
+                            comment.pos + after_import as u32,
+                            1,
+                        );
                     } else if joined.contains("from")
                         && !joined.contains('"')
                         && !joined.contains('\'')
                         && let Some(from_off) = rest_full[..next_tag].rfind("from")
                     {
-                        self.ctx
-                            .push_diagnostic(crate::diagnostics::Diagnostic::error(
-                                self.ctx.file_name.clone(),
-                                comment.pos + after_import as u32 + from_off as u32 + 4,
-                                1,
-                                diagnostic_messages::EXPRESSION_EXPECTED,
-                                diagnostic_codes::EXPRESSION_EXPECTED,
-                            ));
+                        self.error_expression_expected_at_position(
+                            comment.pos + after_import as u32 + from_off as u32 + 4,
+                            1,
+                        );
                     }
                     search_from = after_import;
                 }
@@ -264,8 +255,6 @@ impl<'a> CheckerState<'a> {
         comment_end: u32,
         source_text: &str,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
         let end = (comment_end as usize).min(source_text.len());
         let comment_range = &source_text[comment_pos as usize..end];
         let (start, length) = if let Some(offset) = comment_range.find(name) {
@@ -273,15 +262,7 @@ impl<'a> CheckerState<'a> {
         } else {
             (comment_pos, 0)
         };
-        let message = diagnostic_messages::CANNOT_FIND_NAME.replace("{0}", name);
-        self.ctx
-            .push_diagnostic(crate::diagnostics::Diagnostic::error(
-                self.ctx.file_name.clone(),
-                start,
-                length,
-                message,
-                diagnostic_codes::CANNOT_FIND_NAME,
-            ));
+        self.error_cannot_find_name_at_position(name, start, length);
     }
 
     /// Check whether a JSDoc type expression is a simple identifier name

@@ -748,6 +748,40 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2318: Cannot find global type 'X' at a raw source position.
+    ///
+    /// Used when no AST node is available (e.g., missing core global types
+    /// detected during initialization, where TSC emits at position 0).
+    /// Routes through `push_diagnostic` for consistent deduplication of
+    /// multiple TS2318 errors at position 0.
+    pub fn error_global_type_missing_at_position(
+        &mut self,
+        type_name: &str,
+        file_name: String,
+        start: u32,
+        length: u32,
+    ) {
+        use tsz_binder::lib_loader;
+        let diag = lib_loader::emit_error_global_type_missing(type_name, file_name, start, length);
+        self.ctx.push_diagnostic(diag);
+    }
+
+    /// Report TS2304: Cannot find name 'X' at a raw source position.
+    ///
+    /// Used when no AST node is available (e.g., JSDoc comment scanning where
+    /// positions are computed from comment text offsets rather than AST nodes).
+    pub fn error_cannot_find_name_at_position(&mut self, name: &str, start: u32, length: u32) {
+        use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
+        let message = diagnostic_messages::CANNOT_FIND_NAME.replace("{0}", name);
+        self.ctx.push_diagnostic(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            length,
+            message,
+            diagnostic_codes::CANNOT_FIND_NAME,
+        ));
+    }
+
     /// Report error 2318/2583: Cannot find global type 'X'.
     /// - TS2318: Cannot find global type (for @noLib tests)
     /// - TS2583: Cannot find name - suggests changing target library (for ES2015+ types)
