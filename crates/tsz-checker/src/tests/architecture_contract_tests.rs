@@ -1514,7 +1514,6 @@ fn test_solver_imports_go_through_query_boundaries() {
         "FunctionShape",
         "IndexKind",
         "IndexSignature",
-        "ObjectFlags",
         "ObjectShape",
         "ParamInfo",
         "PropertyInfo",
