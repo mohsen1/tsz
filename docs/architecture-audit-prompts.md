@@ -117,7 +117,7 @@ CLAUDE.md mandates "Checker files should stay under ~2000 LOC" but 14 files
 exceed this limit, with the largest at 2476 lines. These monoliths accumulate
 logic that should be factored into focused submodules.
 
-### Prompt 2.1 — Profile the Worst Offenders
+### Prompt 2.1 — Profile the Worst Offenders ✅ DONE
 
 ```
 For each of the following files that exceed 2000 LOC, analyze their internal
@@ -139,7 +139,7 @@ For each file, output:
 Do NOT make any code changes. This is analysis only.
 ```
 
-### Prompt 2.2 — Split type_resolution/core.rs
+### Prompt 2.2 — Split type_resolution/core.rs ✅ DONE
 
 ```
 Split crates/tsz-checker/src/state/type_resolution/core.rs (2476 lines) into
@@ -165,7 +165,7 @@ Commit with message "refactor(checker): split type_resolution/core.rs into
 focused submodules".
 ```
 
-### Prompt 2.3 — Split types/computation/complex.rs
+### Prompt 2.3 — Split types/computation/complex.rs ✅ DONE
 
 ```
 Split crates/tsz-checker/src/types/computation/complex.rs (2419 lines) into
@@ -186,7 +186,7 @@ Commit with message "refactor(checker): split types/computation/complex.rs into
 focused submodules".
 ```
 
-### Prompt 2.4 — Split function_type.rs and variable_checking/core.rs
+### Prompt 2.4 — Split function_type.rs and variable_checking/core.rs ✅ DONE
 
 ```
 Split these two files into focused submodules:
