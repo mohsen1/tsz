@@ -295,12 +295,12 @@ impl ParserState {
     }
 
     /// Parse a keyword as an identifier (for type keywords like string, number, etc.)
-    pub(crate) fn parse_keyword_as_identifier(&mut self) -> NodeIndex {
+    pub(crate) fn parse_keyword_as_identifier_with_check(&mut self, check_yield_reserved: bool) -> NodeIndex {
         // `yield` is reserved in generator contexts and class bodies.
         if self.is_token(SyntaxKind::YieldKeyword) {
             let start_pos = self.token_pos();
             let end_pos = self.token_end();
-            if self.in_generator_context() {
+            if check_yield_reserved && self.in_generator_context() {
                 self.report_yield_reserved_word_error();
             }
 
@@ -339,6 +339,11 @@ impl ParserState {
                 type_arguments: None,
             },
         )
+    }
+
+    /// Parse a keyword as an identifier (expression context - checks yield reserved).
+    pub(crate) fn parse_keyword_as_identifier(&mut self) -> NodeIndex {
+        self.parse_keyword_as_identifier_with_check(true)
     }
 
     /// Parse qualified name rest: given a left name, parse `.Right.Rest` parts
