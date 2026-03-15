@@ -1993,6 +1993,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Used to prefer structural matches over naked type params when constraining
     /// against union targets with multiple placeholder members.
     fn types_share_outer_structure_for_constraint(&self, source: TypeId, target: TypeId) -> bool {
+        // Unwrap ReadonlyType on both sides — it's a modifier, not a distinct
+        // structural kind. This ensures `Array<number>` matches `ReadonlyType(Array<U>)`
+        // when constraining against union targets like `U | ReadonlyArray<U>`.
+        let unwrap_readonly = |ty: TypeId| -> TypeId {
+            if let Some(TypeData::ReadonlyType(inner)) = self.interner.lookup(ty) {
+                inner
+            } else {
+                ty
+            }
+        };
+        let source = unwrap_readonly(source);
+        let target = unwrap_readonly(target);
+
         let (Some(s_key), Some(t_key)) =
             (self.interner.lookup(source), self.interner.lookup(target))
         else {
@@ -2005,6 +2018,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 s_app.base == t_app.base
             }
             (TypeData::Object(_), TypeData::Object(_))
+            | (TypeData::ObjectWithIndex(_), TypeData::ObjectWithIndex(_))
             | (TypeData::Callable(_), TypeData::Callable(_))
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
