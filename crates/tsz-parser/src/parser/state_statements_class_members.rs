@@ -787,14 +787,19 @@ impl ParserState {
             }
         }
 
-        if self.parse_optional(SyntaxKind::ColonToken) {
+        // Parse return type annotation for error recovery (tsc preserves it in JS output).
+        // Setters cannot legally have return type annotations, but we store it so the
+        // emitter can preserve it.
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'set' accessor cannot have a return type annotation.",
                 diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
             );
-            let _ = self.parse_type();
-        }
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
 
         let body = self.parse_accessor_body(&modifiers);
 
@@ -808,7 +813,7 @@ impl ParserState {
                 name,
                 type_parameters,
                 parameters,
-                type_annotation: NodeIndex::NONE,
+                type_annotation,
                 body,
             },
         )
