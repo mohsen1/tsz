@@ -502,6 +502,13 @@ impl<'a> InferenceContext<'a> {
                         resolved
                     }
                 }
+                // Arrays and tuples: widen element types unconditionally.
+                // `[true]` inferred as `Array<true>` should widen to `Array<boolean>`.
+                // Unlike objects, arrays don't have a freshness concept that should
+                // prevent widening.
+                Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
+                    widening::widen_type_for_inference(self.interner, resolved)
+                }
                 _ => resolved,
             }
         } else {
