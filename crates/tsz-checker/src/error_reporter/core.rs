@@ -1696,13 +1696,7 @@ impl<'a> CheckerState<'a> {
         // messages, matching tsc's freshness model. Non-fresh types (from variables,
         // annotations) should show widened types.
         let is_fresh_literal =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty).is_some_and(
-                |shape| {
-                    shape
-                        .flags
-                        .contains(tsz_solver::types::ObjectFlags::FRESH_LITERAL)
-                },
-            );
+            tsz_solver::relations::freshness::is_fresh_object_type(self.ctx.types, display_ty);
         let mut formatted = if is_fresh_literal {
             self.format_type_diagnostic_with_display(display_ty)
         } else {
