@@ -144,12 +144,9 @@ pub(crate) fn export_clause_is_type_only(
 ///
 /// Recursively walks dotted namespaces (e.g., `namespace Foo.Bar`) to find
 /// the innermost `MODULE_BLOCK` and checks each statement.
-#[allow(dead_code)]
-pub(crate) fn is_instantiated_module(arena: &NodeArena, module_body: NodeIndex) -> bool {
-    is_instantiated_module_ext(arena, module_body, false)
-}
-
-/// Like `is_instantiated_module` but with `preserve_const_enums` awareness.
+///
+/// When `preserve_const_enums` is true, `const enum` declarations count as
+/// runtime value declarations (they produce IIFE output).
 /// When `preserve_const_enums` is true, `const enum` declarations count as
 /// runtime value declarations (they produce IIFE output).
 pub(crate) fn is_instantiated_module_ext(
@@ -189,12 +186,9 @@ pub(crate) fn is_instantiated_module_ext(
 /// Check if a statement inside a module body is purely a type declaration
 /// (interface, type alias, type-only import/export, const/declare enum,
 /// declare/non-instantiated module).
-#[allow(dead_code)]
-pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> bool {
-    is_type_only_module_statement_ext(arena, node, false)
-}
-
-/// Like `is_type_only_module_statement` but with `preserve_const_enums` awareness.
+///
+/// When `preserve_const_enums` is true, `const enum` declarations are NOT
+/// considered type-only (they produce runtime output).
 pub(crate) fn is_type_only_module_statement_ext(
     arena: &NodeArena,
     node: &Node,

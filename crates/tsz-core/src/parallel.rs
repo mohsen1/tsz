@@ -637,35 +637,6 @@ fn parse_and_bind_lib_file(
     Ok(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
 }
 
-/// Phase 1 helper: Read lib file content and recursively collect referenced libs.
-/// Only performs I/O — parsing/binding is deferred to the parallel phase.
-#[allow(dead_code)]
-fn collect_lib_files_recursive(
-    path: &Path,
-    loaded: &mut FxHashSet<PathBuf>,
-    file_contents: &mut Vec<(String, String)>,
-) -> Result<()> {
-    let lib_path = path.to_path_buf();
-    if !loaded.insert(lib_path.clone()) {
-        return Ok(());
-    }
-
-    // Skip separate exists() stat syscall — let read_to_string handle missing files.
-    let source_text = std::fs::read_to_string(&lib_path)
-        .with_context(|| format!("failed to read lib file {}", lib_path.display()))?;
-
-    // Resolve references before adding this file (dependencies come first)
-    for ref_lib in parse_lib_references(&source_text) {
-        if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
-            collect_lib_files_recursive(&ref_path, loaded, file_contents)?;
-        }
-    }
-
-    let file_name = lib_path.to_string_lossy().to_string();
-    file_contents.push((file_name, source_text));
-    Ok(())
-}
-
 /// Phase 1 helper with pre-loaded file cache. Uses embedded lib contents
 /// first (zero I/O), then pre-read file cache, then disk as last resort.
 fn collect_lib_files_recursive_cached(

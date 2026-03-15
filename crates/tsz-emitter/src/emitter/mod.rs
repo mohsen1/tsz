@@ -60,22 +60,11 @@ pub use comments::{
 pub use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
 
 // Re-exports for submodule access (used by sibling modules via `use super::*`)
-#[allow(unused_imports)]
-pub(crate) use crate::context::emit::EmitContext;
-#[allow(unused_imports)]
-pub(crate) use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
-#[allow(unused_imports)]
-pub(crate) use crate::enums::evaluator::EnumValue;
-#[allow(unused_imports)]
-pub(crate) use crate::output::source_writer::{
-    SourcePosition, SourceWriter, source_position_from_offset,
-};
-#[allow(unused_imports)]
+pub(crate) use crate::context::transform::{IdentifierId, TransformDirective};
 pub(crate) use crate::transforms::{
     ClassDecoratorInfo, ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter,
 };
 pub(crate) use tsz_parser::parser::NodeIndex;
-#[allow(unused_imports)]
-pub(crate) use tsz_parser::parser::node::{Node, NodeArena};
+pub(crate) use tsz_parser::parser::node::Node;
 pub(crate) use tsz_parser::parser::syntax_kind_ext;
 pub(crate) use tsz_scanner::SyntaxKind;

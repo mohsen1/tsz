@@ -814,45 +814,4 @@ impl<'a> Printer<'a> {
     pub(super) fn any_param_has_object_rest(&self, params: &[NodeIndex]) -> bool {
         params.iter().any(|&idx| self.param_has_object_rest(idx))
     }
-
-    /// Emit a function parameter that has object rest, replacing the pattern
-    /// with a temp variable. Returns (`temp_name`, `pattern_idx`) for body preamble.
-    #[allow(dead_code)]
-    pub(super) fn emit_param_with_object_rest_replaced(
-        &mut self,
-        param_idx: NodeIndex,
-    ) -> Option<(String, NodeIndex, NodeIndex)> {
-        let param_node = self.arena.get(param_idx)?;
-        let param = self.arena.get_parameter(param_node)?;
-
-        if !self.pattern_has_object_rest(param.name) {
-            return None;
-        }
-
-        let temp = self.get_temp_var_name();
-        self.write(&temp);
-
-        // Emit default value if present
-        if param.initializer.is_some() {
-            self.write(" = ");
-            self.emit_expression(param.initializer);
-        }
-
-        Some((temp, param.name, param.initializer))
-    }
-
-    /// Emit the body preamble for a function whose parameters had object rest lowered.
-    /// This emits `var { a } = _a, rest = __rest(_a, ["a"]);` at the start of the body.
-    #[allow(dead_code)]
-    pub(super) fn emit_object_rest_body_preamble(
-        &mut self,
-        params: &[(String, NodeIndex, NodeIndex)],
-    ) {
-        for (temp_name, pattern_idx, _initializer) in params {
-            self.write("var ");
-            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-            self.write(";");
-            self.write_line();
-        }
-    }
 }

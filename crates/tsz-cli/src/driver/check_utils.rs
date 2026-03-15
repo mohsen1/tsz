@@ -1150,8 +1150,7 @@ pub(super) fn create_cross_file_lookup_binder(
     create_binder_from_bound_file(file, program, file_idx)
 }
 
-// --- TS directive suppression (not yet wired up) ---
-#[allow(dead_code)]
+// --- TS directive suppression ---
 /// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
 fn build_line_starts(text: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
@@ -1163,7 +1162,6 @@ fn build_line_starts(text: &str) -> Vec<u32> {
     starts
 }
 
-#[allow(dead_code)]
 /// Get the 0-based line number for a byte offset.
 fn line_of_offset(line_starts: &[u32], offset: u32) -> u32 {
     match line_starts.binary_search(&offset) {
