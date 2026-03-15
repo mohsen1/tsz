@@ -191,9 +191,7 @@ pub use visitors::visitor::{
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
-pub use caches::query_cache::{QueryCache, RelationCacheStats};
-// NOTE: RelationCacheProbe is solver-internal. Access via
-// `tsz_solver::caches::query_cache` only within the solver crate.
+pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
 pub use canonicalize::*;
 pub use classes::inheritance::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
