@@ -597,12 +597,13 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                        // Always widen parameter default initializer types.
-                        // Parameters with defaults like `(x = 0)` should have type
-                        // `number`, not literal `0`. This applies regardless of
-                        // whether the default is a direct literal or a reference
-                        // to a variable with a literal type.
-                        self.widen_initializer_type_for_mutable_binding(init_type)
+                        // Only widen when the initializer is a "fresh" literal expression
+                        let is_enum_member = self.is_enum_member_type_for_widening(init_type);
+                        if is_enum_member || self.is_fresh_literal_expression(param.initializer) {
+                            self.widen_initializer_type_for_mutable_binding(init_type)
+                        } else {
+                            init_type
+                        }
                     } else {
                         inferred_type
                     }

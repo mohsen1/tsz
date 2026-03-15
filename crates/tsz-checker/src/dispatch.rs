@@ -22,15 +22,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
     /// Resolve a literal type: preserve if const assertion or contextual typing expects it.
     fn resolve_literal(&mut self, literal_type: Option<TypeId>, widened: TypeId) -> TypeId {
-        // tsc preserves literal types at the expression level unconditionally.
-        // Widening to the base type happens at downstream use sites:
-        // - Variable declarations: widen_initializer_type_for_mutable_binding
-        // - Object literal properties: object_literal.rs widening
-        // - Function return inference: return type widening
-        // - Generic inference resolution: widen_type_for_inference
         match literal_type {
-            Some(lit) => lit,
-            None => widened,
+            Some(lit)
+                if self.checker.ctx.in_const_assertion
+                    || self.checker.ctx.preserve_literal_types
+                    || self.checker.contextual_literal_type(lit).is_some() =>
+            {
+                lit
+            }
+            _ => widened,
         }
     }
 
