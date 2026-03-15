@@ -15257,3 +15257,38 @@ interface StringTreeArray extends Array<StringTree> { }
         "Expected TS2454 'Variable x is used before being assigned', got: {diagnostics:?}"
     );
 }
+
+/// Assignment narrowing should decompose enum types into their member union
+/// so that `let e: E = E.ONE` narrows the flow type from `E` to `E.ONE`.
+/// This ensures `const x: E.ONE = e;` compiles without a false TS2322.
+///
+/// Regression test for numericEnumMappedType.ts conformance failure.
+#[test]
+fn enum_assignment_narrowing_to_member_literal() {
+    let source = r#"
+declare enum E { ONE, TWO, THREE = 'x' }
+const e: E = E.ONE;
+const x: E.ONE = e;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should not emit TS2322 for enum member assignment narrowing: {diagnostics:?}"
+    );
+}
+
+/// Assignment narrowing for enums should still produce TS2322 when the assigned
+/// member doesn't match the target member type.
+#[test]
+fn enum_assignment_narrowing_wrong_member_errors() {
+    let source = r#"
+declare enum E { ONE, TWO, THREE = 'x' }
+let e: E = E.TWO;
+const x: E.ONE = e;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Should emit TS2322 when narrowed enum member doesn't match target: {diagnostics:?}"
+    );
+}

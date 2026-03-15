@@ -6,10 +6,11 @@
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, are_types_mutually_subtype_with_env, call_signatures_for_type,
-    fallback_compound_assignment_result, function_return_type, get_application_info,
-    get_array_element_type, get_lazy_def_id, is_compound_assignment_operator, is_promise_like_type,
-    map_compound_assignment_to_binary, tuple_elements_for_type, union_members_for_type,
-    unwrap_promise_type_argument, widen_literal_to_primitive,
+    enum_member_domain, fallback_compound_assignment_result, function_return_type,
+    get_application_info, get_array_element_type, get_lazy_def_id, is_assignable,
+    is_compound_assignment_operator, is_promise_like_type, map_compound_assignment_to_binary,
+    tuple_elements_for_type, union_members_for_type, unwrap_promise_type_argument,
+    widen_literal_to_primitive,
 };
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
@@ -1769,6 +1770,20 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let initial_type = self.resolve_assignment_reduction_type(initial_type);
+
+        // For enum types, narrow directly to the assigned type when it is
+        // assignable to the enum. This preserves the enum member identity
+        // (e.g. `E.ONE` stays `E.ONE`, not decomposed to `0`).
+        // E.g. `let e: E = E.ONE` narrows the flow type from `E` to `E.ONE`.
+        if enum_member_domain(self.interner, initial_type) != initial_type {
+            let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
+            return if is_assignable(self.interner, assigned_type, initial_type) {
+                assigned_type
+            } else {
+                initial_type
+            };
+        }
+
         let members_opt = union_members_for_type(self.interner, initial_type);
         let members = match members_opt {
             Some(m) => m,
