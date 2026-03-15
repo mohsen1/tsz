@@ -447,7 +447,17 @@ impl<'a> CheckerState<'a> {
                                 .map(|arc| (decl_idx, arc.as_ref()))
                                 .collect::<Vec<_>>()
                         } else {
-                            vec![(decl_idx, fallback_arena)]
+                            // When no declaration_arenas entry exists, the declaration
+                            // may be a local augmentation (e.g., user-declared
+                            // `interface ErrorConstructor { ... }` merging with a lib
+                            // symbol). Check if it exists in the main arena first;
+                            // only fall back to the lib arena otherwise.
+                            let arena = if self.ctx.arena.get(decl_idx).is_some() {
+                                self.ctx.arena
+                            } else {
+                                fallback_arena
+                            };
+                            vec![(decl_idx, arena)]
                         }
                     })
                     .collect();
