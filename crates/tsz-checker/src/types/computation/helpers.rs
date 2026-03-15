@@ -518,10 +518,7 @@ impl<'a> CheckerState<'a> {
                     // create a spurious covariant candidate that overwrites contravariant
                     // inference (e.g., from callback parameters).
                     let is_uninformative = matches!(t_elem, TypeId::UNKNOWN)
-                        || matches!(
-                            self.ctx.types.lookup(t_elem),
-                            Some(tsz_solver::types::TypeData::TypeParameter(_))
-                        );
+                        || tsz_solver::visitor::is_type_parameter(self.ctx.types, t_elem);
                     if !is_uninformative {
                         return factory.array(t_elem);
                     }

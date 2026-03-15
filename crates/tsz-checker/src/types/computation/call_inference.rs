@@ -540,7 +540,7 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_object_shape(self.ctx.types, target_eval),
         ) {
             for source_prop in &source_shape.properties {
-                if let Some(target_prop) = tsz_solver::types::PropertyInfo::find_in_slice(
+                if let Some(target_prop) = tsz_solver::PropertyInfo::find_in_slice(
                     &target_shape.properties,
                     source_prop.name,
                 ) {
