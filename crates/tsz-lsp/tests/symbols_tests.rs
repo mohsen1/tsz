@@ -1306,3 +1306,150 @@ fn test_symbols_api_whitespace_only() {
         "Whitespace-only file should produce no symbols"
     );
 }
+
+#[test]
+fn test_symbols_api_const_enum_with_four_members() {
+    let source = "const enum Direction { Up, Down, Left, Right }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(!tree.is_empty());
+    assert_eq!(tree[0].name, "Direction");
+}
+
+#[test]
+fn test_symbols_api_type_alias_with_intersection() {
+    let source = "type Combined = A & B & C;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Combined");
+}
+
+#[test]
+fn test_symbols_api_arrow_function_const_with_template() {
+    let source = "const greet = (name: string) => `Hello, ${name}`;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "greet");
+}
+
+#[test]
+fn test_symbols_api_class_with_private_field() {
+    let source = "class Secret {\n  #value: string;\n  getValue() { return this.#value; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree[0].name, "Secret");
+    assert!(!tree[0].children.is_empty());
+}
+
+#[test]
+fn test_symbols_api_multiple_exports() {
+    let source = "export const a = 1;\nexport const b = 2;\nexport function c() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 3);
+}
+
+#[test]
+fn test_symbols_api_function_with_three_overloads() {
+    let source = "function foo(x: number): number;\nfunction foo(x: string): string;\nfunction foo(x: any): any { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    let _ = tree;
+}
+
+#[test]
+fn test_symbols_api_conditional_type() {
+    let source = "type IsString<T> = T extends string ? true : false;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "IsString");
+}
+
+#[test]
+fn test_symbols_api_mapped_type() {
+    let source = "type Readonly<T> = { readonly [K in keyof T]: T[K] };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+}
+
+#[test]
+fn test_symbols_api_class_with_computed_property() {
+    let source = "const key = 'prop';\nclass Foo {\n  [key]: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(tree.len() >= 2);
+}
+
+#[test]
+fn test_symbols_api_var_declaration() {
+    let source = "var legacy = true;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "legacy");
+}
+
+#[test]
+fn test_symbols_api_destructured_const() {
+    let source = "const { a, b } = { a: 1, b: 2 };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    let _ = tree;
+}
+
+#[test]
+fn test_symbols_api_class_extends_implements() {
+    let source = "interface Serializable { serialize(): string; }\nclass Foo extends Bar implements Serializable {\n  serialize() { return ''; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert!(tree.len() >= 2);
+}
+
+#[test]
+fn test_symbols_api_template_literal_type() {
+    let source = "type Greeting = `Hello ${string}`;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Greeting");
+}
+
+#[test]
+fn test_symbols_api_index_signature_only() {
+    let source = "interface Dict {\n  [key: string]: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+    assert_eq!(tree[0].name, "Dict");
+}

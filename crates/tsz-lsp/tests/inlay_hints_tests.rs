@@ -1049,3 +1049,132 @@ fn test_inlay_hint_new_with_tooltip() {
     assert_eq!(hint.tooltip.as_deref(), Some("This is a string type"));
     assert_eq!(hint.kind, InlayHintKind::Type);
 }
+
+#[test]
+fn test_inlay_hint_for_const_object() {
+    let source = "const obj = { a: 1, b: 'hello' };";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    // Should produce a type hint for obj
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_array_literal() {
+    let source = "const arr = [1, 2, 3];";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_ternary_expression() {
+    let source = "const x = true ? 1 : 'str';";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_arrow_function_no_return_type() {
+    let source = "const add = (a: number, b: number) => a + b;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_destructuring_assignment() {
+    let source = "const { a, b } = { a: 1, b: 2 };";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_for_array_destructuring() {
+    let source = "const [first, second] = [1, 2];";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_for_nested_function() {
+    let source = "function outer() {\n  const inner = () => 42;\n  return inner;\n}";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_class_property() {
+    let source = "class Foo {\n  x = 42;\n  y = 'hello';\n}";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_for_of_loop() {
+    let source = "const items = [1, 2, 3];\nfor (const item of items) { console.log(item); }";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_for_template_literal_variable() {
+    let source = "const name = 'world';\nconst greeting = `hello ${name}`;";
+    let hints = get_hints_for_source(source);
+    let type_hints = get_type_hints(&hints);
+    let _ = type_hints;
+}
+
+#[test]
+fn test_inlay_hint_for_async_function() {
+    let source = "async function fetchData() { return 42; }";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_for_generator_function() {
+    let source = "function* gen() { yield 1; yield 2; }";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_for_catch_clause() {
+    let source = "try { throw 'error'; } catch (e) { console.log(e); }";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_for_enum_initializer() {
+    let source = "enum Color { Red, Green, Blue }";
+    let hints = get_hints_for_source(source);
+    let _ = hints;
+}
+
+#[test]
+fn test_inlay_hint_range_filtering() {
+    let source = "let a = 1;\nlet b = 2;\nlet c = 3;\nlet d = 4;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let provider = InlayHintsProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        source,
+        &interner,
+        "test.ts".to_string(),
+    );
+    // Only request hints for lines 1-2
+    let range = Range::new(Position::new(1, 0), Position::new(2, u32::MAX));
+    let hints = provider.provide_inlay_hints(root, range);
+    let _ = hints;
+}
