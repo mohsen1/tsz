@@ -152,6 +152,15 @@ pub trait StatementCheckCallbacks {
     /// TS2491: Check if a for-in expression initializer is an array/object literal.
     fn check_for_in_expression_destructuring(&mut self, initializer: NodeIndex);
 
+    /// TS7022: Detect self-referencing for-of loop variables under noImplicitAny.
+    fn check_for_of_self_reference_circularity(
+        &mut self,
+        _decl_list_idx: NodeIndex,
+        _expression_idx: NodeIndex,
+    ) {
+        // Default: no check
+    }
+
     /// Recursively check a nested statement (callback to `check_statement`).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
@@ -583,6 +592,16 @@ impl StatementChecker {
                         // TS2491: for-in cannot use destructuring patterns
                         if !is_for_of {
                             state.check_for_in_destructuring_pattern(initializer);
+                        }
+                        // TS7022: Detect self-referencing for-of variables.
+                        // `for (var v of v)` where `v` has no type annotation and the
+                        // iterable expression references the declared variable produces
+                        // a circular dependency.  The element type resolves to `any` or
+                        // `error`, and TS7022 should be emitted under noImplicitAny.
+                        if is_for_of
+                            && (loop_var_type == TypeId::ANY || loop_var_type == TypeId::ERROR)
+                        {
+                            state.check_for_of_self_reference_circularity(initializer, expression);
                         }
                         state.assign_for_in_of_initializer_types(
                             initializer,
