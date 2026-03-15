@@ -411,3 +411,94 @@ fn test_to_script_element_kind() {
         "type parameter"
     );
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_document_symbols_empty_file() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(symbols.is_empty(), "Empty file should have no symbols");
+}
+
+#[test]
+fn test_document_symbols_only_comments() {
+    let source = "// This is a comment\n/* Block comment */";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert!(
+        symbols.is_empty(),
+        "File with only comments should have no symbols"
+    );
+}
+
+#[test]
+fn test_document_symbols_arrow_function_variable() {
+    let source = "const greet = (name: string) => `Hello ${name}`;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "greet");
+    assert_eq!(symbols[0].kind, SymbolKind::Constant);
+}
+
+#[test]
+fn test_document_symbols_class_with_constructor() {
+    let source = "class Point {\n  constructor(public x: number, public y: number) {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "Point");
+    assert_eq!(symbols[0].kind, SymbolKind::Class);
+    let has_ctor = symbols[0]
+        .children
+        .iter()
+        .any(|c| c.kind == SymbolKind::Constructor);
+    assert!(has_ctor, "Should have constructor as child symbol");
+}
+
+#[test]
+fn test_document_symbols_multiple_exports() {
+    let source = "export const A = 1;\nexport function B() {}\nexport class C {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let line_map = LineMap::build(source);
+
+    let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
+    let symbols = provider.get_document_symbols(root);
+
+    assert_eq!(symbols.len(), 3);
+    assert_eq!(symbols[0].name, "A");
+    assert_eq!(symbols[1].name, "B");
+    assert_eq!(symbols[2].name, "C");
+    for sym in &symbols {
+        assert!(
+            sym.kind_modifiers.contains("export"),
+            "Symbol '{}' should have export modifier",
+            sym.name
+        );
+    }
+}
