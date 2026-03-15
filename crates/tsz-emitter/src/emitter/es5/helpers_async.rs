@@ -167,7 +167,8 @@ impl<'a> Printer<'a> {
             // tsc emits: var arguments_1 = arguments;
             // placed before return __awaiter(...) so the generator closure
             // can access the original arguments object.
-            let body_captures_arguments = tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body);
+            let body_captures_arguments =
+                tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body);
             if body_captures_arguments {
                 self.write("var arguments_1 = arguments;");
                 self.write_line();

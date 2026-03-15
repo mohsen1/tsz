@@ -454,8 +454,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // If so, we need to emit `var _a; _a = ClassName;` and replace `this` with `_a`.
         // Note: `this` in static methods/getters/setters stays as `this` (they have their own
         // `this` binding at call time). Only property initializers and static blocks need aliasing.
-        let needs_class_alias =
-            self.static_members_need_class_alias(&class_data.members);
+        let needs_class_alias = self.static_members_need_class_alias(&class_data.members);
 
         let class_alias: Option<String> = if needs_class_alias {
             Some("_a".to_string())
@@ -764,10 +763,7 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Note: `this` in static methods/getters/setters does NOT need aliasing because
     /// regular functions have their own `this` binding. Only static property initializer
     /// expressions and static block statement bodies need `this` → `_a` substitution.
-    fn static_members_need_class_alias(
-        &self,
-        members: &tsz_parser::parser::NodeList,
-    ) -> bool {
+    fn static_members_need_class_alias(&self, members: &tsz_parser::parser::NodeList) -> bool {
         for &member_idx in &members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
