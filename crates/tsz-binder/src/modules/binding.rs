@@ -109,9 +109,13 @@ impl BinderState {
                     declared_module_specifier = Some(module_specifier.clone());
 
                     // Rule #44: Detect module augmentation
-                    // A `declare module "x"` in an external module (file with imports/exports)
-                    // is a module augmentation if it references an existing or external module.
-                    is_augmentation = self.is_external_module
+                    // A `declare module "x"` is a module augmentation if:
+                    // 1. The file is an external module (has top-level imports/exports), OR
+                    // 2. The declaration is nested inside an ambient module in a non-external file
+                    //    (e.g., `module "Observable"` inside `declare module "Map"` in a .d.ts)
+                    // This matches tsc's `isExternalModuleAugmentation` / `isModuleAugmentationExternal`.
+                    is_augmentation = (self.is_external_module
+                        || Self::is_inside_ambient_module(arena, idx))
                         && self.is_potential_module_augmentation(&module_specifier);
 
                     if is_augmentation {
