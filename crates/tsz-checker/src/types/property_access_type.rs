@@ -420,18 +420,15 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
-                let can_cache_fast = !self.contains_type_parameters_cached(resolved_base);
-                let prop_atom = can_cache_fast.then(|| self.ctx.types.intern_string(property_name));
+                let prop_atom = self.ctx.types.intern_string(property_name);
 
-                if can_cache_fast
-                    && let Some(prop_atom) = prop_atom
-                    && let Some(cached) = self
-                        .ctx
-                        .narrowing_cache
-                        .property_cache
-                        .borrow()
-                        .get(&(resolved_base, prop_atom))
-                        .copied()
+                if let Some(cached) = self
+                    .ctx
+                    .narrowing_cache
+                    .property_cache
+                    .borrow()
+                    .get(&(resolved_base, prop_atom))
+                    .copied()
                 {
                     match cached {
                         Some(type_id) => {
@@ -490,12 +487,11 @@ impl<'a> CheckerState<'a> {
                             // property reads, but fall back to the full path when
                             // TS4111 must be reported.
                         } else {
-                            if can_cache_fast {
-                                self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-                                    (resolved_base, prop_atom.expect("cached atom")),
-                                    Some(type_id),
-                                );
-                            }
+                            self.ctx
+                                .narrowing_cache
+                                .property_cache
+                                .borrow_mut()
+                                .insert((resolved_base, prop_atom), Some(type_id));
                             let mut result_type = if self.ctx.skip_flow_narrowing {
                                 write_type.unwrap_or(type_id)
                             } else {
@@ -514,12 +510,11 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                        if can_cache_fast {
-                            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
-                                (resolved_base, prop_atom.expect("cached atom")),
-                                property_type,
-                            );
-                        }
+                        self.ctx
+                            .narrowing_cache
+                            .property_cache
+                            .borrow_mut()
+                            .insert((resolved_base, prop_atom), property_type);
                         let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                         if base_nullish.is_some()
                             && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
@@ -529,13 +524,11 @@ impl<'a> CheckerState<'a> {
                         return self.apply_flow_narrowing(idx, result_type);
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
-                        if can_cache_fast {
-                            self.ctx
-                                .narrowing_cache
-                                .property_cache
-                                .borrow_mut()
-                                .insert((resolved_base, prop_atom.expect("cached atom")), None);
-                        }
+                        self.ctx
+                            .narrowing_cache
+                            .property_cache
+                            .borrow_mut()
+                            .insert((resolved_base, prop_atom), None);
                         // Fall through to full diagnostic path.
                     }
                     PropertyAccessResult::IsUnknown => {
