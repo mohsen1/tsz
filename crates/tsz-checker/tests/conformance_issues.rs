@@ -15212,3 +15212,37 @@ function H() {
         "Should not emit TS2300 for contextual keyword 'as' used in different scopes. Got: {ts2300_diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_interface_does_not_depend_on_base_types_ts2339() {
+    let source = r#"
+// @target: es2015
+var x: StringTree;
+if (typeof x !== "string") {
+    x.push("");
+    x.push([""]);
+}
+
+type StringTree = string | StringTreeArray;
+interface StringTreeArray extends Array<StringTree> { }
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    eprintln!("All diagnostics: {diagnostics:#?}");
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 'Property push does not exist on type StringTree', got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2454),
+        "Expected TS2454 'Variable x is used before being assigned', got: {diagnostics:?}"
+    );
+}
