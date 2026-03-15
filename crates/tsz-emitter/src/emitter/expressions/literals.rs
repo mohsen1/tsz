@@ -715,7 +715,18 @@ impl<'a> Printer<'a> {
         }
 
         // Regular property: name: value
-        self.emit(prop.name);
+        // Use emit_decl_name for simple identifier property names to suppress
+        // namespace qualification — property names are declarations, not references.
+        // Computed property names (e.g., [SYMBOL]) are expressions and should
+        // preserve namespace/export qualification.
+        let name_node = self.arena.get(prop.name);
+        let is_computed = name_node
+            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+        if is_computed {
+            self.emit(prop.name);
+        } else {
+            self.emit_decl_name(prop.name);
+        }
         self.write(": ");
         self.emit_expression(prop.initializer);
     }
