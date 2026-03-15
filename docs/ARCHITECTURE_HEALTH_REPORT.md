@@ -154,7 +154,7 @@ in PRs. Splitting by logical category would improve all three.
 ## 7. Actionable Improvement Plan
 
 ### Tier 1: Fix Now (architecture correctness)
-- [x] Fix `error_reporter/core.rs` boundary violation — use `is_fresh_object_type` query
+- [x] Fix `error_reporter/core.rs` boundary violation — resolved upstream (code path simplified)
 - [x] Clean up `allow(unused_imports)` in `lowering/mod.rs` — replaced with `pub(super)` re-exports
 - [x] Investigate `loop_capture` module — confirmed actively used by `statements.rs`
 
