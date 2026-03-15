@@ -929,9 +929,9 @@ pub(super) const fn export_type_prefix(is_type_only: bool) -> &'static str {
     if is_type_only { "type:" } else { "" }
 }
 
-/// Convert specific parser diagnostics to TS8xxx equivalents for JS files.
+/// Convert specific parser diagnostics to `TS8xxx` equivalents for JS files.
 /// tsc's parser is lenient with TypeScript-only syntax in JS files, so some
-/// parser errors should be converted to TS8xxx checker equivalents rather
+/// parser errors should be converted to `TS8xxx` checker equivalents rather
 /// than being suppressed entirely.
 pub(super) fn convert_js_parse_diagnostics_to_ts8xxx(
     parse_diagnostics: &[ParseDiagnostic],
@@ -940,34 +940,31 @@ pub(super) fn convert_js_parse_diagnostics_to_ts8xxx(
     source_text: Option<&str>,
 ) {
     for diag in parse_diagnostics {
-        match diag.code {
-            // TS1162 ("An object member cannot be declared optional.") ->
-            // TS8009 ("The '?' modifier can only be used in TypeScript files.")
-            // tsc's parser accepts `?` on object members in JS files; the checker
-            // emits TS8009 only for method-like optionals (e.g., `m?()`), not for
-            // property optionals (e.g., `prop?: val`). We distinguish by checking
-            // if `(` follows the `?`.
-            1162 => {
-                let is_method_optional = source_text.is_some_and(|src| {
-                    let after_q = (diag.start + diag.length) as usize;
-                    // Skip whitespace after `?` and check for `(`
-                    src.get(after_q..)
-                        .map(|s| s.trim_start().starts_with('(') || s.trim_start().starts_with('<'))
-                        .unwrap_or(false)
-                });
-                if is_method_optional {
-                    out.push(Diagnostic::error(
-                        file_name.to_string(),
-                        diag.start,
-                        diag.length,
-                        "The '?' modifier can only be used in TypeScript files.".to_string(),
-                        8009,
-                    ));
-                }
+        // TS1162 ("An object member cannot be declared optional.") ->
+        // TS8009 ("The '?' modifier can only be used in TypeScript files.")
+        // tsc's parser accepts `?` on object members in JS files; the checker
+        // emits TS8009 only for method-like optionals (e.g., `m?()`), not for
+        // property optionals (e.g., `prop?: val`). We distinguish by checking
+        // if `(` follows the `?`.
+        if diag.code == 1162 {
+            let is_method_optional = source_text.is_some_and(|src| {
+                let after_q = (diag.start + diag.length) as usize;
+                // Skip whitespace after `?` and check for `(`
+                src.get(after_q..)
+                    .map(|s| s.trim_start().starts_with('(') || s.trim_start().starts_with('<'))
+                    .unwrap_or(false)
+            });
+            if is_method_optional {
+                out.push(Diagnostic::error(
+                    file_name.to_string(),
+                    diag.start,
+                    diag.length,
+                    "The '?' modifier can only be used in TypeScript files.".to_string(),
+                    8009,
+                ));
             }
-            // All other parser diagnostics are suppressed for JS files.
-            _ => {}
         }
+        // All other parser diagnostics are suppressed for JS files.
     }
 }
 
@@ -1062,11 +1059,11 @@ const fn is_parser_grammar_code(code: u32) -> bool {
     )
 }
 
-/// TS1xxx codes that tsc is known to emit for JavaScript files.
+/// `TS1xxx` codes that tsc is known to emit for JavaScript files.
 /// tsc's parser is lenient with TypeScript-only syntax in JS files and its
 /// checker grammar checks (`grammarErrorOnNode`) are suppressed for TS-only
-/// constructs. Only these TS1xxx codes are legitimately emitted for JS.
-pub(super) fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
+/// constructs. Only these `TS1xxx` codes are legitimately emitted for JS.
+pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
     matches!(
         code,
         1003 // Identifier expected
@@ -1110,7 +1107,7 @@ pub(super) fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
     )
 }
 
-/// Checker-emitted grammar codes outside the TS1xxx range that should be
+/// Checker-emitted grammar codes outside the `TS1xxx` range that should be
 /// suppressed for JS files. tsc doesn't emit these for JavaScript because
 /// its parser handles the constructs leniently.
 pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool {

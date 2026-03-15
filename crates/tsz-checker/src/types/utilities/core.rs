@@ -244,12 +244,11 @@ impl<'a> CheckerState<'a> {
                     // get_type_of_function (which computes types from initializer
                     // expressions in JS files). Only overwrite if the existing
                     // cached type is absent or is a placeholder (ERROR).
-                    if param_types.is_none() {
-                        if let Some(&existing) = self.ctx.symbol_types.get(&sym_id) {
-                            if existing != TypeId::ERROR {
-                                continue;
-                            }
-                        }
+                    if param_types.is_none()
+                        && let Some(&existing) = self.ctx.symbol_types.get(&sym_id)
+                        && existing != TypeId::ERROR
+                    {
+                        continue;
                     }
                     self.cache_symbol_type(sym_id, type_id);
                 }

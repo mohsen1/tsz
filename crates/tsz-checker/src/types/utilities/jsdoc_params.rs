@@ -667,13 +667,11 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 break;
             };
-            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                if let Some(jsdoc) = self.try_leading_jsdoc(comments, parent_node.pos, source_text)
-                {
-                    if jsdoc.contains("@type") {
-                        return true;
-                    }
-                }
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(jsdoc) = self.try_leading_jsdoc(comments, parent_node.pos, source_text)
+                && jsdoc.contains("@type")
+            {
+                return true;
             }
             current = parent;
         }
