@@ -4,6 +4,31 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    /// Write a CJS/System export assignment for a named or default export.
+    /// In System modules, uses `exports_1("name", value)` format.
+    /// In CJS modules, uses `exports.name = value` format.
+    /// After calling this, the caller should write the VALUE and terminator.
+    fn write_export_binding_start(&mut self, export_name: &str) {
+        if self.in_system_execute_body {
+            self.write("exports_1(\"");
+            self.write(export_name);
+            self.write("\", ");
+        } else {
+            self.write("exports.");
+            self.write(export_name);
+            self.write(" = ");
+        }
+    }
+
+    /// Write the terminator for an export binding started with `write_export_binding_start`.
+    fn write_export_binding_end(&mut self) {
+        if self.in_system_execute_body {
+            self.write(");");
+        } else {
+            self.write(";");
+        }
+    }
+
     pub(in crate::emitter) fn emit_export_declaration_commonjs(
         &mut self,
         node: &tsz_parser::parser::node::Node,
@@ -293,9 +318,9 @@ impl<'a> Printer<'a> {
                         && let Some(func) = self.arena.get_function(clause_node)
                         && let Some(name) = self.get_identifier_text_opt(func.name)
                     {
-                        self.write("exports.default = ");
+                        self.write_export_binding_start("default");
                         self.write(&name);
-                        self.write(";");
+                        self.write_export_binding_end();
                         self.write_line();
                     }
 
@@ -463,16 +488,14 @@ impl<'a> Printer<'a> {
                         && let Some(name) = self.get_identifier_text_opt(class.name)
                     {
                         if export.is_default_export {
-                            self.write("exports.default = ");
+                            self.write_export_binding_start("default");
                             self.write(&name);
-                            self.write(";");
+                            self.write_export_binding_end();
                             self.write_line();
                         } else if !named_export_emitted_with_class {
-                            self.write("exports.");
+                            self.write_export_binding_start(&name);
                             self.write(&name);
-                            self.write(" = ");
-                            self.write(&name);
-                            self.write(";");
+                            self.write_export_binding_end();
                             self.write_line();
                         } else {
                             // Named exports were already emitted at class-body boundary.
@@ -542,15 +565,14 @@ impl<'a> Printer<'a> {
                             && let Some(enum_decl) = self.arena.get_enum(clause_node)
                             && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
                         {
-                            if export.is_default_export {
-                                self.write("exports.default = ");
+                            let export_name = if export.is_default_export {
+                                "default".to_string()
                             } else {
-                                self.write("exports.");
-                                self.write(&name);
-                                self.write(" = ");
-                            }
+                                name.clone()
+                            };
+                            self.write_export_binding_start(&export_name);
                             self.write(&name);
-                            self.write(";");
+                            self.write_export_binding_end();
                             self.write_line();
                         }
                     }
