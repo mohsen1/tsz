@@ -8,7 +8,7 @@ impl<'a> Printer<'a> {
     /// In System modules, uses `exports_1("name", value)` format.
     /// In CJS modules, uses `exports.name = value` format.
     /// After calling this, the caller should write the VALUE and terminator.
-    fn write_export_binding_start(&mut self, export_name: &str) {
+    pub(in crate::emitter) fn write_export_binding_start(&mut self, export_name: &str) {
         if self.in_system_execute_body {
             self.write("exports_1(\"");
             self.write(export_name);
@@ -21,7 +21,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Write the terminator for an export binding started with `write_export_binding_start`.
-    fn write_export_binding_end(&mut self) {
+    pub(in crate::emitter) fn write_export_binding_end(&mut self) {
         if self.in_system_execute_body {
             self.write(");");
         } else {
