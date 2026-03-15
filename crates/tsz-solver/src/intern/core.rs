@@ -279,6 +279,10 @@ pub struct TypeInterner {
     /// Registered alongside `boxed_types` so subtype checking can identify boxed
     /// types even when `TypeEnvironment` is unavailable.
     boxed_def_ids: DashMap<IntrinsicKind, Vec<DefId>, FxBuildHasher>,
+    /// `DefIds` known to be the `ThisType` marker interface from lib.d.ts.
+    /// Used by `ThisTypeMarkerExtractor` to identify `ThisType<T>` applications
+    /// when the base type is `Lazy(DefId)`.
+    this_type_marker_def_ids: DashMap<DefId, (), FxBuildHasher>,
     /// Global allocation counter for deterministic type ordering.
     /// The sharded interner embeds shard index in TypeId low bits, so raw TypeId
     /// comparison is hash-dependent. This counter provides allocation-order
@@ -337,6 +341,7 @@ impl TypeInterner {
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
+            this_type_marker_def_ids: DashMap::with_hasher(FxBuildHasher),
             alloc_counter: AtomicU32::new(0),
             alloc_order: DashMap::with_hasher(FxBuildHasher),
             no_unchecked_indexed_access: AtomicBool::new(false),
@@ -405,6 +410,16 @@ impl TypeInterner {
         self.boxed_def_ids
             .get(&kind)
             .is_some_and(|ids| ids.contains(&def_id))
+    }
+
+    /// Register a DefId as belonging to the `ThisType` marker interface.
+    pub fn register_this_type_def_id(&self, def_id: DefId) {
+        self.this_type_marker_def_ids.insert(def_id, ());
+    }
+
+    /// Check if a DefId corresponds to the `ThisType` marker interface.
+    pub fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
+        self.this_type_marker_def_ids.contains_key(&def_id)
     }
 
     /// Get the object property maps, initializing on first access

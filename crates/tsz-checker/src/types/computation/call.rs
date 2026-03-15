@@ -613,6 +613,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.preserve_literal_types = true;
         }
         let mut non_generic_contextual_types: Option<Vec<Option<TypeId>>> = None;
+        // Track whether we pushed a ThisType marker to this_type_stack during call processing.
+        let mut pushed_this_type_from_shape = false;
         let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
@@ -883,6 +885,33 @@ impl<'a> CheckerState<'a> {
                             generic_inference_contextual_type,
                         )
                     };
+
+                    // Extract ThisType<T> marker from raw parameter types and
+                    // instantiate with the Round 1 substitution. Push to
+                    // this_type_stack so nested object literal methods resolve
+                    // `this` to the inferred type.
+                    if !pushed_this_type_from_shape {
+                        for param in &shape.params {
+                            use tsz_solver::ContextualTypeContext;
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                param.type_id,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
+                            if let Some(this_type) = ctx_helper.get_this_type_from_marker() {
+                                let instantiated =
+                                    crate::query_boundaries::common::instantiate_type(
+                                        self.ctx.types,
+                                        this_type,
+                                        &substitution,
+                                    );
+                                self.ctx.this_type_stack.push(instantiated);
+                                pushed_this_type_from_shape = true;
+                                break;
+                            }
+                        }
+                    }
+
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if !sensitive_args.get(i).copied().unwrap_or(false) {
                             continue;
@@ -1448,6 +1477,27 @@ impl<'a> CheckerState<'a> {
                         )
                     }
                 } else {
+                    // Extract ThisType<T> marker from raw parameter types.
+                    // In the single-pass path, no inference substitution is available,
+                    // so we push the raw (uninstantiated) ThisType marker.
+                    // This allows property access on `this` in object literal methods
+                    // to suppress false TS2339 errors.
+                    if !pushed_this_type_from_shape {
+                        for param in &shape.params {
+                            use tsz_solver::ContextualTypeContext;
+                            let ctx_helper2 = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                param.type_id,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
+                            if let Some(this_type) = ctx_helper2.get_this_type_from_marker() {
+                                self.ctx.this_type_stack.push(this_type);
+                                pushed_this_type_from_shape = true;
+                                break;
+                            }
+                        }
+                    }
+
                     // No context-sensitive arguments: skip Round 1/2 and use single-pass collection.
                     // For array literal arguments in generic calls, erase the callee's type
                     // parameters from contextual types (replacing with constraints or `unknown`).
@@ -1687,6 +1737,9 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.current_callable_type = prev_callable_type;
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
+        if pushed_this_type_from_shape {
+            self.ctx.this_type_stack.pop();
+        }
 
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);

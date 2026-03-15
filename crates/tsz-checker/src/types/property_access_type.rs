@@ -1021,6 +1021,15 @@ impl<'a> CheckerState<'a> {
                             false
                         };
 
+                    // When `this` type comes from a ThisType<T> marker (e.g., Vue 2
+                    // Options API pattern), property access on unresolved type parameters
+                    // should not emit TS2339. The type parameters will be inferred from the
+                    // object literal, creating a circular dependency that tsc handles by
+                    // deferring the check.
+                    if is_this_access && !self.ctx.this_type_stack.is_empty() {
+                        return TypeId::ANY;
+                    }
+
                     if self.is_js_file() && is_this_access {
                         // Allow dynamic property on `this` in loose JS contexts, but
                         // keep checks when `this` is contextually owned by a class/object

@@ -280,14 +280,10 @@ impl<'a> ThisTypeMarkerExtractor<'a> {
             return name.as_ref() == "ThisType";
         }
 
-        // For Lazy types (type aliases), we need to resolve the def_id to a name
-        // This is harder without access to the symbol table. For now, we fail safe
-        // and return false rather than breaking all type aliases.
-        // TODO: When we have access to symbol resolution, check if def_id points to lib.d.ts ThisType
-        if let Some(TypeData::Lazy(_def_id)) = self.db.lookup(app.base) {
-            // Cannot safely identify ThisType without symbol table access
-            // Return false to avoid breaking other type aliases
-            return false;
+        // For Lazy types (type aliases/interfaces), check if the DefId was registered
+        // as the ThisType marker interface during lib.d.ts setup.
+        if let Some(TypeData::Lazy(def_id)) = self.db.lookup(app.base) {
+            return self.db.is_this_type_marker_def_id(def_id);
         }
 
         false

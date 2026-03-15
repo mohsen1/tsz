@@ -165,6 +165,11 @@ pub trait TypeDatabase {
     fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
         false
     }
+
+    /// Check if a `DefId` corresponds to the `ThisType` marker interface.
+    fn is_this_type_marker_def_id(&self, _def_id: DefId) -> bool {
+        false
+    }
 }
 
 impl TypeDatabase for TypeInterner {
@@ -438,6 +443,10 @@ impl TypeDatabase for TypeInterner {
     fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
         Self::is_boxed_def_id(self, def_id, kind)
     }
+
+    fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
+        Self::is_this_type_marker_def_id(self, def_id)
+    }
 }
 
 /// Implement `TypeResolver` for `TypeInterner` with noop resolution.
@@ -500,6 +509,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     /// Register a `DefId` as belonging to a boxed type.
     fn register_boxed_def_id(&self, _kind: IntrinsicKind, _def_id: DefId) {}
+
+    /// Register a `DefId` as belonging to the `ThisType` marker interface.
+    fn register_this_type_def_id(&self, _def_id: DefId) {}
 
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
         crate::evaluation::evaluate::evaluate_conditional(self.as_type_database(), cond)
@@ -800,6 +812,10 @@ impl QueryDatabase for TypeInterner {
 
     fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
         TypeInterner::register_boxed_def_id(self, kind, def_id);
+    }
+
+    fn register_this_type_def_id(&self, def_id: DefId) {
+        TypeInterner::register_this_type_def_id(self, def_id);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
