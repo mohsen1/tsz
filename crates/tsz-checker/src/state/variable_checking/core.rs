@@ -1264,15 +1264,23 @@ impl<'a> CheckerState<'a> {
                 //   `const a = { get self() { return a; } } satisfies T`
                 // are valid and should NOT get TS7022.  Bare object literals
                 // like `var a = { f: a }` SHOULD still get TS7022.
+                //
+                // Self-references inside getter/setter/function/method bodies are
+                // deferred (lazily evaluated) and should NOT trigger TS7022.
+                // E.g., `const a = { get self() { return a; } }` or
+                //        `const C = object({ get parent() { return optional(C); } })`
                 let has_type_wrapper = init_kind.is_some_and(|k| {
                     matches!(
                         k,
                         syntax_kind_ext::SATISFIES_EXPRESSION | syntax_kind_ext::AS_EXPRESSION
                     )
                 });
+                let all_refs_deferred =
+                    !self.initializer_has_non_deferred_self_reference(var_decl.initializer, sym_id);
                 let is_skip_circularity = init_kind
                     .is_some_and(|k| k == syntax_kind_ext::CLASS_EXPRESSION)
-                    || has_type_wrapper;
+                    || has_type_wrapper
+                    || all_refs_deferred;
                 if !is_skip_circularity {
                     let is_deferred_initializer =
                         self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
