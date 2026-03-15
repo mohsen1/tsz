@@ -1221,11 +1221,17 @@ impl<'a> CheckerState<'a> {
                         | syntax_kind_ext::CLASS_EXPRESSION
                 )
             });
+            // Check once whether all self-references are inside deferred contexts
+            // (getter/setter/function/arrow/method/class bodies). Used by both
+            // TS7022 paths to suppress false circularity diagnostics.
+            let all_refs_deferred =
+                !self.initializer_has_non_deferred_self_reference(var_decl.initializer, sym_id);
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_some()
                 && has_recorded_circular_return
                 && !is_direct_deferred_initializer
+                && !all_refs_deferred
             {
                 self.suppress_circular_initializer_relation_diagnostics(
                     diag_count_before,
@@ -1275,12 +1281,24 @@ impl<'a> CheckerState<'a> {
                         syntax_kind_ext::SATISFIES_EXPRESSION | syntax_kind_ext::AS_EXPRESSION
                     )
                 });
-                let all_refs_deferred =
-                    !self.initializer_has_non_deferred_self_reference(var_decl.initializer, sym_id);
+                // When a var declaration merges with a parameter (e.g.,
+                // `constructor(options?) { var options = (options || 0); }`),
+                // the initializer reference to the parameter is not circular
+                // because the parameter already has a known type.
+                let is_merged_with_parameter =
+                    self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.declarations.iter().any(|&d| {
+                            self.ctx
+                                .arena
+                                .get(d)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::PARAMETER)
+                        })
+                    });
                 let is_skip_circularity = init_kind
                     .is_some_and(|k| k == syntax_kind_ext::CLASS_EXPRESSION)
                     || has_type_wrapper
-                    || all_refs_deferred;
+                    || all_refs_deferred
+                    || is_merged_with_parameter;
                 if !is_skip_circularity {
                     let is_deferred_initializer =
                         self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {

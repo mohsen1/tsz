@@ -431,6 +431,32 @@ impl<'a> TypeFormatter<'a> {
                     formatted
                 };
 
+                // tsc uses shorthand syntax for Array<T> → T[] and ReadonlyArray<T> → readonly T[]
+                if app.args.len() == 1 && (base_str == "Array" || base_str == "ReadonlyArray") {
+                    let elem_formatted = self.format(app.args[0]);
+                    let needs_parens = matches!(
+                        self.interner.lookup(app.args[0]),
+                        Some(
+                            TypeData::Union(_)
+                                | TypeData::Intersection(_)
+                                | TypeData::Function(_)
+                                | TypeData::Callable(_)
+                        )
+                    );
+                    let elem_str = if needs_parens {
+                        format!("({elem_formatted})")
+                    } else {
+                        elem_formatted.into_owned()
+                    };
+                    let result = if base_str == "ReadonlyArray" {
+                        format!("readonly {elem_str}[]")
+                    } else {
+                        format!("{elem_str}[]")
+                    };
+                    trace!(result = %result, "Application formatted as array shorthand");
+                    return result.into();
+                }
+
                 let args: Vec<Cow<'static, str>> =
                     app.args.iter().map(|&arg| self.format(arg)).collect();
                 let result = format!("{}<{}>", base_str, args.join(", "));
@@ -1253,7 +1279,7 @@ impl<'a> TypeFormatter<'a> {
             None => "",
         };
         format!(
-            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {} }}",
+            "{{ {readonly_prefix}[{param_name} in {}]{optional_suffix}: {}; }}",
             self.format(mapped.constraint),
             self.format(mapped.template)
         )
@@ -2550,7 +2576,7 @@ mod tests {
             optional_modifier: None,
         });
 
-        assert_eq!(fmt.format(mapped), "{ [P in string]: P }");
+        assert_eq!(fmt.format(mapped), "{ [P in string]: P; }");
     }
 
     // =================================================================

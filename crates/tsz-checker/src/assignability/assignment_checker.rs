@@ -382,6 +382,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a node is a valid target for object rest assignment.
+    /// Valid targets are identifiers, property accesses, and element accesses.
+    /// Binary expressions like `a + b` are NOT valid rest targets (TS2701).
+    pub(crate) fn is_valid_rest_assignment_target(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::Identifier as u16
+            || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
     /// Check if an identifier node refers to a const variable.
     ///
     /// Returns `Some(name)` if the identifier refers to a const, `None` otherwise.
