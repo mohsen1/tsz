@@ -171,6 +171,7 @@ impl<'a> Completions<'a> {
         match last_char {
             // After `=` in variable declarations and property assignments,
             // but NOT after `==`, `===`, `!=`, `>=`, `<=`
+            // and NOT in type alias definitions (`type X = |`) or type parameter defaults (`<T = |>`)
             Some(b'=') => {
                 if self.is_in_parameter_list(offset) {
                     return false;
@@ -182,13 +183,32 @@ impl<'a> Completions<'a> {
                     && prev != Some(b'>')
                     && prev != Some(b'<')
                 {
+                    // Check if we're in a type context (type alias or type parameter default)
+                    if self.is_in_type_context(node_idx) {
+                        return false;
+                    }
                     return true;
                 }
             }
-            // After `(`, `,` (parameter/argument list), `?` (ternary),
+            // After `(`, `,` (parameter/argument list),
             // `|`, `&` (union/intersection), `!` (non-null/negation)
-            Some(b'(') | Some(b',') | Some(b'?') | Some(b'|') | Some(b'&') | Some(b'!') => {
+            Some(b'(') | Some(b',') | Some(b'|') | Some(b'&') | Some(b'!') => {
+                // In type contexts (type alias body, type parameter defaults, type arguments),
+                // `|` and `&` are union/intersection operators — not new identifier positions
+                if matches!(last_char, Some(b'|') | Some(b'&') | Some(b','))
+                    && self.is_in_type_context(node_idx)
+                {
+                    return false;
+                }
                 return true;
+            }
+            // After `?` — only true in parameter lists (optional param), not ternary
+            Some(b'?') => {
+                // Ternary operator `cond ? |` is an expression position, not new identifier
+                // TypeScript returns false for ternary context
+                if !self.is_in_type_context(node_idx) {
+                    return true;
+                }
             }
             // After `[` - only in specific contexts (array literal, binding pattern)
             // NOT in element access expressions
@@ -308,9 +328,15 @@ impl<'a> Completions<'a> {
             {
                 return true;
             }
+            // `?` is excluded: ternary `cond ? expr|` should not be isNewIdentifierLocation.
+            // In type contexts, `|` and `&` are type operators, not new-identifier positions.
+            if self.is_in_type_context(node_idx) && matches!(prev_sig, '=' | '|' | '&' | ',' | '<')
+            {
+                return false;
+            }
             return matches!(
                 prev_sig,
-                '=' | '(' | ',' | '?' | '|' | '&' | '!' | '+' | '-' | '*' | '/' | '%'
+                '=' | '(' | ',' | '|' | '&' | '!' | '+' | '-' | '*' | '/' | '%'
             );
         }
 
@@ -537,12 +563,86 @@ impl<'a> Completions<'a> {
         }
     }
 
-    /// Check if `<` at end of text is a type parameter context
-    const fn is_type_parameter_context(&self, _trimmed: &str) -> bool {
-        // Conservatively return true - type parameter is the more common case
-        // for `<` in TypeScript than less-than comparison in completion context.
-        // JSX is handled separately by the JSX context check.
-        true
+    /// Check if `<` at end of text is a type parameter *declaration* context
+    /// (where you'd introduce new type parameter names), vs a type *argument*
+    /// context (where you reference existing types).
+    fn is_type_parameter_context(&self, trimmed: &str) -> bool {
+        // Look at what precedes the `<` to determine if this is a declaration or usage.
+        let before = trimmed[..trimmed.len() - 1].trim_end();
+        if before.is_empty() {
+            return false;
+        }
+        // Find the word before `<`
+        let word_end = before.len();
+        let word_start = before
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+            .map_or(0, |p| p + 1);
+        let word = &before[word_start..word_end];
+
+        // Type parameter declarations: `function foo<|`, `class Foo<|`, `interface Bar<|`,
+        // `type Alias<|`, `method<|` (in declarations)
+        // These are contexts where you NAME new type parameters → true
+        //
+        // Type argument usages: `foo<|` (calling generic), `Foo<|` (using generic type),
+        // `new Foo<|`, etc. — you're specifying existing types → false
+        //
+        // Heuristic: if preceded by a keyword that starts a declaration, it's a declaration.
+        matches!(
+            word,
+            "function" | "class" | "interface" | "type" | "extends" | "implements"
+        )
+    }
+
+    /// Check if the cursor is inside a type context (type alias body, type parameter
+    /// default, type argument list, etc.) by walking AST ancestors.
+    fn is_in_type_context(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        for _ in 0..20 {
+            if let Some(node) = self.arena.get(current) {
+                let k = node.kind;
+                // Type-position AST nodes
+                if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || k == syntax_kind_ext::TYPE_REFERENCE
+                    || k == syntax_kind_ext::UNION_TYPE
+                    || k == syntax_kind_ext::INTERSECTION_TYPE
+                    || k == syntax_kind_ext::MAPPED_TYPE
+                    || k == syntax_kind_ext::CONDITIONAL_TYPE
+                    || k == syntax_kind_ext::FUNCTION_TYPE
+                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+                    || k == syntax_kind_ext::TUPLE_TYPE
+                    || k == syntax_kind_ext::ARRAY_TYPE
+                    || k == syntax_kind_ext::PARENTHESIZED_TYPE
+                    || k == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                    || k == syntax_kind_ext::TYPE_QUERY
+                    || k == syntax_kind_ext::TYPE_OPERATOR
+                    || k == syntax_kind_ext::TYPE_LITERAL
+                    || k == syntax_kind_ext::TYPE_PARAMETER
+                    || k == syntax_kind_ext::TYPE_PREDICATE
+                    || k == syntax_kind_ext::IMPORT_TYPE
+                {
+                    return true;
+                }
+                // Stop at expression/statement/declaration boundaries
+                if k == syntax_kind_ext::SOURCE_FILE
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::VARIABLE_DECLARATION
+                    || k == syntax_kind_ext::CALL_EXPRESSION
+                {
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     pub(super) fn should_offer_constructor_keyword(&self, offset: u32) -> bool {

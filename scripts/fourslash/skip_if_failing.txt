@@ -3909,7 +3909,6 @@ syntacticClassificationsDocComment2
 tsxCompletionOnClosingTag2
 tsxQuickInfo2
 textChangesPreserveNewlines6
-typeOfKeywordCompletion
 toggleLineComment9
 tripleSlashRefPathCompletionAbsolutePaths
 unusedClassInNamespace2
