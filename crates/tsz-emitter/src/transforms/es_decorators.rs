@@ -222,7 +222,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // The ctor_ref determines what goes in Object.defineProperty/runInitializers:
-        // - ES2022 with class decorators: `_classThis` (captured via static { _classThis = this; })
+        // - ES2022 with class decorators: `_classThis`
         // - ES2022 without class decorators: `this`
         // - ES2015 with class decorators: `_classThis`
         // - ES2015 without class decorators: the class alias `_a`
@@ -230,6 +230,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
             "_classThis".to_string()
         } else if self.use_static_blocks {
             "this".to_string()
+        } else {
+            class_alias.clone()
+        };
+        // For member __esDecorate calls in ES2022 static blocks, use `this` directly
+        // (even with class decorators, since static blocks execute with class as `this`)
+        let _member_ctor_ref = if self.use_static_blocks {
+            "this".to_string()
+        } else if has_class_decorators {
+            "_classThis".to_string()
         } else {
             class_alias.clone()
         };
@@ -273,7 +282,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2022: emit decorator assignments in a separate static block
             // ONLY when there are no computed method/getter/setter members to serve
             // as assignment sinks (field-only decorators need a static block).
-            let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
+            let _has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
                 decorated_members.get(*mi).is_some_and(|m| {
                     matches!(
                         m.kind,
@@ -447,12 +456,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // __esDecorate calls for each member
+        // In ES2022 static blocks, use `this` for the class ref (it IS the class in static blocks)
+        let member_class_ref = if self.use_static_blocks {
+            "this"
+        } else {
+            ctor_ref
+        };
         for (i, member) in decorated_members.iter().enumerate() {
             let var_info = &member_vars[i];
             self.emit_es_decorate_call(
                 member,
                 var_info,
-                ctor_ref,
+                member_class_ref,
                 computed_key_vars,
                 i,
                 indent,
@@ -1306,14 +1321,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
                 continue;
             }
-            let func = self.arena.get_function(member_node)?;
+            let ctor = self.arena.get_constructor(member_node)?;
             let source = self.source_text?;
 
-            let params = if func.parameters.nodes.is_empty() {
+            let params = if ctor.parameters.nodes.is_empty() {
                 String::new()
             } else {
                 let mut param_texts = Vec::new();
-                for &param_idx in &func.parameters.nodes {
+                for &param_idx in &ctor.parameters.nodes {
                     let param_node = self.arena.get(param_idx)?;
                     let param_data = self.arena.get_parameter(param_node)?;
                     let name_text = self.node_text(param_data.name);
@@ -1329,13 +1344,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 param_texts.join(", ")
             };
 
-            if func.body.is_none() {
+            if ctor.body == NodeIndex::NONE {
                 return Some(ConstructorInfo {
                     params,
                     body_lines: Vec::new(),
                 });
             }
-            let body_node = self.arena.get(func.body)?;
+            let body_node = self.arena.get(ctor.body)?;
             let block = self.arena.get_block(body_node)?;
             let mut body_lines = Vec::new();
             for &stmt_idx in &block.statements.nodes {
