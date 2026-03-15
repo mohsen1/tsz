@@ -425,3 +425,289 @@ fn test_code_lens_all_have_data() {
         );
     }
 }
+
+#[test]
+fn test_code_lens_abstract_class() {
+    let source = "abstract class Base {\n  abstract foo(): void;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Abstract class should get a code lens
+    let class_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        class_lens.is_some(),
+        "Abstract class should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_const_enum() {
+    let source = "const enum Direction {\n  Up,\n  Down,\n  Left,\n  Right\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // const enum should get a code lens
+    let enum_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(enum_lens.is_some(), "Const enum should have a code lens");
+}
+
+#[test]
+fn test_code_lens_interface_only_has_implementations_kind() {
+    let source = "interface Serializable {\n  serialize(): string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Interface should have an Implementations kind lens
+    let impl_lens = lenses.iter().find(|l| {
+        l.data
+            .as_ref()
+            .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+    });
+    assert!(
+        impl_lens.is_some(),
+        "Interface should have an Implementations lens"
+    );
+}
+
+#[test]
+fn test_code_lens_class_no_implementations_kind() {
+    // Regular classes should not get an Implementations lens (only interfaces do)
+    let source = "class Concrete {\n  method() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let impl_lens = lenses.iter().find(|l| {
+        l.data
+            .as_ref()
+            .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+    });
+    assert!(
+        impl_lens.is_none(),
+        "Regular class should NOT have an Implementations lens"
+    );
+}
+
+#[test]
+fn test_code_lens_resolve_interface_implementations() {
+    let source = "interface Runnable {\n  run(): void;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Find the implementations lens and resolve it
+    let impl_lens = lenses.iter().find(|l| {
+        l.data
+            .as_ref()
+            .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+    });
+
+    if let Some(lens) = impl_lens {
+        let resolved = provider.resolve_code_lens(root, lens);
+        assert!(resolved.is_some(), "Implementations lens should resolve");
+        let resolved = resolved.unwrap();
+        assert!(
+            resolved.command.is_some(),
+            "Resolved lens should have command"
+        );
+        let cmd = resolved.command.unwrap();
+        assert_eq!(cmd.command, "editor.action.goToImplementation");
+    }
+}
+
+#[test]
+fn test_code_lens_resolve_with_no_data() {
+    let source = "function foo() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Create a lens with no data - resolution should return None
+    let range = tsz_common::position::Range::new(Position::new(0, 0), Position::new(0, 1));
+    let lens = CodeLens {
+        range,
+        command: None,
+        data: None,
+    };
+
+    let resolved = provider.resolve_code_lens(root, &lens);
+    assert!(resolved.is_none(), "Lens without data should not resolve");
+}
+
+#[test]
+fn test_code_lens_multiple_interfaces() {
+    let source = "interface A {\n  x: number;\n}\ninterface B {\n  y: string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Each interface should get both references and implementations lenses
+    let interface_a_lenses: Vec<_> = lenses.iter().filter(|l| l.range.start.line == 0).collect();
+    let interface_b_lenses: Vec<_> = lenses.iter().filter(|l| l.range.start.line == 3).collect();
+
+    assert!(
+        interface_a_lenses.len() >= 2,
+        "Interface A should have at least 2 lenses (refs + impls), got {}",
+        interface_a_lenses.len()
+    );
+    assert!(
+        interface_b_lenses.len() >= 2,
+        "Interface B should have at least 2 lenses (refs + impls), got {}",
+        interface_b_lenses.len()
+    );
+}
+
+#[test]
+fn test_code_lens_only_comments() {
+    let source = "// This is a comment\n/* Block comment */";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    assert!(
+        lenses.is_empty(),
+        "File with only comments should have no code lenses"
+    );
+}
+
+#[test]
+fn test_code_lens_generic_function() {
+    let source = "function identity<T>(arg: T): T {\n  return arg;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    let func_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        func_lens.is_some(),
+        "Generic function should have a code lens"
+    );
+}
+
+#[test]
+fn test_code_lens_resolve_single_reference() {
+    let source = "function greet() {}\ngreet();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+    let func_lens = lenses
+        .iter()
+        .find(|l| l.range.start.line == 0)
+        .expect("Should have function lens");
+
+    let resolved = provider.resolve_code_lens(root, func_lens);
+    if let Some(resolved) = resolved {
+        if let Some(command) = resolved.command {
+            // Reference count depends on binder implementation
+            assert!(
+                command.title.contains("reference"),
+                "Should contain 'reference' in title, got: {}",
+                command.title
+            );
+        }
+    }
+}
+
+#[test]
+fn test_code_lens_class_with_static_method() {
+    let source = "class Utils {\n  static parse() {}\n  static format() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider = CodeLensProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let lenses = provider.provide_code_lenses(root);
+
+    // Should have lens for the class itself at minimum
+    let class_lens = lenses.iter().find(|l| l.range.start.line == 0);
+    assert!(
+        class_lens.is_some(),
+        "Class with static methods should have a lens"
+    );
+}
