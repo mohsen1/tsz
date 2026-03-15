@@ -1103,3 +1103,113 @@ fn test_constraint_no_bounds_defaults_unknown() {
         "Expected Ok(UNKNOWN) or Err(Unresolved), got {result:?}"
     );
 }
+
+// =============================================================================
+// fix_current_variables: unknown candidate filtering with upper bounds
+// =============================================================================
+
+#[test]
+fn test_fix_current_variables_filters_unknown_with_informative_upper_bound() {
+    // Simulates: f<T>(value: T[], func: (t: T) => void) called as f([], acceptStr)
+    // The empty array contributes `unknown` as a covariant candidate (from contextual typing),
+    // while `acceptStr` contributes `string` as a contra-candidate (from function param).
+    // The reverse constraint direction adds `string` as an upper bound on T.
+    //
+    // fix_current_variables should filter out `unknown` when `string` upper bound exists,
+    // allowing the contra-candidate to drive inference → T = string.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Covariant candidate: unknown (from empty array element type)
+    ctx.add_candidate(var_t, TypeId::UNKNOWN, InferencePriority::NakedTypeVariable);
+    // Contravariant candidate: string (from callback parameter)
+    ctx.add_contra_candidate(var_t, TypeId::STRING, InferencePriority::NakedTypeVariable);
+    // Upper bound: string (from reverse constraint T <: string)
+    ctx.add_upper_bound(var_t, TypeId::STRING);
+
+    // fix_current_variables should filter the `unknown` candidate and use contra-candidates
+    ctx.fix_current_variables().unwrap();
+
+    // T should resolve to `string` from the contra-candidate, not `unknown`
+    let resolved = ctx.probe(var_t);
+    assert_eq!(
+        resolved,
+        Some(TypeId::STRING),
+        "Expected T = string (from contra-candidate), got {resolved:?}"
+    );
+}
+
+#[test]
+fn test_fix_current_variables_keeps_concrete_candidate_with_upper_bound() {
+    // When the covariant candidate is concrete (not unknown/error), it should be preserved.
+    // Simulates: f<T>(value: T[], func: (t: T) => void) called as f(["hello"], acceptStr)
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Covariant candidate: string (from ["hello"] element type)
+    ctx.add_candidate(var_t, TypeId::STRING, InferencePriority::NakedTypeVariable);
+    // Contravariant candidate: string (from callback parameter)
+    ctx.add_contra_candidate(var_t, TypeId::STRING, InferencePriority::NakedTypeVariable);
+    // Upper bound: string
+    ctx.add_upper_bound(var_t, TypeId::STRING);
+
+    ctx.fix_current_variables().unwrap();
+
+    let resolved = ctx.probe(var_t);
+    assert_eq!(
+        resolved,
+        Some(TypeId::STRING),
+        "Expected T = string (from covariant candidate), got {resolved:?}"
+    );
+}
+
+#[test]
+fn test_fix_current_variables_unknown_without_upper_bound_stays_unknown() {
+    // When there is no upper bound, unknown covariant candidate should NOT be filtered.
+    // This ensures we don't break the case where T genuinely resolves to unknown.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    // Only covariant candidate: unknown
+    ctx.add_candidate(var_t, TypeId::UNKNOWN, InferencePriority::NakedTypeVariable);
+
+    ctx.fix_current_variables().unwrap();
+
+    let resolved = ctx.probe(var_t);
+    assert_eq!(
+        resolved,
+        Some(TypeId::UNKNOWN),
+        "Expected T = unknown (no upper bound to filter), got {resolved:?}"
+    );
+}
+
+#[test]
+fn test_contra_candidate_wins_when_only_unknown_covariant() {
+    // Tests that resolve_with_constraints also properly handles contra-candidates
+    // when the only covariant candidate is `unknown` with an informative upper bound.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let var_t = ctx.fresh_type_param(t_name, false);
+
+    ctx.add_candidate(var_t, TypeId::UNKNOWN, InferencePriority::NakedTypeVariable);
+    ctx.add_contra_candidate(var_t, TypeId::NUMBER, InferencePriority::NakedTypeVariable);
+    ctx.add_upper_bound(var_t, TypeId::NUMBER);
+
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "Expected T = number (contra-candidate wins over filtered unknown), got {result:?}"
+    );
+}

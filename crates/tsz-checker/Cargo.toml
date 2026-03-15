@@ -127,5 +127,9 @@ path = "tests/co_contra_inference_tests.rs"
 name = "commonjs_constructor_diagnostics_tests"
 path = "tests/commonjs_constructor_diagnostics_tests.rs"
 
+[[test]]
+name = "type_arg_count_mismatch_tests"
+path = "tests/type_arg_count_mismatch_tests.rs"
+
 [lints]
 workspace = true

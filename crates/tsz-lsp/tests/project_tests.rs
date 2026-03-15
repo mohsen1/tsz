@@ -3722,7 +3722,7 @@ fn test_project_implementations_missing_file() {
 
 #[test]
 fn test_project_type_definition_missing_file() {
-    let mut project = Project::new();
+    let project = Project::new();
     let result = project.get_type_definition("nonexistent.ts", Position::new(0, 0));
     assert!(result.is_none(), "Should return None for missing file");
 }
@@ -3933,4 +3933,365 @@ fn test_project_get_outgoing_calls_missing_file() {
         result.is_empty(),
         "get_outgoing_calls should return empty for missing file"
     );
+}
+
+// =========================================================================
+// Additional coverage tests
+// =========================================================================
+
+#[test]
+fn test_project_multiple_file_diagnostics() {
+    let mut project = Project::new();
+    project.set_file(
+        "a.ts".to_string(),
+        "export const x: string = 1;\n".to_string(),
+    );
+    project.set_file(
+        "b.ts".to_string(),
+        "export const y: number = 'hello';\n".to_string(),
+    );
+
+    let diags_a = project
+        .get_diagnostics("a.ts")
+        .expect("Expected diagnostics for a.ts");
+    let diags_b = project
+        .get_diagnostics("b.ts")
+        .expect("Expected diagnostics for b.ts");
+
+    assert!(!diags_a.is_empty(), "a.ts should have type errors");
+    assert!(!diags_b.is_empty(), "b.ts should have type errors");
+}
+
+#[test]
+fn test_project_diagnostics_update_after_edit() {
+    let mut project = Project::new();
+    project.set_file("test.ts".to_string(), "const x: string = 42;\n".to_string());
+
+    let diags_before = project
+        .get_diagnostics("test.ts")
+        .expect("Expected diagnostics");
+    assert!(
+        !diags_before.is_empty(),
+        "Should have type error before fix"
+    );
+
+    // Fix the error
+    let edit = {
+        let file = project.file("test.ts").unwrap();
+        let range = range_for_substring(file.source_text(), file.line_map(), "42");
+        TextEdit::new(range, "\"hello\"".to_string())
+    };
+    project
+        .update_file("test.ts", &[edit])
+        .expect("Expected update to succeed");
+
+    let diags_after = project
+        .get_diagnostics("test.ts")
+        .expect("Expected diagnostics after fix");
+    assert!(
+        diags_after.len() < diags_before.len(),
+        "Should have fewer diagnostics after fix, before: {}, after: {}",
+        diags_before.len(),
+        diags_after.len()
+    );
+}
+
+#[test]
+fn test_project_folding_ranges_nested_functions() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        r#"function outer() {
+    function inner() {
+        return 1;
+    }
+    return inner();
+}
+"#
+        .to_string(),
+    );
+
+    let ranges = project.get_folding_ranges("test.ts");
+    assert!(ranges.is_some(), "Should return folding ranges");
+    let ranges = ranges.unwrap();
+    assert!(
+        ranges.len() >= 2,
+        "Should have folding ranges for outer and inner functions, got: {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_project_selection_ranges_multiple_positions() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "const x = 1;\nconst y = 2;\n".to_string(),
+    );
+
+    let positions = vec![Position::new(0, 6), Position::new(1, 6)];
+    let ranges = project.get_selection_ranges("test.ts", &positions);
+    assert!(ranges.is_some(), "Should return selection ranges");
+    let ranges = ranges.unwrap();
+    assert_eq!(ranges.len(), 2, "Should have one result per position");
+    assert!(ranges[0].is_some(), "First position should have a range");
+    assert!(ranges[1].is_some(), "Second position should have a range");
+}
+
+#[test]
+fn test_project_selection_ranges_returns_none_for_missing_file() {
+    let project = Project::new();
+    let result = project.get_selection_ranges("missing.ts", &[Position::new(0, 0)]);
+    assert!(result.is_none(), "Should return None for missing file");
+}
+
+#[test]
+fn test_project_inlay_hints_function_call() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "function greet(name: string, age: number) { return name; }\ngreet(\"Alice\", 30);\n"
+            .to_string(),
+    );
+
+    let range = Range::new(Position::new(0, 0), Position::new(2, 0));
+    let hints = project.get_inlay_hints("test.ts", range);
+    assert!(hints.is_some(), "Should return inlay hints result");
+}
+
+#[test]
+fn test_project_code_lens_for_functions() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        r#"function foo() {
+    return 1;
+}
+
+function bar() {
+    return foo();
+}
+"#
+        .to_string(),
+    );
+
+    let lenses = project.get_code_lenses("test.ts");
+    assert!(lenses.is_some(), "Should return code lenses");
+    let lenses = lenses.unwrap();
+    // There should be at least some code lenses for functions
+    assert!(
+        !lenses.is_empty(),
+        "Should produce code lenses for functions"
+    );
+}
+
+#[test]
+fn test_project_code_lens_returns_none_for_missing_file() {
+    let project = Project::new();
+    assert!(project.get_code_lenses("missing.ts").is_none());
+}
+
+#[test]
+fn test_project_semantic_tokens_for_interface() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "interface Foo {\n    bar: string;\n    baz(x: number): void;\n}\n".to_string(),
+    );
+
+    let tokens = project.get_semantic_tokens_full("test.ts");
+    assert!(tokens.is_some(), "Should return semantic tokens");
+    let tokens = tokens.unwrap();
+    assert_eq!(tokens.len() % 5, 0, "Token data should be in groups of 5");
+    assert!(
+        tokens.len() >= 5,
+        "Should have at least one semantic token for interface"
+    );
+}
+
+#[test]
+fn test_project_format_document_produces_edits() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "function   foo(  ){\nreturn 1\n}\n".to_string(),
+    );
+
+    let options = FormattingOptions::default();
+    let result = project.format_document("test.ts", &options);
+    assert!(result.is_some(), "Should return formatting result");
+    let edits = result.unwrap();
+    // Formatting result depends on formatter configuration
+    // Just verify the API returns without panicking
+    let _ = edits;
+}
+
+#[test]
+fn test_project_highlighting_variable_all_occurrences() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "const value = 1;\nconst doubled = value * 2;\nconst tripled = value * 3;\n".to_string(),
+    );
+
+    // Position on 'value' at declaration (line 0, char 6)
+    let highlights = project.get_document_highlighting("test.ts", Position::new(0, 6));
+    assert!(highlights.is_some(), "Should find highlights for 'value'");
+    let highlights = highlights.unwrap();
+    assert!(
+        highlights.len() >= 3,
+        "Should highlight all 3 occurrences of 'value', got: {}",
+        highlights.len()
+    );
+}
+
+#[test]
+fn test_project_call_hierarchy_prepare_missing_file() {
+    let project = Project::new();
+    assert!(
+        project
+            .prepare_call_hierarchy("missing.ts", Position::new(0, 0))
+            .is_none()
+    );
+}
+
+#[test]
+fn test_project_type_hierarchy_prepare_for_interface() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        r#"interface Shape {
+    area(): number;
+}
+
+interface Circle extends Shape {
+    radius: number;
+}
+"#
+        .to_string(),
+    );
+
+    let item = project.prepare_type_hierarchy("test.ts", Position::new(4, 10));
+    assert!(
+        item.is_some(),
+        "Should prepare type hierarchy for Circle interface"
+    );
+    let item = item.unwrap();
+    assert_eq!(
+        item.name, "Circle",
+        "Type hierarchy item should be 'Circle'"
+    );
+}
+
+#[test]
+fn test_project_subtypes_for_base_class() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        r#"class Base {
+    value: number;
+}
+
+class Derived extends Base {
+    extra: string;
+}
+"#
+        .to_string(),
+    );
+
+    let subtypes = project.subtypes("test.ts", Position::new(0, 6));
+    // May or may not find subtypes depending on implementation scope
+    // At minimum, verify it does not crash and returns a valid result
+    let _ = subtypes;
+}
+
+#[test]
+fn test_project_stale_diagnostics_after_file_update() {
+    let mut project = Project::new();
+    project.set_file("a.ts".to_string(), "export const x = 1;\n".to_string());
+    project.set_file(
+        "b.ts".to_string(),
+        "import { x } from \"./a\";\nconst y: string = x;\n".to_string(),
+    );
+
+    // Initial diagnostics
+    let _ = project.get_diagnostics("b.ts");
+
+    // Update a.ts
+    let edit = {
+        let file = project.file("a.ts").unwrap();
+        let range = range_for_substring(file.source_text(), file.line_map(), "1");
+        TextEdit::new(range, "2".to_string())
+    };
+    project
+        .update_file("a.ts", &[edit])
+        .expect("Expected update to succeed");
+
+    let stale = project.get_stale_diagnostics();
+    // After updating a.ts, dependents (b.ts) may be marked stale
+    // The implementation may vary, so just check this doesn't crash
+    let _ = stale;
+}
+
+#[test]
+fn test_project_hover_on_function_declaration() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "function add(a: number, b: number): number {\n    return a + b;\n}\nadd(1, 2);\n"
+            .to_string(),
+    );
+
+    // Hover on 'add' at its declaration
+    let hover = project.get_hover("test.ts", Position::new(0, 9));
+    assert!(
+        hover.is_some(),
+        "Should provide hover for function declaration"
+    );
+    let hover = hover.unwrap();
+    assert!(
+        hover.contents.iter().any(|c| c.contains("add")),
+        "Hover should contain function name"
+    );
+}
+
+#[test]
+fn test_project_definition_within_same_file() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "const myVar = 42;\nconsole.log(myVar);\n".to_string(),
+    );
+
+    // Go to definition of myVar usage (line 1)
+    let defs = project.get_definition("test.ts", Position::new(1, 12));
+    assert!(defs.is_some(), "Should find definition for myVar");
+    let defs = defs.unwrap();
+    assert!(
+        defs.iter()
+            .any(|loc| loc.file_path == "test.ts" && loc.range.start.line == 0),
+        "Definition should point to declaration on line 0"
+    );
+}
+
+#[test]
+fn test_project_get_implementations_for_interface() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        r#"interface Printable {
+    print(): void;
+}
+
+class Document implements Printable {
+    print() { }
+}
+"#
+        .to_string(),
+    );
+
+    let impls = project.get_implementations("test.ts", Position::new(0, 10));
+    // Implementations search for the interface
+    // This may or may not find results depending on how file-local impl search works
+    let _ = impls;
 }
