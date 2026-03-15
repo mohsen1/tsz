@@ -30,8 +30,6 @@ impl<'a> CheckerState<'a> {
     /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts,
     /// generatorReturnTypeFallback.2.ts, missingDecoratorType.ts, etc.
     pub(crate) fn check_missing_global_types(&mut self) {
-        use tsz_binder::lib_loader;
-
         // Core global types that TypeScript requires.
         // These are fundamental types that should always exist unless explicitly disabled.
         const CORE_GLOBAL_TYPES: &[&str] = &[
@@ -73,13 +71,7 @@ impl<'a> CheckerState<'a> {
             if !self.ctx.has_name_in_lib(type_name) {
                 // Type not available globally - emit TS2318
                 // tsc emits these with no file position (file="", line=0, column=0)
-                self.ctx
-                    .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                        type_name,
-                        String::new(),
-                        0,
-                        0,
-                    ));
+                self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
             }
         }
 
@@ -381,8 +373,6 @@ impl<'a> CheckerState<'a> {
     /// - Disposable/AsyncDisposable: Required for using declarations
     /// - Awaited: Required for await type operator
     pub(crate) fn check_feature_specific_global_types(&mut self) {
-        use tsz_binder::lib_loader;
-
         // Types that are commonly referenced in TypeScript features
         // We check if these are available in lib contexts
         let feature_types = [
@@ -437,10 +427,7 @@ impl<'a> CheckerState<'a> {
 
             if should_emit {
                 // tsc emits these with no file position (file="", line=0, column=0)
-                let diag =
-                    lib_loader::emit_error_global_type_missing(type_name, String::new(), 0, 0);
-                // Use push_diagnostic for consistent deduplication
-                self.ctx.push_diagnostic(diag);
+                self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
             }
         }
     }
