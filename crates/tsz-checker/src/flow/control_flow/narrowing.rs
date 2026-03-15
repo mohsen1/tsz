@@ -371,23 +371,11 @@ impl<'a> FlowAnalyzer<'a> {
             return predicate.clone();
         };
 
-        // Extract type params from the generic function/callable
-        let classify_result = classify_for_predicate_signature(self.interner, callee_type);
-        let type_params = match classify_result {
-            PredicateSignatureKind::Function(shape_id) => {
-                self.interner.function_shape(shape_id).type_params.clone()
-            }
-            PredicateSignatureKind::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                shape
-                    .call_signatures
-                    .iter()
-                    .find(|sig| sig.type_predicate.is_some())
-                    .map(|sig| sig.type_params.clone())
-                    .unwrap_or_default()
-            }
-            _ => vec![],
-        };
+        // Extract type params from the predicate signature via solver query
+        let type_params =
+            tsz_solver::type_queries::flow::extract_predicate_signature(self.interner, callee_type)
+                .map(|sig| sig.type_params)
+                .unwrap_or_default();
 
         if type_params.is_empty() {
             return predicate.clone();
