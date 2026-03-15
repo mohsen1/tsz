@@ -640,6 +640,14 @@ impl<'a> Printer<'a> {
                 if let Some(arrow_node) = self.arena.get(arrow_node)
                     && let Some(func) = self.arena.get_function(arrow_node)
                 {
+                    // If this arrow-turned-function is the leftmost expression in a
+                    // statement, wrap with parens to avoid `function` being parsed as
+                    // a function declaration.
+                    let needs_paren = self.ctx.flags.paren_leftmost_function_or_object;
+                    if needs_paren {
+                        self.ctx.flags.paren_leftmost_function_or_object = false;
+                        self.write("(");
+                    }
                     self.emit_arrow_function_es5(
                         arrow_node,
                         func,
@@ -647,6 +655,9 @@ impl<'a> Printer<'a> {
                         captures_arguments,
                         &class_alias,
                     );
+                    if needs_paren {
+                        self.write(")");
+                    }
                     return;
                 }
 
