@@ -212,12 +212,13 @@ fn should_preserve_contextual_application_shape(
             .any(|member| should_preserve_contextual_application_shape(db, member));
     }
 
-    match db.lookup(ty) {
-        Some(tsz_solver::TypeData::ReadonlyType(inner) | tsz_solver::TypeData::NoInfer(inner)) => {
-            should_preserve_contextual_application_shape(db, inner)
-        }
-        _ => false,
+    if let Some(inner) = tsz_solver::visitor::readonly_inner_type(db, ty)
+        .or_else(|| tsz_solver::visitor::no_infer_inner_type(db, ty))
+    {
+        return should_preserve_contextual_application_shape(db, inner);
     }
+
+    false
 }
 
 fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: NodeIndex) -> bool {
