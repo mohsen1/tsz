@@ -584,7 +584,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut rename_buf = String::with_capacity(32);
         for (index, tp) in source.type_params.iter().enumerate() {
             rename_buf.clear();
-            write!(rename_buf, "__infer_src_ctx_{index}").unwrap();
+            write!(rename_buf, "__infer_src_ctx_{index}").expect("write to String is infallible");
             let fresh_name = self.interner.intern_string(&rename_buf);
             let fresh_type = self.interner.type_param(TypeParamInfo {
                 name: fresh_name,

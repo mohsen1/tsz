@@ -1902,7 +1902,13 @@ impl<'a> Printer<'a> {
             self.emit(jump.label);
             // Emit inline comments between label and semicolon (e.g., `break foo /*c*/;`)
             if let Some(label_node) = self.arena.get(jump.label) {
-                self.emit_comments_in_range(label_node.end, node.end, true, false);
+                // Limit the scan range to the semicolon position (not node.end,
+                // which may extend past the `;` into the next statement's trivia
+                // due to how parse_break_statement sets end_pos).
+                let range_end = self
+                    .find_semicolon_pos_in_range(label_node.end, node.end)
+                    .unwrap_or(label_node.end);
+                self.emit_comments_in_range(label_node.end, range_end, true, false);
             }
         }
         self.map_trailing_semicolon(node);
@@ -1923,12 +1929,33 @@ impl<'a> Printer<'a> {
             self.emit(jump.label);
             // Emit inline comments between label and semicolon (e.g., `continue foo /*c*/;`)
             if let Some(label_node) = self.arena.get(jump.label) {
-                self.emit_comments_in_range(label_node.end, node.end, true, false);
+                // Limit the scan range to the semicolon position (not node.end,
+                // which may extend past the `;` into the next statement's trivia
+                // due to how parse_continue_statement sets end_pos).
+                let range_end = self
+                    .find_semicolon_pos_in_range(label_node.end, node.end)
+                    .unwrap_or(label_node.end);
+                self.emit_comments_in_range(label_node.end, range_end, true, false);
             }
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    /// Find the position of the first `;` in the source text between `start` and `end`.
+    /// Returns the position right after the `;` (exclusive end) or `None` if no `;` found.
+    fn find_semicolon_pos_in_range(&self, start: u32, end: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let s = start as usize;
+        let e = (end as usize).min(bytes.len());
+        for i in s..e {
+            if bytes[i] == b';' {
+                return Some(i as u32);
+            }
+        }
+        None
     }
 
     pub(super) fn emit_labeled_statement(&mut self, node: &Node) {
