@@ -1014,3 +1014,149 @@ fn test_goto_definition_for_node_with_none_index() {
         "Should return None for NodeIndex::none()"
     );
 }
+
+// =========================================================================
+// Edge case tests for comprehensive coverage
+// =========================================================================
+
+#[test]
+fn test_goto_definition_empty_file() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let defs = goto_def.get_definition(root, Position::new(0, 0));
+    assert!(defs.is_none(), "Empty file should have no definitions");
+}
+
+#[test]
+fn test_goto_definition_class_reference() {
+    let source = "class MyClass {}\nlet c = new MyClass();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on "MyClass" in "new MyClass()"
+    let defs = goto_def.get_definition(root, Position::new(1, 12));
+    assert!(defs.is_some(), "Should find class definition");
+    let defs = defs.unwrap();
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to class declaration"
+    );
+}
+
+#[test]
+fn test_goto_definition_enum_usage() {
+    let source = "enum Direction { Up, Down }\nlet d = Direction.Up;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on "Direction" in "Direction.Up"
+    let defs = goto_def.get_definition(root, Position::new(1, 8));
+    assert!(defs.is_some(), "Should find enum definition");
+    let defs = defs.unwrap();
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to enum declaration"
+    );
+}
+
+#[test]
+fn test_goto_definition_function_in_nested_scope() {
+    let source = "function outer() {\n  function inner() {}\n  inner();\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on "inner" in "inner();"
+    let defs = goto_def.get_definition(root, Position::new(2, 2));
+    assert!(defs.is_some(), "Should find inner function definition");
+    let defs = defs.unwrap();
+    assert_eq!(
+        defs[0].range.start.line, 1,
+        "Should point to inner function declaration"
+    );
+}
+
+#[test]
+fn test_goto_definition_type_alias_usage() {
+    let source = "type MyStr = string;\nlet x: MyStr = 'hello';";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on "MyStr" in type annotation
+    let defs = goto_def.get_definition(root, Position::new(1, 7));
+    assert!(defs.is_some(), "Should find type alias definition");
+    let defs = defs.unwrap();
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to type alias declaration"
+    );
+}
+
+#[test]
+fn test_goto_definition_at_semicolon_returns_none() {
+    let source = "const x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let defs = goto_def.get_definition(root, Position::new(0, 12));
+    assert!(
+        defs.is_none(),
+        "Should not find definition at semicolon position"
+    );
+}
+
+#[test]
+fn test_goto_definition_multiple_declarations_same_name() {
+    let source = "let x = 1;\nx = 2;\nx;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position on "x" in last line
+    let defs = goto_def.get_definition(root, Position::new(2, 0));
+    assert!(
+        defs.is_some(),
+        "Should find definition for reassigned variable"
+    );
+    let defs = defs.unwrap();
+    // Should point to original declaration
+    assert_eq!(
+        defs[0].range.start.line, 0,
+        "Should point to original declaration"
+    );
+}

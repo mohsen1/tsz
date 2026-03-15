@@ -593,3 +593,122 @@ foo(bar);"#;
         "(alias) module \"jquery\"\nimport bar"
     );
 }
+
+// =========================================================================
+// Edge case tests for comprehensive coverage
+// =========================================================================
+
+#[test]
+fn test_hover_empty_file() {
+    let source = "";
+    let info = get_hover_at(source, 0, 0);
+    assert!(info.is_none(), "Should not find hover info in empty file");
+}
+
+#[test]
+fn test_hover_parameter_type() {
+    let source = "function foo(x: number) { return x; }";
+    let info = get_hover_at(source, 0, 13).expect("Should find hover for parameter");
+    assert!(
+        info.display_string.contains("x"),
+        "Should contain parameter name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_arrow_function() {
+    let source = "const add = (a: number, b: number) => a + b;\nadd(1, 2);";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for arrow function");
+    assert!(
+        info.display_string.contains("add"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_namespace() {
+    let source = "namespace MyNS {\n  export const x = 1;\n}";
+    let info = get_hover_at(source, 0, 10).expect("Should find hover for namespace");
+    assert!(
+        info.display_string.contains("MyNS"),
+        "Should contain namespace name, got: {}",
+        info.display_string
+    );
+    assert_eq!(
+        info.kind, "module",
+        "Namespace kind should be 'module', got: {}",
+        info.kind
+    );
+}
+
+#[test]
+fn test_hover_enum_member() {
+    let source = "enum Color { Red = 1, Green = 2 }\nColor.Red;";
+    let info = get_hover_at(source, 0, 13);
+    // Hover on 'Red' member declaration
+    if let Some(info) = info {
+        assert!(
+            info.display_string.contains("Red"),
+            "Should contain enum member name, got: {}",
+            info.display_string
+        );
+    }
+}
+
+#[test]
+fn test_hover_class_method() {
+    let source = "class Foo {\n  bar() { return 42; }\n}";
+    let info = get_hover_at(source, 1, 2).expect("Should find hover for class method");
+    assert!(
+        info.display_string.contains("bar"),
+        "Should contain method name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_at_beginning_of_line() {
+    let source = "const x = 42;\nx;";
+    let info = get_hover_at(source, 1, 0);
+    assert!(info.is_some(), "Should find hover at beginning of line");
+}
+
+#[test]
+fn test_hover_multiline_function_signature() {
+    let source = "function longName(\n  a: number,\n  b: string,\n  c: boolean\n): void {}";
+    let info = get_hover_at(source, 0, 9).expect("Should find hover for function");
+    assert!(
+        info.display_string.contains("longName"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_const_assertion() {
+    let source = "const arr = [1, 2, 3] as const;\narr;";
+    let info = get_hover_at(source, 1, 0).expect("Should find hover for const assertion");
+    assert!(
+        info.display_string.contains("arr"),
+        "Should contain variable name, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
+fn test_hover_export_function() {
+    let source = "export function exported() { return true; }";
+    let info = get_hover_at(source, 0, 16).expect("Should find hover for exported function");
+    assert!(
+        info.display_string.contains("exported"),
+        "Should contain function name, got: {}",
+        info.display_string
+    );
+    assert!(
+        info.kind_modifiers.contains("export"),
+        "Should have export modifier, got: {}",
+        info.kind_modifiers
+    );
+}
