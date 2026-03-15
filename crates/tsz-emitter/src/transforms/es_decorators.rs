@@ -58,6 +58,8 @@ pub struct TC39DecoratorEmitter<'a> {
     tslib_prefix: bool,
     /// When true, emit as an expression (no `let C = ` wrapper) for class expressions.
     expression_mode: bool,
+    /// Function name for class expression named evaluation (__setFunctionName).
+    function_name: Option<String>,
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
@@ -69,6 +71,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             use_static_blocks: false,
             tslib_prefix: false,
             expression_mode: false,
+            function_name: None,
         }
     }
 
@@ -90,6 +93,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub const fn set_expression_mode(&mut self, expr: bool) {
         self.expression_mode = expr;
+    }
+
+    /// Set the function name for class expression named evaluation.
+    /// Used for `__setFunctionName(_classThis, name)` in ES2022 mode.
+    pub fn set_function_name(&mut self, name: String) {
+        self.function_name = Some(name);
     }
 
     /// Returns the helper function name with optional tslib prefix.
@@ -265,15 +274,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2022: with class decorators, emit _classThis capture block first
             if has_class_decorators {
                 out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
-                // For class expressions, emit __setFunctionName with the original class name
+                // For class expressions, emit __setFunctionName with the class name
+                // or the externally-provided function name (from assignment context)
                 if self.expression_mode {
-                    let original_name = self
+                    let name = self
                         .get_identifier_text(class_data.name)
-                        .unwrap_or_default();
-                    if !original_name.is_empty() {
+                        .filter(|n| !n.is_empty())
+                        .or_else(|| self.function_name.clone());
+                    if let Some(fn_name) = name {
                         let set_fn = self.helper("__setFunctionName");
                         out.push_str(&format!(
-                            "{i2}static {{ {set_fn}(_classThis, \"{original_name}\"); }}\n"
+                            "{i2}static {{ {set_fn}(_classThis, \"{fn_name}\"); }}\n"
                         ));
                     }
                 }

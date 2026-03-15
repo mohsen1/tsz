@@ -867,6 +867,12 @@ impl<'a> Printer<'a> {
         // For class expressions, emit as expression (no `let C = ` wrapper)
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
             emitter.set_expression_mode(true);
+            // Try to determine the function name from the assignment context
+            if let Some(ref name) = self.anonymous_default_export_name {
+                emitter.set_function_name(name.clone());
+            } else if let Some(ref name) = self.pending_commonjs_class_export_name {
+                emitter.set_function_name(name.clone());
+            }
         }
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
