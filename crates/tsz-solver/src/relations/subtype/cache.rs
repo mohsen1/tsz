@@ -13,7 +13,7 @@ use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
-use crate::types::{IntrinsicKind, TypeId};
+use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitor::{application_id, enum_components, lazy_def_id};
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -128,9 +128,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Fast path: distinct disjoint unit types are never subtypes.
         // This avoids expensive structural checks for large unions of literals/enum members.
+        // Guard: when both are Literal types with the same value but different TypeIds
+        // (can happen when the same literal is interned from different contexts, e.g.,
+        // JSDoc annotations on export default vs the expression type), they ARE equal.
         if is_disjoint_unit_type(self.interner, source)
             && is_disjoint_unit_type(self.interner, target)
         {
+            // Check if both are literals with the same value
+            if let (Some(TypeData::Literal(s_lit)), Some(TypeData::Literal(t_lit))) =
+                (self.interner.lookup(source), self.interner.lookup(target))
+            {
+                if s_lit == t_lit {
+                    return SubtypeResult::True;
+                }
+            }
             return SubtypeResult::False;
         }
 
