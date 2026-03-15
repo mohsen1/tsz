@@ -148,6 +148,9 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return;
         };
+        if sf.comments.is_empty() {
+            return;
+        }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
 
