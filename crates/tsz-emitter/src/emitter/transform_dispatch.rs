@@ -872,7 +872,10 @@ impl<'a> Printer<'a> {
             emitter.set_source_text(text);
         }
         let output = emitter.emit_class(class_node);
-        self.write(&output);
+        // Trim trailing newline from the output to avoid double-newlining
+        // when the writer adds its own line termination
+        let output = output.trim_end_matches('\n');
+        self.write(output);
         // Skip comments within the class range - the TC39 decorator emitter
         // handles them separately.
         self.skip_comments_for_erased_node(node);
