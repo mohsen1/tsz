@@ -526,12 +526,12 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(DECORATE_HELPER);
         output.push('\n');
     }
-    if helpers.es_decorate {
-        output.push_str(ES_DECORATE_HELPER);
-        output.push('\n');
-    }
     if helpers.run_initializers {
         output.push_str(RUN_INITIALIZERS_HELPER);
+        output.push('\n');
+    }
+    if helpers.es_decorate {
+        output.push_str(ES_DECORATE_HELPER);
         output.push('\n');
     }
     if helpers.set_function_name {
