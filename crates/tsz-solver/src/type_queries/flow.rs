@@ -65,6 +65,8 @@ pub fn classify_for_predicate_signature(
 pub struct ExtractedPredicateSignature {
     pub predicate: crate::types::TypePredicate,
     pub params: Vec<crate::types::ParamInfo>,
+    /// Generic type parameters of the signature containing the predicate.
+    pub type_params: Vec<crate::types::TypeParamInfo>,
 }
 
 /// Extract a type predicate signature from a type, if present.
@@ -84,6 +86,7 @@ pub fn extract_predicate_signature(
             Some(ExtractedPredicateSignature {
                 predicate,
                 params: shape.params.clone(),
+                type_params: shape.type_params.clone(),
             })
         }
         PredicateSignatureKind::Callable(shape_id) => {
@@ -93,6 +96,7 @@ pub fn extract_predicate_signature(
                     return Some(ExtractedPredicateSignature {
                         predicate: predicate.clone(),
                         params: sig.params.clone(),
+                        type_params: sig.type_params.clone(),
                     });
                 }
             }
