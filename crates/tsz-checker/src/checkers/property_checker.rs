@@ -75,7 +75,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let (class_idx, is_static) = class_result.unwrap();
+        let (class_idx, is_static) = class_result.expect("early return above handles None case");
 
         // Mark the class member symbol as referenced for unused-variable tracking.
         // Property accesses like `this.x` go through the solver's property resolution
@@ -167,37 +167,14 @@ impl<'a> CheckerState<'a> {
                                 receiver_class_idx == access_info.declaring_class_idx
                             })
                 }
-                Some(current_class_idx) => {
-                    if current_class_idx == access_info.declaring_class_idx {
-                        true
-                    } else if !self
-                        .is_class_derived_from(current_class_idx, access_info.declaring_class_idx)
-                    {
-                        false
-                    } else if is_static {
-                        // Static protected members: the current class extends the
-                        // declaring class, which is sufficient. No receiver check
-                        // needed because static access is through the class itself.
-                        true
-                    } else {
-                        let receiver_class_idx =
-                            self.resolve_receiver_class_for_access(object_expr, object_type);
-                        if let Some(receiver) = receiver_class_idx {
-                            if receiver == current_class_idx
-                                || self.is_class_derived_from(receiver, current_class_idx)
-                            {
-                                true
-                            } else if self.is_class_derived_from(current_class_idx, receiver) {
-                                false
-                            } else {
-                                protected_receiver_mismatch = Some((current_class_idx, receiver));
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                }
+                Some(current_class_idx) => self.check_protected_access_allowed(
+                    current_class_idx,
+                    &access_info,
+                    is_static,
+                    object_expr,
+                    object_type,
+                    &mut protected_receiver_mismatch,
+                ),
             },
         };
 
@@ -244,6 +221,72 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check whether protected access is allowed from the given class context.
+    ///
+    /// This handles nested classes by walking up the `enclosing_class_chain`.
+    /// In TypeScript, when code is inside a nested class (e.g., `class B` inside
+    /// `Derived1.method()`), protected access checks consider the outer enclosing
+    /// classes, not just the innermost one. If the innermost class doesn't derive
+    /// from the declaring class, we walk up to find the first outer class that does.
+    ///
+    /// This is what distinguishes TS2445 from TS2446:
+    /// - TS2445: No enclosing class in the scope chain derives from the declaring class.
+    /// - TS2446: An enclosing class derives from the declaring class, but the receiver
+    ///   type doesn't match (wrong instance type).
+    fn check_protected_access_allowed(
+        &mut self,
+        current_class_idx: NodeIndex,
+        access_info: &crate::state::MemberAccessInfo,
+        is_static: bool,
+        object_expr: NodeIndex,
+        object_type: tsz_solver::TypeId,
+        protected_receiver_mismatch: &mut Option<(NodeIndex, NodeIndex)>,
+    ) -> bool {
+        // Try the innermost class first, then walk up the chain.
+        let mut candidates = vec![current_class_idx];
+        candidates.extend(self.ctx.enclosing_class_chain.iter().rev().copied());
+
+        for candidate_class_idx in candidates {
+            if candidate_class_idx == access_info.declaring_class_idx {
+                // We're inside the declaring class itself — always allowed.
+                return true;
+            }
+            if !self.is_class_derived_from(candidate_class_idx, access_info.declaring_class_idx) {
+                // This enclosing class doesn't derive from the declaring class; skip.
+                continue;
+            }
+            // This class derives from the declaring class. Check the receiver.
+            if is_static {
+                // Static protected members: the current class extends the
+                // declaring class, which is sufficient. No receiver check
+                // needed because static access is through the class itself.
+                return true;
+            }
+            let receiver_class_idx =
+                self.resolve_receiver_class_for_access(object_expr, object_type);
+            if let Some(receiver) = receiver_class_idx {
+                if receiver == candidate_class_idx
+                    || self.is_class_derived_from(receiver, candidate_class_idx)
+                {
+                    // Receiver IS the enclosing class or a subclass — allowed.
+                    return true;
+                } else {
+                    // Receiver is a different class (parent, sibling, or unrelated).
+                    // This is the TS2446 case: "protected and only accessible through
+                    // an instance of class X. This is an instance of class Y."
+                    *protected_receiver_mismatch = Some((candidate_class_idx, receiver));
+                    return false;
+                }
+            } else {
+                // Can't resolve receiver — deny access.
+                return false;
+            }
+        }
+
+        // No enclosing class derives from the declaring class → TS2445.
         false
     }
 
@@ -961,5 +1004,240 @@ mod tests {
         assert!(!has_code(&diagnostics, 2339));
         assert!(!has_code(&diagnostics, 2445));
         assert!(!has_code(&diagnostics, 2341));
+    }
+
+    // =========================================================================
+    // TS2446: Protected access through wrong instance type in nested classes
+    // =========================================================================
+
+    #[test]
+    fn nested_class_protected_access_through_correct_instance_is_allowed() {
+        // Inside Derived1.method, nested class B accesses protected x through
+        // a Derived1 instance — should be allowed (no error).
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                protected x: string = "";
+            }
+            class Derived1 extends Base {
+                method() {
+                    class B {
+                        test() {
+                            var d1: Derived1 = undefined as any;
+                            d1.x;
+                        }
+                    }
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "Should not emit TS2445 for access through correct instance, got: {:?}",
+            diagnostics
+        );
+        assert!(
+            !has_code(&diagnostics, 2446),
+            "Should not emit TS2446 for access through correct instance, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_class_protected_access_through_wrong_instance_emits_ts2446() {
+        // Inside Derived1.method, nested class B accesses protected x through
+        // a Base instance — should emit TS2446 (wrong instance type).
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                protected x: string = "";
+            }
+            class Derived1 extends Base {
+                method() {
+                    class B {
+                        test() {
+                            var b: Base = undefined as any;
+                            b.x;
+                        }
+                    }
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2446),
+            "Expected TS2446 for access through Base instance inside nested class, got: {:?}",
+            diagnostics
+        );
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "Should emit TS2446 not TS2445 for wrong-instance access, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_class_protected_access_through_sibling_emits_ts2446() {
+        // Inside Derived1.method, nested class B accesses protected x through
+        // a Derived2 instance — should emit TS2446 (sibling class, wrong instance).
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                protected x: string = "";
+            }
+            class Derived1 extends Base {
+                method() {
+                    class B {
+                        test() {
+                            var d2: Derived2 = undefined as any;
+                            d2.x;
+                        }
+                    }
+                }
+            }
+            class Derived2 extends Base {}
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2446),
+            "Expected TS2446 for access through sibling instance, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_class_protected_access_through_subclass_instance_is_allowed() {
+        // Inside Derived2.method, nested class C accesses protected x through
+        // a Derived4 instance (which extends Derived2) — should be allowed.
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                protected x: string = "";
+            }
+            class Derived2 extends Base {
+                method() {
+                    class C {
+                        test() {
+                            var d4: Derived4 = undefined as any;
+                            d4.x;
+                        }
+                    }
+                }
+            }
+            class Derived4 extends Derived2 {}
+        "#,
+        );
+
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "Should allow access through subclass instance, got: {:?}",
+            diagnostics
+        );
+        assert!(
+            !has_code(&diagnostics, 2446),
+            "Should allow access through subclass instance, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn non_nested_class_protected_access_outside_hierarchy_emits_ts2445() {
+        // Outside any derived class, accessing protected member should emit TS2445.
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                protected x: string = "";
+            }
+            var b: Base = undefined as any;
+            b.x;
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2445),
+            "Expected TS2445 for access outside class hierarchy, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_class_declaring_class_allows_access() {
+        // Inside Base.method, nested class A accesses protected x through
+        // a Base instance — should be allowed (we're in the declaring class).
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                protected x: string = "";
+                method() {
+                    class A {
+                        test() {
+                            var b: Base = undefined as any;
+                            b.x;
+                        }
+                    }
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "Should allow access from nested class inside declaring class, got: {:?}",
+            diagnostics
+        );
+        assert!(
+            !has_code(&diagnostics, 2446),
+            "Should allow access from nested class inside declaring class, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn nested_class_full_hierarchy_emits_correct_errors() {
+        // Mirrors the conformance test pattern: Base > Derived1 with nested classes.
+        // Inside Base.method > class A: access to b.x is OK (declaring class scope).
+        // Inside Derived1.method > class B: b.x should be TS2446 (wrong instance),
+        // d1.x should be OK (correct instance).
+        let diagnostics = crate::test_utils::check_source_diagnostics(
+            r#"
+class Base {
+    protected x!: string;
+    method() {
+        class A {
+            methoda() {
+                var b: Base = undefined as any;
+                var d1: Derived1 = undefined as any;
+                b.x;
+                d1.x;
+            }
+        }
+    }
+}
+
+class Derived1 extends Base {
+    method1() {
+        class B {
+            method1b() {
+                var b: Base = undefined as any;
+                var d1: Derived1 = undefined as any;
+                b.x;
+                d1.x;
+            }
+        }
+    }
+}
+"#,
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2446),
+            "Expected TS2446 for b.x inside nested class in Derived1, got: {:?}",
+            codes
+        );
+        // Should not have TS2445 for the b.x in Derived1's nested class (it should be TS2446)
+        // The only TS2445 errors should be from outside the class hierarchy if any
     }
 }

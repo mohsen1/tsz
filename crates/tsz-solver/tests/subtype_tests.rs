@@ -17046,7 +17046,6 @@ fn test_overload_single_signature_subtype() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_multiple_to_single() {
     // Callable with multiple overloads <: callable with one matching overload
     let interner = TypeInterner::new();
@@ -17116,7 +17115,6 @@ fn test_overload_multiple_to_single() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_order_independent_matching() {
     // Overload matching should find the best match regardless of order
     let interner = TypeInterner::new();
@@ -17396,7 +17394,6 @@ fn test_overload_constructor_subtype() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_with_different_arity() {
     // Overloads with different arities
     let interner = TypeInterner::new();
@@ -22370,7 +22367,6 @@ fn test_overload_by_argument_count() {
 }
 
 #[test]
-#[ignore = "pre-existing: overload/inference logic changed by remote"]
 fn test_overload_subtype_more_signatures_to_fewer() {
     // More overloads is subtype of fewer (if matching signatures exist)
     let interner = TypeInterner::new();

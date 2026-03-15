@@ -1536,7 +1536,10 @@ fn resolve_package_specifier(
         let has_exports = options.resolve_package_json_exports && package_json.exports.is_some();
 
         if has_exports {
-            let exports = package_json.exports.as_ref().unwrap();
+            let exports = package_json
+                .exports
+                .as_ref()
+                .expect("has_exports guard ensures exports is Some");
             let subpath_key = match subpath {
                 Some(value) => format!("./{value}"),
                 None => ".".to_string(),

@@ -576,7 +576,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             match name_text {
                 "any" | "unknown" | "never" | "number" | "bigint" | "boolean" | "string"
                 | "symbol" | "void" | "object" | "undefined" => {
-                    let name_node = self.ctx.arena.get(enum_data.name).unwrap();
+                    let name_node = self
+                        .ctx
+                        .arena
+                        .get(enum_data.name)
+                        .expect("enum name node must exist when identifier text was found");
                     self.ctx.error(
                         name_node.pos,
                         name_node.end - name_node.pos,

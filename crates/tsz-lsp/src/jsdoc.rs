@@ -307,6 +307,10 @@ fn parse_param_tag(line: &str) -> Option<(String, String)> {
     Some((name, desc))
 }
 
+#[cfg(test)]
+#[path = "../tests/jsdoc_tests.rs"]
+mod jsdoc_tests;
+
 fn normalize_param_name(name: &str) -> String {
     let trimmed = name.trim();
     let mut name = if trimmed.starts_with('[') && trimmed.ends_with(']') && trimmed.len() > 2 {

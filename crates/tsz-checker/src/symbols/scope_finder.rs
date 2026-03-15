@@ -1216,7 +1216,12 @@ impl<'a> CheckerState<'a> {
                 // `super` must be the callee of the call expression
                 self.ctx
                     .arena
-                    .get_call_expr(self.ctx.arena.get(parent_idx).unwrap())
+                    .get_call_expr(
+                        self.ctx
+                            .arena
+                            .get(parent_idx)
+                            .expect("parent_idx obtained from valid extended node"),
+                    )
                     .is_some_and(|call| call.expression == idx)
             });
 

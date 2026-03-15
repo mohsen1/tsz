@@ -710,7 +710,8 @@ fn parse_lib_references(content: &str) -> Vec<String> {
                 let after_lib = &rest[lib_start + 4..];
                 let quote = after_lib.chars().next();
                 if quote == Some('"') || quote == Some('\'') {
-                    let quote_char = quote.unwrap();
+                    let quote_char = quote
+                        .expect("guarded by quote == Some('\"') || quote == Some('\\'') check");
                     let value_start = 1;
                     if let Some(end) = after_lib[value_start..].find(quote_char) {
                         refs.push(
@@ -2034,7 +2035,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             } else if let Some(&remapped_new_id) = id_remap.get(sym_id) {
                                 // Both files export the same name (e.g., nested namespace Utils).
                                 // Record for deferred merge outside the get_mut borrow scope.
-                                let existing_export_id = new_exports.get(name).unwrap();
+                                let existing_export_id = new_exports
+                                    .get(name)
+                                    .expect("else branch guarantees name exists in new_exports");
                                 if existing_export_id != remapped_new_id {
                                     nested_merges.push((existing_export_id, remapped_new_id));
                                 }
@@ -2146,7 +2149,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             dst_exp.set(ename.clone(), esym);
                         } else {
                             // Both sides export the same name — queue recursive merge
-                            let existing_export_id = dst_exp.get(ename).unwrap();
+                            let existing_export_id = dst_exp
+                                .get(ename)
+                                .expect("else branch guarantees ename exists in dst_exp");
                             if existing_export_id != esym {
                                 all_nested_merges.push((existing_export_id, esym));
                             }
@@ -2162,7 +2167,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             dst_mem.set(mname.clone(), msym);
                         } else {
                             // Both sides have the same member — queue recursive merge
-                            let existing_member_id = dst_mem.get(mname).unwrap();
+                            let existing_member_id = dst_mem
+                                .get(mname)
+                                .expect("else branch guarantees mname exists in dst_mem");
                             if existing_member_id != msym {
                                 all_nested_merges.push((existing_member_id, msym));
                             }

@@ -690,10 +690,11 @@ impl<'a> Printer<'a> {
         // `test` → `exports.test`), which breaks shorthand syntax. In that
         // case, expand to `name: substituted_value`.
         if is_shorthand {
-            if let Some(ident) = self
-                .arena
-                .get_identifier(self.arena.get(prop.name).unwrap())
-            {
+            if let Some(ident) = self.arena.get_identifier(
+                self.arena
+                    .get(prop.name)
+                    .expect("property name NodeIndex must be valid in arena"),
+            ) {
                 let has_import_subst = !self.suppress_commonjs_named_import_substitution
                     && self
                         .commonjs_named_import_substitutions
@@ -757,10 +758,11 @@ impl<'a> Printer<'a> {
         // would produce invalid shorthand syntax (e.g., `{ foo_1.foo }` or `{ exports.test }`).
         // Check both import substitutions and exported variable names.
         // Note: don't check is_commonjs() — module kind is temporarily None inside export bodies.
-        if let Some(ident) = self
-            .arena
-            .get_identifier(self.arena.get(shorthand.name).unwrap())
-        {
+        if let Some(ident) = self.arena.get_identifier(
+            self.arena
+                .get(shorthand.name)
+                .expect("shorthand name NodeIndex must be valid in arena"),
+        ) {
             let has_import_subst = !self.suppress_commonjs_named_import_substitution
                 && self
                     .commonjs_named_import_substitutions

@@ -706,7 +706,9 @@ pub(super) fn collect_diagnostics(
             .collect();
 
         {
-            let mut tc_out = type_cache_output.lock().unwrap();
+            let mut tc_out = type_cache_output
+                .lock()
+                .expect("type_cache_output mutex poisoned");
             for (idx, (file_diags, type_cache)) in file_results.into_iter().enumerate() {
                 diagnostics.extend(file_diags);
                 if let Some(tc) = type_cache {

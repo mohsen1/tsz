@@ -1328,7 +1328,10 @@ impl<'a> Completions<'a> {
     /// Get the set of property names already defined in an object literal.
     fn get_defined_properties(&self, object_literal_idx: NodeIndex) -> FxHashSet<String> {
         let mut names = FxHashSet::default();
-        let node = self.arena.get(object_literal_idx).unwrap();
+        let node = self
+            .arena
+            .get(object_literal_idx)
+            .expect("object_literal_idx must be valid in arena");
 
         if let Some(lit) = self.arena.get_literal_expr(node) {
             for &prop_idx in &lit.elements.nodes {

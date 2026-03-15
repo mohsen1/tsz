@@ -20,12 +20,19 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a type is an enum type or a union of enum member literal types.
+    /// Check if a type is a *numeric* enum type or union of *numeric* enum member
+    /// literal types, for the purpose of arithmetic operand validation.
     ///
     /// This handles cases like `type YesNo = Choice.Yes | Choice.No` where the
     /// type is a union of `Lazy(DefId)` references to enum members. The solver's
     /// `NumberLikeVisitor` can't resolve these, but the checker can via symbol
     /// resolution.
+    ///
+    /// **Important:** This should only be used as a fallback when the resolved type
+    /// is still `Lazy(DefId)` (i.e., `evaluate_type_with_env` couldn't fully resolve
+    /// the type). When the type IS resolved, `BinaryOpEvaluator::is_arithmetic_operand`
+    /// already handles `Enum(DefId, member_type)` correctly via the visitor pattern,
+    /// distinguishing numeric from string enums by checking the member type.
     ///
     /// Returns true if:
     /// - The type is a direct enum type (via `is_enum_type`)
@@ -48,6 +55,17 @@ impl<'a> CheckerState<'a> {
         }
 
         member_list.iter().all(|&m| self.is_enum_or_enum_member(m))
+    }
+
+    /// Check if a resolved type is still an unresolved `Lazy(DefId)`.
+    ///
+    /// Used to determine whether the `is_enum_like_type` fallback should apply.
+    /// When `evaluate_type_with_env` resolves the type (to `Enum`, `Literal`, etc.),
+    /// `is_arithmetic_operand` is authoritative and no fallback is needed.
+    /// Only when the type stays as `Lazy` (evaluation couldn't resolve it) should
+    /// the symbol-based enum check be used as a fallback.
+    pub fn is_unresolved_lazy_type(&self, type_id: TypeId) -> bool {
+        tsz_solver::visitor::is_lazy_type(self.ctx.types, type_id)
     }
 
     /// Check if a type resolves to an ENUM or `ENUM_MEMBER` symbol.

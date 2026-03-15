@@ -175,6 +175,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
         let node = self.ctx.arena.get(idx)?;
@@ -390,6 +393,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let sf = self.source_file_data_for_node(idx)?;
+        // Fast path: no comments in file means no JSDoc possible.
+        // Avoids expensive Arc<str>::to_string() + Vec::clone() per call.
+        if sf.comments.is_empty() {
+            return None;
+        }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
         let node = self.ctx.arena.get(idx)?;
@@ -421,6 +429,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
         let (jsdoc, jsdoc_start) =
@@ -945,6 +956,9 @@ impl<'a> CheckerState<'a> {
         }
         // Try @typedef resolution from JSDoc comments
         if let Some(sf) = self.ctx.arena.source_files.first() {
+            if sf.comments.is_empty() {
+                return None;
+            }
             let comments = sf.comments.clone();
             let source_text: String = sf.text.to_string();
             if let Some(ty) =
@@ -2348,7 +2362,10 @@ impl<'a> CheckerState<'a> {
             if after >= jsdoc.len() {
                 return true;
             }
-            let next_ch = jsdoc[after..].chars().next().unwrap();
+            let next_ch = jsdoc[after..]
+                .chars()
+                .next()
+                .expect("after < jsdoc.len() checked above");
             if !next_ch.is_ascii_alphanumeric() {
                 return true;
             }

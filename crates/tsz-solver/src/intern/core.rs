@@ -157,12 +157,16 @@ where
     }
 
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
-        // For id 0 (empty), we can return without initializing
-        if id == 0 {
-            return Some(Arc::from(Vec::new()));
-        }
-        self.inner
-            .get()?
+        // For id 0, return from the initialized inner (which has the pre-allocated
+        // empty Arc) instead of creating a new Arc::from(Vec::new()) on every call.
+        let inner = if id == 0 {
+            // If inner isn't initialized yet, the only valid id is 0 (empty).
+            // Initialize lazily so we reuse the pre-allocated empty Arc.
+            self.get_inner()
+        } else {
+            self.inner.get()?
+        };
+        inner
             .items
             .get(&id)
             .map(|e| std::sync::Arc::clone(e.value()))
@@ -692,6 +696,12 @@ impl TypeInterner {
         TypeListId(self.type_lists.intern(&members))
     }
 
+    /// Intern a type list from a slice, avoiding Vec conversion when the caller
+    /// already has a SmallVec or slice reference.
+    pub(super) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
+        TypeListId(self.type_lists.intern(members))
+    }
+
     fn intern_tuple_list(&self, elements: Vec<TupleElement>) -> TupleListId {
         TupleListId(self.tuple_lists.intern(&elements))
     }
@@ -1001,7 +1011,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1282,8 +1292,26 @@ impl TypeInterner {
         flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
 
-        // Handle special cases
-        if flat.contains(&TypeId::ERROR) {
+        // Single-pass scan for special sentinel types instead of multiple contains() calls.
+        // Each contains() is O(N); scanning once is O(N) total instead of O(4N).
+        let mut has_error = false;
+        let mut has_any = false;
+        let mut has_unknown = false;
+        let mut has_never = false;
+        for &id in flat.iter() {
+            if id == TypeId::ERROR {
+                has_error = true;
+                break; // ERROR trumps everything
+            }
+            if id == TypeId::ANY {
+                has_any = true;
+            } else if id == TypeId::UNKNOWN {
+                has_unknown = true;
+            } else if id == TypeId::NEVER {
+                has_never = true;
+            }
+        }
+        if has_error {
             return TypeId::ERROR;
         }
         if flat.is_empty() {
@@ -1292,16 +1320,16 @@ impl TypeInterner {
         if flat.len() == 1 {
             return flat[0];
         }
-        // If any member is `any`, the union is `any`
-        if flat.contains(&TypeId::ANY) {
+        if has_any {
             return TypeId::ANY;
         }
-        // If any member is `unknown`, the union is `unknown`
-        if flat.contains(&TypeId::UNKNOWN) {
+        if has_unknown {
             return TypeId::UNKNOWN;
         }
-        // Remove `never` from unions
-        flat.retain(|id| *id != TypeId::NEVER);
+        // Remove `never` from unions (only scan if we found any)
+        if has_never {
+            flat.retain(|id| *id != TypeId::NEVER);
+        }
         if flat.is_empty() {
             return TypeId::NEVER;
         }
@@ -1341,7 +1369,7 @@ impl TypeInterner {
             return flat[0];
         }
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1354,7 +1382,25 @@ impl TypeInterner {
         flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
 
-        if flat.contains(&TypeId::ERROR) {
+        // Single-pass scan for special sentinel types
+        let mut has_error = false;
+        let mut has_any = false;
+        let mut has_unknown = false;
+        let mut has_never = false;
+        for &id in flat.iter() {
+            if id == TypeId::ERROR {
+                has_error = true;
+                break;
+            }
+            if id == TypeId::ANY {
+                has_any = true;
+            } else if id == TypeId::UNKNOWN {
+                has_unknown = true;
+            } else if id == TypeId::NEVER {
+                has_never = true;
+            }
+        }
+        if has_error {
             return TypeId::ERROR;
         }
         if flat.is_empty() {
@@ -1363,13 +1409,15 @@ impl TypeInterner {
         if flat.len() == 1 {
             return flat[0];
         }
-        if flat.contains(&TypeId::ANY) {
+        if has_any {
             return TypeId::ANY;
         }
-        if flat.contains(&TypeId::UNKNOWN) {
+        if has_unknown {
             return TypeId::UNKNOWN;
         }
-        flat.retain(|id| *id != TypeId::NEVER);
+        if has_never {
+            flat.retain(|id| *id != TypeId::NEVER);
+        }
         if flat.is_empty() {
             return TypeId::NEVER;
         }
@@ -1389,7 +1437,7 @@ impl TypeInterner {
         // NOTE: No subtype reduction here — this is the key difference from normalize_union.
         // tsc's UnionReduction.Literal only absorbs literals into primitives.
 
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }
 
@@ -1468,7 +1516,7 @@ impl TypeInterner {
         }
 
         // Create the intersection directly without calling normalize_intersection
-        let list_id = self.intern_type_list(flat.into_vec());
+        let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Intersection(list_id))
     }
 

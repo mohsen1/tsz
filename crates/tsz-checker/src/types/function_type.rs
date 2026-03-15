@@ -1480,7 +1480,8 @@ impl<'a> CheckerState<'a> {
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
             {
-                let raw_expected_return_type = expected_expression_return_type.unwrap();
+                let raw_expected_return_type =
+                    expected_expression_return_type.expect("is_some checked in outer condition");
                 let expected_return_type =
                     if tsz_solver::is_index_access_type(self.ctx.types, raw_expected_return_type) {
                         let evaluated = self.evaluate_type_with_env(raw_expected_return_type);

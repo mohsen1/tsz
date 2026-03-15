@@ -510,17 +510,19 @@ impl<'a> CheckerState<'a> {
                 } else if let Some(t_elem) =
                     tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
                 {
-                    // Don't use contextual element type if it's `unknown` or a type parameter.
-                    // This happens when the contextual type is `T[]` with T an unresolved
-                    // type parameter during generic call inference. tsc treats `[]` as
-                    // `never[]` in this case, letting contra-candidates (e.g. from callback
-                    // parameters) drive inference instead of polluting with unknown/T.
-                    if t_elem != TypeId::UNKNOWN
-                        && !tsz_solver::type_queries::is_type_parameter_like(
-                            self.ctx.types.as_type_database(),
-                            t_elem,
-                        )
-                    {
+                    // Skip uninformative element types (unknown, type parameters) for empty
+                    // arrays. These typically come from unresolved inference placeholders
+                    // (e.g., T[] where T is being inferred). In tsc, empty arrays contribute
+                    // `never` as the element type during inference, allowing contra-candidates
+                    // from other arguments to drive resolution. Using `unknown` here would
+                    // create a spurious covariant candidate that overwrites contravariant
+                    // inference (e.g., from callback parameters).
+                    let is_uninformative = matches!(t_elem, TypeId::UNKNOWN)
+                        || matches!(
+                            self.ctx.types.lookup(t_elem),
+                            Some(tsz_solver::types::TypeData::TypeParameter(_))
+                        );
+                    if !is_uninformative {
                         return factory.array(t_elem);
                     }
                 }
@@ -1151,7 +1153,9 @@ impl<'a> CheckerState<'a> {
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                         let evaluated = self.evaluate_type_with_env(ty);
-                        evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
+                        evaluator.is_arithmetic_operand(evaluated)
+                            || (self.is_enum_like_type(ty)
+                                && self.is_unresolved_lazy_type(evaluated))
                     });
                     if self.ctx.strict_null_checks()
                         && let Some(cause) = nullish_cause
@@ -1167,8 +1171,13 @@ impl<'a> CheckerState<'a> {
                     let resolved_type = self.evaluate_type_with_env(operand_type);
                     // When strictNullChecks is off, null/undefined are silently
                     // assignable to number, so skip arithmetic check for them.
+                    // Only use is_enum_like_type as fallback when evaluation couldn't
+                    // resolve the type (stays Lazy). When resolved, is_arithmetic_operand
+                    // correctly handles Enum types via visit_enum, distinguishing
+                    // numeric enums (valid) from string enums (invalid for arithmetic).
                     let is_valid = evaluator.is_arithmetic_operand(resolved_type)
-                        || self.is_enum_like_type(operand_type)
+                        || (self.is_enum_like_type(operand_type)
+                            && self.is_unresolved_lazy_type(resolved_type))
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 

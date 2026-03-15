@@ -1261,7 +1261,10 @@ impl<'a> CheckerState<'a> {
                 if after >= comment_text.len() {
                     continue;
                 }
-                let next_ch = comment_text[after..].chars().next().unwrap();
+                let next_ch = comment_text[after..]
+                    .chars()
+                    .next()
+                    .expect("after < len checked above");
                 if next_ch.is_ascii_alphanumeric() {
                     continue;
                 }
@@ -1399,7 +1402,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Ensure @implements is not a prefix of another tag
-            let next_ch = jsdoc[after..].chars().next().unwrap();
+            let next_ch = jsdoc[after..]
+                .chars()
+                .next()
+                .expect("after < len checked above");
             if next_ch.is_ascii_alphanumeric() {
                 continue;
             }

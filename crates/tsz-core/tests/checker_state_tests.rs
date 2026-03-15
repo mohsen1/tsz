@@ -5743,7 +5743,6 @@ delete v[2];
 }
 
 #[test]
-#[ignore = "abstract accessor pair TS2322 false positive not yet fixed"]
 fn test_abstract_property_negative_errors() {
     // Test the full abstractPropertyNegative test case to verify expected errors
     use crate::parser::ParserState;
@@ -11730,9 +11729,8 @@ type Alias = Merge.Extra;
 
 /// Test namespace merging with class for element access
 ///
-/// NOTE: Previously ignored due to wrong type expectation.
+/// Namespace members should be visible through bracket access on the class constructor type.
 #[test]
-#[ignore = "TODO: pre-existing issue from merge - no longer emits TS7053, assertion needs update"]
 fn test_checker_namespace_merges_with_class_element_access() {
     use crate::parser::ParserState;
 
@@ -11761,14 +11759,10 @@ const direct = Foo["value"];
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    // TODO: namespace+class element access emits TS7053 ("Element implicitly
-    // has an 'any' type ...") because the merged namespace members are not
-    // visible through bracket access on the class constructor type.
-    // Once fixed, this test should assert no diagnostics and direct's type == 1.
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&7053),
-        "Expected TS7053 for namespace+class element access (known limitation), got: {codes:?}"
+        codes.is_empty(),
+        "Expected no diagnostics for namespace+class element access, got: {codes:?}"
     );
 }
 
@@ -29837,6 +29831,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             jsx_import_source: String::new(),
             verbatim_module_syntax: false,
             ignore_deprecations: false,
+            allow_umd_global_access: false,
         },
     );
     assert!(

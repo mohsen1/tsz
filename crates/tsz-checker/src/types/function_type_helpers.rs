@@ -354,7 +354,10 @@ impl<'a> CheckerState<'a> {
 
         // Create a new function shape with the evaluated rest param type
         let mut new_params = shape.params.clone();
-        new_params.last_mut().unwrap().type_id = evaluated_rest;
+        new_params
+            .last_mut()
+            .expect("new_params cloned from non-empty shape.params")
+            .type_id = evaluated_rest;
 
         let new_shape = tsz_solver::FunctionShape {
             type_params: shape.type_params.clone(),
