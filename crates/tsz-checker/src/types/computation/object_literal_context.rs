@@ -66,40 +66,14 @@ impl<'a> CheckerState<'a> {
             type_id,
         ) {
             ExcessPropertiesKind::Object(_) | ExcessPropertiesKind::ObjectWithIndex(_) => {
-                if let Some(shape) =
-                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                {
-                    for prop in &shape.properties {
-                        if crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            prop.type_id,
-                        )
-                        .is_some()
-                        {
-                            candidates.push(prop.type_id);
-                        }
-                    }
-
-                    if let Some(index) = &shape.string_index
-                        && crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            index.value_type,
-                        )
-                        .is_some()
-                    {
-                        candidates.push(index.value_type);
-                    }
-
-                    if let Some(index) = &shape.number_index
-                        && crate::query_boundaries::common::callable_shape_for_type(
-                            self.ctx.types,
-                            index.value_type,
-                        )
-                        .is_some()
-                    {
-                        candidates.push(index.value_type);
-                    }
-                }
+                // Delegate to solver query: collect all callable property types
+                // (named properties + index signatures) from the object shape.
+                candidates.extend(
+                    tsz_solver::type_queries::data::collect_callable_property_types(
+                        self.ctx.types,
+                        type_id,
+                    ),
+                );
             }
             ExcessPropertiesKind::Union(members) | ExcessPropertiesKind::Intersection(members) => {
                 for member in members {
