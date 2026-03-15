@@ -648,6 +648,29 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 (false, false)
             };
 
+            // TS2534: A function returning 'never' cannot have a reachable end point.
+            // This must be checked before TS2355/TS2366 because `never` return type
+            // causes `requires_return` to be false (never doesn't require a return VALUE,
+            // but it does require the function to never complete normally).
+            if has_declared_return
+                && check_return_type == TypeId::NEVER
+                && self.function_body_falls_through(func.body)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                let error_node = if has_type_annotation {
+                    func.type_annotation
+                } else if func.name.is_some() {
+                    func.name
+                } else {
+                    func_idx
+                };
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::A_FUNCTION_RETURNING_NEVER_CANNOT_HAVE_A_REACHABLE_END_POINT,
+                    diagnostic_codes::A_FUNCTION_RETURNING_NEVER_CANNOT_HAVE_A_REACHABLE_END_POINT,
+                );
+            }
+
             if check_explicit_return_paths && requires_return && falls_through {
                 // For JSDoc @type, the error node is the function name/node
                 // (there's no separate type annotation node in the AST).
