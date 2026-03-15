@@ -2361,6 +2361,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 evaluated_source_ty,
                 evaluated_target_ty,
             )
+        })
+        .or_else(|| {
+            // When the target is an Application with a Lazy base (interface-defined
+            // callback like `Callback<T, R>`), the solver's evaluate_type can't resolve
+            // the Lazy DefId. Use the checker's evaluate_type which has access to the
+            // type environment for DefId → Callable resolution.
+            let checker_target = self.checker.evaluate_type(target_ty);
+            if checker_target != target_ty && checker_target != evaluated_target_ty {
+                Self::get_source_signature_for_target(
+                    self.interner.as_type_database(),
+                    source_ty,
+                    checker_target,
+                )
+            } else {
+                None
+            }
         });
 
         let Some((source_fn, target_fn)) = function_info else {

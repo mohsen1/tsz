@@ -943,12 +943,14 @@ impl<'a> CheckerState<'a> {
             self.check_rest_element_initializer(left_idx);
         }
 
-        // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
-        // the assignability check from running. TypeScript emits both readonly
-        // errors AND type mismatch errors (e.g., TS2542 + TS2322).
-        if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx);
-        }
+        // Check readonly first — when the target is readonly (TS2540/TS2542),
+        // tsc suppresses the assignability check (TS2322) for the same target.
+        // The "cannot assign to readonly" error is more specific and sufficient.
+        let is_readonly_target = if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx)
+        } else {
+            false
+        };
 
         if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
             return right_type;
@@ -959,7 +961,8 @@ impl<'a> CheckerState<'a> {
             // skip the whole-object assignability check. tsc processes each
             // property/element individually, which correctly handles private
             // members and other access-controlled properties.
-            let mut check_assignability = !is_destructuring;
+            // Also skip when the target was readonly (TS2540/TS2542 already emitted).
+            let mut check_assignability = !is_destructuring && !is_readonly_target;
 
             if is_destructuring {
                 self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
@@ -1389,15 +1392,16 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
 
-        // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
-        // assignability checks. TypeScript emits both errors.
-        if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx);
-        }
+        // Check readonly first — suppress TS2322 when TS2540/TS2542 fires.
+        let is_readonly_target = if !is_const {
+            self.check_readonly_assignment(left_idx, expr_idx)
+        } else {
+            false
+        };
 
         // Track whether an operator error was emitted so we can suppress cascading TS2322.
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
-        let mut emitted_operator_error = is_const || is_function_assignment;
+        let mut emitted_operator_error = is_const || is_function_assignment || is_readonly_target;
 
         let op_str = match operator {
             k if k == SyntaxKind::PlusEqualsToken as u16 => "+",
