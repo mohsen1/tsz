@@ -116,6 +116,22 @@ impl<'a> InferenceContext<'a> {
                 self.infer_callables(source_call, target_call, priority)?;
             }
 
+            // Cross-type Function ↔ Callable inference: when a Function needs to be
+            // inferred against a Callable's call signature (or vice versa), bridge them
+            // by matching the function shape against the callable's last call signature.
+            (Some(TypeData::Function(source_func)), Some(TypeData::Callable(target_call))) => {
+                let target = self.interner.callable_shape(target_call);
+                if let Some(target_sig) = target.call_signatures.last() {
+                    self.infer_function_vs_signature(source_func, target_sig, priority)?;
+                }
+            }
+            (Some(TypeData::Callable(source_call)), Some(TypeData::Function(target_func))) => {
+                let source = self.interner.callable_shape(source_call);
+                if let Some(source_sig) = source.call_signatures.last() {
+                    self.infer_signature_vs_function(source_sig, target_func, priority)?;
+                }
+            }
+
             // Array types: recurse into element types
             (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
                 self.infer_from_types(source_elem, target_elem, priority)?;
@@ -611,6 +627,42 @@ impl<'a> InferenceContext<'a> {
             self.infer_from_types(source_idx.value_type, target_idx.value_type, priority)?;
         }
 
+        Ok(())
+    }
+
+    /// Infer from a Function shape against a Callable's call signature.
+    /// Bridges Function ↔ Callable for cross-type inference.
+    fn infer_function_vs_signature(
+        &mut self,
+        source_func: FunctionShapeId,
+        target_sig: &crate::types::CallSignature,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source = self.interner.function_shape(source_func);
+        // Parameters are contravariant
+        for (s_param, t_param) in source.params.iter().zip(target_sig.params.iter()) {
+            self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+        }
+        // Return type is covariant
+        self.infer_from_types(source.return_type, target_sig.return_type, priority)?;
+        Ok(())
+    }
+
+    /// Infer from a Callable's call signature against a Function shape.
+    /// Bridges Callable → Function for cross-type inference.
+    fn infer_signature_vs_function(
+        &mut self,
+        source_sig: &crate::types::CallSignature,
+        target_func: FunctionShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let target = self.interner.function_shape(target_func);
+        // Parameters are contravariant
+        for (s_param, t_param) in source_sig.params.iter().zip(target.params.iter()) {
+            self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+        }
+        // Return type is covariant
+        self.infer_from_types(source_sig.return_type, target.return_type, priority)?;
         Ok(())
     }
 

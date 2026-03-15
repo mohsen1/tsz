@@ -197,12 +197,12 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy/application types before checking (e.g. Record<string, any>)
         let expr_type = self.resolve_type_for_property_access(expr_type);
 
-        // Valid types: any, unknown, object (non-primitive), object types, type parameters, never
-        // Invalid types: primitive types like void, null, undefined, number, string, boolean, bigint, symbol
+        // Valid types: any, unknown, object (non-primitive), object types, type parameters
+        // Invalid types: primitive types (void, null, undefined, number, string, boolean,
+        // bigint, symbol) and `never` (tsc reports TS2407 for `never` as well)
         let is_valid = expr_type == TypeId::ANY
             || expr_type == TypeId::UNKNOWN
             || expr_type == TypeId::OBJECT
-            || expr_type == TypeId::NEVER
             || query::is_type_parameter_like(self.ctx.types, expr_type)
             || query::is_object_like_type(self.ctx.types, expr_type)
             || self.is_deferred_object_like_for_in(expr_type)

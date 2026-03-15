@@ -106,6 +106,9 @@ impl<'a> Printer<'a> {
         } else {
             node.end
         };
+        // Increment function_scope_depth before parameters so async arrows in
+        // parameter defaults use `this` in __awaiter instead of `void 0`
+        self.function_scope_depth += 1;
         self.emit_function_parameters_with_trailing_comments(
             &func.parameters.nodes,
             open_paren_pos,
@@ -125,7 +128,7 @@ impl<'a> Printer<'a> {
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
-        self.function_scope_depth += 1;
+        // Don't increment again — already incremented before parameter emission
 
         // Push temp scope and block scope for function body.
         // Each function has its own scope for variable renaming/shadowing.
