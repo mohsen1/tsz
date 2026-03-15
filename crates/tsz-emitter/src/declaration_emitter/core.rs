@@ -2020,9 +2020,16 @@ impl<'a> DeclarationEmitter<'a> {
                     // Type annotation (omit for private properties, include for others)
                     if !is_private && param.type_annotation.is_some() {
                         self.write(": ");
+                        let before_type = self.writer.len();
                         self.emit_type(param.type_annotation);
                         if param.question_token {
-                            self.write(" | undefined");
+                            // Only append `| undefined` if the type doesn't already
+                            // include it (avoid `Type | undefined | undefined`).
+                            let full = self.writer.get_output();
+                            let type_text = &full[before_type..];
+                            if !type_text.ends_with("| undefined") {
+                                self.write(" | undefined");
+                            }
                         }
                     } else if !is_private
                         && let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
