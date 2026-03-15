@@ -491,10 +491,10 @@ impl<'a> CheckerState<'a> {
         // expose method signatures, while the original class type does.
         if next_fn_type == TypeId::ANY && iterator_type != type_id {
             let fallback_next = self.resolve_property_access_with_env(type_id, "next");
-            if let PropertyAccessResult::Success { type_id: fb, .. } = &fallback_next {
-                if *fb != TypeId::ANY {
-                    next_fn_type = *fb;
-                }
+            if let PropertyAccessResult::Success { type_id: fb, .. } = &fallback_next
+                && *fb != TypeId::ANY
+            {
+                next_fn_type = *fb;
             }
         }
 

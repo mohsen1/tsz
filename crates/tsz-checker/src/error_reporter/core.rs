@@ -1315,10 +1315,10 @@ impl<'a> CheckerState<'a> {
                 return self.format_assignability_type_for_message(display_type, target);
             }
 
-            if node_type_matches_source {
-                if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
-                    return display;
-                }
+            if node_type_matches_source
+                && let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
+            {
+                return display;
             }
         }
 

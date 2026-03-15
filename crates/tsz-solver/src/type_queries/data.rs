@@ -500,7 +500,7 @@ pub fn get_overload_call_signatures(
 
 /// Get the symbol associated with an object type's shape.
 ///
-/// Returns the `SymbolId` from the ObjectShape for Object or ObjectWithIndex
+/// Returns the `SymbolId` from the `ObjectShape` for Object or `ObjectWithIndex`
 /// types. Returns None for non-object types or objects without a symbol.
 pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
     match db.lookup(type_id) {
@@ -513,7 +513,7 @@ pub fn get_object_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_b
 
 /// Get the raw property type by name from an object shape.
 ///
-/// Looks up a named property in an Object or ObjectWithIndex type and returns
+/// Looks up a named property in an Object or `ObjectWithIndex` type and returns
 /// its type. Does NOT use full property access resolution — returns the raw
 /// declared type from the shape. Returns None if the type isn't an object or
 /// the property doesn't exist.
@@ -2438,7 +2438,7 @@ mod tests {
 
         // Function with 1 type param
         let fn_generic = interner.function(FunctionShape {
-            type_params: vec![tp_t.clone()],
+            type_params: vec![tp_t],
             params: vec![],
             this_type: None,
             return_type: TypeId::VOID,
