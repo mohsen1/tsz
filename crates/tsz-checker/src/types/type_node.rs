@@ -965,8 +965,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-            PropertyInfo,
+            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
         };
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1260,11 +1259,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let factory = self.ctx.types.factory();
 
             return factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,
-                symbol: None,
+                ..ObjectShape::default()
             });
         }
 

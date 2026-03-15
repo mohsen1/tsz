@@ -1930,3 +1930,295 @@ class Foo {
         "'global' should be visible from inside a class method"
     );
 }
+
+// ============================================================================
+// Additional resolver tests (batch 2)
+// ============================================================================
+
+#[test]
+fn test_resolve_type_alias_in_file_locals() {
+    let source = "type Callback = () => void;\ntype Result<T> = { ok: T };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("Callback").is_some(),
+        "'Callback' type alias should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.get("Result").is_some(),
+        "'Result' type alias should be in file_locals"
+    );
+}
+
+#[test]
+fn test_const_enum_in_file_locals() {
+    let source = "const enum Direction { Up, Down, Left, Right }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("Direction").is_some(),
+        "'Direction' const enum should be in file_locals"
+    );
+}
+
+#[test]
+fn test_while_loop_variable_scoping() {
+    let source = r#"
+while (true) {
+    const loopVar = 1;
+    break;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("loopVar").is_none(),
+        "'loopVar' should NOT be in file_locals (block-scoped inside while)"
+    );
+}
+
+#[test]
+fn test_do_while_loop_variable_scoping() {
+    let source = r#"
+do {
+    const doVar = 1;
+} while (false);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("doVar").is_none(),
+        "'doVar' should NOT be in file_locals (block-scoped inside do-while)"
+    );
+}
+
+#[test]
+fn test_switch_case_variable_scoping() {
+    let source = r#"
+const x = 1;
+switch (x) {
+    case 1: {
+        const caseVar = "one";
+        break;
+    }
+    default: {
+        const defaultVar = "other";
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("x").is_some(),
+        "'x' should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.get("caseVar").is_none(),
+        "'caseVar' should NOT be in file_locals (block-scoped inside case)"
+    );
+    assert!(
+        binder.file_locals.get("defaultVar").is_none(),
+        "'defaultVar' should NOT be in file_locals (block-scoped inside default)"
+    );
+}
+
+#[test]
+fn test_if_else_block_variable_scoping() {
+    let source = r#"
+if (true) {
+    const ifVar = 1;
+} else {
+    const elseVar = 2;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("ifVar").is_none(),
+        "'ifVar' should NOT be in file_locals (block-scoped in if)"
+    );
+    assert!(
+        binder.file_locals.get("elseVar").is_none(),
+        "'elseVar' should NOT be in file_locals (block-scoped in else)"
+    );
+}
+
+#[test]
+fn test_function_expression_name_scoping() {
+    let source = r#"
+const fn1 = function namedExpr() {
+    return namedExpr;
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("fn1").is_some(),
+        "'fn1' should be in file_locals"
+    );
+    // The named function expression name should NOT leak to file scope
+    assert!(
+        binder.file_locals.get("namedExpr").is_none(),
+        "'namedExpr' should NOT be in file_locals (function expression name is local)"
+    );
+}
+
+#[test]
+fn test_multiple_declarations_same_scope() {
+    let source = "const a = 1;\nlet b = 2;\nvar c = 3;\nfunction d() {}\nclass E {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(binder.file_locals.get("a").is_some());
+    assert!(binder.file_locals.get("b").is_some());
+    assert!(binder.file_locals.get("c").is_some());
+    assert!(binder.file_locals.get("d").is_some());
+    assert!(binder.file_locals.get("E").is_some());
+}
+
+#[test]
+fn test_find_references_class_used_in_type_position() {
+    let source = r#"
+class MyClass {}
+const a: MyClass = new MyClass();
+function foo(x: MyClass) {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let class_symbol = binder
+        .file_locals
+        .get("MyClass")
+        .expect("MyClass should be bound");
+
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let refs = walker.find_references(root, class_symbol);
+
+    // Should find at least 3 references (declaration + type annotation + new expression)
+    assert!(
+        refs.len() >= 3,
+        "should find at least 3 references to 'MyClass', got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_scope_chain_at_arrow_function_body() {
+    let source = r#"
+const outer = 1;
+const fn1 = (x: number) => {
+    const inner = x;
+    return inner;
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Find the 'inner' usage in 'return inner;'
+    let inner_nodes: Vec<_> = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| {
+            if node.kind == SyntaxKind::Identifier as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_identifier_text(node_idx) == Some("inner") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .collect();
+
+    if let Some(&inner_usage) = inner_nodes.last() {
+        let mut walker = ScopeWalker::new(arena, &binder);
+        let chain = walker.get_scope_chain(root, inner_usage);
+
+        // Should have at least file + arrow function scopes
+        assert!(
+            chain.len() >= 2,
+            "scope chain inside arrow function should have at least 2 scopes, got {}",
+            chain.len()
+        );
+
+        // 'outer' should be visible
+        let has_outer = chain.iter().any(|scope| scope.get("outer").is_some());
+        assert!(
+            has_outer,
+            "'outer' should be visible from inside arrow function"
+        );
+    }
+}
+
+#[test]
+fn test_try_finally_variable_scoping() {
+    let source = r#"
+try {
+    const tryVar = 1;
+} finally {
+    const finallyVar = 2;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    assert!(
+        binder.file_locals.get("tryVar").is_none(),
+        "'tryVar' should NOT be in file_locals (block-scoped in try)"
+    );
+    assert!(
+        binder.file_locals.get("finallyVar").is_none(),
+        "'finallyVar' should NOT be in file_locals (block-scoped in finally)"
+    );
+}

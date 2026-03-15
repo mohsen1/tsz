@@ -637,3 +637,138 @@ fn test_folding_ranges_mapped_type() {
     let ranges = get_ranges(source);
     assert!(!ranges.is_empty(), "Should fold mapped type");
 }
+
+#[test]
+fn test_folding_ranges_while_loop() {
+    let source = "\nwhile (true) {\n  doWork();\n  if (done) break;\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for while loop body"
+    );
+    let while_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        while_range.is_some(),
+        "Should find while loop folding range at line 1"
+    );
+}
+
+#[test]
+fn test_folding_ranges_for_loop() {
+    let source = "\nfor (let i = 0; i < 10; i++) {\n  console.log(i);\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for for loop body"
+    );
+}
+
+#[test]
+fn test_folding_ranges_for_of_loop() {
+    let source = "\nfor (const item of items) {\n  process(item);\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for for-of loop"
+    );
+}
+
+#[test]
+fn test_folding_ranges_for_in_loop() {
+    let source = "\nfor (const key in obj) {\n  console.log(key);\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for for-in loop"
+    );
+}
+
+#[test]
+fn test_folding_ranges_do_while_loop() {
+    let source = "\ndo {\n  attempt();\n} while (retry);\n";
+    let ranges = get_ranges(source);
+    assert!(
+        !ranges.is_empty(),
+        "Should find folding range for do-while loop"
+    );
+}
+
+#[test]
+fn test_folding_ranges_if_else() {
+    let source = "\nif (a) {\n  doA();\n} else {\n  doB();\n}\n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.len() >= 2,
+        "Should find folding ranges for both if and else blocks, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_multiple_imports_with_multiline_import() {
+    let source =
+        "import {\n  a,\n  b,\n  c\n} from \"mod\";\nimport { d } from \"other\";\nconst x = 1;\n";
+    let ranges = get_ranges(source);
+    // Should have at least an import group fold and the multiline import braces
+    assert!(
+        !ranges.is_empty(),
+        "Should find folds for multiline import and import group"
+    );
+}
+
+#[test]
+fn test_folding_ranges_class_with_multiple_methods_and_properties() {
+    let source = "\nclass Widget {\n  private name: string;\n  constructor(name: string) {\n    this.name = name;\n  }\n  render() {\n    return this.name;\n  }\n  dispose() {\n    this.name = '';\n  }\n}\n";
+    let ranges = get_ranges(source);
+    // class body + constructor + render + dispose = at least 4
+    assert!(
+        ranges.len() >= 4,
+        "Should have class body + 3 method body folds, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_nested_object_literals() {
+    let source = "\nconst config = {\n  server: {\n    host: 'localhost',\n    port: 3000\n  },\n  db: {\n    name: 'test'\n  }\n};\n";
+    let ranges = get_ranges(source);
+    // outer object + at least one inner object
+    assert!(
+        ranges.len() >= 2,
+        "Should find folds for nested objects, got {}",
+        ranges.len()
+    );
+}
+
+#[test]
+fn test_folding_ranges_whitespace_only_source() {
+    let source = "   \n   \n   \n";
+    let ranges = get_ranges(source);
+    assert!(
+        ranges.is_empty(),
+        "Whitespace-only source should not produce folds"
+    );
+}
+
+#[test]
+fn test_folding_ranges_enum_const() {
+    let source = "\nconst enum Direction {\n  Up,\n  Down,\n  Left,\n  Right\n}\n";
+    let ranges = get_ranges(source);
+    let enum_range = ranges.iter().find(|r| r.start_line == 1);
+    assert!(
+        enum_range.is_some(),
+        "Should find folding range for const enum"
+    );
+}
+
+#[test]
+fn test_folding_ranges_interface_extending_multiple() {
+    let source = "\ninterface A {\n  a: number;\n}\ninterface B {\n  b: string;\n}\ninterface C extends A, B {\n  c: boolean;\n}\n";
+    let ranges = get_ranges(source);
+    // 3 interface bodies
+    assert!(
+        ranges.len() >= 3,
+        "Should find folds for all three interfaces, got {}",
+        ranges.len()
+    );
+}

@@ -17,8 +17,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::def::DefId;
 use tsz_solver::types::{
-    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-    ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
+    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, ParamInfo,
+    PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
 };
 use tsz_solver::{QueryDatabase, TypeDatabase};
 
@@ -1509,11 +1509,10 @@ impl<'a> TypeLowering<'a> {
                     return TypeId::ERROR;
                 }
                 return self.interner.object_with_index(ObjectShape {
-                    flags: ObjectFlags::empty(),
                     properties,
                     string_index,
                     number_index,
-                    symbol: None,
+                    ..ObjectShape::default()
                 });
             }
 
@@ -1996,16 +1995,16 @@ impl<'a> TypeLowering<'a> {
                 return TypeId::ERROR;
             }
             return self.interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
                 symbol: symbol_id,
+                ..ObjectShape::default()
             });
         }
 
         self.interner
-            .object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol_id)
+            .object_with_flags_and_symbol(properties, Default::default(), symbol_id)
     }
 
     fn lower_call_signature(&self, sig: &SignatureData) -> CallSignature {

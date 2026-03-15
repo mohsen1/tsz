@@ -929,6 +929,23 @@ impl std::hash::Hash for ObjectShape {
     }
 }
 
+impl ObjectShape {
+    /// Mark this shape as a fresh object literal.
+    ///
+    /// Fresh literals are subject to excess property checking. Use this
+    /// instead of importing `ObjectFlags::FRESH_LITERAL` directly.
+    pub fn mark_fresh_literal(&mut self) {
+        self.flags |= ObjectFlags::FRESH_LITERAL;
+    }
+
+    /// Mark this shape as having late-bound (computed) members.
+    ///
+    /// Use this instead of importing `ObjectFlags::HAS_LATE_BOUND_MEMBERS` directly.
+    pub fn mark_has_late_bound_members(&mut self) {
+        self.flags |= ObjectFlags::HAS_LATE_BOUND_MEMBERS;
+    }
+}
+
 impl Default for ObjectShape {
     fn default() -> Self {
         Self {

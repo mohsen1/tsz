@@ -433,36 +433,46 @@ impl<'a> CheckerState<'a> {
 
             // For merged class/function/enum + namespace symbols, literal element
             // access should see exported namespace members just like property access.
-            if let Some(expr_node) = self.ctx.arena.get(access.expression)
-                && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
-            {
-                let expr_name = &expr_ident.escaped_text;
-                if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            // In write context (skip_flow_narrowing), skip these shortcuts:
+            // they return the symbol's read type, which doesn't account for
+            // divergent getter/setter types. The full property access path
+            // below correctly uses write_type for setter parameters.
+            if !self.ctx.skip_flow_narrowing {
+                if let Some(expr_node) = self.ctx.arena.get(access.expression)
+                    && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
                 {
-                    let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
-                        && (symbol.flags
-                            & (symbol_flags::CLASS
-                                | symbol_flags::FUNCTION
-                                | symbol_flags::REGULAR_ENUM))
-                            != 0;
-
-                    if is_merged
-                        && let Some(exports) = symbol.exports.as_ref()
-                        && let Some(member_id) = exports.get(name)
+                    let expr_name = &expr_ident.escaped_text;
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        result_type = Some(self.get_type_of_symbol(member_id));
-                        use_index_signature_check = false;
+                        let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
+                            && (symbol.flags
+                                & (symbol_flags::CLASS
+                                    | symbol_flags::FUNCTION
+                                    | symbol_flags::REGULAR_ENUM))
+                                != 0;
+
+                        if is_merged
+                            && let Some(exports) = symbol.exports.as_ref()
+                            && let Some(member_id) = exports.get(name)
+                        {
+                            result_type = Some(self.get_type_of_symbol(member_id));
+                            use_index_signature_check = false;
+                        }
                     }
+                }
+
+                if let Some(member_type) =
+                    self.resolve_namespace_value_member(object_type_for_access, name)
+                {
+                    result_type = Some(member_type);
+                    use_index_signature_check = false;
                 }
             }
 
-            if let Some(member_type) =
-                self.resolve_namespace_value_member(object_type_for_access, name)
+            if result_type.is_none()
+                && self.namespace_has_type_only_member(object_type_for_access, name)
             {
-                result_type = Some(member_type);
-                use_index_signature_check = false;
-            } else if self.namespace_has_type_only_member(object_type_for_access, name) {
                 if self.is_unresolved_import_symbol(access.expression) {
                     return TypeId::ERROR;
                 }
