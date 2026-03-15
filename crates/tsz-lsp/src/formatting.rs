@@ -661,11 +661,61 @@ impl DocumentFormattingProvider {
         if out.starts_with("@ ") {
             out = format!("@{}", out[2..].trim_start());
         }
-        // Ensure space before opening brace: `foo{` → `foo {`
-        if let Some(prefix) = out.strip_suffix('{') {
-            out = format!("{} {{", prefix.trim_end());
-        }
+        // Ensure space inside empty braces: `{}` → `{ }`
+        out = out.replace("{}", "{ }");
+        // Ensure space before opening brace (not at start of line): `foo{` → `foo {`
+        out = Self::ensure_space_before_brace(&out);
         out
+    }
+
+    /// Ensure there's a space before `{` when preceded by non-whitespace,
+    /// but not after `$` (template literal `${`).
+    fn ensure_space_before_brace(line: &str) -> String {
+        let bytes = line.as_bytes();
+        let len = bytes.len();
+        let mut result = Vec::with_capacity(len + 4);
+        let mut in_string: Option<u8> = None;
+        let mut i = 0;
+
+        while i < len {
+            let ch = bytes[i];
+
+            // Track string state
+            if in_string.is_none() && (ch == b'\'' || ch == b'"' || ch == b'`') {
+                in_string = Some(ch);
+                result.push(ch);
+                i += 1;
+                continue;
+            }
+            if let Some(q) = in_string {
+                if ch == b'\\' && i + 1 < len {
+                    result.push(ch);
+                    result.push(bytes[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if ch == q {
+                    in_string = None;
+                }
+                result.push(ch);
+                i += 1;
+                continue;
+            }
+
+            if ch == b'{' && i > 0 {
+                let prev = bytes[i - 1];
+                // Add space before `{` if preceded by non-whitespace
+                // but NOT after `$` (template literal `${`)
+                if prev != b' ' && prev != b'\t' && prev != b'$' && prev != b'(' {
+                    result.push(b' ');
+                }
+            }
+
+            result.push(ch);
+            i += 1;
+        }
+
+        String::from_utf8(result).unwrap_or_else(|_| line.to_string())
     }
 
     /// Collapse runs of whitespace to single spaces, but preserve whitespace
