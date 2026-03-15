@@ -35,7 +35,6 @@ CHECKS = [
                 "crates/tsz-checker/src/types/computation/object_literal.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",
                 "crates/tsz-checker/src/error_reporter/core.rs",
-                "crates/tsz-checker/src/error_reporter/properties.rs",
                 "crates/tsz-checker/src/checkers/generic_checker.rs",
             },
         },
@@ -211,7 +210,6 @@ CHECKS = [
                 "crates/tsz-checker/src/types/computation/object_literal.rs",
                 "crates/tsz-checker/src/error_reporter/operator_errors.rs",
                 "crates/tsz-checker/src/error_reporter/core.rs",
-                "crates/tsz-checker/src/error_reporter/properties.rs",
                 "crates/tsz-checker/src/checkers/generic_checker.rs",
             },
             "ignore_comment_lines": True,
@@ -289,7 +287,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/error_reporter/call_errors.rs",
             "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
             "crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs",
-            "crates/tsz-checker/src/types/type_checking/core.rs",
         },
     ),
 ]
