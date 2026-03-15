@@ -134,8 +134,7 @@ fn ts2352_array_assertion_anchors_first_excess_property() {
 }
 
 #[test]
-#[ignore = "fresh literal object display model changed"]
-fn ts2345_never_parameter_uses_non_contextual_object_literal_display() {
+fn ts2345_never_parameter_uses_widened_object_literal_display() {
     let diags = check_source_diagnostics(
         r#"
 declare function fn(x: never): void;
@@ -146,10 +145,11 @@ fn({ a: 1, b: 2 });
     assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
 
     let msg = &matching[0].message_text;
-    // tsc preserves literal types from the AST in fresh object literal display
+    // tsc widens literal types in assignability error messages:
+    // `{ a: 1, b: 2 }` displays as `{ a: number; b: number; }`
     assert!(
-        msg.contains("Argument of type '{ a: 1; b: 2; }'"),
-        "Expected fresh literal object display (tsc freshness model), got: {msg}"
+        msg.contains("Argument of type '{ a: number; b: number; }'"),
+        "Expected widened object literal display (tsc behavior), got: {msg}"
     );
     assert!(
         msg.contains("parameter of type 'never'"),

@@ -363,8 +363,52 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             (Some(TypeData::Union(s_members)), _) => {
                 let s_members = self.interner.type_list(s_members);
-                for &member in s_members.iter() {
-                    self.constrain_types(ctx, var_map, member, target, priority);
+                // When all union members are Applications with the same base as the
+                // target Application, combine type arguments into unions and constrain
+                // once. This avoids BCT picking one branch over another for inference
+                // from union-of-generics: e.g., Interface<A|B> | Interface<C> against
+                // Interface<T> should infer T = A|B|C, not just one branch.
+                if let Some(TypeData::Application(t_app_id)) = self.interner.lookup(target) {
+                    let t_app = self.interner.type_application(t_app_id);
+                    let t_base = t_app.base;
+                    let t_args_len = t_app.args.len();
+                    let mut all_same_base = !s_members.is_empty() && t_args_len > 0;
+                    let mut combined_args: Vec<Vec<TypeId>> = vec![Vec::new(); t_args_len];
+                    if all_same_base {
+                        for &member in s_members.iter() {
+                            if let Some(TypeData::Application(s_app_id)) =
+                                self.interner.lookup(member)
+                            {
+                                let s_app = self.interner.type_application(s_app_id);
+                                if s_app.base == t_base && s_app.args.len() == t_args_len {
+                                    for (i, &arg) in s_app.args.iter().enumerate() {
+                                        combined_args[i].push(arg);
+                                    }
+                                } else {
+                                    all_same_base = false;
+                                    break;
+                                }
+                            } else {
+                                all_same_base = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_same_base {
+                        let t_app_args = t_app.args.clone();
+                        for (i, t_arg) in t_app_args.iter().enumerate() {
+                            let combined = self.interner.union(combined_args[i].clone());
+                            self.constrain_types(ctx, var_map, combined, *t_arg, priority);
+                        }
+                    } else {
+                        for &member in s_members.iter() {
+                            self.constrain_types(ctx, var_map, member, target, priority);
+                        }
+                    }
+                } else {
+                    for &member in s_members.iter() {
+                        self.constrain_types(ctx, var_map, member, target, priority);
+                    }
                 }
             }
             (_, Some(TypeData::Intersection(t_members))) => {
