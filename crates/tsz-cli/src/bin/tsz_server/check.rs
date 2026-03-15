@@ -767,7 +767,8 @@ impl Server {
                     let after_lib = &rest[lib_start + 4..];
                     let quote = after_lib.chars().next();
                     if quote == Some('"') || quote == Some('\'') {
-                        let quote_char = quote.unwrap();
+                        let quote_char = quote
+                            .expect("guarded by quote == Some('\"') || quote == Some('\\'') check");
                         let value_start = 1;
                         if let Some(end) = after_lib[value_start..].find(quote_char) {
                             let lib_name = &after_lib[value_start..value_start + end];
