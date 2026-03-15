@@ -941,6 +941,27 @@ impl<'a> CheckerState<'a> {
                 self.contextual_type_option_for_expression(expected_type)
             };
 
+            // Extract ThisType<T> marker from the unevaluated expected type BEFORE
+            // contextual_type_for_expression evaluates it away. ThisType<T> is an empty
+            // interface marker, so intersection simplification removes it. We need to
+            // preserve it for object literal methods' `this` type.
+            let pushed_this_type = if let Some(et) = expected_type {
+                use tsz_solver::ContextualTypeContext;
+                let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                    self.ctx.types,
+                    et,
+                    self.ctx.compiler_options.no_implicit_any,
+                );
+                if let Some(this_type) = ctx_helper.get_this_type_from_marker() {
+                    self.ctx.this_type_stack.push(this_type);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
             let prev_context = self.ctx.contextual_type;
             if apply_contextual {
                 self.ctx.contextual_type = expected_context_type;
@@ -1085,6 +1106,9 @@ impl<'a> CheckerState<'a> {
             }
 
             self.ctx.contextual_type = prev_context;
+            if pushed_this_type {
+                self.ctx.this_type_stack.pop();
+            }
             effective_index += 1;
         }
 

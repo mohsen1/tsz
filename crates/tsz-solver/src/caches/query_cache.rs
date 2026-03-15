@@ -651,6 +651,10 @@ impl TypeDatabase for QueryCache<'_> {
     fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
         self.interner.is_boxed_def_id(def_id, kind)
     }
+
+    fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
+        self.interner.is_this_type_marker_def_id(def_id)
+    }
 }
 
 /// Implement `TypeResolver` for `QueryCache` with noop resolution.
@@ -697,6 +701,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
         self.interner.register_boxed_def_id(kind, def_id);
+    }
+
+    fn register_this_type_def_id(&self, def_id: DefId) {
+        self.interner.register_this_type_def_id(def_id);
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {

@@ -264,6 +264,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Register ThisType marker DefIds so ThisTypeMarkerExtractor can identify
+        // ThisType<T> applications when the base type is Lazy(DefId).
+        for ctx in &self.ctx.lib_contexts {
+            if let Some(sym_id) = ctx.binder.file_locals.get("ThisType") {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx.types.register_this_type_def_id(def_id);
+            }
+        }
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("ThisType") {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx.types.register_this_type_def_id(def_id);
+        }
+
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
