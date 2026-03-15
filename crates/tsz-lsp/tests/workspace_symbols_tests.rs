@@ -446,3 +446,101 @@ fn test_get_definition_kind_returns_some_with_kind() {
         "add_definition_with_kind should store the kind"
     );
 }
+
+#[test]
+fn test_find_symbols_unicode_names() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "日本語関数",
+        make_location("unicode.ts", 0, 0, 5),
+        SymbolKind::Function,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("日本語");
+    assert!(
+        !results.is_empty(),
+        "Should find symbols with unicode names"
+    );
+    assert_eq!(results[0].name, "日本語関数");
+}
+
+#[test]
+fn test_find_symbols_single_char_query() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    // Single character should still return matches
+    let results = provider.find_symbols("M");
+    let names: Vec<&str> = results.iter().map(|s| s.name.as_str()).collect();
+    // Should match MyClass, myFunction, myVariable (case-insensitive prefix match)
+    assert!(
+        !names.is_empty(),
+        "Single char query 'M' should find symbols"
+    );
+}
+
+#[test]
+fn test_find_symbols_returns_correct_location() {
+    let mut index = SymbolIndex::new();
+    let loc = make_location("specific.ts", 10, 5, 15);
+    index.add_definition_with_kind("targetSymbol", loc, SymbolKind::Variable);
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("targetSymbol");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].location.file_path, "specific.ts");
+    assert_eq!(results[0].location.range.start.line, 10);
+    assert_eq!(results[0].location.range.start.character, 5);
+}
+
+#[test]
+fn test_symbol_index_remove_file() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("foo", make_location("a.ts", 0, 0, 3), SymbolKind::Function);
+    index.add_definition_with_kind("bar", make_location("b.ts", 0, 0, 3), SymbolKind::Function);
+
+    index.remove_file("a.ts");
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("foo");
+    assert!(
+        results.is_empty(),
+        "After removing a.ts, foo should not be found"
+    );
+    let results = provider.find_symbols("bar");
+    assert!(!results.is_empty(), "bar from b.ts should still be found");
+}
+
+#[test]
+fn test_find_symbols_special_characters_in_query() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    // Query with characters not in any symbol name
+    let results = provider.find_symbols("$$$");
+    assert!(
+        results.is_empty(),
+        "Query with no matching characters should return empty"
+    );
+}
+
+#[test]
+fn test_symbol_index_multiple_definitions_same_name() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "handler",
+        make_location("a.ts", 0, 0, 7),
+        SymbolKind::Function,
+    );
+    index.add_definition_with_kind(
+        "handler",
+        make_location("b.ts", 5, 0, 7),
+        SymbolKind::Function,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("handler");
+    assert!(
+        results.len() >= 2,
+        "Should find multiple definitions with the same name, got: {}",
+        results.len()
+    );
+}
