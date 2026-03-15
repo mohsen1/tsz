@@ -1088,9 +1088,8 @@ impl ParserState {
             ) {
                 if id_a.atom != Atom::NONE && id_b.atom != Atom::NONE {
                     return id_a.atom == id_b.atom;
-                } else {
-                    return id_a.escaped_text == id_b.escaped_text;
                 }
+                return id_a.escaped_text == id_b.escaped_text;
             }
         } else if node_a.kind == SyntaxKind::ThisKeyword as u16 {
             return true;

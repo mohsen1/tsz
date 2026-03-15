@@ -1673,14 +1673,13 @@ impl ParserState {
                                 },
                             );
                             continue;
-                        } else {
-                            // expr?.<T> not followed by `(` or a template literal.
-                            // tsc emits TS1005 ('(' expected) here. Do NOT fall
-                            // through to the property-access path, which would call
-                            // parse_identifier_name() and emit the spurious TS1003.
-                            self.parse_expected(SyntaxKind::OpenParenToken);
-                            break;
                         }
+                        // expr?.<T> not followed by `(` or a template literal.
+                        // tsc emits TS1005 ('(' expected) here. Do NOT fall
+                        // through to the property-access path, which would call
+                        // parse_identifier_name() and emit the spurious TS1003.
+                        self.parse_expected(SyntaxKind::OpenParenToken);
+                        break;
                     }
                     if self.is_token(SyntaxKind::OpenBracketToken) {
                         // expr?.[index]

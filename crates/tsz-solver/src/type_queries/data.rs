@@ -444,7 +444,7 @@ pub fn extract_type_params_for_call(
     }
 }
 
-/// Get a CallableShape for any callable type (Function or Callable).
+/// Get a `CallableShape` for any callable type (Function or Callable).
 ///
 /// For Callable types: returns the shape directly.
 /// For Function types: wraps the function as a single-signature callable.

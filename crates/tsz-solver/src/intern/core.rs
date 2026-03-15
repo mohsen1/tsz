@@ -297,8 +297,8 @@ pub struct TypeInterner {
     /// literal types (`{ x: "hello" }`) even though the type system uses
     /// widened types (`{ x: string }`).
     ///
-    /// Key: ObjectShapeId of the widened (interned) shape.
-    /// Value: Vec of PropertyInfo with original (non-widened) type_ids.
+    /// Key: `ObjectShapeId` of the widened (interned) shape.
+    /// Value: Vec of `PropertyInfo` with original (non-widened) `type_ids`.
     display_properties: DashMap<ObjectShapeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
 }
 
