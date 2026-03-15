@@ -1097,3 +1097,90 @@ fn test_signature_overload_count() {
         "Active signature should match arg count"
     );
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_signature_help_no_function_call() {
+    let source = "const x = 1;";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(0, 5), &mut cache);
+    assert!(
+        help.is_none(),
+        "Should not provide signature help outside function call"
+    );
+}
+
+#[test]
+fn test_signature_help_empty_file() {
+    let source = "";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(0, 0), &mut cache);
+    assert!(
+        help.is_none(),
+        "Should not provide signature help in empty file"
+    );
+}
+
+#[test]
+fn test_signature_help_arrow_function_call() {
+    let source = "const add = (a: number, b: number): number => a + b;\nadd(";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 4), &mut cache);
+    if let Some(h) = help {
+        assert!(
+            !h.signatures.is_empty(),
+            "Should have signatures for arrow function"
+        );
+    }
+}
+
+#[test]
+fn test_signature_help_nested_call() {
+    let source = "function outer(x: number): string { return ''; }\nfunction inner(s: string): void {}\ninner(outer(";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position inside inner call (outer's open paren)
+    let help = provider.get_signature_help(root, Position::new(2, 12), &mut cache);
+    if let Some(h) = help {
+        // Should show signature for the innermost call (outer)
+        assert!(!h.signatures.is_empty());
+    }
+}

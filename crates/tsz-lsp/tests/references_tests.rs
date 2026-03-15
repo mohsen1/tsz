@@ -1019,3 +1019,195 @@ fn test_rename_locations_simple() {
         );
     }
 }
+
+// =========================================================================
+// Edge case tests for comprehensive coverage
+// =========================================================================
+
+#[test]
+fn test_find_references_class_name() {
+    let source = "class Animal {}\nlet a = new Animal();\nlet b: Animal;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let refs = find_refs.find_references(root, Position::new(0, 6));
+
+    assert!(refs.is_some(), "Should find references for class");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "Should find declaration + usages, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_find_references_interface_name() {
+    let source = "interface Foo { x: number; }\nlet a: Foo;\nlet b: Foo;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let refs = find_refs.find_references(root, Position::new(0, 10));
+
+    assert!(refs.is_some(), "Should find references for interface");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "Should find declaration + usages, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_find_references_enum_name() {
+    let source = "enum Color { Red, Green }\nlet c: Color;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let refs = find_refs.find_references(root, Position::new(0, 5));
+
+    assert!(refs.is_some(), "Should find references for enum");
+}
+
+#[test]
+fn test_find_references_no_results_for_unknown_position() {
+    let source = "const x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at the semicolon
+    let refs = find_refs.find_references(root, Position::new(0, 12));
+
+    assert!(
+        refs.is_none(),
+        "Should not find references for semicolon position"
+    );
+}
+
+#[test]
+fn test_find_references_parameter_in_function() {
+    let source = "function foo(param: number) {\n  return param * 2;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let refs = find_refs.find_references(root, Position::new(0, 13));
+
+    assert!(
+        refs.is_some(),
+        "Should find references for function parameter"
+    );
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "Should find param declaration + usage, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_find_references_in_nested_scope() {
+    let source = "const x = 1;\nfunction foo() {\n  const y = x;\n  return y + x;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Find references for 'x' on line 0
+    let refs = find_refs.find_references(root, Position::new(0, 6));
+
+    assert!(refs.is_some(), "Should find references for x");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 3,
+        "Should find declaration + 2 usages in nested scope, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_find_references_type_alias() {
+    let source = "type ID = string;\nlet userId: ID;\nlet groupId: ID;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let refs = find_refs.find_references(root, Position::new(0, 5));
+
+    assert!(refs.is_some(), "Should find references for type alias");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "Should find declaration + type usages, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn test_find_references_empty_file() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let refs = find_refs.find_references(root, Position::new(0, 0));
+
+    assert!(refs.is_none(), "Should not find references in empty file");
+}
+
+#[test]
+fn test_rename_locations_function() {
+    let source = "function greet() {}\ngreet();\ngreet();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let locs = find_refs.find_rename_locations(root, Position::new(0, 9));
+
+    assert!(locs.is_some(), "Should find rename locations for function");
+    let locs = locs.unwrap();
+    assert!(
+        locs.len() >= 3,
+        "Should find declaration + 2 calls, got {}",
+        locs.len()
+    );
+}
