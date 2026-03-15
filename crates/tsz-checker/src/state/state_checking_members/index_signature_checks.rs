@@ -715,6 +715,19 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip computed property names whose expression is an entity name
+            // (identifier or property access chain).  In tsc these are "late-bound"
+            // names and are NOT checked against index signatures for TS2411.
+            // Other computed expressions (e.g. `[+s]`, `[s + n]`, `["literal"]`)
+            // ARE checked normally.
+            if let Some(name_node) = self.ctx.arena.get(name_idx)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+                && self.computed_name_uses_entity_expression(computed.expression)
+            {
+                continue;
+            }
+
             let computed_key_type = if let Some(name_node) = self.ctx.arena.get(name_idx)
                 && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
