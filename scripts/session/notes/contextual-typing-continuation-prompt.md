@@ -25,17 +25,13 @@
 - `classImplementsClass6.ts` — now passes (fix #11: implements clause property recovery)
 - TS7018 batch (fix #12): `arrayBestCommonTypes`, `declarationEmitOverloadedPrivateInference`, `esNextWeakRefs_IterableWeakMap`, `useBeforeDeclaration_propertyAssignment`, `superCallBeforeThisAccessing7`, `commonJSReexport`, `namespaceImportTypeQuery`, `namespaceImportTypeQuery4`, `YieldExpression20_es6`, `TwoInternalModules*` (4 tests), `exportEqualsProperty2`
 
-## Remaining Failure Breakdown (updated 2026-03-15)
+## Remaining Failure Breakdown (updated 2026-03-15, post fix #13)
 
-On 3000-test sample: 2743 pass (91.4%), ~257 fail. Top error code mismatches:
-- **TS2345**: missing=7, extra=20 — argument type false positives (conditional types, generics)
-- **TS2322**: missing=8, extra=19 — type assignment false positives (deep type system)
-- **TS2339**: missing=10, extra=7 — property access issues (both directions)
-- **TS2323**: missing=7, extra=0 — duplicate export variable (export default merging)
-- **TS2344**: missing=6, extra=0 — constraint satisfaction (lib.dom.d.ts)
-- **TS2741**: missing=2, extra=5 — property missing (rest/spread, intersection)
+On 3000-test sample: 2745 pass (91.5%), ~255 fail. Includes 81 fingerprint-only failures.
 
-All remaining categories are "hard" — no more quick wins from contextual-typing campaign.
+**Fingerprint-only failures** (81 tests — correct error codes, wrong message/position):
+- Diverse causes: union member ordering (`null | X | undefined` vs `X | null | undefined`), generic type parameter display (`A<T>` vs `A<number>`), optional parameter `| undefined` stripping, parser error positions, literal types in messages.
+- No single pattern dominates. Fix #13 recovered 13 of these; remaining 81 each require individual investigation.
 
 ## Highest-Impact Next Steps
 
