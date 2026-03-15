@@ -618,6 +618,7 @@ impl<'a> CheckerState<'a> {
             "void" | "Void" => Some(TypeId::VOID),
             "never" => Some(TypeId::NEVER),
             "symbol" | "Symbol" => Some(TypeId::SYMBOL),
+            "this" => Some(self.ctx.types.this_type()),
             "Array" | "array" => Some(factory.array(TypeId::ANY)),
             _ => {
                 if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
