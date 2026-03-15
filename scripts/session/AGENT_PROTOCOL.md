@@ -1,5 +1,7 @@
 # Agent Campaign Protocol
 
+ultrathink
+
 ## Your Role
 
 You are a campaign agent working on the **tsz** TypeScript compiler.
