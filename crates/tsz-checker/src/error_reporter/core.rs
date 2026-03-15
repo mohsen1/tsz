@@ -1277,7 +1277,17 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
-            if expr_type != TypeId::ERROR {
+            // Only use the node-derived type when it plausibly represents the
+            // source of the assignment, not the target.  For-of loops pass the
+            // element type as `source` but anchor the diagnostic at the loop
+            // variable whose node type equals the *target* (declared variable
+            // type), not the source.  When the node type matches the target but
+            // not the source, the anchor is the assignment target — skip
+            // node-based resolution to avoid confusing "Type 'X' is not
+            // assignable to type 'X'" messages.
+            let node_is_target_not_source = expr_type == target && expr_type != source;
+            let node_type_matches_source = expr_type != TypeId::ERROR && !node_is_target_not_source;
+            if node_type_matches_source {
                 if let Some(annotation_text) =
                     self.declared_diagnostic_source_annotation_text(expr_idx)
                     && self.should_prefer_declared_source_annotation_display(
@@ -1305,8 +1315,10 @@ impl<'a> CheckerState<'a> {
                 return self.format_assignability_type_for_message(display_type, target);
             }
 
-            if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
-                return display;
+            if node_type_matches_source {
+                if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx) {
+                    return display;
+                }
             }
         }
 
