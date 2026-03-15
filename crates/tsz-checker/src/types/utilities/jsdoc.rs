@@ -5,8 +5,8 @@ use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{
-    FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TupleElement,
-    TypeId, TypePredicate, TypePredicateTarget, Visibility,
+    FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
+    TypePredicate, TypePredicateTarget, Visibility,
 };
 #[derive(Clone)]
 pub(crate) struct JsdocTypedefInfo {
@@ -654,13 +654,7 @@ impl<'a> CheckerState<'a> {
                         self.jsdoc_type_from_expression(key_str),
                         self.jsdoc_type_from_expression(value_str),
                     ) {
-                        let mut shape = ObjectShape {
-                            flags: ObjectFlags::empty(),
-                            properties: Vec::new(),
-                            string_index: None,
-                            number_index: None,
-                            symbol: None,
-                        };
+                        let mut shape = ObjectShape::default();
                         if key_type == TypeId::STRING {
                             shape.string_index = Some(IndexSignature {
                                 key_type,

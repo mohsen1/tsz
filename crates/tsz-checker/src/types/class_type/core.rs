@@ -12,8 +12,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
-    TypeParamInfo, Visibility,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
+    Visibility,
 };
 
 #[inline]
@@ -653,11 +653,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let partial_type = factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties: partial_props,
                 string_index: string_index.clone(),
                 number_index: number_index.clone(),
                 symbol: current_sym,
+                ..ObjectShape::default()
             });
             self.ctx.this_type_stack.push(partial_type);
 
@@ -776,11 +776,11 @@ impl<'a> CheckerState<'a> {
                 });
             }
             let partial_type = factory.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
                 properties: partial_props,
                 string_index: string_index.clone(),
                 number_index: number_index.clone(),
                 symbol: current_sym,
+                ..ObjectShape::default()
             });
             self.ctx.this_type_stack.push(partial_type);
 
@@ -1276,28 +1276,17 @@ impl<'a> CheckerState<'a> {
 
         // Build the final instance type
         let props: Vec<PropertyInfo> = properties.into_values().collect();
-        let mut flags = ObjectFlags::empty();
-        if has_late_bound_members {
-            flags |= ObjectFlags::HAS_LATE_BOUND_MEMBERS;
-        }
-        let mut instance_type = if string_index.is_some() || number_index.is_some() {
-            factory.object_with_index(ObjectShape {
-                flags,
-                properties: props,
-                string_index,
-                number_index,
-                symbol: current_sym,
-            })
-        } else {
-            // Use object_with_index even without index signatures to set the symbol for nominal typing
-            factory.object_with_index(ObjectShape {
-                flags,
-                properties: props,
-                string_index: None,
-                number_index: None,
-                symbol: current_sym,
-            })
+        let mut shape = ObjectShape {
+            properties: props,
+            string_index,
+            number_index,
+            symbol: current_sym,
+            ..ObjectShape::default()
         };
+        if has_late_bound_members {
+            shape.mark_has_late_bound_members();
+        }
+        let mut instance_type = factory.object_with_index(shape);
 
         // Final interface merging pass
         if let Some(sym_id) = current_sym {

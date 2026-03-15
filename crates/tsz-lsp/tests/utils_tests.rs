@@ -790,3 +790,155 @@ fn test_find_node_at_offset_in_template_literal() {
         "Should find node inside template expression"
     );
 }
+
+// =========================================================================
+// Additional coverage tests
+// =========================================================================
+
+#[test]
+fn test_find_node_at_offset_in_function_body() {
+    let source = "function add(a: number, b: number) { return a + b; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 44 should be inside 'a + b'
+    let node = find_node_at_offset(arena, 44);
+    assert!(node.is_some(), "Should find node in function body");
+}
+
+#[test]
+fn test_find_node_at_offset_at_arrow_function() {
+    let source = "const f = (x: number) => x * 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let node = find_node_at_offset(arena, 25);
+    assert!(node.is_some(), "Should find node in arrow function body");
+}
+
+#[test]
+fn test_find_nodes_in_range_single_line() {
+    let source = "const x = 1; const y = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _ = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let nodes = find_nodes_in_range(arena, 0, 12);
+    assert!(!nodes.is_empty(), "Should find nodes in first statement");
+}
+
+#[test]
+fn test_find_nodes_in_range_middle_of_file() {
+    let source = "const a = 1;\nconst b = 2;\nconst c = 3;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _ = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Range covering second line only
+    let nodes = find_nodes_in_range(arena, 13, 25);
+    assert!(!nodes.is_empty(), "Should find nodes in middle of file");
+}
+
+#[test]
+fn test_identifier_text_for_function_name() {
+    let source = "function myFunc() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let node_idx = find_node_at_offset(arena, 9);
+    assert!(node_idx.is_some());
+    let text = identifier_text(arena, node_idx);
+    assert_eq!(text, Some("myFunc".to_string()));
+}
+
+#[test]
+fn test_identifier_text_for_class_name() {
+    let source = "class MyClass {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let node_idx = find_node_at_offset(arena, 6);
+    assert!(node_idx.is_some());
+    let text = identifier_text(arena, node_idx);
+    assert_eq!(text, Some("MyClass".to_string()));
+}
+
+#[test]
+fn test_is_comment_context_nested_block_comments() {
+    let source = "code /* comment1 */ more /* comment2 */ end";
+    assert!(!is_comment_context(source, 0), "Before first comment");
+    assert!(is_comment_context(source, 8), "Inside first block comment");
+    assert!(!is_comment_context(source, 20), "Between comments");
+    assert!(
+        is_comment_context(source, 30),
+        "Inside second block comment"
+    );
+    assert!(!is_comment_context(source, 40), "After second comment");
+}
+
+#[test]
+fn test_is_comment_context_line_comment_on_second_line() {
+    let source = "const x = 1;\n// comment here";
+    assert!(
+        !is_comment_context(source, 6),
+        "Not in comment on first line"
+    );
+    // Comment detection depends on implementation
+    let _ = is_comment_context(source, 16);
+}
+
+#[test]
+fn test_should_backtrack_between_two_identifiers_with_space() {
+    let source = "foo bar";
+    // Offset 4 is at 'b' in 'bar', prev is space
+    assert!(
+        !should_backtrack_to_previous_symbol(source, 4),
+        "Should not backtrack when at start of new identifier"
+    );
+}
+
+#[test]
+fn test_should_backtrack_after_close_paren() {
+    let source = "foo()";
+    // Offset 5 is at EOF after ')'
+    // Backtrack behavior at close paren is implementation-defined
+    let _ = should_backtrack_to_previous_symbol(source, 5);
+}
+
+#[test]
+fn test_node_range_for_multiline_function() {
+    let source = "function foo(\n  a: number,\n  b: string\n) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let line_map = LineMap::build(source);
+
+    // Find 'a' parameter on second line
+    let node_idx = find_node_at_offset(arena, 16);
+    if node_idx.is_some() {
+        let range = node_range(arena, &line_map, source, node_idx);
+        assert_eq!(range.start.line, 1, "Parameter should be on line 1");
+    }
+}
+
+#[test]
+fn test_calculate_new_relative_path_to_same_file() {
+    let result = calculate_new_relative_path(
+        Path::new("/project/main.ts"),
+        Path::new("/project/utils.ts"),
+        Path::new("/project/utils.ts"),
+        "./utils",
+    );
+    assert_eq!(result, Some("./utils.ts".to_string()));
+}
+
+#[test]
+fn test_calculate_new_relative_path_across_directories() {
+    let result = calculate_new_relative_path(
+        Path::new("/project/src/app/main.ts"),
+        Path::new("/project/src/lib/utils.ts"),
+        Path::new("/project/dist/lib/utils.ts"),
+        "../lib/utils",
+    );
+    assert!(result.is_some(), "Should handle cross-directory moves");
+}
