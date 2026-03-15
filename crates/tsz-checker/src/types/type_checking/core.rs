@@ -559,6 +559,7 @@ impl<'a> CheckerState<'a> {
         else if node.kind == syntax_kind_ext::TYPE_LITERAL {
             if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
                 self.check_type_literal_duplicate_properties(&type_lit.members.nodes);
+                self.check_type_literal_overload_optionality(&type_lit.members.nodes);
                 for &member_idx in &type_lit.members.nodes {
                     self.check_type_member_for_parameter_properties(member_idx);
                     // TS1170: Computed property in type literal must have literal/unique symbol type
@@ -696,6 +697,58 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 seen.insert(name, (member_idx, type_ann));
+            }
+        }
+    }
+
+    /// TS2386: Check overload optionality agreement in type literal members.
+    /// Method signatures with the same name must all be optional or all required.
+    pub(crate) fn check_type_literal_overload_optionality(&mut self, members: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use rustc_hash::FxHashMap;
+        use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
+
+        // Group method signatures by name
+        let mut method_groups: FxHashMap<String, Vec<(NodeIndex, bool)>> = FxHashMap::default();
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != METHOD_SIGNATURE {
+                continue;
+            }
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                continue;
+            };
+            let Some(name) = self.get_member_name(member_idx) else {
+                continue;
+            };
+            method_groups
+                .entry(name)
+                .or_default()
+                .push((member_idx, sig.question_token));
+        }
+
+        for group in method_groups.values() {
+            if group.len() < 2 {
+                continue;
+            }
+            let first_optional = group[0].1;
+            for &(member_idx, optional) in &group[1..] {
+                if optional != first_optional {
+                    let error_node = self
+                        .ctx
+                        .arena
+                        .get(member_idx)
+                        .and_then(|n| self.ctx.arena.get_signature(n))
+                        .map(|s| s.name)
+                        .unwrap_or(member_idx);
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                        diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                    );
+                }
             }
         }
     }
