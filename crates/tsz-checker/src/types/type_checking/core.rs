@@ -497,9 +497,10 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check constraint type
+        // Check constraint type (missing names + structural validation like TS2313)
         if param.constraint.is_some() {
             self.check_type_for_missing_names(param.constraint);
+            self.check_type_node(param.constraint);
         }
 
         // Check default type
