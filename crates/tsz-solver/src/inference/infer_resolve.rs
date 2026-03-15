@@ -283,7 +283,22 @@ impl<'a> InferenceContext<'a> {
 
         let result = if !candidates.is_empty() {
             // Covariant candidates exist: use union/BCT (matches tsc's getInferredType)
-            self.resolve_from_candidates(&candidates, is_const, &upper_bounds, declared_constraint)
+            let covariant_result = self.resolve_from_candidates(
+                &candidates,
+                is_const,
+                &upper_bounds,
+                declared_constraint,
+            );
+            // tsc's getInferredType: when the covariant inference is `never` and
+            // contra-candidates exist, use the contra-candidates instead. This handles
+            // the common pattern of empty arrays (`never[]`) alongside callback arguments
+            // that provide real type information via contravariant parameter positions.
+            // See: `inferredCovariantType && !(inferredCovariantType.flags & TypeFlags.Never)`
+            if covariant_result == TypeId::NEVER && !contra_candidates.is_empty() {
+                self.resolve_from_contra_candidates(&contra_candidates)
+            } else {
+                covariant_result
+            }
         } else if !contra_candidates.is_empty() {
             // Only contravariant candidates: use intersection (matches tsc behavior).
             // In tsc, when only contraCandidates exist, getIntersectionType is used.
@@ -1252,7 +1267,20 @@ impl<'a> InferenceContext<'a> {
             let is_const = self.is_var_const(root);
             let dc = self.declared_constraints.get(&root).copied();
             let result = if !info.candidates.is_empty() {
-                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds, dc)
+                let covariant_result = self.resolve_from_candidates(
+                    &info.candidates,
+                    is_const,
+                    &info.upper_bounds,
+                    dc,
+                );
+                // Match tsc: when covariant inference is `never` and contra-candidates
+                // exist, use contra-candidates. This handles empty arrays (`never[]`)
+                // alongside callback arguments that provide type info contravariantly.
+                if covariant_result == TypeId::NEVER && !info.contra_candidates.is_empty() {
+                    self.resolve_from_contra_candidates(&info.contra_candidates)
+                } else {
+                    covariant_result
+                }
             } else {
                 self.resolve_from_contra_candidates(&info.contra_candidates)
             };
