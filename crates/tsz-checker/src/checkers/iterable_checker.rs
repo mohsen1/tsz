@@ -479,10 +479,24 @@ impl<'a> CheckerState<'a> {
 
         // Step 3: Get .next() on the iterator
         let next_result = self.resolve_property_access_with_env(iterator_type, "next");
-        let next_fn_type = match &next_result {
+        let mut next_fn_type = match &next_result {
             PropertyAccessResult::Success { type_id, .. } => *type_id,
             _ => return TypeId::ANY,
         };
+
+        // If next() resolves to `any` but the iterator type differs from the
+        // original iterable, retry on the original iterable.  This handles
+        // classes where `[Symbol.iterator]()` returns `this` — the call return
+        // type may resolve to an intermediate representation that doesn't
+        // expose method signatures, while the original class type does.
+        if next_fn_type == TypeId::ANY && iterator_type != type_id {
+            let fallback_next = self.resolve_property_access_with_env(type_id, "next");
+            if let PropertyAccessResult::Success { type_id: fb, .. } = &fallback_next {
+                if *fb != TypeId::ANY {
+                    next_fn_type = *fb;
+                }
+            }
+        }
 
         // Step 4: Get the return type of next() — this is the IteratorResult type
         let next_return = self.get_call_return_type(next_fn_type);
