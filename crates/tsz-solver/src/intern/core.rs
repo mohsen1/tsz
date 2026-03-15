@@ -173,7 +173,20 @@ where
     }
 
     fn empty(&self) -> Arc<[T]> {
-        Arc::from(Vec::new())
+        // Reuse the pre-allocated empty Arc from the inner cache (id 0)
+        // instead of creating Arc::from(Vec::new()) on every call.
+        if let Some(inner) = self.inner.get() {
+            if let Some(e) = inner.items.get(&0) {
+                return Arc::clone(e.value());
+            }
+        }
+        // Fallback: initialize inner (which creates the empty entry at id 0)
+        let inner = self.get_inner();
+        inner
+            .items
+            .get(&0)
+            .map(|e| Arc::clone(e.value()))
+            .unwrap_or_else(|| Arc::from(Vec::new()))
     }
 }
 
@@ -487,13 +500,17 @@ impl TypeInterner {
     #[inline]
     pub fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
         self.object_shapes.get(id.0).unwrap_or_else(|| {
-            Arc::new(ObjectShape {
-                flags: ObjectFlags::empty(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-            })
+            // Use a cached static empty shape to avoid heap allocation on every miss.
+            static EMPTY_SHAPE: OnceLock<Arc<ObjectShape>> = OnceLock::new();
+            Arc::clone(EMPTY_SHAPE.get_or_init(|| {
+                Arc::new(ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                })
+            }))
         })
     }
 
