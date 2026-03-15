@@ -1681,7 +1681,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // NullKeyword has no value-position check (null is a valid value).
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
             k if keyword_type_mapping(k).is_some() => {
-                let (name, type_id) = keyword_type_mapping(k).unwrap();
+                let (name, type_id) = keyword_type_mapping(k).expect("is_some guard checked above");
                 if self.checker.is_keyword_type_used_as_value_position(idx) {
                     self.checker.error_type_only_value_at(name, idx);
                     TypeId::ERROR

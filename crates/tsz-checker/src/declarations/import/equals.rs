@@ -68,7 +68,12 @@ impl<'a> CheckerState<'a> {
                         tracing::trace!("Could not resolve identifier symbol");
                         continue;
                     };
-                    let symbol = self.ctx.binder.symbols.get(sym_id).unwrap();
+                    let symbol = self
+                        .ctx
+                        .binder
+                        .symbols
+                        .get(sym_id)
+                        .expect("sym_id resolved from resolve_identifier_symbol");
                     tracing::trace!("Symbol flags: {:?}", symbol.flags);
                     if self.symbol_is_value_only(sym_id, Some(&alias_name)) {
                         self.error_value_only_type_at(&alias_name, import_decl.import_clause);
@@ -292,11 +297,12 @@ impl<'a> CheckerState<'a> {
         let mut resolved_flags = 0u32;
         let mut resolved_decls = Vec::new();
 
-        if let Some(import_decl) = self
-            .ctx
-            .arena
-            .get_import_decl(self.ctx.arena.get(stmt_idx).unwrap())
-        {
+        if let Some(import_decl) = self.ctx.arena.get_import_decl(
+            self.ctx
+                .arena
+                .get(stmt_idx)
+                .expect("stmt_idx is a valid node index from caller"),
+        ) {
             let target_node = import_decl.module_specifier;
             let target_sym_id_opt = if let Some(node) = self.ctx.arena.get(target_node) {
                 if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {

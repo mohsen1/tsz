@@ -1204,7 +1204,8 @@ impl<'a> CheckerState<'a> {
         if is_keyof_type(self.ctx.types, target)
             && let Some(str_lit) = get_string_literal_value(self.ctx.types, source)
         {
-            let keyof_type = get_keyof_type(self.ctx.types, target).unwrap();
+            let keyof_type = get_keyof_type(self.ctx.types, target)
+                .expect("is_keyof_type guard ensures this succeeds");
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
             if !allowed_keys.contains(&str_lit) {
                 self.error_type_does_not_satisfy_the_expected_type(
@@ -1387,7 +1388,8 @@ impl<'a> CheckerState<'a> {
         if is_keyof_type(self.ctx.types, target)
             && let Some(str_lit) = get_string_literal_value(self.ctx.types, source)
         {
-            let keyof_type = get_keyof_type(self.ctx.types, target).unwrap();
+            let keyof_type = get_keyof_type(self.ctx.types, target)
+                .expect("is_keyof_type guard ensures this succeeds");
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
             // Only use this pre-check when we could determine concrete keys.
             // An empty set means the inner type couldn't be resolved (e.g., it's

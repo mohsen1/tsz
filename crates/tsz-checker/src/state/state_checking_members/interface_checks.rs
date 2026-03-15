@@ -533,19 +533,26 @@ impl<'a> CheckerState<'a> {
         let member_node = self.ctx.arena.get(member_idx);
         let (name_idx, error_node) = match member_node.map(|n| n.kind) {
             Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                let prop = self.ctx.arena.get_property_decl(member_node.unwrap());
+                let prop = self.ctx.arena.get_property_decl(
+                    member_node.expect("Some(k) match ensures member_node is Some"),
+                );
                 let name_idx = prop.map(|p| p.name).filter(|idx| idx.is_some());
                 let node = name_idx.unwrap_or(member_idx);
                 (name_idx, node)
             }
             Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => {
-                let method = self.ctx.arena.get_method_decl(member_node.unwrap());
+                let method = self.ctx.arena.get_method_decl(
+                    member_node.expect("Some(k) match ensures member_node is Some"),
+                );
                 let name_idx = method.map(|m| m.name).filter(|idx| idx.is_some());
                 let node = name_idx.unwrap_or(member_idx);
                 (name_idx, node)
             }
             Some(k) if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                let accessor = self.ctx.arena.get_accessor(member_node.unwrap());
+                let accessor = self
+                    .ctx
+                    .arena
+                    .get_accessor(member_node.expect("Some(k) match ensures member_node is Some"));
                 let name_idx = accessor.map(|a| a.name).filter(|idx| idx.is_some());
                 let node = name_idx.unwrap_or(member_idx);
                 (name_idx, node)

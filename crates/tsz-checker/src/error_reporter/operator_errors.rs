@@ -338,8 +338,12 @@ impl<'a> CheckerState<'a> {
             && self.literal_type_from_initializer(left_idx).is_some()
             && self.literal_type_from_initializer(right_idx).is_some()
             && {
-                let l = self.literal_type_from_initializer(left_idx).unwrap();
-                let r = self.literal_type_from_initializer(right_idx).unwrap();
+                let l = self
+                    .literal_type_from_initializer(left_idx)
+                    .expect("checked is_some above");
+                let r = self
+                    .literal_type_from_initializer(right_idx)
+                    .expect("checked is_some above");
                 let l_num = tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::NUMBER
                     || tsz_solver::widen_literal_type(self.ctx.types, l) == TypeId::BIGINT;
                 let r_num = tsz_solver::widen_literal_type(self.ctx.types, r) == TypeId::NUMBER
@@ -353,8 +357,12 @@ impl<'a> CheckerState<'a> {
 
         let (left_diag, right_diag) = if is_number_bigint_mix {
             // Preserve literal types for number+bigint mix (e.g., '1' and '2n')
-            let l = self.literal_type_from_initializer(left_idx).unwrap();
-            let r = self.literal_type_from_initializer(right_idx).unwrap();
+            let l = self
+                .literal_type_from_initializer(left_idx)
+                .expect("checked is_some above");
+            let r = self
+                .literal_type_from_initializer(right_idx)
+                .expect("checked is_some above");
             (
                 self.widen_enum_member_type(l),
                 self.widen_enum_member_type(r),
