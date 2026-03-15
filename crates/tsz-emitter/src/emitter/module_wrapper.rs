@@ -733,7 +733,7 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_wrapped_import_helpers(&mut self, source: &tsz_parser::parser::node::SourceFileData) {
-        if self.ctx.options.no_emit_helpers {
+        if self.ctx.options.no_emit_helpers || self.ctx.options.import_helpers {
             return;
         }
 
