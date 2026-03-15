@@ -64,6 +64,15 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
         let non_nullable = tsz_solver::remove_nullish(self.ctx.types, expr_type);
+
+        // For concrete (non-generic) types, always return `string`.
+        // Same fix as FlowAnalyzer::for_in_variable_type: computing keyof
+        // on concrete types creates unevaluated KeyOf nodes that leak into
+        // the variable type as `keyof T & string`.
+        if !self.contains_type_parameters_cached(non_nullable) {
+            return TypeId::STRING;
+        }
+
         let keyof_type = self.ctx.types.factory().keyof(non_nullable);
         let keyof_evaluated = self.evaluate_type_with_env(keyof_type);
 
@@ -74,13 +83,11 @@ impl<'a> CheckerState<'a> {
                 .types
                 .factory()
                 .intersection2(keyof_evaluated, TypeId::STRING)
-        } else if self.contains_type_parameters_cached(non_nullable) {
+        } else {
             self.ctx
                 .types
                 .factory()
                 .intersection2(keyof_type, TypeId::STRING)
-        } else {
-            TypeId::STRING
         }
     }
 }
