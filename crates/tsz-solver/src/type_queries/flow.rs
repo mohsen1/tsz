@@ -56,6 +56,68 @@ pub fn classify_for_predicate_signature(
     }
 }
 
+/// Extracted type predicate signature from a callable/function type.
+///
+/// Contains the predicate and parameter list needed for type narrowing.
+/// This is a higher-level query that resolves the predicate from Function
+/// or Callable types without leaking shape IDs to the caller.
+#[derive(Debug, Clone)]
+pub struct ExtractedPredicateSignature {
+    pub predicate: crate::types::TypePredicate,
+    pub params: Vec<crate::types::ParamInfo>,
+}
+
+/// Extract a type predicate signature from a type, if present.
+///
+/// For Function types: returns the function's type predicate + params.
+/// For Callable types: returns the first call signature with a predicate.
+/// For Union types: recursively searches members.
+/// Returns None for types without predicates.
+pub fn extract_predicate_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<ExtractedPredicateSignature> {
+    match classify_for_predicate_signature(db, type_id) {
+        PredicateSignatureKind::Function(shape_id) => {
+            let shape = db.function_shape(shape_id);
+            let predicate = shape.type_predicate.clone()?;
+            Some(ExtractedPredicateSignature {
+                predicate,
+                params: shape.params.clone(),
+            })
+        }
+        PredicateSignatureKind::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            for sig in &shape.call_signatures {
+                if let Some(predicate) = &sig.type_predicate {
+                    return Some(ExtractedPredicateSignature {
+                        predicate: predicate.clone(),
+                        params: sig.params.clone(),
+                    });
+                }
+            }
+            None
+        }
+        PredicateSignatureKind::Union(members) => {
+            for member in &members {
+                if let Some(sig) = extract_predicate_signature(db, *member) {
+                    return Some(sig);
+                }
+            }
+            None
+        }
+        PredicateSignatureKind::Intersection(members) => {
+            for member in &members {
+                if let Some(sig) = extract_predicate_signature(db, *member) {
+                    return Some(sig);
+                }
+            }
+            None
+        }
+        PredicateSignatureKind::None => None,
+    }
+}
+
 /// Classification for constructor instance type extraction.
 /// Used by instanceof narrowing to get the instance type from a constructor.
 #[derive(Debug, Clone)]
@@ -1133,5 +1195,53 @@ mod tests {
             TypeId::STRING,
             TypeId::UNKNOWN
         ));
+    }
+
+    #[test]
+    fn test_extract_predicate_signature_function() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{FunctionShape, ParamInfo, TypePredicate, TypePredicateTarget};
+
+        // Function with type predicate
+        let fn_with_pred = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::Identifier(interner.intern_string("x")),
+                type_id: Some(TypeId::STRING),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let sig = super::extract_predicate_signature(&interner, fn_with_pred);
+        assert!(sig.is_some());
+        let sig = sig.unwrap();
+        assert_eq!(sig.predicate.type_id, Some(TypeId::STRING));
+        assert_eq!(sig.params.len(), 1);
+
+        // Function without predicate → None
+        let fn_no_pred = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        assert!(super::extract_predicate_signature(&interner, fn_no_pred).is_none());
+
+        // Non-function type → None
+        assert!(super::extract_predicate_signature(&interner, TypeId::STRING).is_none());
     }
 }
