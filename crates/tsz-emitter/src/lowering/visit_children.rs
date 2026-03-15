@@ -182,8 +182,11 @@ impl<'a> LoweringPass<'a> {
                     {
                         self.mark_async_helpers();
                     }
-                    // Set __metadata helper when a decorated method exists
-                    if self.ctx.options.legacy_decorators
+                    // Set __metadata helper when a decorated method WITH a body exists.
+                    // Overload signatures (no body) are not emitted as __decorate targets.
+                    let is_overload = !method.body.is_some();
+                    if !is_overload
+                        && self.ctx.options.legacy_decorators
                         && self.ctx.options.emit_decorator_metadata
                         && method.modifiers.as_ref().is_some_and(|m| {
                             m.nodes.iter().any(|&mod_idx| {
@@ -196,8 +199,18 @@ impl<'a> LoweringPass<'a> {
                         self.transforms.helpers_mut().metadata = true;
                     }
                     if let Some(mods) = &method.modifiers {
+                        // For overload signatures (no body), save/restore the decorate
+                        // flag to prevent decorator visits from triggering helper emission.
+                        let prev_decorate = if is_overload {
+                            Some(self.transforms.helpers().decorate)
+                        } else {
+                            None
+                        };
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
+                        }
+                        if let Some(prev) = prev_decorate {
+                            self.transforms.helpers_mut().decorate = prev;
                         }
                     }
                     self.visit(method.name);

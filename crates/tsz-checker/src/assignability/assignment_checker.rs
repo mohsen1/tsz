@@ -938,6 +938,11 @@ impl<'a> CheckerState<'a> {
             self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
+        // TS1186: Check for rest elements with initializers in destructuring assignments.
+        if is_destructuring {
+            self.check_rest_element_initializer(left_idx);
+        }
+
         // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
         // the assignability check from running. TypeScript emits both readonly
         // errors AND type mismatch errors (e.g., TS2542 + TS2322).
@@ -1137,18 +1142,16 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS1186: A rest element cannot have an initializer.
-    ///
-    /// In assignment destructuring, `[...x = a] = b` is parsed as a spread of
-    /// the assignment expression `x = a`. TypeScript detects this and emits
-    /// TS1186 when the spread expression is a binary `=` assignment.
     fn check_rest_element_initializer(&mut self, left_idx: NodeIndex) {
         let Some(left_node) = self.ctx.arena.get(left_idx) else {
             return;
         };
-
-        let elements = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-            || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-        {
+        let elements = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            self.ctx
+                .arena
+                .get_literal_expr(left_node)
+                .map(|lit| &lit.elements.nodes as &[NodeIndex])
+        } else if left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             self.ctx
                 .arena
                 .get_literal_expr(left_node)
@@ -1156,7 +1159,6 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-
         let Some(elements) = elements else { return };
         for &element_idx in elements {
             let Some(element_node) = self.ctx.arena.get(element_idx) else {
