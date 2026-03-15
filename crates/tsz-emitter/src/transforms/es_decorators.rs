@@ -532,22 +532,73 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
-    /// Find the position of the class closing brace by scanning backwards from end.
+    /// Find the position of the class closing brace by scanning forward from the
+    /// class body opening `{`, tracking brace depth.
     fn find_class_close_brace(&self, class_node: &tsz_parser::parser::node::Node) -> usize {
         let Some(source) = self.source_text else {
             return class_node.end as usize;
         };
         let bytes = source.as_bytes();
-        let mut pos = class_node.end as usize;
-        // Scan backwards past whitespace and the closing `}`
-        while pos > 0 && matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r') {
-            pos -= 1;
+        let start = class_node.pos as usize;
+        let end = source.len().min(class_node.end as usize + 100); // generous bound
+
+        // Find the opening `{` of the class body
+        let mut pos = start;
+        while pos < end && bytes[pos] != b'{' {
+            pos += 1;
         }
-        // Now pos should be at `}` (the class closing brace) - skip past it
-        if pos > 0 && bytes[pos - 1] == b'}' {
-            pos -= 1;
+        if pos >= end {
+            return class_node.end as usize;
         }
-        pos
+
+        // Track brace depth from the opening `{`
+        let mut depth: u32 = 0;
+        let mut in_string = false;
+        let mut string_char: u8 = 0;
+        let mut in_template = false;
+        let mut template_depth: u32 = 0;
+
+        while pos < end {
+            let ch = bytes[pos];
+            if in_string {
+                if ch == b'\\' {
+                    pos += 1; // skip escape
+                } else if ch == string_char {
+                    in_string = false;
+                }
+            } else if in_template {
+                if ch == b'\\' {
+                    pos += 1;
+                } else if ch == b'`' {
+                    in_template = false;
+                } else if ch == b'$' && pos + 1 < end && bytes[pos + 1] == b'{' {
+                    template_depth += 1;
+                    pos += 1;
+                }
+            } else {
+                match ch {
+                    b'\'' | b'"' => {
+                        in_string = true;
+                        string_char = ch;
+                    }
+                    b'`' => in_template = true,
+                    b'{' => depth += 1,
+                    b'}' => {
+                        if template_depth > 0 {
+                            template_depth -= 1;
+                        } else {
+                            depth -= 1;
+                            if depth == 0 {
+                                return pos; // position of the closing `}`
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            pos += 1;
+        }
+        class_node.end as usize
     }
 
     /// Emit a single member with decorators stripped, bounded by the next member's start.
@@ -569,17 +620,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let mut text = source[clean_start..raw_end].trim();
             // Strip class closing brace that may leak into last member's text.
             // The parser sets member.end to include trailing trivia up to the class `}`.
-            // The class closing brace always appears after a newline, so strip only
-            // a trailing `}` that follows whitespace containing a newline.
+            // Detect: a trailing `}` separated from member content by whitespace containing newline.
             if text.ends_with('}') {
-                // Check if the `}` is preceded by newline+optional-whitespace
-                let before_brace = &text[..text.len() - 1];
-                let trimmed = before_brace.trim_end_matches(|c: char| c == ' ' || c == '\t');
-                if trimmed.len() < before_brace.len() || trimmed.ends_with('\n') {
-                    // Check if the trimmed part has a newline between content and `}`
-                    if before_brace.contains('\n') && trimmed.ends_with('}') {
-                        text = trimmed;
-                    }
+                let before = &text[..text.len() - 1];
+                let trimmed = before.trim_end();
+                if trimmed.ends_with('}') && before.contains('\n') {
+                    text = trimmed;
                 }
             }
             // Normalize empty method bodies: `{}` -> `{ }`
