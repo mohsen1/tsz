@@ -420,3 +420,306 @@ fn test_semantic_tokens_enum_with_values() {
     assert!(down_token.is_some(), "Should have token for Down");
     assert_eq!(down_token.unwrap().0, SemanticTokenType::EnumMember as u32);
 }
+
+#[test]
+fn test_semantic_tokens_decorator() {
+    let source = "@decorator\nclass Foo {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Decorator identifier "decorator" at (0, 1)
+    let dec_token = find_token_at(&decoded, 0, 1);
+    assert!(dec_token.is_some(), "Should have token for decorator");
+    assert_eq!(dec_token.unwrap().0, SemanticTokenType::Decorator as u32);
+}
+
+#[test]
+fn test_semantic_tokens_getter_setter() {
+    let source = "class C {\n  get name() { return ''; }\n  set name(v: string) {}\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Class "C" at (0, 6)
+    let c_token = find_token_at(&decoded, 0, 6);
+    assert!(c_token.is_some(), "Should have token for C");
+    assert_eq!(c_token.unwrap().0, SemanticTokenType::Class as u32);
+
+    // Getter "name" at (1, 6)
+    let get_token = find_token_at(&decoded, 1, 6);
+    assert!(get_token.is_some(), "Should have token for getter name");
+
+    // Setter "name" at (2, 6)
+    let set_token = find_token_at(&decoded, 2, 6);
+    assert!(set_token.is_some(), "Should have token for setter name");
+}
+
+#[test]
+fn test_semantic_tokens_async_function() {
+    let source = "async function fetchData() {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Should have tokens for the function
+    assert!(!decoded.is_empty(), "Should have tokens for async function");
+
+    // Find the function name token - could be at various positions depending on how
+    // async is handled. Just verify we find a Function token somewhere.
+    let fn_token = decoded
+        .iter()
+        .find(|t| t.3 == SemanticTokenType::Function as u32);
+    assert!(
+        fn_token.is_some(),
+        "Should have a Function token for fetchData"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_import_specifier() {
+    let source = "import { foo } from './mod';";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "foo" import specifier at some position
+    // The token should exist for the imported name
+    assert!(!decoded.is_empty(), "Should have tokens for import");
+}
+
+#[test]
+fn test_semantic_tokens_export_specifier() {
+    let source = "const x = 1;\nexport { x };";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // x declaration at (0, 6)
+    let x_decl = find_token_at(&decoded, 0, 6);
+    assert!(x_decl.is_some(), "Should have token for x declaration");
+
+    // Should have at least 2 tokens
+    assert!(
+        decoded.len() >= 2,
+        "Should have tokens for both declaration and export"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_abstract_class() {
+    let source = "abstract class Base {\n  abstract method(): void;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "abstract" modifier at (0, 0)
+    let abstract_kw = find_token_at(&decoded, 0, 0);
+    assert!(
+        abstract_kw.is_some(),
+        "Should have token for abstract keyword"
+    );
+    assert_eq!(abstract_kw.unwrap().0, SemanticTokenType::Modifier as u32);
+
+    // "Base" class at (0, 15)
+    let class_token = find_token_at(&decoded, 0, 15);
+    assert!(class_token.is_some(), "Should have token for Base");
+    assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
+}
+
+#[test]
+fn test_semantic_tokens_private_modifier() {
+    let source = "class C {\n  private x: number = 0;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "private" modifier at (1, 2)
+    let private_kw = find_token_at(&decoded, 1, 2);
+    assert!(
+        private_kw.is_some(),
+        "Should have token for private keyword"
+    );
+    assert_eq!(private_kw.unwrap().0, SemanticTokenType::Modifier as u32);
+}
+
+#[test]
+fn test_semantic_tokens_readonly_modifier_keyword() {
+    let source = "class C {\n  readonly name: string = '';\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "readonly" modifier at (1, 2)
+    let readonly_kw = find_token_at(&decoded, 1, 2);
+    assert!(
+        readonly_kw.is_some(),
+        "Should have token for readonly keyword"
+    );
+    assert_eq!(readonly_kw.unwrap().0, SemanticTokenType::Modifier as u32);
+}
+
+#[test]
+fn test_semantic_tokens_empty_source() {
+    let tokens = get_tokens("");
+    assert!(tokens.is_empty(), "Empty source should produce no tokens");
+}
+
+#[test]
+fn test_semantic_tokens_only_comments() {
+    let tokens = get_tokens("// just a comment\n/* block comment */");
+    // Comments are not emitted as semantic tokens since the editor handles them
+    // Just verify no crash
+    assert_eq!(tokens.len() % 5, 0, "Token array should be divisible by 5");
+}
+
+#[test]
+fn test_semantic_tokens_multiple_type_params() {
+    let source = "function map<T, U>(items: T[], fn: (item: T) => U): U[] { return []; }";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "T" type parameter at col 13
+    let t_token = find_token_at(&decoded, 0, 13);
+    assert!(t_token.is_some(), "Should have token for T");
+    assert_eq!(t_token.unwrap().0, SemanticTokenType::TypeParameter as u32);
+
+    // "U" type parameter at col 16
+    let u_token = find_token_at(&decoded, 0, 16);
+    assert!(u_token.is_some(), "Should have token for U");
+    assert_eq!(u_token.unwrap().0, SemanticTokenType::TypeParameter as u32);
+}
+
+#[test]
+fn test_semantic_tokens_interface_property() {
+    let source = "interface Config {\n  host: string;\n  port: number;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Interface "Config" should be emitted as Interface
+    let iface_token = decoded
+        .iter()
+        .find(|t| t.3 == SemanticTokenType::Interface as u32);
+    assert!(
+        iface_token.is_some(),
+        "Should have Interface token for Config"
+    );
+
+    // Property signatures may or may not be emitted depending on binder support
+    // Just verify no crash and basic token generation
+    assert!(
+        decoded.len() >= 1,
+        "Should have at least the interface token"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_interface_method_signature() {
+    let source = "interface Logger {\n  log(msg: string): void;\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Interface "Logger" should be emitted
+    let iface_token = decoded
+        .iter()
+        .find(|t| t.3 == SemanticTokenType::Interface as u32);
+    assert!(
+        iface_token.is_some(),
+        "Should have Interface token for Logger"
+    );
+
+    // Method signatures in interfaces may or may not be emitted
+    // Just verify the basic token generation works
+    assert!(
+        !decoded.is_empty(),
+        "Should have at least the interface token"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_const_enum() {
+    let source = "const enum Direction { Up, Down }";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // Should still recognize enum and members
+    assert!(!decoded.is_empty(), "Should have tokens for const enum");
+}
+
+#[test]
+fn test_semantic_tokens_namespace_declaration() {
+    let source = "namespace App {\n  export function init() {}\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "App" namespace at (0, 10)
+    let ns = find_token_at(&decoded, 0, 10);
+    assert!(ns.is_some(), "Should have token for namespace App");
+    assert_eq!(ns.unwrap().0, SemanticTokenType::Namespace as u32);
+}
+
+#[test]
+fn test_semantic_tokens_builder_same_line_delta() {
+    // Test that delta encoding is correct for multiple tokens on same line
+    let mut builder = SemanticTokensBuilder::new();
+    builder.push(0, 5, 3, SemanticTokenType::Variable, 0);
+    builder.push(0, 12, 4, SemanticTokenType::Function, 0);
+    let data = builder.build();
+
+    assert_eq!(data.len(), 10);
+    // First token: deltaLine=0, deltaStart=5
+    assert_eq!(data[0], 0);
+    assert_eq!(data[1], 5);
+    // Second token: deltaLine=0, deltaStart=7 (12 - 5 = 7)
+    assert_eq!(data[5], 0);
+    assert_eq!(data[6], 7);
+}
+
+#[test]
+fn test_semantic_tokens_builder_multi_line() {
+    let mut builder = SemanticTokensBuilder::new();
+    builder.push(0, 5, 3, SemanticTokenType::Variable, 0);
+    builder.push(2, 3, 4, SemanticTokenType::Function, 0);
+    let data = builder.build();
+
+    assert_eq!(data.len(), 10);
+    // Second token: deltaLine=2, deltaStart=3 (absolute on new line)
+    assert_eq!(data[5], 2);
+    assert_eq!(data[6], 3);
+}
+
+#[test]
+fn test_semantic_tokens_builder_empty() {
+    let builder = SemanticTokensBuilder::new();
+    let data = builder.build();
+    assert!(data.is_empty());
+}
+
+#[test]
+fn test_semantic_tokens_var_reference_readonly() {
+    // A const reference should still have READONLY in reference position
+    let source = "const PI = 3.14;\nconst area = PI * 4;";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // PI reference at (1, 13)
+    let pi_ref = find_token_at(&decoded, 1, 13);
+    assert!(pi_ref.is_some(), "Should have reference token for PI");
+    let (tt, m) = pi_ref.unwrap();
+    assert_eq!(tt, SemanticTokenType::Variable as u32);
+    assert_ne!(
+        m & semantic_token_modifiers::READONLY,
+        0,
+        "const ref should have READONLY"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_class_with_constructor() {
+    let source = "class Point {\n  constructor(public x: number, public y: number) {}\n}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+
+    // "Point" class at (0, 6)
+    let class_token = find_token_at(&decoded, 0, 6);
+    assert!(class_token.is_some());
+    assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
+
+    // "public" modifiers should be present
+    let pub1 = find_token_at(&decoded, 1, 14);
+    if let Some((tt, _)) = pub1 {
+        assert_eq!(tt, SemanticTokenType::Modifier as u32);
+    }
+}

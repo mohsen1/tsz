@@ -676,3 +676,255 @@ class Zeta { method() {} }
     assert_eq!(tree[5].name, "Zeta");
     assert_eq!(tree[5].kind, SymbolKind::Class);
 }
+
+// =========================================================================
+// Additional coverage tests for DocumentSymbols wrapper
+// =========================================================================
+
+#[test]
+fn test_symbols_api_module_declaration() {
+    let source = "module MyMod {\n  function init() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "MyMod");
+    assert_eq!(tree[0].kind, SymbolKind::Module);
+    assert_eq!(tree[0].children.len(), 1);
+    assert_eq!(tree[0].children[0].name, "init");
+}
+
+#[test]
+fn test_symbols_api_const_enum() {
+    let source = "const enum Flags { Read = 1, Write = 2 }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Flags");
+    assert_eq!(tree[0].kind, SymbolKind::Enum);
+    assert_eq!(tree[0].children.len(), 2);
+    assert_eq!(tree[0].children[0].name, "Read");
+    assert_eq!(tree[0].children[0].kind, SymbolKind::EnumMember);
+}
+
+#[test]
+fn test_symbols_api_declare_function() {
+    let source = "declare function readFile(path: string): string;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "readFile");
+    assert_eq!(tree[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_symbols_api_declare_class() {
+    let source = "declare class Buffer {\n  length: number;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Buffer");
+    assert_eq!(tree[0].kind, SymbolKind::Class);
+    assert_eq!(tree[0].children.len(), 1);
+}
+
+#[test]
+fn test_symbols_api_async_function() {
+    let source = "async function fetchData() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "fetchData");
+    assert_eq!(tree[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_symbols_api_private_protected_members() {
+    let source = r#"
+class Secure {
+    private secret: string;
+    protected internal: number;
+    public visible: boolean;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Secure");
+    assert_eq!(tree[0].children.len(), 3);
+    assert_eq!(tree[0].children[0].name, "secret");
+    assert_eq!(tree[0].children[1].name, "internal");
+    assert_eq!(tree[0].children[2].name, "visible");
+}
+
+#[test]
+fn test_symbols_api_nested_function() {
+    let source = "function outer() {\n  function inner() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "outer");
+    assert_eq!(tree[0].kind, SymbolKind::Function);
+    assert_eq!(tree[0].children.len(), 1);
+    assert_eq!(tree[0].children[0].name, "inner");
+    assert_eq!(tree[0].children[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_symbols_api_enum_with_values() {
+    let source = "enum HttpStatus {\n  OK = 200,\n  NotFound = 404,\n  InternalError = 500\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "HttpStatus");
+    assert_eq!(tree[0].kind, SymbolKind::Enum);
+    assert_eq!(tree[0].children.len(), 3);
+    assert_eq!(tree[0].children[0].name, "OK");
+    assert_eq!(tree[0].children[1].name, "NotFound");
+    assert_eq!(tree[0].children[2].name, "InternalError");
+}
+
+#[test]
+fn test_symbols_api_interface_with_optional_properties() {
+    let source = "interface Options {\n  width?: number;\n  height?: number;\n  title: string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Options");
+    assert_eq!(tree[0].kind, SymbolKind::Interface);
+    assert_eq!(tree[0].children.len(), 3);
+    assert_eq!(tree[0].children[0].name, "width");
+    assert_eq!(tree[0].children[1].name, "height");
+    assert_eq!(tree[0].children[2].name, "title");
+}
+
+#[test]
+fn test_symbols_api_multiple_const_declarations() {
+    let source = "const a = 1, b = 'hello', c = true;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 3);
+    assert_eq!(tree[0].name, "a");
+    assert_eq!(tree[0].kind, SymbolKind::Constant);
+    assert_eq!(tree[1].name, "b");
+    assert_eq!(tree[1].kind, SymbolKind::Constant);
+    assert_eq!(tree[2].name, "c");
+    assert_eq!(tree[2].kind, SymbolKind::Constant);
+}
+
+#[test]
+fn test_symbols_api_class_with_multiple_constructors_and_methods() {
+    let source = r#"
+class Router {
+    constructor(private routes: string[]) {}
+    add(route: string) {}
+    remove(route: string) {}
+    get(path: string) {}
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "Router");
+    assert_eq!(tree[0].children.len(), 4);
+
+    let names: Vec<&str> = tree[0].children.iter().map(|c| c.name.as_str()).collect();
+    assert!(names.contains(&"constructor"));
+    assert!(names.contains(&"add"));
+    assert!(names.contains(&"remove"));
+    assert!(names.contains(&"get"));
+}
+
+#[test]
+fn test_symbols_api_export_default_expression() {
+    let source = "export default 42;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "default");
+    assert_eq!(tree[0].kind, SymbolKind::Variable);
+}
+
+#[test]
+fn test_symbols_api_namespace_with_exports() {
+    let source = r#"
+namespace API {
+    export function get() {}
+    export function post() {}
+    export const BASE_URL = "http://example.com";
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].name, "API");
+    assert_eq!(tree[0].kind, SymbolKind::Module);
+    assert_eq!(tree[0].children.len(), 3);
+}
+
+#[test]
+fn test_symbols_api_var_declarations() {
+    let source = "var x = 1;\nvar y = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let symbols = DocumentSymbols::new(parser.get_arena(), source);
+    let tree = symbols.get_symbol_tree(root);
+
+    assert_eq!(tree.len(), 2);
+    assert_eq!(tree[0].name, "x");
+    assert_eq!(tree[0].kind, SymbolKind::Variable);
+    assert_eq!(tree[1].name, "y");
+    assert_eq!(tree[1].kind, SymbolKind::Variable);
+}
