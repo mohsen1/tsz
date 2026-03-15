@@ -1139,6 +1139,28 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+
+        // TS1186: Check ALL spread elements for initializers (not just non-last).
+        // In assignment destructuring, `[...x = a]` parses as `...(x = a)`.
+        for &element_idx in &array_lit.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                if let Some(spread) = self.ctx.arena.get_spread(element_node)
+                    && let Some(expr_node) = self.ctx.arena.get(spread.expression)
+                    && expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.ctx.arena.get_binary_expr(expr_node)
+                    && bin.operator_token == SyntaxKind::EqualsToken as u16
+                {
+                    self.error_at_node_msg(
+                        element_idx,
+                        diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                        &[],
+                    );
+                }
+            }
+        }
     }
 
     /// TS1186: A rest element cannot have an initializer.
