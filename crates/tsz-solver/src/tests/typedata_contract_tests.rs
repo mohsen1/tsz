@@ -37,8 +37,19 @@ fn compact_without_whitespace(source: &str) -> String {
     source.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
+/// Strip inline `#[cfg(test)] mod tests { ... }` blocks from source.
+/// This avoids flagging test-only code that legitimately constructs TypeData.
+fn strip_test_modules(source: &str) -> String {
+    if let Some(pos) = source.find("#[cfg(test)]") {
+        source[..pos].to_string()
+    } else {
+        source.to_string()
+    }
+}
+
 fn has_raw_typedata_intern(source: &str, aliases: &[String]) -> bool {
-    let compact = compact_without_whitespace(source);
+    let source = strip_test_modules(source);
+    let compact = compact_without_whitespace(&source);
     if compact.contains(".intern(TypeData::")
         || compact.contains(".intern(crate::types::TypeData::")
         || compact.contains(".intern(tsz_solver::TypeData::")
