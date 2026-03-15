@@ -1328,3 +1328,76 @@ fn test_class_inheritance_paths_use_shared_class_declaration_lookup_helper() {
         "class_type should resolve base declaration once per inheritance path"
     );
 }
+
+/// Architecture guard: all push_diagnostic calls must live in error_reporter/ or context/core.rs.
+///
+/// Direct push_diagnostic calls in feature modules bypass diagnostic centralization,
+/// creating ad-hoc diagnostic paths that are harder to maintain and audit.
+/// All diagnostic emission should route through error_reporter methods instead.
+#[test]
+fn test_no_push_diagnostic_outside_error_reporter() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = fs::read_dir(dir)
+            .unwrap_or_else(|_| panic!("failed to read directory {}", dir.display()));
+        for entry in entries {
+            let entry = entry.expect("failed to read directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src"), &mut files);
+
+    // Known exceptions (empty if all migrations are done)
+    let allowlist: &[&str] = &[];
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+
+        // Skip the legitimate homes for push_diagnostic:
+        // - error_reporter/ is where all diagnostics should be emitted
+        // - context/core.rs defines the push_diagnostic method itself
+        // - tests/ are not production code
+        if rel.contains("/error_reporter/")
+            || rel.ends_with("context/core.rs")
+            || rel.contains("/tests/")
+        {
+            continue;
+        }
+
+        // Check allowlist
+        if allowlist.iter().any(|allowed| rel.ends_with(allowed)) {
+            continue;
+        }
+
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+
+        for (line_num, line) in src.lines().enumerate() {
+            // Skip comments
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("*") {
+                continue;
+            }
+            if line.contains("push_diagnostic(") || line.contains(".push_diagnostic(") {
+                violations.push(format!("{}:{}", rel, line_num + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "push_diagnostic calls found outside error_reporter/. \
+         Move these diagnostics to error_reporter/ methods instead.\n\
+         Violations:\n  {}",
+        violations.join("\n  ")
+    );
+}
