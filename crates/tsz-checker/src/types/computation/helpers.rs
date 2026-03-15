@@ -510,7 +510,19 @@ impl<'a> CheckerState<'a> {
                 } else if let Some(t_elem) =
                     tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
                 {
-                    return factory.array(t_elem);
+                    // Don't use contextual element type if it's `unknown` or a type parameter.
+                    // This happens when the contextual type is `T[]` with T an unresolved
+                    // type parameter during generic call inference. tsc treats `[]` as
+                    // `never[]` in this case, letting contra-candidates (e.g. from callback
+                    // parameters) drive inference instead of polluting with unknown/T.
+                    if t_elem != TypeId::UNKNOWN
+                        && !tsz_solver::type_queries::is_type_parameter_like(
+                            self.ctx.types.as_type_database(),
+                            t_elem,
+                        )
+                    {
+                        return factory.array(t_elem);
+                    }
                 }
             }
 
