@@ -481,6 +481,23 @@ pub fn get_callable_shape_for_type(
     None
 }
 
+/// Get overload call signatures if a type has multiple call overloads.
+///
+/// Returns `Some(signatures)` when the type has more than one call signature
+/// (overloaded function). Returns `None` for single-signature or non-callable types.
+pub fn get_overload_call_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<crate::types::CallSignature>> {
+    if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id) {
+        let shape = db.callable_shape(shape_id);
+        if shape.call_signatures.len() > 1 {
+            return Some(shape.call_signatures.clone());
+        }
+    }
+    None
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -2381,5 +2398,64 @@ mod tests {
 
         // Non-callable → None
         assert!(super::get_callable_shape_for_type(&interner, TypeId::NUMBER).is_none());
+    }
+
+    #[test]
+    fn test_get_overload_call_signatures() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{CallSignature, CallableShape};
+
+        // Callable with 2 overloads → Some
+        let overloaded = interner.callable(CallableShape {
+            call_signatures: vec![
+                CallSignature {
+                    type_params: vec![],
+                    params: vec![],
+                    this_type: None,
+                    return_type: TypeId::STRING,
+                    type_predicate: None,
+                    is_method: false,
+                },
+                CallSignature {
+                    type_params: vec![],
+                    params: vec![],
+                    this_type: None,
+                    return_type: TypeId::NUMBER,
+                    type_predicate: None,
+                    is_method: false,
+                },
+            ],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        let sigs = super::get_overload_call_signatures(&interner, overloaded);
+        assert!(sigs.is_some());
+        assert_eq!(sigs.unwrap().len(), 2);
+
+        // Callable with 1 signature → None (not overloaded)
+        let single = interner.callable(CallableShape {
+            call_signatures: vec![CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            }],
+            construct_signatures: vec![],
+            properties: vec![],
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+        assert!(super::get_overload_call_signatures(&interner, single).is_none());
+
+        // Non-callable → None
+        assert!(super::get_overload_call_signatures(&interner, TypeId::STRING).is_none());
     }
 }
