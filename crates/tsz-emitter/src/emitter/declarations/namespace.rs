@@ -323,6 +323,10 @@ impl<'a> Printer<'a> {
     /// catch clause, etc.) with the given name. Uses a simple text scan that looks
     /// for the identifier in declaration contexts.
     fn text_has_binding_named(text: &str, name: &str) -> bool {
+        // Strip comments and string literals to avoid false positives from
+        // commented-out code like `//import m6 = require('')`
+        let stripped = Self::strip_comments(text);
+        let text = &stripped;
         let name_bytes = name.as_bytes();
         let text_bytes = text.as_bytes();
         let name_len = name_bytes.len();
@@ -399,6 +403,40 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    /// Strip single-line and block comments from text, replacing them with spaces.
+    fn strip_comments(text: &str) -> String {
+        let bytes = text.as_bytes();
+        let mut result = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+                // Single-line comment: replace with spaces until newline
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    result.push(b' ');
+                    i += 1;
+                }
+            } else if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                // Block comment: replace with spaces
+                result.push(b' ');
+                result.push(b' ');
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    result.push(b' ');
+                    i += 1;
+                }
+                if i + 1 < bytes.len() {
+                    result.push(b' ');
+                    result.push(b' ');
+                    i += 2;
+                }
+            } else {
+                result.push(bytes[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(result).unwrap_or_default()
     }
 
     /// Collect exported *variable* names from a namespace body for identifier qualification.
