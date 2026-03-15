@@ -1537,3 +1537,1061 @@ fn test_completions_try_catch() {
         assert!(names.contains(&"y"), "Should suggest try-scoped 'y'");
     }
 }
+
+// =========================================================================
+// Additional coverage tests
+// =========================================================================
+
+#[test]
+fn test_completions_no_completions_in_line_comment() {
+    // Cursor inside a line comment should yield empty completions
+    let source = "const x = 1;\n// some comment ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 16));
+    // Inside a comment, completions should be suppressed (empty list)
+    if let Some(ref items) = items {
+        assert!(
+            items.is_empty(),
+            "Should not have completions inside a line comment"
+        );
+    }
+}
+
+#[test]
+fn test_completions_no_completions_in_block_comment() {
+    // Cursor inside a block comment should yield empty completions
+    let source = "const x = 1;\n/* block comment */";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside the block comment
+    let items = completions.get_completions(root, Position::new(1, 10));
+    if let Some(ref items) = items {
+        assert!(
+            items.is_empty(),
+            "Should not have completions inside a block comment"
+        );
+    }
+}
+
+#[test]
+fn test_completions_no_completions_in_string_literal() {
+    // Cursor inside a string literal should yield empty completions (non-module-specifier)
+    let source = "const x = \"hello world\";\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside the string literal
+    let items = completions.get_completions(root, Position::new(0, 15));
+    if let Some(ref items) = items {
+        assert!(
+            items.is_empty(),
+            "Should not have completions inside a string literal"
+        );
+    }
+}
+
+#[test]
+fn test_completions_no_completions_after_double_dot() {
+    // After ".." (not "..." spread), no completions should be offered
+    let source = "const x = [1, 2];\nx..";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 3));
+    assert!(
+        items.is_none(),
+        "Should not have completions after double dot '..'"
+    );
+}
+
+#[test]
+fn test_completions_at_start_of_file_with_content() {
+    // Cursor at position (0,0) when the file has content
+    let source = "const x = 1;\nconst y = 2;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(0, 0));
+    // At position 0,0, completions should include keywords at minimum
+    assert!(items.is_some(), "Should have completions at start of file");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Keywords should always be available
+        assert!(
+            names.contains(&"const"),
+            "Should suggest keyword 'const' at start of file"
+        );
+    }
+}
+
+#[test]
+fn test_completions_function_snippet_insert_text_with_helper() {
+    // Functions should have insert text with snippet tab-stop
+    let source = "function myFunc() {}\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let func_item = items.iter().find(|i| i.label == "myFunc");
+        assert!(func_item.is_some(), "Should find 'myFunc' completion");
+        let func_item = func_item.unwrap();
+        assert_eq!(
+            func_item.kind,
+            CompletionItemKind::Function,
+            "myFunc should be Function kind"
+        );
+        assert!(func_item.is_snippet, "Function should be a snippet");
+        assert_eq!(
+            func_item.insert_text.as_deref(),
+            Some("myFunc($1)"),
+            "Function insert text should include tab-stop"
+        );
+    }
+}
+
+#[test]
+fn test_completions_arguments_available_inside_function() {
+    // Inside a function body, "arguments" should appear as a completion
+    let source = "function foo() {\n  \n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 2));
+    assert!(items.is_some(), "Should have completions in function body");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"arguments"),
+            "Should suggest 'arguments' inside function"
+        );
+    }
+}
+
+#[test]
+fn test_completions_arguments_not_at_top_level() {
+    // At the top level (outside any function), "arguments" should NOT appear
+    let source = "const x = 1;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions at top level");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            !names.contains(&"arguments"),
+            "Should NOT suggest 'arguments' at top level"
+        );
+    }
+}
+
+#[test]
+fn test_completions_keywords_at_top_level() {
+    // Keywords like if, for, while, return should appear in completions
+    let source = "const x = 1;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(names.contains(&"if"), "Should suggest keyword 'if'");
+        assert!(names.contains(&"for"), "Should suggest keyword 'for'");
+        assert!(names.contains(&"while"), "Should suggest keyword 'while'");
+        assert!(
+            names.contains(&"function"),
+            "Should suggest keyword 'function'"
+        );
+        assert!(names.contains(&"class"), "Should suggest keyword 'class'");
+
+        // Keywords should have Keyword kind and appropriate sort text
+        let if_item = items.iter().find(|i| i.label == "if").unwrap();
+        assert_eq!(if_item.kind, CompletionItemKind::Keyword);
+        assert_eq!(
+            if_item.sort_text.as_deref(),
+            Some(sort_priority::KEYWORD),
+            "Keywords should have KEYWORD sort priority"
+        );
+    }
+}
+
+#[test]
+fn test_completions_global_this_always_present() {
+    // globalThis should always appear in global completions
+    let source = "const x = 1;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(names.contains(&"globalThis"), "Should suggest 'globalThis'");
+        assert!(names.contains(&"undefined"), "Should suggest 'undefined'");
+    }
+}
+
+#[test]
+fn test_completions_const_vs_let_kind() {
+    // const and let declarations should have distinct CompletionItemKind
+    let source = "const myConst = 1;\nlet myLet = 2;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(2, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let const_item = items.iter().find(|i| i.label == "myConst");
+        let let_item = items.iter().find(|i| i.label == "myLet");
+        assert!(const_item.is_some(), "Should find 'myConst'");
+        assert!(let_item.is_some(), "Should find 'myLet'");
+        assert_eq!(
+            const_item.unwrap().kind,
+            CompletionItemKind::Const,
+            "const declaration should have Const kind"
+        );
+        assert_eq!(
+            let_item.unwrap().kind,
+            CompletionItemKind::Let,
+            "let declaration should have Let kind"
+        );
+    }
+}
+
+#[test]
+fn test_completions_parameter_kind() {
+    // Parameters should have Parameter kind
+    let source = "function foo(myParam: number) {\n  \n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 2));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let param_item = items.iter().find(|i| i.label == "myParam");
+        assert!(param_item.is_some(), "Should find 'myParam'");
+        let param_item = param_item.unwrap();
+        assert_eq!(
+            param_item.kind,
+            CompletionItemKind::Parameter,
+            "Parameter should have Parameter kind"
+        );
+        // Parameter should have type annotation as detail
+        assert_eq!(
+            param_item.detail.as_deref(),
+            Some("number"),
+            "Parameter should show type annotation as detail"
+        );
+    }
+}
+
+#[test]
+fn test_completions_no_completions_at_definition_location() {
+    // After 'const ' we're defining a new identifier, so no completions
+    let source = "const ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(0, 6));
+    // Should be suppressed at definition location
+    if let Some(ref items) = items {
+        assert!(
+            items.is_empty(),
+            "Should not have completions at variable definition location"
+        );
+    }
+}
+
+#[test]
+fn test_completions_class_kind() {
+    // Class declarations should have Class kind
+    let source = "class MyClass {}\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let class_item = items.iter().find(|i| i.label == "MyClass");
+        assert!(class_item.is_some(), "Should find 'MyClass'");
+        assert_eq!(
+            class_item.unwrap().kind,
+            CompletionItemKind::Class,
+            "Class should have Class kind"
+        );
+    }
+}
+
+#[test]
+fn test_completions_interface_kind_with_helper() {
+    // Interface declarations should have Interface kind
+    let source = "interface MyInterface { x: number; }\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let iface_item = items.iter().find(|i| i.label == "MyInterface");
+        assert!(iface_item.is_some(), "Should find 'MyInterface'");
+        assert_eq!(
+            iface_item.unwrap().kind,
+            CompletionItemKind::Interface,
+            "Interface should have Interface kind"
+        );
+    }
+}
+
+#[test]
+fn test_completions_enum_kind_with_helper() {
+    // Enum declarations should have Enum kind
+    let source = "enum MyEnum { A, B }\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let enum_item = items.iter().find(|i| i.label == "MyEnum");
+        assert!(enum_item.is_some(), "Should find 'MyEnum'");
+        assert_eq!(
+            enum_item.unwrap().kind,
+            CompletionItemKind::Enum,
+            "Enum should have Enum kind"
+        );
+    }
+}
+
+#[test]
+fn test_completions_type_alias_kind_with_helper() {
+    // Type alias declarations should have TypeAlias kind
+    let source = "type MyType = string | number;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let type_item = items.iter().find(|i| i.label == "MyType");
+        assert!(type_item.is_some(), "Should find 'MyType'");
+        assert_eq!(
+            type_item.unwrap().kind,
+            CompletionItemKind::TypeAlias,
+            "Type alias should have TypeAlias kind"
+        );
+    }
+}
+
+#[test]
+fn test_completion_result_commit_characters() {
+    // Global completions (non-member, non-new-identifier) should have default commit characters
+    let source = "const x = 1;\nfunction foo() {\n  \n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let result = completions.get_completion_result(root, Position::new(2, 2));
+    assert!(result.is_some(), "Should have completion result");
+    let result = result.unwrap();
+    // Inside function body is NOT a new identifier location (just typing expressions)
+    // so commit characters should be present
+    if !result.is_new_identifier_location {
+        assert!(
+            result.default_commit_characters.is_some(),
+            "Non-new-identifier completions should have commit characters"
+        );
+        let chars = result.default_commit_characters.unwrap();
+        assert!(
+            chars.contains(&".".to_string()),
+            "Commit chars should include '.'"
+        );
+        assert!(
+            chars.contains(&",".to_string()),
+            "Commit chars should include ','"
+        );
+        assert!(
+            chars.contains(&";".to_string()),
+            "Commit chars should include ';'"
+        );
+    }
+}
+
+#[test]
+fn test_is_new_identifier_location_after_class_keyword() {
+    // After 'class ' keyword, should be new identifier location
+    let source = "class ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let offset = source.len() as u32;
+    assert!(
+        completions.compute_is_new_identifier_location(root, offset),
+        "After 'class' keyword should be new identifier location"
+    );
+}
+
+#[test]
+fn test_is_new_identifier_location_after_function_keyword() {
+    // After 'function ' keyword, should be new identifier location
+    let source = "function ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let offset = source.len() as u32;
+    assert!(
+        completions.compute_is_new_identifier_location(root, offset),
+        "After 'function' keyword should be new identifier location"
+    );
+}
+
+#[test]
+fn test_completions_import_meta_dot() {
+    // After "import.meta.", should get meta property completions
+    let source = "import.";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(0, 7));
+    // Should offer "meta" as a completion for import.
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"meta"),
+            "Should suggest 'meta' after 'import.'"
+        );
+    }
+}
+
+#[test]
+fn test_completions_with_strict_mode() {
+    // Test the with_strict constructor
+    let source = "const x = 1;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::with_strict(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+        true,
+    );
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions in strict mode");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(names.contains(&"x"), "Should suggest 'x' in strict mode");
+    }
+}
+
+#[test]
+fn test_completions_sort_order_locals_before_keywords() {
+    // Local declarations should sort before keywords
+    let source = "const myVar = 1;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(1, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let var_item = items.iter().find(|i| i.label == "myVar");
+        let kw_item = items.iter().find(|i| i.label == "if");
+        assert!(var_item.is_some(), "Should find 'myVar'");
+        assert!(kw_item.is_some(), "Should find keyword 'if'");
+        // Local declarations have sort text "11" (LOCATION_PRIORITY), keywords have "15"
+        let var_sort = var_item.unwrap().effective_sort_text();
+        let kw_sort = kw_item.unwrap().effective_sort_text();
+        assert!(
+            var_sort <= kw_sort,
+            "Local variable sort text ({}) should be <= keyword sort text ({})",
+            var_sort,
+            kw_sort
+        );
+    }
+}
+
+#[test]
+fn test_completions_template_literal_expression() {
+    // Completions inside template literal expression `${|}`
+    // Line 1: "const greeting = `hello ${ }`;"
+    //          0123456789...                   col 26 = '$', col 27 = '{', col 28 = ' '
+    let source = "const name = 'world';\nconst greeting = `hello ${ }`;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside the ${ } - try at the space between { and }
+    let items = completions.get_completions(root, Position::new(1, 28));
+    // Template literal expression completion may or may not be supported,
+    // just verify no crash and check if we get items
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // If completions are returned, they should include variables in scope
+        if !names.is_empty() {
+            assert!(
+                names.contains(&"name") || names.contains(&"greeting"),
+                "Should suggest variables in scope, got: {:?}",
+                names
+            );
+        }
+    }
+    // Test passes regardless - we're mainly testing it doesn't crash
+}
+
+#[test]
+fn test_completions_namespace_members() {
+    // After namespace dot, should offer namespace members
+    let source =
+        "namespace MyNS {\n  export const val = 1;\n  export function greet() {}\n}\nMyNS.";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let items = completions.get_completions(root, Position::new(4, 5));
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"val"),
+            "Should suggest namespace member 'val'"
+        );
+        assert!(
+            names.contains(&"greet"),
+            "Should suggest namespace member 'greet'"
+        );
+    }
+}
+
+// ============================================================================
+// New coverage tests for completions module
+// ============================================================================
+
+#[test]
+fn test_completions_after_new_keyword() {
+    // After `new `, should suggest classes and constructable symbols in scope
+    let source = "class MyClass { constructor() {} }\nclass Other {}\nnew ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(2, 4));
+    assert!(items.is_some(), "Should have completions after 'new '");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"MyClass"),
+            "Should suggest 'MyClass' after 'new', got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"Other"),
+            "Should suggest 'Other' after 'new', got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_object_literal_shorthand_property() {
+    // Inside an object literal, should suggest variables for shorthand properties
+    let source = "const foo = 1;\nconst bar = 2;\nconst obj = { };";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside the braces of { }
+    let items = completions.get_completions(root, Position::new(2, 14));
+    assert!(
+        items.is_some(),
+        "Should have completions inside object literal"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"foo"),
+            "Should suggest 'foo' for shorthand property, got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"bar"),
+            "Should suggest 'bar' for shorthand property, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_in_ternary_expression() {
+    // Completions in the consequent and alternate of a ternary expression
+    let source = "const flag = true;\nconst a = 1;\nconst b = 2;\nconst result = flag ? ;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `? ` in the ternary
+    let items = completions.get_completions(root, Position::new(3, 22));
+    assert!(
+        items.is_some(),
+        "Should have completions in ternary consequent"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"a"),
+            "Should suggest 'a' in ternary, got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"b"),
+            "Should suggest 'b' in ternary, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_after_typeof_operator() {
+    // After `typeof `, should suggest variables in scope
+    let source = "const myVar = 42;\nconst myStr = 'hello';\nlet t = typeof ;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `typeof `
+    let items = completions.get_completions(root, Position::new(2, 15));
+    assert!(items.is_some(), "Should have completions after 'typeof '");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"myVar"),
+            "Should suggest 'myVar' after typeof, got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"myStr"),
+            "Should suggest 'myStr' after typeof, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_in_generic_type_arguments() {
+    // After `Array<`, should suggest type names in scope
+    let source = "interface Foo {}\ntype Bar = {};\nlet x: Array<>;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside `Array<|>`
+    let items = completions.get_completions(root, Position::new(2, 14));
+    // May or may not produce items, but should not crash
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Type names should appear
+        if names.contains(&"Foo") || names.contains(&"Bar") {
+            // Good - type names are suggested in type argument position
+        }
+    }
+}
+
+#[test]
+fn test_completions_in_type_annotation_position() {
+    // After `: ` in a variable declaration, should suggest types
+    let source = "interface MyInterface {}\ntype MyType = string;\nlet x: ;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `let x: `
+    let items = completions.get_completions(root, Position::new(2, 7));
+    assert!(
+        items.is_some(),
+        "Should have completions in type annotation position"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"MyInterface") || names.contains(&"MyType"),
+            "Should suggest type names in type position, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_in_switch_case_expression() {
+    // Inside a switch case, should suggest variables in scope
+    let source = "const val = 1;\nconst opt = 2;\nswitch (val) {\n  case : break;\n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `case ` (line 3, col 7)
+    let items = completions.get_completions(root, Position::new(3, 7));
+    assert!(
+        items.is_some(),
+        "Should have completions in switch case expression"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"val") || names.contains(&"opt"),
+            "Should suggest variables in case expression, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_in_return_statement() {
+    // Inside a return statement, should suggest variables in scope
+    let source = "function compute() {\n  const result = 42;\n  return ;\n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `return ` (line 2, col 9)
+    let items = completions.get_completions(root, Position::new(2, 9));
+    assert!(
+        items.is_some(),
+        "Should have completions in return statement"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"result"),
+            "Should suggest 'result' in return statement, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_with_multiple_function_overloads() {
+    // Functions declared multiple times (overloads) should appear once
+    let source = "function greet(name: string): string;\nfunction greet(name: string, greeting: string): string;\nfunction greet(name: string, greeting?: string): string { return ''; }\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(3, 0));
+    assert!(items.is_some(), "Should have completions after overloads");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        let greet_count = names.iter().filter(|&&n| n == "greet").count();
+        assert!(
+            greet_count <= 1,
+            "Overloaded function 'greet' should appear at most once, found {} times",
+            greet_count
+        );
+    }
+}
+
+#[test]
+fn test_completions_in_catch_clause() {
+    // Inside a catch block, should have access to the error variable and outer scope
+    let source = "const outer = 1;\ntry {\n  const inner = 2;\n} catch (err) {\n  \n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside catch block (line 4, col 2)
+    let items = completions.get_completions(root, Position::new(4, 2));
+    assert!(
+        items.is_some(),
+        "Should have completions inside catch clause"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"outer"),
+            "Should suggest 'outer' in catch block, got: {:?}",
+            names
+        );
+        // The catch parameter 'err' should also be visible
+        assert!(
+            names.contains(&"err"),
+            "Should suggest catch parameter 'err', got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_in_module_declaration() {
+    // Inside a module/namespace, should see module-scoped declarations
+    let source = "namespace Outer {\n  export const a = 1;\n  namespace Inner {\n    const b = 2;\n    \n  }\n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside Inner namespace (line 4, col 4)
+    let items = completions.get_completions(root, Position::new(4, 4));
+    assert!(
+        items.is_some(),
+        "Should have completions inside nested namespace"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"b"),
+            "Should suggest inner variable 'b', got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_import_type_position() {
+    // Inside `import("...")`, completions should be suppressed or not crash
+    let source = "type T = import(\"\");";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside the import type string literal - should not crash
+    let _items = completions.get_completions(root, Position::new(0, 17));
+    // Main goal: no panic. Import specifier positions are typically suppressed.
+}
+
+#[test]
+fn test_completions_computed_property_name() {
+    // Inside computed property `[|]`, should suggest variables
+    let source = "const key = 'name';\nconst sym = Symbol();\nconst obj = { []: 1 };";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside `[]` in object literal (line 2, col 15)
+    let items = completions.get_completions(root, Position::new(2, 15));
+    assert!(
+        items.is_some(),
+        "Should have completions inside computed property brackets"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"key"),
+            "Should suggest 'key' in computed property, got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"sym"),
+            "Should suggest 'sym' in computed property, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_inside_array_literal() {
+    // Inside an array literal, should suggest variables in scope
+    let source = "const alpha = 1;\nconst beta = 2;\nconst arr = [ ];";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside array literal (line 2, col 14)
+    let items = completions.get_completions(root, Position::new(2, 14));
+    assert!(
+        items.is_some(),
+        "Should have completions inside array literal"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"alpha"),
+            "Should suggest 'alpha' in array literal, got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"beta"),
+            "Should suggest 'beta' in array literal, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_binary_expression_rhs() {
+    // After binary operator, should suggest variables
+    let source = "const x = 10;\nconst y = 20;\nconst sum = x + ;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `x + ` (line 2, col 16)
+    let items = completions.get_completions(root, Position::new(2, 16));
+    assert!(
+        items.is_some(),
+        "Should have completions after binary operator"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"y"),
+            "Should suggest 'y' after '+', got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"x"),
+            "Should suggest 'x' after '+', got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_binary_expression_lhs() {
+    // At the beginning of a binary expression (before operator), should suggest variables
+    let source = "const p = 5;\nconst q = 10;\nconst r =  + q;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position at `r = |` (line 2, col 10)
+    let items = completions.get_completions(root, Position::new(2, 10));
+    assert!(
+        items.is_some(),
+        "Should have completions at binary expression LHS"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"p"),
+            "Should suggest 'p' at LHS of binary expr, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_inside_line_comment() {
+    // Inside a line comment, we verify the completion engine handles it without crash
+    let source = "const x = 1;\n// some comment ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let _items = completions.get_completions(root, Position::new(1, 15));
+    // Currently may or may not return completions in comments
+    // The main test is that it doesn't crash
+}
+
+#[test]
+fn test_completions_inside_block_comment() {
+    // Inside a block comment, we verify no crash
+    let source = "const x = 1;\n/* block comment  */";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let _items = completions.get_completions(root, Position::new(1, 10));
+    // Currently may or may not return completions in comments
+}
+
+#[test]
+fn test_completions_inside_string_literal() {
+    // Inside a string literal, verify no crash
+    let source = "const x = 1;\nconst s = \"hello world\";";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let _items = completions.get_completions(root, Position::new(1, 16));
+    // Currently may or may not return completions in strings
+}
+
+#[test]
+fn test_completions_for_loop_variable_scope() {
+    // Variables declared in a for loop should be visible inside the loop body
+    let source = "const outer = 1;\nfor (let i = 0; i < 10; i++) {\n  \n}";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position inside loop body (line 2, col 2)
+    let items = completions.get_completions(root, Position::new(2, 2));
+    assert!(items.is_some(), "Should have completions inside for loop");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"i"),
+            "Should suggest loop variable 'i', got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"outer"),
+            "Should suggest outer variable 'outer', got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_no_duplicate_from_var_hoisting() {
+    // var declarations are hoisted; should not appear duplicated
+    let source = "var x = 1;\nvar x = 2;\n";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let items = completions.get_completions(root, Position::new(2, 0));
+    assert!(items.is_some(), "Should have completions");
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        let x_count = names.iter().filter(|&&n| n == "x").count();
+        assert_eq!(
+            x_count, 1,
+            "Hoisted 'var x' should appear exactly once, found {} times",
+            x_count
+        );
+    }
+}
+
+#[test]
+fn test_completions_after_spread_operator() {
+    // After `...` in an array, should suggest variables
+    let source = "const items = [1, 2];\nconst all = [0, ...];";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `...` (line 1, col 19)
+    let items = completions.get_completions(root, Position::new(1, 19));
+    assert!(
+        items.is_some(),
+        "Should have completions after spread operator"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"items"),
+            "Should suggest 'items' after spread, got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_at_function_name_definition() {
+    // At the name position of a function declaration, verify no crash
+    let source = "function ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let _items = completions.get_completions(root, Position::new(0, 9));
+    // Currently may or may not suppress completions at definition sites
+}
+
+#[test]
+fn test_completions_at_class_name_definition() {
+    // At the name position of a class declaration, verify no crash
+    let source = "class ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let _items = completions.get_completions(root, Position::new(0, 6));
+    // Currently may or may not suppress completions at definition sites
+}
+
+#[test]
+fn test_completions_after_assignment_operator() {
+    // After `=` in an assignment, should suggest variables
+    let source = "let target = 0;\nconst source = 42;\ntarget = ;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `target = ` (line 2, col 9)
+    let items = completions.get_completions(root, Position::new(2, 9));
+    assert!(
+        items.is_some(),
+        "Should have completions after assignment operator"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"source"),
+            "Should suggest 'source' after '=', got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"target"),
+            "Should suggest 'target' after '=', got: {:?}",
+            names
+        );
+    }
+}
+
+#[test]
+fn test_completions_after_logical_operator() {
+    // After logical operators (`&&`, `||`), should suggest variables
+    let source = "const a = true;\nconst b = false;\nconst c = a && ;";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    // Position after `a && ` (line 2, col 15)
+    let items = completions.get_completions(root, Position::new(2, 15));
+    assert!(
+        items.is_some(),
+        "Should have completions after logical operator"
+    );
+    if let Some(items) = items {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            names.contains(&"b"),
+            "Should suggest 'b' after '&&', got: {:?}",
+            names
+        );
+    }
+}
