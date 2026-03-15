@@ -645,6 +645,10 @@ impl<'a> CheckerState<'a> {
         let mut non_generic_contextual_types: Option<Vec<Option<TypeId>>> = None;
         // Track whether we pushed a ThisType marker to this_type_stack during call processing.
         let mut pushed_this_type_from_shape = false;
+        // Track whether Round 2 successfully used a non-empty return context substitution.
+        // When true, the post-inference retry should be suppressed because Round 2 already
+        // correctly resolved the callback parameter types using the return context.
+        let mut had_return_context_substitution = false;
         let mut arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which parameter positions should skip excess property
@@ -1074,6 +1078,7 @@ impl<'a> CheckerState<'a> {
 
                             if should_update {
                                 round2_substitution.insert(name, ty);
+                                had_return_context_substitution = true;
                             }
                         }
                     }
@@ -1906,6 +1911,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let should_retry_generic_call = if is_generic_call
+            && !had_return_context_substitution
             && args
                 .iter()
                 .copied()
