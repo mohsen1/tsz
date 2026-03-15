@@ -1691,23 +1691,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        // Use display properties (pre-widened literal types) for fresh object literals.
-        // Fresh literals like `{ a: 1, b: 2 }` should display literal types in TS2345
-        // messages, matching tsc's freshness model. Non-fresh types (from variables,
-        // annotations) should show widened types.
-        let is_fresh_literal =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, display_ty).is_some_and(
-                |shape| {
-                    shape
-                        .flags
-                        .contains(tsz_solver::types::ObjectFlags::FRESH_LITERAL)
-                },
-            );
-        let mut formatted = if is_fresh_literal {
-            self.format_type_diagnostic_with_display(display_ty)
-        } else {
-            self.format_type_diagnostic(display_ty)
-        };
+        // tsc always widens literal types in assignability error messages,
+        // even for fresh object literals. `{ a: 1 }` displays as `{ a: number }`.
+        let mut formatted = self.format_type_diagnostic(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')

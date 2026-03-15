@@ -2,7 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~91.5% on 3000-test sample (2026-03-15, post fix #13). All contextual-typing commits merged.
+**Conformance**: 10814/12581 (86.0%) full suite, ~91.5% on 3000-test sample (2026-03-15, post fix #13). All contextual-typing commits merged.
+
+**Campaign plateau**: After 13 fixes, remaining failures require deep type system work, multi-file compilation, JSDoc support, or individual fingerprint investigation. No more bulk-fixable patterns available.
 
 **What was fixed** (13 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
@@ -73,6 +75,7 @@ On 3000-test sample: 2745 pass (91.5%), ~255 fail. Includes 81 fingerprint-only 
 
 ## Dead Ends (don't re-investigate)
 
+- **Optional parameter `| undefined` in TS2345 messages**: Changing `CallResult::ArgumentTypeMismatch.expected` from `param_type` to `effective_param_type` (with `| undefined`) fixes some fingerprint tests (like `genericFunctionsWithOptionalParameters1`) but causes -9 net regression. tsc's behavior about when to show `| undefined` is context-dependent — not always for optional params.
 - **Conditional expression literal widening** (`defaultParameterAddsUndefinedWithStrictNullChecks.ts`): `is_fresh_literal_expression` uses `&&` for conditionals (both branches must be fresh). Changing to `||` fixes parameter widening (`cond ? true : undefined` → `boolean | undefined`) but doesn't fix TS2367 — the comparison overlap check uses a DIFFERENT type resolution path that still sees the pre-widened `true`. Net -1 conformance. The real fix requires making TS2367's operand type resolution use widened types.
 - **Bulk `Array<X>` → `X[]` formatting**: tsc uses BOTH formats (108 fingerprints contain `Array<`). Changing all breaks as many tests as it fixes. Evaluating all Application types before formatting also net-negative.
 - **Method sensitivity inside object literals**: Changing methods from "always sensitive" to "check params" inside the OBJECT_LITERAL branch of `is_contextually_sensitive` breaks contextual typing for methods. Only the TOP-LEVEL can check params.
