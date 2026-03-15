@@ -243,11 +243,14 @@ impl<'a> Printer<'a> {
                 if let Some(body_node) = self.arena.get(module.body) {
                     self.namespace_scope_end = body_node.end;
                 }
+                let prev_parent_ns = self.parent_namespace_name.clone();
+                self.parent_namespace_name = prev_ns_name.clone();
                 self.current_namespace_name = Some(iife_param.clone());
                 self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;
                 self.namespace_scope_end = prev_scope_end;
                 self.current_namespace_name = prev_ns_name;
+                self.parent_namespace_name = prev_parent_ns;
                 self.declared_namespace_names = prev_declared;
             }
         }
@@ -560,8 +563,16 @@ impl<'a> Printer<'a> {
             let class_fn_enum_names = self.collect_namespace_class_fn_enum_names(module);
             // Merge in exports from prior blocks of the same namespace (cross-block sharing)
             {
-                let root_name = self.get_identifier_text_idx(module.name);
-                if !root_name.is_empty() {
+                let leaf_name = self.get_identifier_text_idx(module.name);
+                // Use scope-qualified key to distinguish same-named namespaces
+                // at different scopes (e.g., m1.m2 vs m4.m2). Reopenings at the
+                // same scope share the same parent, so they get the same key.
+                let root_name = if let Some(ref parent) = self.parent_namespace_name {
+                    format!("{parent}.{leaf_name}")
+                } else {
+                    leaf_name.clone()
+                };
+                if !leaf_name.is_empty() {
                     let entry = self.namespace_prior_exports.entry(root_name).or_default();
                     // Merge PRIOR exports into local set BEFORE adding this block's names.
                     // This ensures names from earlier blocks are qualified in this block,
