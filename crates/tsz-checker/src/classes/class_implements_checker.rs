@@ -1166,9 +1166,13 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(class_error_idx, &full_message, diagnostic_code);
                     }
 
-                    // TypeScript prioritizes the top-level TS2420 missing-members diagnostic
-                    // over per-member TS2416 reports for the same implemented interface.
-                    if missing_members.is_empty() {
+                    // tsc emits both TS2420 (missing members) and TS2416 (incompatible
+                    // member types) when both conditions hold. This is important when
+                    // the interface is merged with lib declarations (e.g., FileSystem
+                    // from lib.dom.d.ts) — the merged interface may have members the
+                    // class doesn't implement, but the class's own members may also
+                    // have incompatible types.
+                    {
                         for (class_member_idx, member_name, expected, actual) in
                             incompatible_members
                         {
