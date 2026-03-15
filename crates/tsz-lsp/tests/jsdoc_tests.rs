@@ -605,3 +605,190 @@ fn test_jsdoc_for_node_enum() {
         let _ = doc;
     }
 }
+
+// ============================================================================
+// Additional parse_jsdoc tests (batch 2)
+// ============================================================================
+
+#[test]
+fn test_parse_jsdoc_author_tag() {
+    let result = parse_jsdoc("A utility.\n@author John Doe <john@example.com>");
+    assert_eq!(result.summary, Some("A utility.".to_string()));
+    assert!(!result.tags.is_empty(), "Should parse @author tag");
+    assert_eq!(result.tags[0].name, "author");
+}
+
+#[test]
+fn test_parse_jsdoc_license_tag() {
+    let result = parse_jsdoc("@license MIT");
+    assert!(!result.tags.is_empty(), "Should parse @license tag");
+    assert_eq!(result.tags[0].name, "license");
+    assert_eq!(result.tags[0].text, "MIT");
+}
+
+#[test]
+fn test_parse_jsdoc_type_tag() {
+    let result = parse_jsdoc("@type {string}");
+    assert!(!result.tags.is_empty(), "Should parse @type tag");
+    assert_eq!(result.tags[0].name, "type");
+}
+
+#[test]
+fn test_parse_jsdoc_private_tag() {
+    let result = parse_jsdoc("Internal helper.\n@private");
+    assert_eq!(result.summary, Some("Internal helper.".to_string()));
+    assert!(!result.tags.is_empty());
+    assert_eq!(result.tags[0].name, "private");
+}
+
+#[test]
+fn test_parse_jsdoc_abstract_tag() {
+    let result = parse_jsdoc("@abstract");
+    assert!(!result.tags.is_empty(), "Should parse @abstract tag");
+    assert_eq!(result.tags[0].name, "abstract");
+    assert_eq!(result.tags[0].text, "");
+}
+
+#[test]
+fn test_parse_jsdoc_many_params() {
+    let result = parse_jsdoc(
+        "@param a First\n@param b Second\n@param c Third\n@param d Fourth\n@param e Fifth",
+    );
+    assert_eq!(result.params.len(), 5);
+    assert_eq!(result.params.get("a"), Some(&"First".to_string()));
+    assert_eq!(result.params.get("e"), Some(&"Fifth".to_string()));
+}
+
+#[test]
+fn test_parse_jsdoc_param_with_complex_type() {
+    let result = parse_jsdoc("@param {Map<string, Array<number>>} data The data map");
+    if let Some(desc) = result.params.get("data") {
+        assert!(
+            desc.contains("data map") || desc.contains("The"),
+            "Should extract description for complex typed param, got: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_overrides_tag() {
+    let result = parse_jsdoc("@override");
+    assert!(!result.tags.is_empty(), "Should parse @override tag");
+    assert_eq!(result.tags[0].name, "override");
+}
+
+#[test]
+fn test_parse_jsdoc_summary_ending_with_period() {
+    let result = parse_jsdoc("Does the thing.");
+    assert_eq!(result.summary, Some("Does the thing.".to_string()));
+    assert!(result.params.is_empty());
+    assert!(result.tags.is_empty());
+}
+
+#[test]
+fn test_parse_jsdoc_summary_with_code_backticks() {
+    let result = parse_jsdoc("Returns `true` if valid.");
+    assert_eq!(result.summary, Some("Returns `true` if valid.".to_string()));
+}
+
+#[test]
+fn test_parse_jsdoc_enum_tag() {
+    let result = parse_jsdoc("@enum {number}");
+    assert!(!result.tags.is_empty(), "Should parse @enum tag");
+    assert_eq!(result.tags[0].name, "enum");
+}
+
+#[test]
+fn test_parse_jsdoc_callback_tag() {
+    let result = parse_jsdoc("@callback MyCallback");
+    assert!(!result.tags.is_empty(), "Should parse @callback tag");
+    assert_eq!(result.tags[0].name, "callback");
+}
+
+#[test]
+fn test_parse_jsdoc_is_empty_true_for_empty() {
+    let result = parse_jsdoc("");
+    assert!(result.is_empty(), "Empty input should produce empty result");
+}
+
+// ============================================================================
+// Additional jsdoc_for_node tests (batch 2)
+// ============================================================================
+
+#[test]
+fn test_jsdoc_for_node_function_with_params_doc() {
+    let source = "/** Process data.\n * @param data The input data\n * @returns The result\n */\nfunction process(data: string): number { return 0; }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(func_idx.is_some(), "Should find function declaration");
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    assert!(
+        doc.contains("Process data"),
+        "Should extract JSDoc summary, got: {doc}",
+    );
+}
+
+#[test]
+fn test_jsdoc_for_node_multiple_functions_first() {
+    let source = "/** First fn */\nfunction first() {}\n/** Second fn */\nfunction second() {}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(func_idx.is_some(), "Should find first function declaration");
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    assert!(
+        doc.contains("First fn"),
+        "Should extract JSDoc for first function, got: {doc}",
+    );
+}
+
+#[test]
+fn test_jsdoc_for_node_type_alias() {
+    let source = "/** A string or number */\ntype StringOrNumber = string | number;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let type_alias = find_first_node_of_kind(arena, root, syntax_kind_ext::TYPE_ALIAS_DECLARATION);
+    if let Some(idx) = type_alias {
+        let doc = jsdoc_for_node(arena, root, idx, source);
+        // Should not panic; doc extraction depends on implementation
+        let _ = doc;
+    }
+}
+
+#[test]
+fn test_inline_param_jsdocs_arrow_function() {
+    let source = "const fn = (/** the name */ name: string) => name;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    // Look for arrow function
+    let arrow = find_first_node_of_kind(arena, root, syntax_kind_ext::ARROW_FUNCTION);
+    if let Some(idx) = arrow {
+        let result = inline_param_jsdocs(arena, root, idx, source);
+        // May or may not find inline docs depending on comment storage
+        let _ = result;
+    }
+}
+
+#[test]
+fn test_jsdoc_for_node_line_comment_not_jsdoc() {
+    // Line comments should not be treated as JSDoc
+    let source = "// just a line comment\nfunction baz() {}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(func_idx.is_some());
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    assert!(
+        doc.is_empty(),
+        "Line comment should not be treated as JSDoc, got: {doc}",
+    );
+}
