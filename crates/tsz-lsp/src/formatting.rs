@@ -649,18 +649,77 @@ impl DocumentFormattingProvider {
     }
 
     fn normalize_member_spacing(line: &str) -> String {
-        let mut out = line.replace("( )", "()");
+        // Normalize multiple whitespace to single space, respecting strings.
+        let mut out = Self::collapse_whitespace(line);
+        // After collapsing, `( )` → `()`
+        out = out.replace("( )", "()");
+        // Remove space before semicolon: `foo ;` → `foo;`
+        out = out.replace(" ;", ";");
+        // Remove space before comma: `foo ,` → `foo,`
+        out = out.replace(" ,", ",");
+        // Remove space after `@` in decorators: `@ decorator` → `@decorator`
+        if out.starts_with("@ ") {
+            out = format!("@{}", out[2..].trim_start());
+        }
+        // Ensure space before opening brace: `foo{` → `foo {`
         if let Some(prefix) = out.strip_suffix('{') {
             out = format!("{} {{", prefix.trim_end());
         }
-        if out.starts_with("public ")
-            || out.starts_with("private ")
-            || out.starts_with("protected ")
-            || out.starts_with("readonly ")
-        {
-            out = out.split_whitespace().collect::<Vec<_>>().join(" ");
-        }
         out
+    }
+
+    /// Collapse runs of whitespace to single spaces, but preserve whitespace
+    /// inside string literals (single, double, backtick quotes).
+    fn collapse_whitespace(line: &str) -> String {
+        let bytes = line.as_bytes();
+        let len = bytes.len();
+        let mut result = Vec::with_capacity(len);
+        let mut i = 0;
+        let mut in_whitespace_run = false;
+
+        while i < len {
+            let ch = bytes[i];
+
+            // Handle string literals — copy them verbatim
+            if ch == b'\'' || ch == b'"' || ch == b'`' {
+                if in_whitespace_run {
+                    result.push(b' ');
+                    in_whitespace_run = false;
+                }
+                result.push(ch);
+                i += 1;
+                // Scan to matching close quote
+                while i < len {
+                    let c = bytes[i];
+                    result.push(c);
+                    if c == b'\\' && i + 1 < len {
+                        // Escape sequence — copy next char too
+                        i += 1;
+                        result.push(bytes[i]);
+                    } else if c == ch {
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+
+            if ch == b' ' || ch == b'\t' {
+                in_whitespace_run = true;
+                i += 1;
+            } else {
+                if in_whitespace_run {
+                    result.push(b' ');
+                    in_whitespace_run = false;
+                }
+                result.push(ch);
+                i += 1;
+            }
+        }
+
+        // Don't add trailing space
+        String::from_utf8(result).unwrap_or_else(|_| line.to_string())
     }
 
     /// Convert leading spaces to tabs based on tab size.
