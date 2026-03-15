@@ -41,6 +41,17 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
     });
     let mut declaration_bundle_chunks = Vec::new();
 
+    // When --outFile is set and there are multiple source files, collect JS
+    // chunks and concatenate at the end instead of emitting individual files.
+    // Single-file tests emit normally (bundle would just wrap the same content).
+    let has_multiple_files = context.program.files.len() > 1;
+    let js_bundle_path: Option<PathBuf> = if has_multiple_files {
+        context.options.out_file.as_ref().map(|p| p.clone())
+    } else {
+        None
+    };
+    let mut js_bundle_chunks: Vec<String> = Vec::new();
+
     // Build mapping from arena address to file path for module resolution
     let arena_to_path: rustc_hash::FxHashMap<usize, String> = context
         .program
@@ -212,12 +223,17 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                 });
             }
 
-            outputs.push(OutputFile {
-                path: js_path,
-                contents,
-            });
-            if let Some(map_output) = map_output {
-                outputs.push(map_output);
+            // When --outFile is set, collect content for bundling.
+            if js_bundle_path.is_some() {
+                js_bundle_chunks.push(contents);
+            } else {
+                outputs.push(OutputFile {
+                    path: js_path,
+                    contents,
+                });
+                if let Some(map_output) = map_output {
+                    outputs.push(map_output);
+                }
             }
         }
 
@@ -350,6 +366,41 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                 }
             }
         }
+    }
+
+    // Emit bundled JS output when --outFile is set
+    if let Some(bundle_path) = js_bundle_path
+        && !js_bundle_chunks.is_empty()
+    {
+        let mut bundled = String::new();
+        for (i, chunk) in js_bundle_chunks.iter().enumerate() {
+            let mut trimmed = chunk.trim_end_matches(['\r', '\n']);
+            // Strip duplicate "use strict" directives from non-first files.
+            // In bundled output, only the first file's prologue is kept.
+            if i > 0 {
+                if let Some(rest) = trimmed.strip_prefix("\"use strict\";\n") {
+                    trimmed = rest;
+                } else if let Some(rest) = trimmed.strip_prefix("\"use strict\";\r\n") {
+                    trimmed = rest;
+                }
+            }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !bundled.is_empty() && !bundled.ends_with(new_line) {
+                bundled.push_str(new_line);
+            }
+            bundled.push_str(trimmed);
+            bundled.push_str(new_line);
+        }
+        // Remove trailing newline to match tsc behavior
+        if bundled.ends_with(new_line) {
+            bundled.truncate(bundled.len() - new_line.len());
+        }
+        outputs.push(OutputFile {
+            path: bundle_path,
+            contents: bundled,
+        });
     }
 
     if let Some(bundle_path) = declaration_bundle_path
