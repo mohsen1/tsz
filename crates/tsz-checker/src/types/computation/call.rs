@@ -8,13 +8,14 @@
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{CallResult, ContextualTypeContext, FunctionShape, TypeId};
+use tsz_solver::{ContextualTypeContext, FunctionShape, TypeId};
 
 use super::call_inference::should_preserve_contextual_application_shape;
 use super::call_result::CallResultContext;
@@ -902,7 +903,8 @@ impl<'a> CheckerState<'a> {
                         if !names_to_strip.is_empty() {
                             let names_to_strip: rustc_hash::FxHashSet<_> =
                                 names_to_strip.into_iter().collect();
-                            let mut filtered = tsz_solver::TypeSubstitution::new();
+                            let mut filtered =
+                                crate::query_boundaries::common::TypeSubstitution::new();
                             for (&name, &type_id) in substitution.map() {
                                 if !names_to_strip.contains(&name) {
                                     filtered.insert(name, type_id);
@@ -1170,7 +1172,7 @@ impl<'a> CheckerState<'a> {
                                 let tracked_type_params: FxHashSet<_> =
                                     shape.type_params.iter().map(|tp| tp.name).collect();
                                 let mut first_branch_substitution =
-                                    tsz_solver::TypeSubstitution::new();
+                                    crate::query_boundaries::common::TypeSubstitution::new();
                                 let mut visited = FxHashSet::default();
                                 self.collect_return_context_substitution(
                                     callback_shape.return_type,
@@ -1262,7 +1264,8 @@ impl<'a> CheckerState<'a> {
                             {
                                 let tracked_type_params: FxHashSet<_> =
                                     shape.type_params.iter().map(|tp| tp.name).collect();
-                                let mut arg_substitution = tsz_solver::TypeSubstitution::new();
+                                let mut arg_substitution =
+                                    crate::query_boundaries::common::TypeSubstitution::new();
                                 let mut visited = FxHashSet::default();
                                 self.collect_return_context_substitution(
                                     shape_param_type,
@@ -1439,7 +1442,7 @@ impl<'a> CheckerState<'a> {
                     // We only erase for array/object literals to avoid breaking literal type
                     // preservation and other contextual typing behaviors.
                     let type_param_eraser = {
-                        use tsz_solver::TypeSubstitution;
+                        use crate::query_boundaries::common::TypeSubstitution;
                         let mut sub = TypeSubstitution::new();
                         for tp in &shape.type_params {
                             sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
@@ -1458,7 +1461,7 @@ impl<'a> CheckerState<'a> {
                                         .is_some_and(|lit| lit.elements.nodes.is_empty())
                             });
                             let param_type = if is_empty_array_literal {
-                                use tsz_solver::instantiate_type;
+                                use crate::query_boundaries::common::instantiate_type;
                                 instantiate_type(self.ctx.types, param_type, &type_param_eraser)
                             } else {
                                 param_type
@@ -1514,11 +1517,12 @@ impl<'a> CheckerState<'a> {
                                                 last.rest.then_some((last.type_id, true))
                                             },
                                         )?;
-                                    let instantiated = tsz_solver::instantiate_type(
-                                        self.ctx.types,
-                                        param.0,
-                                        &return_context_substitution,
-                                    );
+                                    let instantiated =
+                                        crate::query_boundaries::common::instantiate_type(
+                                            self.ctx.types,
+                                            param.0,
+                                            &return_context_substitution,
+                                        );
                                     let param_type = if param.1 {
                                         self.rest_argument_element_type_with_env(instantiated)
                                     } else {

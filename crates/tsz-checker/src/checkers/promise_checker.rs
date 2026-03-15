@@ -812,9 +812,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let substitution =
-            tsz_solver::TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
-        let instantiated = tsz_solver::instantiate_type(self.ctx.types, body_type, &substitution);
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &type_params,
+            &args,
+        );
+        let instantiated = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            body_type,
+            &substitution,
+        );
         if instantiated != type_id {
             Some(instantiated)
         } else {

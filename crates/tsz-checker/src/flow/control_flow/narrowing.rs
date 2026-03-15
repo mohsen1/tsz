@@ -426,7 +426,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Case 2: Complex predicate type CONTAINS type parameters (e.g., mapped types
         // like `target is { readonly [K in P]: unknown }`). Build a substitution from
         // function type params to call argument types and instantiate the predicate type.
-        let mut substitution = tsz_solver::TypeSubstitution::new();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
         for tp in &type_params {
             for (i, param) in params.iter().enumerate() {
                 if let Some(info) =
@@ -444,8 +444,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if !substitution.is_empty() {
-            let instantiated =
-                tsz_solver::instantiate_type(self.interner, pred_type, &substitution);
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.interner,
+                pred_type,
+                &substitution,
+            );
             if instantiated != pred_type {
                 // Evaluate to resolve mapped types (e.g., `{ [K in "length"]: unknown }` → `{ length: unknown }`)
                 let evaluated = tsz_solver::evaluate_type(self.interner, instantiated);

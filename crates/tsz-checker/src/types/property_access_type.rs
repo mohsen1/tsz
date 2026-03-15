@@ -1,6 +1,7 @@
 //! Property access type resolution, global augmentation property lookup,
 //! and expando function pattern detection.
 
+use crate::query_boundaries::common::PropertyAccessResult;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
@@ -8,7 +9,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::operations::property::PropertyAccessResult;
 
 impl<'a> CheckerState<'a> {
     fn recover_property_from_implemented_interfaces(
@@ -80,7 +80,7 @@ impl<'a> CheckerState<'a> {
 
     /// Inner implementation of property access type resolution.
     fn get_type_of_property_access_inner(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1450,13 +1450,13 @@ impl<'a> CheckerState<'a> {
             property_name,
             object_type
         );
+        use crate::query_boundaries::common::PropertyAccessResult;
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::NodeArena;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::is_compiler_managed_type;
-        use tsz_solver::operations::property::PropertyAccessResult;
         let base_type =
             crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
 
@@ -1733,13 +1733,13 @@ impl<'a> CheckerState<'a> {
         interface_name: &str,
         property_name: &str,
     ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::NodeArena;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::is_compiler_managed_type;
-        use tsz_solver::operations::property::PropertyAccessResult;
 
         let augmentation_decls = self.ctx.binder.global_augmentations.get(interface_name)?;
         if augmentation_decls.is_empty() {

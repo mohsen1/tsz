@@ -473,16 +473,18 @@ impl<'a> CheckerState<'a> {
                                 if evaluated_args.len() > base_type_params.len() {
                                     evaluated_args.truncate(base_type_params.len());
                                 }
-                                let substitution = tsz_solver::TypeSubstitution::from_args(
-                                    self.ctx.types,
-                                    &base_type_params,
-                                    &evaluated_args,
-                                );
-                                instantiated_type = tsz_solver::instantiate_type(
-                                    self.ctx.types,
-                                    symbol_type,
-                                    &substitution,
-                                );
+                                let substitution =
+                                    crate::query_boundaries::common::TypeSubstitution::from_args(
+                                        self.ctx.types,
+                                        &base_type_params,
+                                        &evaluated_args,
+                                    );
+                                instantiated_type =
+                                    crate::query_boundaries::common::instantiate_type(
+                                        self.ctx.types,
+                                        symbol_type,
+                                        &substitution,
+                                    );
                             }
 
                             // TS2312: Only reject *generic* mapped types — those whose

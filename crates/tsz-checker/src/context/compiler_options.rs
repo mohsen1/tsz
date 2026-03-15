@@ -176,19 +176,19 @@ impl<'a> CheckerContext<'a> {
     /// `RelationCacheKey` flags field. This is the single source of truth for
     /// flag packing — call this instead of manually constructing the bitmask.
     pub const fn pack_relation_flags(&self) -> u16 {
-        use tsz_solver::RelationCacheKey;
+        use crate::query_boundaries::assignability::RelationFlags;
         let mut flags: u16 = 0;
         if self.strict_null_checks() {
-            flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+            flags |= RelationFlags::STRICT_NULL_CHECKS;
         }
         if self.strict_function_types() {
-            flags |= RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+            flags |= RelationFlags::STRICT_FUNCTION_TYPES;
         }
         if self.exact_optional_property_types() {
-            flags |= RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+            flags |= RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES;
         }
         if self.no_unchecked_indexed_access() {
-            flags |= RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+            flags |= RelationFlags::NO_UNCHECKED_INDEXED_ACCESS;
         }
         flags
     }

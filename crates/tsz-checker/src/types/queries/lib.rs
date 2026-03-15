@@ -25,9 +25,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
+        use crate::query_boundaries::common::TypeSubstitution;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::TypeInstantiator;
-        use tsz_solver::TypeSubstitution;
 
         let factory = self.ctx.types.factory();
         let lib_contexts = &self.ctx.lib_contexts;
@@ -1527,7 +1527,7 @@ impl<'a> CheckerState<'a> {
                     let right_ty = self.literal_type_from_initializer(binary.right);
                     if let (Some(l), Some(r)) = (left_ty, right_ty) {
                         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-                        if let tsz_solver::BinaryOpResult::Success(res) =
+                        if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
                             evaluator.evaluate(l, r, "&&")
                         {
                             return Some(res);
@@ -1539,7 +1539,7 @@ impl<'a> CheckerState<'a> {
                     let right_ty = self.literal_type_from_initializer(binary.right);
                     if let (Some(l), Some(r)) = (left_ty, right_ty) {
                         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
-                        if let tsz_solver::BinaryOpResult::Success(res) =
+                        if let crate::query_boundaries::type_computation::core::BinaryOpResult::Success(res) =
                             evaluator.evaluate(l, r, "||")
                         {
                             return Some(res);

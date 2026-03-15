@@ -533,10 +533,10 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 #[cfg(test)]
 mod tests {
     use super::ClassInheritanceChecker;
+    use crate::query_boundaries::type_construction::TypeInterner;
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
 
     #[test]
     fn declared_parent_fallback_detects_cycle_without_registered_graph_edges() {

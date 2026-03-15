@@ -309,7 +309,7 @@ impl<'a> CheckerState<'a> {
                 let member_type = info.type_id;
                 // Skip if either type is ANY
                 if member_type != TypeId::ANY {
-                    use tsz_solver::operations::property::PropertyAccessResult;
+                    use crate::query_boundaries::common::PropertyAccessResult;
                     let base_prop_result =
                         self.resolve_property_access_with_env(base_type_id, &info.name);
                     if let PropertyAccessResult::Success {
@@ -751,7 +751,7 @@ impl<'a> CheckerState<'a> {
         _class_idx: NodeIndex,
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
-        use tsz_solver::{TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
         // Find base class from heritage clauses (extends, not implements)
         // If there are no heritage clauses, we still need to check for
@@ -1611,7 +1611,7 @@ impl<'a> CheckerState<'a> {
         base_class_name: &str,
         substitution: &tsz_solver::TypeSubstitution,
     ) {
-        use tsz_solver::instantiate_type;
+        use crate::query_boundaries::common::instantiate_type;
 
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {

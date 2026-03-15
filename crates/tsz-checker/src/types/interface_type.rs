@@ -398,8 +398,8 @@ impl<'a> CheckerState<'a> {
         declarations: &[NodeIndex],
         mut derived_type: TypeId,
     ) -> TypeId {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
         use tracing::trace;
-        use tsz_solver::{TypeSubstitution, instantiate_type};
 
         trace!(decls = declarations.len(), derived_type_id = %derived_type.0, "merge_interface_heritage_types called");
 
@@ -1198,11 +1198,13 @@ impl<'a> CheckerState<'a> {
                     && !interface_type_params.is_empty()
                     && interface_type_params.len() == type_args.len()
                 {
-                    Some(tsz_solver::TypeSubstitution::from_args(
-                        self.ctx.types,
-                        &interface_type_params,
-                        type_args,
-                    ))
+                    Some(
+                        crate::query_boundaries::common::TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &interface_type_params,
+                            type_args,
+                        ),
+                    )
                 } else {
                     None
                 };
@@ -1222,7 +1224,7 @@ impl<'a> CheckerState<'a> {
                         let type_id = if std::ptr::eq(arena, self.ctx.arena) {
                             let mut type_id = self.get_type_of_interface_member_simple(member_idx);
                             if let Some(substitution) = interface_substitution.as_ref() {
-                                type_id = tsz_solver::instantiate_type(
+                                type_id = crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
                                     type_id,
                                     substitution,

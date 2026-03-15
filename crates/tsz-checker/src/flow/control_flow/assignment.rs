@@ -102,7 +102,8 @@ impl<'a> FlowAnalyzer<'a> {
                     if self.is_access_reference(target) {
                         return None;
                     }
-                    use tsz_solver::{BinaryOpEvaluator, BinaryOpResult};
+                    use crate::query_boundaries::type_computation::core::BinaryOpResult;
+                    use tsz_solver::BinaryOpEvaluator;
 
                     // When node_types is not available, use heuristics for flow narrowing
                     if self.node_types.is_none() {
@@ -1019,7 +1020,7 @@ impl<'a> FlowAnalyzer<'a> {
         source: DestructuringSource,
         name: NodeIndex,
     ) -> Option<DestructuringSource> {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let key = self.property_key_from_name(name).or_else(|| {
             if source.node.is_some() {

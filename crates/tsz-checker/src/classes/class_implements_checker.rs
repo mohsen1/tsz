@@ -5,11 +5,11 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
+use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::operations::property::PropertyAccessResult;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
@@ -58,7 +58,7 @@ impl<'a> CheckerState<'a> {
         interface_type: TypeId,
         type_args: &[TypeId],
         interface_declarations: &[NodeIndex],
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
     ) -> (Vec<PropertyInfo>, bool, String) {
         let array_display_name = |state: &Self| format!("{}[]", state.format_type(type_args[0]));
 
@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(shape) =
                     tsz_solver::type_queries::get_object_shape(self.ctx.types, array_base)
             {
-                let substitution = tsz_solver::TypeSubstitution::from_args(
+                let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
                     self.ctx.types.get_array_base_type_params(),
                     type_args,
@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .cloned()
                     .map(|mut prop| {
-                        prop.type_id = tsz_solver::instantiate_type(
+                        prop.type_id = crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
                             prop.type_id,
                             &substitution,
@@ -149,7 +149,11 @@ impl<'a> CheckerState<'a> {
                     } => write_type.unwrap_or(type_id),
                     _ => {
                         let member_type = self.get_type_of_interface_member_simple(member_idx);
-                        tsz_solver::instantiate_type(self.ctx.types, member_type, substitution)
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            member_type,
+                            substitution,
+                        )
                     }
                 };
 
@@ -888,7 +892,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Create substitution to instantiate interface type parameters with actual type arguments
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                    let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                         self.ctx.types,
                         &interface_type_params,
                         &type_args,
@@ -910,7 +914,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_of_symbol(sym_id)
                     };
-                    let interface_type = tsz_solver::instantiate_type(
+                    let interface_type = crate::query_boundaries::common::instantiate_type(
                         self.ctx.types,
                         raw_interface_type,
                         &substitution,

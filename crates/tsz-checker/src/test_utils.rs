@@ -5,10 +5,10 @@
 
 use crate::context::CheckerOptions;
 use crate::diagnostics::Diagnostic;
+use crate::query_boundaries::type_construction::TypeInterner;
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 /// Parse, bind, and type-check a TypeScript source string, returning all diagnostics.
 ///

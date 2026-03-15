@@ -1258,7 +1258,10 @@ impl<'a> CheckerState<'a> {
             None,
         );
 
-        if !matches!(result, tsz_solver::CallResult::Success(_)) {
+        if !matches!(
+            result,
+            crate::query_boundaries::common::CallResult::Success(_)
+        ) {
             self.error_at_node(
                 decorator_node,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,

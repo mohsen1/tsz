@@ -44,8 +44,9 @@ impl<'a> CheckerState<'a> {
     /// Handles all binary operators including arithmetic, comparison, logical,
     /// assignment, nullish coalescing, and comma operators.
     pub(crate) fn get_type_of_binary_expression(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::{BinaryOpEvaluator, BinaryOpResult};
+        use tsz_solver::BinaryOpEvaluator;
         let factory = self.ctx.types.factory();
 
         // Hot path: pure `+` chains with stable primitive operands are common in
@@ -469,7 +470,7 @@ impl<'a> CheckerState<'a> {
                     // TypeScript also allows types with [Symbol.hasInstance] as valid instanceof RHS.
                     // This is checked even when the standard callable/Function checks fail.
                     if !is_valid_rhs {
-                        use tsz_solver::operations::property::PropertyAccessResult;
+                        use crate::query_boundaries::common::PropertyAccessResult;
                         is_valid_rhs = matches!(
                             self.resolve_property_access_with_env(
                                 eval_right,

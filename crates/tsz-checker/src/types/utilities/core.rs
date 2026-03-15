@@ -1201,7 +1201,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keys: &[tsz_common::interner::Atom],
     ) -> LiteralKeysResult {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         if keys.is_empty() {
             return LiteralKeysResult {

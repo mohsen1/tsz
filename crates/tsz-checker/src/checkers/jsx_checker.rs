@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
                     cached
                 } else {
                     // Resolve the tag name as a property on the evaluated IntrinsicElements
-                    use tsz_solver::operations::property::PropertyAccessResult;
+                    use crate::query_boundaries::common::PropertyAccessResult;
                     let result = self.resolve_property_access_with_env(evaluated_ie, tag);
                     let props = match result {
                         PropertyAccessResult::Success { type_id, .. } => type_id,
@@ -926,7 +926,7 @@ impl<'a> CheckerState<'a> {
             Some(ref name) => {
                 // ElementAttributesProperty has a member → access that property on instance
                 let evaluated_instance = self.evaluate_type_with_env(instance_type);
-                use tsz_solver::operations::property::PropertyAccessResult;
+                use crate::query_boundaries::common::PropertyAccessResult;
                 match self.resolve_property_access_with_env(evaluated_instance, name) {
                     PropertyAccessResult::Success { type_id, .. } => {
                         let evaluated = self.evaluate_type_with_env(type_id);
@@ -1075,7 +1075,7 @@ impl<'a> CheckerState<'a> {
                         Some(format!("{ns_text}:{name_text}"))
                     })
             }?;
-            use tsz_solver::operations::property::PropertyAccessResult;
+            use crate::query_boundaries::common::PropertyAccessResult;
             match self.resolve_property_access_with_env(evaluated_ie, &tag_name) {
                 PropertyAccessResult::Success { type_id, .. } => type_id,
                 _ => return None,
@@ -1090,7 +1090,7 @@ impl<'a> CheckerState<'a> {
         // Get 'children' property from the resolved props type
         let evaluated_props = self.evaluate_type_with_env(props_type);
         let resolved_props = self.resolve_type_for_property_access(evaluated_props);
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
         match self.resolve_property_access_with_env(resolved_props, "children") {
             PropertyAccessResult::Success { type_id, .. } => {
                 // Don't use ANY or ERROR as contextual type — it provides no information
@@ -1335,7 +1335,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Get expected type from props
-                use tsz_solver::operations::property::PropertyAccessResult;
+                use crate::query_boundaries::common::PropertyAccessResult;
                 let is_data_or_aria =
                     attr_name.starts_with("data-") || attr_name.starts_with("aria-");
                 let expected_type = match self
@@ -1712,7 +1712,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check TS2746: children count mismatch (single child expected, multiple provided).
     fn check_jsx_children_count(&mut self, props_type: TypeId, tag_name_idx: NodeIndex) {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let resolved = self.resolve_type_for_property_access(props_type);
         let children_type = match self.resolve_property_access_with_env(resolved, "children") {

@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
         let property_result =
             self.resolve_property_access_with_env(readonly_check_type, &prop_name);
         let (property_exists, prop_from_index_sig) = match &property_result {
@@ -477,7 +477,7 @@ impl<'a> CheckerState<'a> {
         // If the property doesn't exist, skip the readonly check - TS2339 will be
         // reported elsewhere. This matches tsc behavior which checks existence before
         // readonly status.
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
         let property_result =
             self.resolve_property_access_with_env(readonly_check_type, &prop_name);
         let (property_exists, prop_from_index_sig) = match &property_result {
@@ -1049,10 +1049,10 @@ impl<'a> CheckerState<'a> {
 mod tests {
     use super::*;
     use crate::context::{CheckerOptions, ScriptTarget};
+    use crate::query_boundaries::type_construction::TypeInterner;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_parser::parser::node::NodeArena;
-    use tsz_solver::TypeInterner;
 
     fn find_node_by_text_and_kind(
         arena: &NodeArena,

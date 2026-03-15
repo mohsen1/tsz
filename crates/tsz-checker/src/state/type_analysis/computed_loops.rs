@@ -43,7 +43,7 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         export_name: &str,
     ) -> Option<tsz_solver::TypeId> {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let exports_table = self.resolve_effective_module_exports(module_name)?;
         let export_equals_sym = exports_table.get("export=")?;

@@ -68,7 +68,7 @@ Run `cargo check -p tsz-checker` to verify compilation. Commit with message
 "feat(checker): add query_boundaries wrappers for top-10 bypassed solver APIs".
 ```
 
-### Prompt 1.4 — Migrate Callers to Use Wrappers
+### Prompt 1.4 — Migrate Callers to Use Wrappers ✅ DONE (2026-03-15)
 
 ```
 For each of the 10 new query_boundaries wrappers created in the previous step,

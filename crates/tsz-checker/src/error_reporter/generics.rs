@@ -5,12 +5,13 @@ use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type,
 };
 use crate::query_boundaries::common;
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::{CallSignature, CallableShape, TypeSubstitution, instantiate_type};
+use tsz_solver::{CallSignature, CallableShape};
 
 impl<'a> CheckerState<'a> {
     fn type_assertion_overlap_anchor_in_expression(

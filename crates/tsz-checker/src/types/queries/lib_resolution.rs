@@ -246,12 +246,13 @@ impl<'a> CheckerState<'a> {
                             }
                             type_args.truncate(base_params.len());
 
-                            let substitution = tsz_solver::TypeSubstitution::from_args(
-                                self.ctx.types,
-                                &base_params,
-                                &type_args,
-                            );
-                            base_type = tsz_solver::instantiate_type(
+                            let substitution =
+                                crate::query_boundaries::common::TypeSubstitution::from_args(
+                                    self.ctx.types,
+                                    &base_params,
+                                    &type_args,
+                                );
+                            base_type = crate::query_boundaries::common::instantiate_type(
                                 self.ctx.types,
                                 base_type,
                                 &substitution,
