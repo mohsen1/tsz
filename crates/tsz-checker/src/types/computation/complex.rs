@@ -109,9 +109,36 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                                     return true;
                                 }
                             }
-                            // Methods and Accessors are function-like (always sensitive)
-                            k if k == syntax_kind_ext::METHOD_DECLARATION
-                                || k == syntax_kind_ext::GET_ACCESSOR
+                            // Methods: sensitive only if they have unannotated params
+                            // (same rule as arrow/function expressions). Fully annotated
+                            // methods should participate in Round 1 inference.
+                            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                if let Some(method) = state.ctx.arena.get_method_decl(element) {
+                                    let has_unannotated =
+                                        method.parameters.nodes.iter().any(|&param_idx| {
+                                            state
+                                                .ctx
+                                                .arena
+                                                .get(param_idx)
+                                                .and_then(|pn| state.ctx.arena.get_parameter(pn))
+                                                .is_some_and(|p| p.type_annotation.is_none())
+                                        });
+                                    if has_unannotated
+                                        || (method.parameters.nodes.is_empty()
+                                            && method.type_annotation.is_none()
+                                            && function_body_needs_contextual_return_type(
+                                                state,
+                                                method.body,
+                                            ))
+                                    {
+                                        return true;
+                                    }
+                                } else {
+                                    return true;
+                                }
+                            }
+                            // Accessors are always sensitive
+                            k if k == syntax_kind_ext::GET_ACCESSOR
                                 || k == syntax_kind_ext::SET_ACCESSOR =>
                             {
                                 return true;
