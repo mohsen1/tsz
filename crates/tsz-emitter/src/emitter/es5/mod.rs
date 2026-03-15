@@ -8,5 +8,6 @@ mod bindings_assignment;
 mod bindings_patterns;
 mod helpers;
 mod helpers_async;
+#[allow(dead_code)] // WIP: loop capture transform is under active development
 pub(in crate::emitter) mod loop_capture;
 mod templates;

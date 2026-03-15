@@ -1598,30 +1598,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // the two S params have different TypeIds but same name.
                     if let Some(crate::TypeData::TypeParameter(tp_info)) =
                         self.interner.lookup(ty_for_check)
+                        && let Some(tp_constraint) = tp_info.constraint
                     {
-                        if let Some(tp_constraint) = tp_info.constraint {
-                            // Direct TypeId match
-                            if tp_constraint == constraint_ty {
-                                final_subst.insert(tp.name, ty_for_check);
-                                continue;
-                            }
-                            // Both are keyof <TypeParam> with same-named params
-                            if let (Some(c_inner), Some(t_inner)) = (
-                                crate::visitor::keyof_inner_type(self.interner, tp_constraint),
-                                crate::visitor::keyof_inner_type(self.interner, constraint_ty),
-                            ) {
-                                if let (
-                                    Some(crate::TypeData::TypeParameter(c_tp)),
-                                    Some(crate::TypeData::TypeParameter(t_tp)),
-                                ) =
-                                    (self.interner.lookup(c_inner), self.interner.lookup(t_inner))
-                                {
-                                    if c_tp.name == t_tp.name {
-                                        final_subst.insert(tp.name, ty_for_check);
-                                        continue;
-                                    }
-                                }
-                            }
+                        // Direct TypeId match
+                        if tp_constraint == constraint_ty {
+                            final_subst.insert(tp.name, ty_for_check);
+                            continue;
+                        }
+                        // Both are keyof <TypeParam> with same-named params
+                        if let (Some(c_inner), Some(t_inner)) = (
+                            crate::visitor::keyof_inner_type(self.interner, tp_constraint),
+                            crate::visitor::keyof_inner_type(self.interner, constraint_ty),
+                        ) && let (
+                            Some(crate::TypeData::TypeParameter(c_tp)),
+                            Some(crate::TypeData::TypeParameter(t_tp)),
+                        ) = (self.interner.lookup(c_inner), self.interner.lookup(t_inner))
+                            && c_tp.name == t_tp.name
+                        {
+                            final_subst.insert(tp.name, ty_for_check);
+                            continue;
                         }
                     }
                     // Try to recover using un-widened literal candidates when widening

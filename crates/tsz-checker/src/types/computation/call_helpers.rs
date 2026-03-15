@@ -797,15 +797,14 @@ impl<'a> CheckerState<'a> {
                 // where prop has target type { produce: (arg1: number) => T, consume: (arg2: T) => void }
                 if tsz_solver::type_queries::get_object_shape(self.ctx.types, target_prop_type)
                     .is_some()
-                {
-                    if let Some(nested_partial) = self.extract_inference_contributing_object_type(
+                    && let Some(nested_partial) = self.extract_inference_contributing_object_type(
                         prop.initializer,
                         target_prop_type,
                         type_param_names,
-                    ) {
-                        properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
-                        continue;
-                    }
+                    )
+                {
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                    continue;
                 }
 
                 // Get the function shape for the target property

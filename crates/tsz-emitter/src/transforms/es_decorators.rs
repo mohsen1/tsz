@@ -558,14 +558,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // If this member has a computed key with propKey, flush all accumulated
             // assignments into this member's computed brackets
             if propkey_map.contains_key(&member.member_idx) {
-                if let MemberName::Computed(expr_idx) = &member.name {
-                    if let Some((_, var_name)) = computed_key_vars.iter().find(|(mi, _)| *mi == i) {
-                        assignment_queue.push(format!(
-                            "{var_name} = {}({})",
-                            self.helper("__propKey"),
-                            self.node_text(*expr_idx)
-                        ));
-                    }
+                if let MemberName::Computed(expr_idx) = &member.name
+                    && let Some((_, var_name)) = computed_key_vars.iter().find(|(mi, _)| *mi == i)
+                {
+                    assignment_queue.push(format!(
+                        "{var_name} = {}({})",
+                        self.helper("__propKey"),
+                        self.node_text(*expr_idx)
+                    ));
                 }
                 injected_assignments
                     .insert(member.member_idx, std::mem::take(&mut assignment_queue));
