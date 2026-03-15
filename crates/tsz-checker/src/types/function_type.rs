@@ -337,6 +337,14 @@ impl<'a> CheckerState<'a> {
             found
         };
 
+        // Check if this closure is inside a JSDoc @type cast parenthesized expression.
+        // In JS files, `/** @type {SomeType} */(expr)` acts as a type assertion.
+        // Even if the import type in the JSDoc can't be fully resolved, the presence
+        // of a @type annotation means the user explicitly typed the expression,
+        // so TS7006 should be suppressed for closures within the cast.
+        let is_in_jsdoc_type_cast =
+            is_closure && self.is_js_file() && { self.is_inside_jsdoc_type_cast(idx) };
+
         // Pre-extract ordered @param names for positional matching with binding patterns.
         let jsdoc_param_names: Vec<String> = func_jsdoc
             .as_ref()
@@ -728,6 +736,7 @@ impl<'a> CheckerState<'a> {
                 let skip_implicit_any = is_setter
                     || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
                     || (is_in_decorator && !has_contextual_type)
+                    || is_in_jsdoc_type_cast
                     || closure_already_checked
                     || is_ambient_private;
                 if !skip_implicit_any {

@@ -636,6 +636,50 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is inside a JSDoc `@type` cast parenthesized expression.
+    ///
+    /// Walks up the parent chain looking for a `PARENTHESIZED_EXPRESSION` with a
+    /// leading `/** @type {...} */` JSDoc comment. This is used to suppress TS7006
+    /// for arrow/function parameters inside JSDoc type casts like:
+    ///   `/** @type {import("./foo").Bar} */({ doer: q => q })`
+    ///
+    /// Even if the import type can't be fully resolved, the explicit @type
+    /// annotation means the user intended to type the expression.
+    pub(crate) fn is_inside_jsdoc_type_cast(&self, idx: NodeIndex) -> bool {
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        let mut current = idx;
+        // Walk up at most 8 levels to find an enclosing JSDoc @type cast.
+        // Typical nesting: arrow -> (params) -> property -> obj_literal -> paren_expr
+        for _ in 0..8 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(jsdoc) = self.try_leading_jsdoc(comments, parent_node.pos, source_text)
+                {
+                    if jsdoc.contains("@type") {
+                        return true;
+                    }
+                }
+            }
+            current = parent;
+        }
+        false
+    }
+
     /// Check if a node has a `/** @override */` JSDoc annotation.
     pub(crate) fn has_jsdoc_override_tag(&self, idx: NodeIndex) -> bool {
         if !self.is_js_file() {
