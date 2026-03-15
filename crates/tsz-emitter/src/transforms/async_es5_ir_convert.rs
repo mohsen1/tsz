@@ -57,7 +57,12 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == SyntaxKind::Identifier as u16 => {
                 let text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx);
-                IRNode::Identifier(text.into())
+                // When capturing arguments, replace `arguments` with `arguments_1`
+                if self.state.captures_arguments && text == "arguments" {
+                    IRNode::Identifier("arguments_1".to_string().into())
+                } else {
+                    IRNode::Identifier(text.into())
+                }
             }
 
             k if k == syntax_kind_ext::CALL_EXPRESSION => {

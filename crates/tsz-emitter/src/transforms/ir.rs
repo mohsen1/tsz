@@ -325,6 +325,13 @@ pub enum IRNode {
     /// _a.label - the label property
     GeneratorLabel,
 
+    /// `if (condition) return [3 /*break*/, target_label];`
+    /// Used in async state machines for conditional branching.
+    IfBreak {
+        condition: Box<Self>,
+        target_label: u32,
+    },
+
     // =========================================================================
     // Private Field Helpers
     // =========================================================================
