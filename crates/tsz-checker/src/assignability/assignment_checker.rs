@@ -938,6 +938,11 @@ impl<'a> CheckerState<'a> {
             self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
+        // TS1186: Check for rest elements with initializers in destructuring assignments.
+        if is_destructuring {
+            self.check_rest_element_initializer(left_idx);
+        }
+
         // Check readonly separately — emitting TS2542/TS2540 does NOT prevent
         // the assignability check from running. TypeScript emits both readonly
         // errors AND type mismatch errors (e.g., TS2542 + TS2322).
@@ -1130,6 +1135,70 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     element_idx,
                     diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
+                    &[],
+                );
+            }
+        }
+    }
+
+    /// TS1186: A rest element cannot have an initializer.
+    ///
+    /// In assignment destructuring, `[...x = a] = b` is parsed as a spread of
+    /// the assignment expression `x = a`. TypeScript detects this and emits
+    /// TS1186 when the spread expression is a binary `=` assignment.
+    fn check_rest_element_initializer(&mut self, left_idx: NodeIndex) {
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+
+        let elements = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            self.ctx
+                .arena
+                .get_literal_expr(left_node)
+                .map(|lit| &lit.elements.nodes as &[NodeIndex])
+        } else if left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            self.ctx
+                .arena
+                .get_literal_expr(left_node)
+                .map(|lit| &lit.elements.nodes as &[NodeIndex])
+        } else {
+            None
+        };
+
+        let Some(elements) = elements else { return };
+        for &element_idx in elements {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            // Check spread elements and spread assignments
+            if element_node.kind != syntax_kind_ext::SPREAD_ELEMENT
+                && element_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                continue;
+            }
+            let spread_expr = self
+                .ctx
+                .arena
+                .get_spread(element_node)
+                .map(|s| s.expression)
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get_unary_expr_ex(element_node)
+                        .map(|u| u.expression)
+                });
+            let Some(spread_expr) = spread_expr else {
+                continue;
+            };
+            // If the spread expression is a binary assignment (x = a), emit TS1186
+            if let Some(spread_node) = self.ctx.arena.get(spread_expr)
+                && spread_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(spread_node)
+                && bin.operator_token == SyntaxKind::EqualsToken as u16
+            {
+                self.error_at_node_msg(
+                    element_idx,
+                    diagnostic_codes::A_REST_ELEMENT_CANNOT_HAVE_AN_INITIALIZER,
                     &[],
                 );
             }

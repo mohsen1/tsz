@@ -284,6 +284,13 @@ impl TsProgram {
             None => return Vec::new(),
         };
 
+        // Build a map of file_name -> source_text for byte→UTF-16 conversion
+        let source_map: std::collections::HashMap<&str, &str> = self
+            .files
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect();
+
         let mut diagnostics: Vec<serde_json::Value> = Vec::new();
 
         for bound_file in &merged.files {
@@ -294,11 +301,23 @@ impl TsProgram {
                 continue;
             }
 
+            let source_text = source_map.get(bound_file.file_name.as_str()).copied();
+
             for diag in &bound_file.parse_diagnostics {
+                // Convert byte offsets to UTF-16 offsets for JS/Monaco compatibility
+                let (start, length) = if let Some(src) = source_text {
+                    (
+                        Self::byte_offset_to_utf16(src, diag.start),
+                        Self::byte_length_to_utf16(src, diag.start, diag.length),
+                    )
+                } else {
+                    (diag.start, diag.length)
+                };
+
                 diagnostics.push(serde_json::json!({
                     "file": bound_file.file_name,
-                    "start": diag.start,
-                    "length": diag.length,
+                    "start": start,
+                    "length": length,
                     "messageText": diag.message,
                     "category": 1, // Error
                     "code": diag.code,
@@ -309,7 +328,33 @@ impl TsProgram {
         diagnostics
     }
 
-    /// Collect semantic diagnostics as structured values
+    /// Convert a byte offset in `source` to a UTF-16 code unit offset.
+    ///
+    /// Rust strings are UTF-8, but JavaScript/Monaco use UTF-16 offsets.
+    /// For ASCII-only text these are identical, but multi-byte UTF-8 characters
+    /// (em dashes, emoji, CJK, etc.) cause the byte offset to diverge from
+    /// the character offset that JS expects.
+    pub(crate) fn byte_offset_to_utf16(source: &str, byte_offset: u32) -> u32 {
+        let byte_off = byte_offset as usize;
+        if byte_off > source.len() {
+            return byte_offset;
+        }
+        let prefix = &source[..byte_off];
+        // Count UTF-16 code units: BMP chars = 1, supplementary = 2
+        prefix.chars().map(|c| c.len_utf16() as u32).sum()
+    }
+
+    /// Convert a byte length starting at `byte_start` to UTF-16 code unit length.
+    pub(crate) fn byte_length_to_utf16(source: &str, byte_start: u32, byte_length: u32) -> u32 {
+        let start = byte_start as usize;
+        let end = (byte_start + byte_length) as usize;
+        if end > source.len() || start > source.len() {
+            return byte_length;
+        }
+        let span = &source[start..end];
+        span.chars().map(|c| c.len_utf16() as u32).sum()
+    }
+
     fn collect_semantic_diagnostics(&mut self, file_name: Option<&str>) -> Vec<serde_json::Value> {
         self.ensure_compiled();
 
@@ -321,6 +366,13 @@ impl TsProgram {
         let checker_options = self.options.to_checker_options();
         let check_result = check_files_parallel(merged, &checker_options, &self.lib_files);
 
+        // Build a map of file_name -> source_text for byte→UTF-16 conversion
+        let source_map: std::collections::HashMap<&str, &str> = self
+            .files
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect();
+
         let mut diagnostics: Vec<serde_json::Value> = Vec::new();
 
         for file_result in &check_result.file_results {
@@ -331,11 +383,23 @@ impl TsProgram {
                 continue;
             }
 
+            let source_text = source_map.get(file_result.file_name.as_str()).copied();
+
             for diag in &file_result.diagnostics {
+                // Convert byte offsets to UTF-16 offsets for JS/Monaco compatibility
+                let (start, length) = if let Some(src) = source_text {
+                    (
+                        Self::byte_offset_to_utf16(src, diag.start),
+                        Self::byte_length_to_utf16(src, diag.start, diag.length),
+                    )
+                } else {
+                    (diag.start, diag.length)
+                };
+
                 diagnostics.push(serde_json::json!({
                     "file": file_result.file_name,
-                    "start": diag.start,
-                    "length": diag.length,
+                    "start": start,
+                    "length": length,
                     "messageText": diag.message_text,
                     "category": match diag.category {
                         DiagnosticCategory::Error => 1,
