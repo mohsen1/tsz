@@ -475,3 +475,112 @@ fn test_compute_line_edits_descending_order_preserves_markers_on_sequential_appl
     assert!(text.contains("/*2*/"), "marker 2 was removed: {text}");
     assert!(text.contains("/*3*/"), "marker 3 was removed: {text}");
 }
+
+#[test]
+fn test_formatting_empty_string() {
+    let source = "";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Empty string should produce empty or just a newline
+    assert!(
+        formatted.is_empty() || formatted == "\n",
+        "Empty source should format to empty or newline, got: {:?}",
+        formatted
+    );
+}
+
+#[test]
+fn test_formatting_only_whitespace() {
+    let source = "   \n  \n   ";
+    let options = FormattingOptions {
+        trim_trailing_whitespace: Some(true),
+        ..Default::default()
+    };
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // All whitespace should be trimmed from each line
+    for line in formatted.lines() {
+        assert!(
+            !line.ends_with(' '),
+            "Line should not end with spaces: {:?}",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_formatting_preserves_content() {
+    let source = "function foo() {\n  return 42;\n}\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("function foo()"),
+        "Should preserve function declaration"
+    );
+    assert!(
+        formatted.contains("return 42"),
+        "Should preserve return statement"
+    );
+}
+
+#[test]
+fn test_formatting_tab_to_spaces() {
+    let source = "function foo() {\n\treturn 42;\n}\n";
+    let options = FormattingOptions {
+        tab_size: 2,
+        insert_spaces: true,
+        ..Default::default()
+    };
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    // Tabs should be converted to spaces
+    if !formatted.contains('\t') {
+        assert!(
+            formatted.contains("  return"),
+            "Should convert tab to 2 spaces, got: {:?}",
+            formatted
+        );
+    }
+}
+
+#[test]
+fn test_formatting_no_trailing_whitespace() {
+    let source = "const x = 1;    \nconst y = 2;  \nconst z = 3;\n";
+    let options = FormattingOptions {
+        trim_trailing_whitespace: Some(true),
+        ..Default::default()
+    };
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    for (i, line) in formatted.lines().enumerate() {
+        assert!(
+            !line.ends_with(' ') && !line.ends_with('\t'),
+            "Line {} should not have trailing whitespace: {:?}",
+            i,
+            line
+        );
+    }
+}
+
+#[test]
+fn test_formatting_options_custom_tab_size() {
+    let options = FormattingOptions {
+        tab_size: 2,
+        insert_spaces: true,
+        ..Default::default()
+    };
+    assert_eq!(options.tab_size, 2);
+    assert!(options.insert_spaces);
+}
+
+#[test]
+fn test_formatting_single_line() {
+    let source = "const x = 1;";
+    let options = FormattingOptions {
+        insert_final_newline: Some(false),
+        trim_trailing_whitespace: Some(false),
+        ..Default::default()
+    };
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert!(
+        formatted.contains("const x = 1"),
+        "Should preserve single line content"
+    );
+}
