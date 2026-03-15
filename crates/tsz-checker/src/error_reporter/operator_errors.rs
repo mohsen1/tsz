@@ -530,10 +530,10 @@ impl<'a> CheckerState<'a> {
     /// tsc displays enum names (e.g., `'E'`) rather than their structural base
     /// type (`'number'`). We must try enum member widening BEFORE
     /// `get_base_type_for_comparison`, because the latter unwraps
-    /// `TypeData::Enum` to its member union (losing the enum identity).
+    /// enum types to their member union (losing the enum identity).
     fn widen_type_for_operator_display(&mut self, type_id: TypeId) -> TypeId {
         // 1. Try widening enum members to their parent enum.
-        //    Both parent enums (E) and members (E.A) are TypeData::Enum —
+        //    Both parent enums (E) and members (E.A) are enum types —
         //    widen_enum_member_type correctly handles both: members widen to
         //    parent, parent enums return unchanged.
         let widened = self.widen_enum_member_type(type_id);
@@ -543,10 +543,7 @@ impl<'a> CheckerState<'a> {
 
         // 2. If it's a parent Enum type (widen_enum_member_type returned it
         //    unchanged because it has no parent), keep for display.
-        if matches!(
-            self.ctx.types.lookup(type_id),
-            Some(tsz_solver::TypeData::Enum(_, _))
-        ) {
+        if tsz_solver::visitor::is_enum_type(self.ctx.types, type_id) {
             return type_id;
         }
 
