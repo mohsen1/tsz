@@ -394,6 +394,7 @@ impl<'a> InferenceContext<'a> {
             // sameMap(candidates, getWidenedLiteralType)). This ensures the tournament
             // operates on widened types (number, string) not literals (3, "").
             let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+            #[allow(clippy::redundant_clone)]
             let widened_candidates: Vec<TypeId> = if !preserve_literals
                 && !is_const
                 && !has_non_fresh

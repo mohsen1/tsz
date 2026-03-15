@@ -2630,11 +2630,10 @@ impl<'a> Printer<'a> {
         // For class declarations: use separate statements `ClassName.field = value;`
         if !static_field_inits.is_empty()
             && !class_name.is_empty()
-            && class_expr_static_temp.is_some()
+            && let Some(temp) = class_expr_static_temp.as_ref()
         {
             // Class expression comma-expression: `(_a = class C {}, _a.a = 1, _a)`
             // The `(_a = ` prefix was already emitted before the `class` keyword.
-            let temp = class_expr_static_temp.as_ref().unwrap();
             for (name_emit, init_idx, _member_pos, _leading_comments, _trailing_comments) in
                 &static_field_inits
             {

@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
                     let prev_context = self.ctx.contextual_type;
-                    let had_object_context = prev_context.is_some();
+                    let _had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type
                             .or(initializer_context_type)
@@ -251,12 +251,6 @@ impl<'a> CheckerState<'a> {
                         declared_type
                     } else {
                         // Apply bidirectional type inference - use contextual type to narrow the value type
-                        let value_type = tsz_solver::apply_contextual_type(
-                            self.ctx.types,
-                            value_type,
-                            property_context_type,
-                        );
-
                         // tsc does NOT widen literal types at object literal
                         // construction time — it preserves the literal type in
                         // the "fresh" object type. Widening happens later at the
@@ -266,7 +260,11 @@ impl<'a> CheckerState<'a> {
                         // - Accurate error messages (`"frizzlebizzle"` not `string`)
                         // - Generic inference (T inferred as `{ x: "hello" }`)
                         // - Excess property checks against discriminated unions
-                        value_type
+                        tsz_solver::apply_contextual_type(
+                            self.ctx.types,
+                            value_type,
+                            property_context_type,
+                        )
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
@@ -472,7 +470,7 @@ impl<'a> CheckerState<'a> {
 
                     // Set contextual type for shorthand property value
                     let prev_context = self.ctx.contextual_type;
-                    let had_object_context = prev_context.is_some();
+                    let _had_object_context = prev_context.is_some();
                     self.ctx.contextual_type = self.contextual_type_option_for_expression(
                         jsdoc_declared_type.or(property_context_type),
                     );
@@ -633,15 +631,13 @@ impl<'a> CheckerState<'a> {
                         declared_type
                     } else {
                         // Apply bidirectional type inference - use contextual type to narrow the value type
-                        let value_type = tsz_solver::apply_contextual_type(
+                        // Literal types preserved at construction time — widening
+                        // happens at variable binding (same rationale as named properties).
+                        tsz_solver::apply_contextual_type(
                             self.ctx.types,
                             value_type,
                             property_context_type,
-                        );
-
-                        // Literal types preserved at construction time — widening
-                        // happens at variable binding (same rationale as named properties).
-                        value_type
+                        )
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.

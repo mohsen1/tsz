@@ -1490,19 +1490,17 @@ impl<'a> LoweringPass<'a> {
         let trimmed = scan;
 
         // Check for `export default` pattern
-        if trimmed.ends_with("default") {
-            let prefix = trimmed[..trimmed.len() - 7].trim_end();
-            if prefix.ends_with("export") {
-                return Some("default".to_string());
-            }
+        if let Some(prefix) = trimmed.strip_suffix("default")
+            && prefix.trim_end().ends_with("export")
+        {
+            return Some("default".to_string());
         }
 
         // Check for `export =` pattern → empty name
-        if trimmed.ends_with('=') {
-            let prefix = trimmed[..trimmed.len() - 1].trim_end();
-            if prefix.ends_with("export") {
-                return Some(String::new());
-            }
+        if let Some(prefix) = trimmed.strip_suffix('=')
+            && prefix.trim_end().ends_with("export")
+        {
+            return Some(String::new());
         }
 
         // Check for assignment patterns: `NAME =`, `NAME ||=`, `NAME &&=`, `NAME ??=`

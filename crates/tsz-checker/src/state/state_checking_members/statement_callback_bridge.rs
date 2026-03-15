@@ -1359,14 +1359,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // case expressions. When a case expression is an object literal, tsc checks
         // for excess properties against the switch type and emits TS2353 instead of
         // TS2678. If excess property errors are emitted, skip the comparability check.
-        if let Some(case_node) = self.ctx.arena.get(case_expr) {
-            if case_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                let diag_count_before = self.ctx.diagnostics.len();
-                self.check_object_literal_excess_properties(case_type, switch_type, case_expr);
-                if self.ctx.diagnostics.len() > diag_count_before {
-                    // Excess property errors were emitted (TS2353); skip TS2678.
-                    return;
-                }
+        if let Some(case_node) = self.ctx.arena.get(case_expr)
+            && case_node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            let diag_count_before = self.ctx.diagnostics.len();
+            self.check_object_literal_excess_properties(case_type, switch_type, case_expr);
+            if self.ctx.diagnostics.len() > diag_count_before {
+                // Excess property errors were emitted (TS2353); skip TS2678.
+                return;
             }
         }
 
