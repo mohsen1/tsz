@@ -1313,11 +1313,20 @@ impl<'a> CheckerState<'a> {
                         false,
                     ) || self.ctx.circular_type_aliases.contains(&sym_id)
                         || (self.is_simple_type_reference(type_alias.type_node)
-                            && self.is_cross_file_circular_alias(sym_id, alias_type)));
+                            && self.is_cross_file_circular_alias(sym_id, alias_type))
+                        || (params.is_empty()
+                            && self.is_non_generic_mapped_type_circular(
+                                sym_id,
+                                type_alias.type_node,
+                            )));
                 if is_circular {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
+
+                    // Mark this alias as circular so downstream checks (TS2313)
+                    // can detect constraints referencing it.
+                    self.ctx.circular_type_aliases.insert(sym_id);
 
                     let name = escaped_name;
                     let message = format_message(

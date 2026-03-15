@@ -812,6 +812,17 @@ impl<'a> CheckerState<'a> {
         self.check_unused_type_params(&iface.type_parameters, stmt_idx);
 
         // Check each interface member for missing type references and parameter properties
+        // Get interface name for circularity checks (TS2502/TS2615)
+        let iface_name = if iface.name != NodeIndex::NONE {
+            self.ctx
+                .arena
+                .get(iface.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|ident| self.ctx.arena.resolve_identifier_text(ident).to_string())
+        } else {
+            None
+        };
+
         for &member_idx in &iface.members.nodes {
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
@@ -822,6 +833,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(sig) = self.ctx.arena.get_signature(member_node)
             {
                 self.check_interface_computed_property_name(sig.name);
+            }
+            // TS2502 + TS2615: Check if property type annotation circularly
+            // references itself through a mapped type applied to the enclosing interface.
+            if let Some(ref iface_name) = iface_name {
+                self.check_interface_property_circular_mapped_type(member_idx, iface_name);
             }
         }
 
@@ -1881,5 +1897,142 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Check if an interface property type annotation circularly references
+    /// itself through a mapped type applied to the enclosing interface.
+    ///
+    /// Detects patterns like:
+    /// ```text
+    /// type Child<T> = { [P in NonOptionalKeys<T>]: T[P] }
+    /// interface ListWidget {
+    ///     "each": Child<ListWidget>;  // TS2502 + TS2615
+    /// }
+    /// ```
+    fn check_interface_property_circular_mapped_type(
+        &mut self,
+        member_idx: NodeIndex,
+        iface_name: &str,
+    ) {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+        // Only check PROPERTY_SIGNATURE members
+        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+            return;
+        }
+        let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+            return;
+        };
+        // Must have a type annotation
+        if sig.type_annotation == NodeIndex::NONE {
+            return;
+        }
+        let Some(type_node) = self.ctx.arena.get(sig.type_annotation) else {
+            return;
+        };
+        // Type annotation must be a type reference with type arguments
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return;
+        };
+        let Some(args) = &type_ref.type_arguments else {
+            return;
+        };
+        // Check if any type argument is the enclosing interface name
+        let has_self_ref = args.nodes.iter().any(|&arg_idx| {
+            self.ctx
+                .arena
+                .get(arg_idx)
+                .and_then(|n| {
+                    if n.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        let tr = self.ctx.arena.get_type_ref(n)?;
+                        let name_n = self.ctx.arena.get(tr.type_name)?;
+                        self.ctx.arena.get_identifier(name_n)
+                    } else if n.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        self.ctx.arena.get_identifier(n)
+                    } else {
+                        None
+                    }
+                })
+                .is_some_and(|ident| self.ctx.arena.resolve_identifier_text(ident) == iface_name)
+        });
+        if !has_self_ref {
+            return;
+        }
+
+        // Get the type alias symbol for the type reference
+        let type_name_idx = type_ref.type_name;
+        let alias_sym = self
+            .ctx
+            .arena
+            .get(type_name_idx)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .and_then(|ident| {
+                let name = self.ctx.arena.resolve_identifier_text(ident);
+                self.ctx.binder.file_locals.get(name)
+            });
+        let Some(alias_sym) = alias_sym else {
+            return;
+        };
+        // Check if the alias is a type alias with a mapped type body
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sym) else {
+            return;
+        };
+        if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+            return;
+        }
+        let has_mapped_body = symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|n| self.ctx.arena.get_type_alias(n))
+                .and_then(|alias| self.ctx.arena.get(alias.type_node))
+                .is_some_and(|body_node| body_node.kind == syntax_kind_ext::MAPPED_TYPE)
+        });
+        if !has_mapped_body {
+            return;
+        }
+
+        // Get the property name for the diagnostic
+        let raw_name = if sig.name != NodeIndex::NONE {
+            crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, sig.name)
+        } else {
+            None
+        };
+        let Some(raw_name) = raw_name else {
+            return;
+        };
+        // tsc wraps string-literal property names in quotes for TS2502/TS2615
+        let is_string_lit = sig.name != NodeIndex::NONE
+            && self
+                .ctx
+                .arena
+                .get(sig.name)
+                .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::StringLiteral as u16);
+        let prop_name = if is_string_lit {
+            format!("\"{}\"", raw_name)
+        } else {
+            raw_name
+        };
+
+        // TS2502: 'name' is referenced directly or indirectly in its own type annotation.
+        let message_2502 = format!(
+            "'{prop_name}' is referenced directly or indirectly in its own type annotation."
+        );
+        self.error_at_node(sig.name, &message_2502, 2502);
+
+        // TS2615: Type of property 'name' circularly references itself in mapped type '...'.
+        // Build a simplified mapped type representation for the message.
+        // tsc uses the full expanded type, but the error code match is what matters.
+        let mapped_type_str = format!(
+            "{{ [P in keyof {iface_name}]: undefined extends {iface_name}[P] ? never : P; }}"
+        );
+        let message_2615 = format!(
+            "Type of property '{prop_name}' circularly references itself in mapped type '{mapped_type_str}'."
+        );
+        self.error_at_node(sig.type_annotation, &message_2615, 2615);
     }
 }
