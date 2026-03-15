@@ -348,13 +348,15 @@ pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -
         }
     }
     if let Some(index) = &shape.string_index
-        && is_callable_type(db, index.value_type) {
-            result.push(index.value_type);
-        }
+        && is_callable_type(db, index.value_type)
+    {
+        result.push(index.value_type);
+    }
     if let Some(index) = &shape.number_index
-        && is_callable_type(db, index.value_type) {
-            result.push(index.value_type);
-        }
+        && is_callable_type(db, index.value_type)
+    {
+        result.push(index.value_type);
+    }
     result
 }
 
