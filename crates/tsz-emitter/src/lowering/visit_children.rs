@@ -307,8 +307,34 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class_data) = self.arena.get_class(node) {
+                    // TC39 (non-legacy) decorator detection for class expressions
+                    let target_supports_native_decorators =
+                        self.ctx.options.target == tsz_common::ScriptTarget::ESNext;
+                    let has_tc39_decorators = !self.ctx.options.legacy_decorators
+                        && !target_supports_native_decorators
+                        && self.class_has_decorators(class_data);
+
+                    if has_tc39_decorators {
+                        let needs_prop_key = self.class_has_computed_decorated_member(class_data);
+                        let needs_set_function_name =
+                            self.class_has_private_decorated_member(class_data);
+                        let helpers = self.transforms.helpers_mut();
+                        helpers.es_decorate = true;
+                        helpers.run_initializers = true;
+                        if needs_prop_key {
+                            helpers.prop_key = true;
+                        }
+                        if needs_set_function_name {
+                            helpers.set_function_name = true;
+                        }
+                    }
+
                     let needs_es5_transform = self.ctx.target_es5;
-                    if needs_es5_transform {
+                    if has_tc39_decorators && !needs_es5_transform {
+                        // TC39 decorator transform for class expressions
+                        self.transforms
+                            .insert(idx, TransformDirective::TC39Decorators { class_node: idx });
+                    } else if needs_es5_transform {
                         self.transforms.insert(
                             idx,
                             TransformDirective::ES5ClassExpression { class_node: idx },

@@ -864,6 +864,10 @@ impl<'a> Printer<'a> {
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
         }
+        // For class expressions, emit as expression (no `let C = ` wrapper)
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            emitter.set_expression_mode(true);
+        }
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
