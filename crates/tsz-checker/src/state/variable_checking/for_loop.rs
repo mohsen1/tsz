@@ -5,6 +5,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -522,5 +523,105 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
             );
         }
+    }
+
+    /// TS7022: Detect self-referencing for-of loop variables.
+    ///
+    /// When `for (var v of v)` is written with `noImplicitAny`, the iterable
+    /// expression `v` references the loop variable before it has a type,
+    /// creating a circular dependency.  The element type resolves to `any`,
+    /// and TS7022 should be emitted on the variable name.
+    ///
+    /// This also handles indirect circularity where the iterable expression
+    /// contains a reference to the declared variable (e.g., via class methods
+    /// that return `v`).
+    pub(crate) fn check_for_of_self_reference_circularity(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        expression_idx: NodeIndex,
+    ) {
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
+
+        let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
+            return;
+        };
+        let Some(list) = self.ctx.arena.get_variable(list_node) else {
+            return;
+        };
+
+        for &decl_idx in &list.declarations.nodes {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+
+            // Only applies when there's no type annotation
+            if var_decl.type_annotation.is_some() {
+                continue;
+            }
+
+            // Get the symbol for this declaration
+            let sym_id = self
+                .ctx
+                .binder
+                .get_node_symbol(decl_idx)
+                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name));
+            let Some(sym_id) = sym_id else {
+                continue;
+            };
+
+            // Check if the expression references this variable
+            if !self.expression_references_symbol(expression_idx, sym_id) {
+                continue;
+            }
+
+            // Get the variable name for the diagnostic
+            let var_name = self.get_identifier_text_from_idx(var_decl.name);
+
+            if let Some(name) = var_name {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    var_decl.name,
+                    diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                    &[&name],
+                );
+            }
+        }
+    }
+
+    /// Check if an expression AST subtree contains a reference to the given symbol.
+    fn expression_references_symbol(
+        &self,
+        node_idx: NodeIndex,
+        target_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check if this node is an identifier referencing the target symbol
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let ref_sym = self
+                .ctx
+                .binder
+                .get_node_symbol(node_idx)
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx));
+            if ref_sym == Some(target_sym) {
+                return true;
+            }
+        }
+
+        // Recurse into children
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            if self.expression_references_symbol(child_idx, target_sym) {
+                return true;
+            }
+        }
+
+        false
     }
 }

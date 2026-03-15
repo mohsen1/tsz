@@ -1292,6 +1292,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_for_in_expression_destructuring(self, initializer);
     }
 
+    fn check_for_of_self_reference_circularity(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        expression_idx: NodeIndex,
+    ) {
+        CheckerState::check_for_of_self_reference_circularity(self, decl_list_idx, expression_idx);
+    }
+
     fn check_statement(&mut self, stmt_idx: NodeIndex) {
         // This calls back to the main check_statement which will delegate to StatementChecker
         CheckerState::check_statement(self, stmt_idx);
