@@ -1332,6 +1332,13 @@ impl<'a> ES5ClassTransformer<'a> {
             body.push(super_call);
         }
 
+        // Emit destructuring prologue for binding-pattern parameters
+        {
+            let ir_params = self.extract_parameters(params);
+            let prologue = self.generate_destructuring_prologue(params, &ir_params);
+            body.extend(prologue);
+        }
+
         // Emit parameter properties
         self.emit_parameter_properties_ir(body, params, true);
 
@@ -1384,6 +1391,13 @@ impl<'a> ES5ClassTransformer<'a> {
         if needs_this_capture {
             // Emit: var _this = this;
             body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+        }
+
+        // Emit destructuring prologue for binding-pattern parameters
+        {
+            let ir_params = self.extract_parameters(params);
+            let prologue = self.generate_destructuring_prologue(params, &ir_params);
+            body.extend(prologue);
         }
 
         // Emit private field initializations
