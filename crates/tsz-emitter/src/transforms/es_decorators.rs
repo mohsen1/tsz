@@ -97,8 +97,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let has_any_instance = decorated_members.iter().any(|m| !m.is_static);
         let has_any_static = decorated_members.iter().any(|m| m.is_static);
 
+        let has_class_decorators = !class_decorators.is_empty();
+
         // Compute temp var allocation.
-        // At ES2022+, no class alias is needed (use `this` in static blocks).
+        // For IIFE mode (ES2015), always need a class alias (_a).
+        // For static block mode (ES2022+) with class decorators, we use `var C = class {}`
+        // and _classThis instead of a temp var.
         let mut temp_counter: u32 = 0;
         let class_alias = if self.use_static_blocks {
             String::new()
@@ -176,15 +180,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         }
 
-        // The ctor_ref is `this` for static blocks, `_a` for IIFE
+        // The ctor_ref determines what goes in Object.defineProperty/runInitializers:
+        // - ES2022 with class decorators: `_classThis` (captured via static { _classThis = this; })
+        // - ES2022 without class decorators: `this`
+        // - ES2015 (IIFE): the class alias `_a`
         let ctor_ref = if self.use_static_blocks {
-            "this".to_string()
+            if has_class_decorators {
+                "_classThis".to_string()
+            } else {
+                "this".to_string()
+            }
         } else {
             class_alias.clone()
         };
 
         // --- Class expression ---
-        if self.use_static_blocks {
+        if self.use_static_blocks && has_class_decorators {
+            // With class decorators: `var C = class {` (anonymous class assigned to var)
+            out.push_str(&format!("{i1}var {class_name} = class"));
+        } else if self.use_static_blocks {
             out.push_str(&format!("{i1}return class {class_name}"));
         } else {
             out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
@@ -195,7 +209,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         out.push_str(" {\n");
 
         if self.use_static_blocks {
-            // ES2022: emit static block with decorator application FIRST
+            // ES2022: with class decorators, emit _classThis capture block first
+            if has_class_decorators {
+                out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
+            }
+            // ES2022: emit static block with decorator application
             out.push_str(&format!("{i2}static {{\n"));
             self.emit_decorator_application(
                 &decorated_members,
@@ -236,8 +254,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         );
 
         if self.use_static_blocks {
-            // ES2022: close class with semicolon (it's the return value)
+            // ES2022: close class body
             out.push_str(&format!("{i1}}};\n"));
+            if has_class_decorators {
+                // With class decorators: return C = _classThis after the class
+                out.push_str(&format!("{i1}return {class_name} = _classThis;\n"));
+            }
         } else {
             // ES2015: close class body, then IIFE for decorator application
             out.push_str(&format!("{i2}}},\n"));
@@ -326,6 +348,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 "{indent}__runInitializers({ctor_ref}, _staticExtraInitializers);\n"
             ));
         }
+
+        // Class extra initializers (when class decorators exist)
+        if !class_decorators.is_empty() {
+            out.push_str(&format!(
+                "{indent}__runInitializers({ctor_ref}, _classExtraInitializers);\n"
+            ));
+        }
     }
 
     /// Emit class body members.
@@ -399,16 +428,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .map(|(i, _)| i)
             .collect();
 
+        let class_close = self.find_class_close_brace(class_node);
         for &emit_i in &emittable {
             let (_, member_node) = all_members[emit_i];
             // Find next sibling in the full member list (not just emittable ones)
             let next_boundary = if emit_i + 1 < all_members.len() {
                 all_members[emit_i + 1].1.pos as usize
             } else {
-                // Last member: use class_node.end and scan backwards for `}`
-                self.find_class_close_brace(class_node)
+                // Last member: use class closing brace position
+                class_close
             };
-            let member_text = self.emit_member_bounded(member_node, next_boundary);
+            let member_text = self.emit_member_bounded(member_node, next_boundary.min(class_close));
             out.push_str(&format!("{indent}{member_text}\n"));
         }
 
@@ -417,28 +447,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{indent}[({sink_expr})]() {{ }}\n"));
         }
 
-        // Emit constructor
-        out.push_str(&format!("{indent}constructor("));
-        if let Some(ctor) = self.get_constructor_info(class_data) {
-            out.push_str(&ctor.params);
-            out.push_str(") {\n");
-            for line in &ctor.body_lines {
-                out.push_str(&format!("{inner_indent}{}\n", line.trim()));
+        // Emit constructor only if source has one or we need instance initializers
+        let source_ctor = self.get_constructor_info(class_data);
+        if source_ctor.is_some() || has_any_instance {
+            out.push_str(&format!("{indent}constructor("));
+            if let Some(ctor) = source_ctor {
+                out.push_str(&ctor.params);
+                out.push_str(") {\n");
+                for line in &ctor.body_lines {
+                    out.push_str(&format!("{inner_indent}{}\n", line.trim()));
+                }
+                if has_any_instance {
+                    out.push_str(&format!(
+                        "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
+                    ));
+                }
+                out.push_str(&format!("{indent}}}\n"));
+            } else {
+                out.push_str(") {\n");
+                if has_any_instance {
+                    out.push_str(&format!(
+                        "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
+                    ));
+                }
+                out.push_str(&format!("{indent}}}\n"));
             }
-            if has_any_instance {
-                out.push_str(&format!(
-                    "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
-                ));
-            }
-            out.push_str(&format!("{indent}}}\n"));
-        } else {
-            out.push_str(") {\n");
-            if has_any_instance {
-                out.push_str(&format!(
-                    "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
-                ));
-            }
-            out.push_str(&format!("{indent}}}\n"));
         }
     }
 
@@ -472,11 +505,22 @@ impl<'a> TC39DecoratorEmitter<'a> {
         };
 
         let clean_start = self.find_member_clean_start(member_node);
-        // Use the minimum of member.end and next_boundary, then trim
+        // Use member.end as the primary boundary, clamped by next_boundary
         let raw_end = std::cmp::min(member_node.end as usize, next_boundary);
 
         if clean_start < source.len() && raw_end <= source.len() && clean_start < raw_end {
-            let text = source[clean_start..raw_end].trim();
+            let mut text = source[clean_start..raw_end].trim();
+            // Strip class closing brace that may leak into last member's text.
+            // The parser sets member.end to include trailing trivia up to the class `}`.
+            // Detect this by checking for a stray `}` after the member's own content.
+            if let Some(before_last_brace) = text.strip_suffix('}') {
+                let before_trimmed = before_last_brace.trim_end();
+                // If there's another `}` before, the last one is the class brace
+                if before_trimmed.ends_with('}') || before_trimmed.ends_with(';') {
+                    text = before_trimmed;
+                }
+            }
+            // Normalize empty method bodies: `{}` -> `{ }`
             if let Some(stripped) = text.strip_suffix("{}") {
                 format!("{stripped}{{ }}")
             } else {
@@ -809,7 +853,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             _ => "",
         };
 
-        let var_base = format!("_{kind_prefix}{prefix}{base_name}");
+        let var_base = format!("_{prefix}{kind_prefix}{base_name}");
 
         // For computed/string members, only increment counter on NEW member names.
         // Getter/setter pairs with the same name share the same suffix.
