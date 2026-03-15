@@ -921,3 +921,205 @@ fn test_symbol_index_special_chars_symbol() {
     assert_eq!(dollar.len(), 1);
     assert_eq!(underscore.len(), 1);
 }
+
+// =========================================================================
+// Additional coverage tests for untested API surface
+// =========================================================================
+
+#[test]
+fn test_all_definition_names_returns_all_names() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("alpha", make_location("a.ts", 0, 0, 5));
+    index.add_definition("beta", make_location("b.ts", 0, 0, 4));
+    index.add_definition("gamma", make_location("c.ts", 0, 0, 5));
+
+    let names: Vec<&str> = index.all_definition_names().collect();
+    assert_eq!(names.len(), 3);
+    assert!(names.contains(&"alpha"));
+    assert!(names.contains(&"beta"));
+    assert!(names.contains(&"gamma"));
+}
+
+#[test]
+fn test_all_definition_names_empty_index() {
+    let index = SymbolIndex::new();
+    let names: Vec<&str> = index.all_definition_names().collect();
+    assert!(names.is_empty());
+}
+
+#[test]
+fn test_all_definition_names_after_remove() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("keep", make_location("a.ts", 0, 0, 4));
+    index.add_definition("remove", make_location("b.ts", 0, 0, 6));
+
+    index.remove_file("b.ts");
+
+    let names: Vec<&str> = index.all_definition_names().collect();
+    assert_eq!(names.len(), 1);
+    assert!(names.contains(&"keep"));
+}
+
+#[test]
+fn test_stats_total_import_relationships() {
+    let mut index = SymbolIndex::new();
+    index.add_import(
+        "a.ts",
+        ImportInfo {
+            local_name: "x".to_string(),
+            source_module: "./mod1".to_string(),
+            exported_name: "x".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    index.add_import(
+        "b.ts",
+        ImportInfo {
+            local_name: "y".to_string(),
+            source_module: "./mod1".to_string(),
+            exported_name: "y".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    index.add_import(
+        "c.ts",
+        ImportInfo {
+            local_name: "z".to_string(),
+            source_module: "./mod2".to_string(),
+            exported_name: "z".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+
+    let stats = index.stats();
+    // mod1 has 2 importers (a.ts, b.ts), mod2 has 1 (c.ts) = 3 total
+    assert_eq!(stats.total_import_relationships, 3);
+    assert_eq!(stats.files_with_imports, 3);
+}
+
+#[test]
+fn test_has_file_with_references() {
+    let mut index = SymbolIndex::new();
+    index.add_reference("ref.ts", "sym", make_location("ref.ts", 0, 0, 3));
+
+    assert!(index.has_file("ref.ts"));
+    assert!(!index.has_file("other.ts"));
+}
+
+#[test]
+fn test_get_exports_nonexistent_file() {
+    let index = SymbolIndex::new();
+    let exports = index.get_exports("nonexistent.ts");
+    assert!(exports.is_empty());
+}
+
+#[test]
+fn test_get_imports_nonexistent_file() {
+    let index = SymbolIndex::new();
+    let imports = index.get_imports("nonexistent.ts");
+    assert!(imports.is_empty());
+}
+
+#[test]
+fn test_get_importing_files_nonexistent_module() {
+    let index = SymbolIndex::new();
+    let importers = index.get_importing_files("./nonexistent");
+    assert!(importers.is_empty());
+}
+
+#[test]
+fn test_remove_file_twice_does_not_panic() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("foo", make_location("a.ts", 0, 0, 3));
+    index.remove_file("a.ts");
+    index.remove_file("a.ts"); // second remove should be safe
+    let defs = index.find_definitions("foo");
+    assert!(defs.is_empty());
+}
+
+#[test]
+fn test_multiple_files_same_export_name() {
+    let mut index = SymbolIndex::new();
+    index.add_export("a.ts", "default");
+    index.add_export("b.ts", "default");
+
+    let a_exports = index.get_exports("a.ts");
+    let b_exports = index.get_exports("b.ts");
+    assert!(a_exports.contains(&"default".to_string()));
+    assert!(b_exports.contains(&"default".to_string()));
+}
+
+#[test]
+fn test_import_kind_variants() {
+    let mut index = SymbolIndex::new();
+
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "React".to_string(),
+            source_module: "react".to_string(),
+            exported_name: "default".to_string(),
+            kind: ImportKind::Default,
+        },
+    );
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "ns".to_string(),
+            source_module: "./helpers".to_string(),
+            exported_name: "*".to_string(),
+            kind: ImportKind::Namespace,
+        },
+    );
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "useState".to_string(),
+            source_module: "react".to_string(),
+            exported_name: "useState".to_string(),
+            kind: ImportKind::Named,
+        },
+    );
+    index.add_import(
+        "app.ts",
+        ImportInfo {
+            local_name: "".to_string(),
+            source_module: "./polyfill".to_string(),
+            exported_name: "".to_string(),
+            kind: ImportKind::SideEffect,
+        },
+    );
+
+    let imports = index.get_imports("app.ts");
+    assert_eq!(imports.len(), 4);
+
+    // Verify each kind is stored correctly
+    assert!(imports.iter().any(|i| i.kind == ImportKind::Default));
+    assert!(imports.iter().any(|i| i.kind == ImportKind::Namespace));
+    assert!(imports.iter().any(|i| i.kind == ImportKind::Named));
+    assert!(imports.iter().any(|i| i.kind == ImportKind::SideEffect));
+}
+
+#[test]
+fn test_symbol_flags_to_kind_accessor() {
+    assert_eq!(
+        symbol_flags_to_kind(symbol_flags::ACCESSOR),
+        SymbolKind::Property
+    );
+}
+
+#[test]
+fn test_symbol_flags_to_kind_get_accessor() {
+    assert_eq!(
+        symbol_flags_to_kind(symbol_flags::GET_ACCESSOR),
+        SymbolKind::Property
+    );
+}
+
+#[test]
+fn test_symbol_flags_to_kind_type_parameter() {
+    assert_eq!(
+        symbol_flags_to_kind(symbol_flags::TYPE_PARAMETER),
+        SymbolKind::TypeParameter
+    );
+}

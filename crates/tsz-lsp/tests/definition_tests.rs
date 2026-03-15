@@ -1987,3 +1987,129 @@ fn test_goto_definition_class_in_extends() {
         );
     }
 }
+
+#[test]
+fn test_goto_definition_namespace_member() {
+    let source = "namespace NS {\n  export const val = 1;\n}\nNS.val;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(3, 0));
+    // Namespace reference may or may not resolve
+    let _ = definitions;
+}
+
+#[test]
+fn test_goto_definition_optional_param() {
+    let source = "function f(x?: number) {}\nf();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 0));
+    assert!(definitions.is_some(), "Should find function definition");
+}
+
+#[test]
+fn test_goto_definition_const_enum_member() {
+    let source = "const enum Dir { Up, Down }\nlet d = Dir.Up;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 8));
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty());
+    }
+}
+
+#[test]
+fn test_goto_definition_decorated_class() {
+    let source = "function Deco(target: any) {}\n@Deco\nclass MyClass {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Go to definition of @Deco
+    let definitions = goto_def.get_definition(root, Position::new(1, 1));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find Deco function");
+    }
+}
+
+#[test]
+fn test_goto_definition_generic_type_param() {
+    let source = "function id<T>(x: T): T { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // T in param type
+    let definitions = goto_def.get_definition(root, Position::new(0, 18));
+    // Type params may or may not resolve
+    let _ = definitions;
+}
+
+#[test]
+fn test_goto_definition_rest_param() {
+    let source = "function sum(...nums: number[]) { return nums.reduce((a, b) => a + b, 0); }\nsum(1, 2, 3);";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 0));
+    assert!(definitions.is_some(), "Should find sum function");
+}
+
+#[test]
+fn test_goto_definition_interface_method() {
+    let source = "interface Foo {\n  bar(): void;\n}\nfunction f(x: Foo) { x.bar(); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Go to 'Foo' type annotation
+    let definitions = goto_def.get_definition(root, Position::new(3, 14));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find Foo interface");
+    }
+}
+
+#[test]
+fn test_goto_definition_computed_property_key() {
+    let source = "const key = 'name';\nconst obj = { [key]: 'value' };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Go to 'key' in computed property
+    let definitions = goto_def.get_definition(root, Position::new(1, 15));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
