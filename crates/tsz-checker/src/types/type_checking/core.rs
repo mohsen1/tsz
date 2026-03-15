@@ -830,6 +830,23 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // TS2700: Rest types may only be created from object types.
+                // For object binding patterns with rest, the source type must
+                // not be exclusively null/undefined (e.g., `null | undefined`).
+                if _pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    && pattern_type != TypeId::ANY
+                    && pattern_type != TypeId::ERROR
+                {
+                    let (non_nullish, _) = self.split_nullish_type(pattern_type);
+                    if non_nullish.is_none() {
+                        self.error_at_node_msg(
+                            pattern_idx,
+                            diagnostic_codes::REST_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
+                            &[],
+                        );
+                    }
+                }
+
                 // TS2462: A rest element must be last in a destructuring pattern.
                 // Applies to both array and object binding patterns.
                 if i < elements_len - 1 {
