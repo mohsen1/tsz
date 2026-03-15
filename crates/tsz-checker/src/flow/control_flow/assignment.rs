@@ -1142,10 +1142,18 @@ impl<'a> FlowAnalyzer<'a> {
 
         let db = self.interner.as_type_database();
         let non_nullable = tsz_solver::remove_nullish(db, expr_type);
+
+        // For concrete (non-generic) types, always return `string`.
+        // Computing `keyof ConcreteType` creates a KeyOf node that may not
+        // fully evaluate, causing `is_keyof_type` to return true and leak
+        // `keyof T & string` into the variable's flow type. This prevents
+        // TS7053 from firing when indexing with for-in variables.
+        if !query::contains_type_parameters(db, non_nullable) {
+            return TypeId::STRING;
+        }
+
         let keyof_type = self.interner.factory().keyof(non_nullable);
 
-        // If keyof evaluates to a type parameter or remains an unevaluated keyof,
-        // return the intersection with string (= Extract<keyof T, string>).
         if query::is_type_parameter_like(db, keyof_type) || query::is_keyof_type(db, keyof_type) {
             self.interner
                 .factory()
