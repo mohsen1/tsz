@@ -1375,12 +1375,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2309: Check for export assignment with other exports
-        // Skip if already emitting TS1203 (ES module target) or TS2300 (duplicate)
-        // Also skip in `preserve` mode — it allows mixing CJS (`export =`) and ESM syntax
+        // tsc emits TS2309 alongside TS1203 (ES module target) — both fire together.
+        // Skip in `preserve` mode — it allows mixing CJS (`export =`) and ESM syntax.
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
-            && !emitted_ts1203
             && !is_preserve
         {
             self.error_at_node(
