@@ -31,8 +31,10 @@
 ## Highest-Impact Next Steps
 
 ### 1. TS2322↔TS2345 Diagnostic Elaboration (4 tests)
-**Status**: Investigated extensively. The issue is that for callback return type mismatches, we report TS2345 at the argument level while tsc reports TS2322 at the specific incompatible property inside the return expression. The inner `check_assignable_or_report` at `function_type.rs:1656` fires but gets overridden by the outer TS2345.
-**Difficulty**: High. Requires changing diagnostic priority/suppression in the call resolution path.
+**Status**: Root cause FOUND. The inner `check_assignable_or_report` at `function_type.rs:1653` DOES fire and emits TS2322 (confirmed with debug: `ok=false, diags_emitted=1`). But the TS2322 is then REMOVED by `prune_callback_body_diagnostics_since` in `call_checker.rs:88`. This function removes ALL diagnostics within callback body spans. The TS2322 is at the property position (e.g., `value: "string"`) which is inside the callback body, so it gets pruned. Then the outer call resolution emits TS2345.
+**Fix approach**: Modify `prune_callback_body_diagnostics_since` to KEEP TS2322 diagnostics inside callback bodies (they're return type mismatches that tsc reports). BUT: this alone doesn't work because for explicit type args, a DIFFERENT code path prunes the diagnostic. Need to find ALL pruning points.
+**Files**: `crates/tsz-checker/src/checkers/call_checker.rs` (line 88+, `prune_callback_body_diagnostics_since`), potentially other truncation points in the same file (lines 1573, 1639, 1675, 1767, 1796).
+**Difficulty**: Medium-High. Need to identify which truncation point removes the TS2322 for non-overload call paths.
 **Tests**: `circularResolvedSignature.ts`, `coAndContraVariantInferences6.ts`, `invariantGenericErrorElaboration.ts`, `intraExpressionInferences.ts`
 
 ### 2. TS2741↔TS2322 Swap (6 tests)
