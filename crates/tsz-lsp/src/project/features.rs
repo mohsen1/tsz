@@ -23,6 +23,26 @@ use tsz_common::position::{Location, Position, Range};
 use tsz_scanner::SyntaxKind;
 
 impl Project {
+    /// Go to type definition within a single file.
+    pub fn get_type_definition(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Option<Vec<Location>> {
+        let file = self.files.get(file_name)?;
+
+        use crate::navigation::type_definition::TypeDefinitionProvider;
+        let provider = TypeDefinitionProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+
+        provider.get_type_definition(file.root(), position)
+    }
+
     /// Go to definition within a single file.
     pub fn get_definition(&mut self, file_name: &str, position: Position) -> Option<Vec<Location>> {
         let start = Instant::now();
