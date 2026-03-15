@@ -256,6 +256,11 @@ impl CompletionsResult {
         self
     }
 
+    /// Alias for `expect_contains` for readability in tests.
+    pub fn expect_includes(&self, label: &str) -> &Self {
+        self.expect_contains(label)
+    }
+
     /// Assert a completion with the given label does NOT exist.
     pub fn expect_not_contains(&self, label: &str) -> &Self {
         let found = self.items.iter().any(|item| item.label == label);
@@ -335,6 +340,15 @@ pub struct DiagnosticsResult {
 }
 
 impl DiagnosticsResult {
+    /// Assert at least one diagnostic was found.
+    pub fn expect_found(&self) -> &Self {
+        assert!(
+            !self.diagnostics.is_empty(),
+            "Expected diagnostics, but found none"
+        );
+        self
+    }
+
     /// Assert no diagnostics.
     pub fn expect_none(&self) {
         assert!(
@@ -495,6 +509,20 @@ impl SignatureHelpResult {
         );
         self
     }
+
+    /// Assert the parameter count of the first (or active) signature.
+    pub fn expect_parameter_count(&self, n: usize) -> &Self {
+        self.expect_found();
+        let help = self.help.as_ref().unwrap();
+        let sig = &help.signatures[0];
+        assert_eq!(
+            sig.parameters.len(),
+            n,
+            "Expected {n} parameters, got {}",
+            sig.parameters.len()
+        );
+        self
+    }
 }
 
 /// Result of a folding ranges query, for fluent assertions.
@@ -518,6 +546,16 @@ impl FoldingRangesResult {
             self.ranges.len(),
             n,
             "Expected {n} folding ranges, got {}",
+            self.ranges.len()
+        );
+        self
+    }
+
+    /// Assert at least N folding ranges.
+    pub fn expect_min_count(&self, n: usize) -> &Self {
+        assert!(
+            self.ranges.len() >= n,
+            "Expected at least {n} folding ranges, got {}",
             self.ranges.len()
         );
         self
@@ -857,6 +895,16 @@ impl InlayHintsResult {
             self.hints.len(),
             n,
             "Expected {n} inlay hints, got {}",
+            self.hints.len()
+        );
+        self
+    }
+
+    /// Assert at least N inlay hints.
+    pub fn expect_min_count(&self, n: usize) -> &Self {
+        assert!(
+            self.hints.len() >= n,
+            "Expected at least {n} inlay hints, got {}",
             self.hints.len()
         );
         self
@@ -1304,6 +1352,16 @@ impl DocumentLinksResult {
             self.links.len(),
             n,
             "Expected {n} document links, got {}",
+            self.links.len()
+        );
+        self
+    }
+
+    /// Assert at least N document links.
+    pub fn expect_min_count(&self, n: usize) -> &Self {
+        assert!(
+            self.links.len() >= n,
+            "Expected at least {n} document links, got {}",
             self.links.len()
         );
         self
