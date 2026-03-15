@@ -1362,15 +1362,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 .unwrap_or_else(|| "undefined".to_string()),
         };
 
-        let is_simple_ident = matches!(member.name, MemberName::Identifier(_));
-        let prop_access = if is_simple_ident {
-            if let MemberName::Identifier(name) = &member.name {
-                format!("obj.{name}")
-            } else {
-                unreachable!()
-            }
-        } else {
-            format!("obj[{key_expr}]")
+        // Private fields use dot notation (obj.#field), same as regular identifiers
+        let prop_access = match &member.name {
+            MemberName::Identifier(name) | MemberName::Private(name) => format!("obj.{name}"),
+            _ => format!("obj[{key_expr}]"),
         };
 
         let has_in = format!("{key_expr} in obj");
