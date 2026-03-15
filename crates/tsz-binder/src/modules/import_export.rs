@@ -305,8 +305,13 @@ impl BinderState {
                 self.node_symbols
                     .insert(export.export_clause.0, default_sym_id);
 
-                // Also mark the underlying local symbol as exported if it exists
-                if let Some(name) = Self::get_identifier_name(arena, export.export_clause) {
+                // Also mark the underlying local symbol as exported if it exists.
+                // For `export default class Foo`, get_identifier_name returns None
+                // (ClassDeclaration is not an Identifier node), so we also try
+                // looking up the symbol via get_declaration_name.
+                let local_name = Self::get_identifier_name(arena, export.export_clause)
+                    .or_else(|| Self::get_declaration_name(arena, export.export_clause));
+                if let Some(name) = local_name {
                     if let Some(sym_id) = self
                         .current_scope
                         .get(name)
@@ -314,9 +319,16 @@ impl BinderState {
                         && let Some(sym) = self.symbols.get_mut(sym_id)
                     {
                         sym.is_exported = true;
+                        // Set EXPORT_VALUE on the local symbol when the declaration
+                        // itself has `export default` (e.g., `export default class Foo`).
+                        // This distinguishes it from `function f() {} export default f;`
+                        // where `f` is a local name re-exported via a separate statement.
+                        if let Some(clause_node) = arena.get(export.export_clause)
+                            && Self::is_declaration(clause_node.kind)
+                        {
+                            sym.flags |= symbol_flags::EXPORT_VALUE;
+                        }
                         // Only escalate is_type_only to true; never downgrade.
-                        // The import site (e.g. `import type C`) sets this flag,
-                        // and `export default C` must not clear it.
                         if export_type_only {
                             sym.is_type_only = true;
                         }
