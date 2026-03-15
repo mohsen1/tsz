@@ -542,11 +542,43 @@ impl<'a> ES5ClassTransformer<'a> {
         converter.convert_statement(idx)
     }
 
+    /// Convert an AST statement to IR in static context with class alias for `this` substitution
+    fn convert_statement_static_with_class_alias(
+        &self,
+        idx: NodeIndex,
+        class_alias: &str,
+    ) -> IRNode {
+        let mut converter = AstToIr::new(self.arena)
+            .with_super(self.has_extends)
+            .with_static(true)
+            .with_class_alias(Some(class_alias.to_string()));
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_statement(idx)
+    }
+
     /// Convert an AST expression to IR in static context
     fn convert_expression_static(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena)
             .with_super(self.has_extends)
             .with_static(true);
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_expression(idx)
+    }
+
+    /// Convert an AST expression to IR in static context with class alias for `this` substitution
+    fn convert_expression_static_with_class_alias(
+        &self,
+        idx: NodeIndex,
+        class_alias: &str,
+    ) -> IRNode {
+        let mut converter = AstToIr::new(self.arena)
+            .with_super(self.has_extends)
+            .with_static(true)
+            .with_class_alias(Some(class_alias.to_string()));
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
