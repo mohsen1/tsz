@@ -1307,6 +1307,31 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // ES5: Check if closures capture loop variables (let/const) —
+        // if so, emit the _loop_N IIFE pattern instead of a plain for-loop.
+        if self.ctx.target_es5 {
+            let init_vars = self.collect_for_initializer_let_const_vars(loop_stmt.initializer);
+            if !init_vars.is_empty() {
+                let body_info =
+                    super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
+                if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
+                    self.arena,
+                    loop_stmt.statement,
+                    &init_vars,
+                    &body_info.block_scoped_vars,
+                ) {
+                    self.emit_for_statement_with_capture(
+                        node,
+                        loop_stmt,
+                        &capture_info,
+                        &init_vars,
+                        &body_info,
+                    );
+                    return;
+                }
+            }
+        }
+
         // Pre-locate both `;` positions in the for-header by scanning from
         // the statement start to the body start.  The parser often includes the
         // `;` inside the preceding node's range, so per-child scans miss them.
