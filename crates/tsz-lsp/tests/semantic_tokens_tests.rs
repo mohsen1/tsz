@@ -1674,3 +1674,80 @@ fn test_semantic_tokens_multiple_namespaces_decl() {
         ns_tokens.len()
     );
 }
+
+#[test]
+fn test_semantic_tokens_async_function_fetchdata() {
+    let source = "async function fetchData() { return 42; }";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+    let func_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Function as u32)
+        .collect();
+    assert!(
+        !func_tokens.is_empty(),
+        "Should have function token for async function"
+    );
+}
+
+#[test]
+fn test_semantic_tokens_generator_function() {
+    let source = "function* gen() { yield 1; }";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+    let _ = decoded;
+}
+
+#[test]
+fn test_semantic_tokens_template_literal() {
+    let source = "const name = 'world';\nconst greeting = `hello ${name}`;";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+    let _ = decoded;
+}
+
+#[test]
+fn test_semantic_tokens_enum_member() {
+    let source = "enum Color { Red, Green, Blue }\nconst c = Color.Red;";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+    let enum_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Enum as u32)
+        .collect();
+    let _ = enum_tokens;
+}
+
+#[test]
+fn test_semantic_tokens_type_alias_id() {
+    let source = "type ID = string;\nconst x: ID = 'abc';";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+    let type_tokens: Vec<_> = decoded
+        .iter()
+        .filter(|t| t.3 == SemanticTokenType::Type as u32)
+        .collect();
+    let _ = type_tokens;
+}
+
+#[test]
+fn test_semantic_tokens_empty_source_no_output() {
+    let source = "";
+    let tokens = get_tokens(source);
+    assert!(tokens.is_empty(), "Empty source should produce no tokens");
+}
+
+#[test]
+fn test_semantic_tokens_comments_only() {
+    let source = "// comment\n/* block comment */";
+    let tokens = get_tokens(source);
+    let _ = tokens;
+}
+
+#[test]
+fn test_semantic_tokens_decorators() {
+    let source = "@sealed\nclass Decorated {}";
+    let tokens = get_tokens(source);
+    let decoded = decode_tokens(&tokens);
+    let _ = decoded;
+}
