@@ -459,7 +459,9 @@ impl BinderState {
                                             if spec_type_only && !orig_is_type_only {
                                                 let clone_id = {
                                                     let src =
-                                                        self.symbols.get(sym_id).cloned().unwrap();
+                                                        self.symbols.get(sym_id).cloned().expect(
+                                                            "symbol exists for resolved sym_id",
+                                                        );
                                                     self.symbols.alloc_from(&src)
                                                 };
                                                 if let Some(clone_sym) =
