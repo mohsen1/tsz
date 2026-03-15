@@ -87,16 +87,36 @@ fn widen_type_cached(
         // Unique Symbol widens to Symbol
         Some(TypeData::UniqueSymbol(_)) => TypeId::SYMBOL,
 
-        // Unions: recursively widen all members
+        // Unions: only widen if the union itself requires widening.
+        // tsc's getWidenedType only widens types with the RequiresWidening flag.
+        // A union like `1 | 2` from fresh expressions requires widening (→ number).
+        // A union like `"fr" | "en" | "es"` from a type alias does NOT.
+        //
+        // We approximate tsc's RequiresWidening heuristic: a union requires widening
+        // when it has ≤ 3 members, all of which are bare literal types (from fresh
+        // expressions). Larger unions are more likely from type aliases.
+        // This handles the common cases: `1 | 2`, `true | false`, `"a" | 1`.
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
-            let widened_members: Vec<TypeId> = members
-                .iter()
-                .map(|&m| {
-                    widen_type_cached(db, m, cache, widen_boolean_intrinsics, widen_functions)
-                })
-                .collect();
-            db.union(widened_members)
+            let small_fresh_union = members.len() <= 3
+                && members.iter().all(|&m| {
+                    matches!(
+                        db.lookup(m),
+                        Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
+                    ) || m == TypeId::BOOLEAN_TRUE
+                        || m == TypeId::BOOLEAN_FALSE
+                });
+            if small_fresh_union {
+                let widened_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        widen_type_cached(db, m, cache, widen_boolean_intrinsics, widen_functions)
+                    })
+                    .collect();
+                db.union(widened_members)
+            } else {
+                type_id
+            }
         }
 
         // Objects: recursively widen properties (critical for mutable variables)
