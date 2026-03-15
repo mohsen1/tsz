@@ -283,7 +283,24 @@ impl<'a> InferenceContext<'a> {
 
         let result = if !candidates.is_empty() {
             // Covariant candidates exist: use union/BCT (matches tsc's getInferredType)
-            self.resolve_from_candidates(&candidates, is_const, &upper_bounds, declared_constraint)
+            let covariant_result = self.resolve_from_candidates(
+                &candidates,
+                is_const,
+                &upper_bounds,
+                declared_constraint,
+            );
+            // Match tsc: if covariant result is uninformative (never or unknown) and
+            // there are contravariant candidates, prefer the contravariant result.
+            // This handles patterns like `mkList([], compareNumbers)` where `[]` gives
+            // T an uninformative candidate from the empty array, but `compareNumbers`
+            // gives T=number from the callback parameters.
+            if matches!(covariant_result, TypeId::NEVER | TypeId::UNKNOWN)
+                && !contra_candidates.is_empty()
+            {
+                self.resolve_from_contra_candidates(&contra_candidates)
+            } else {
+                covariant_result
+            }
         } else if !contra_candidates.is_empty() {
             // Only contravariant candidates: use intersection (matches tsc behavior).
             // In tsc, when only contraCandidates exist, getIntersectionType is used.
@@ -1305,7 +1322,18 @@ impl<'a> InferenceContext<'a> {
                 });
             }
             let result = if !candidates.is_empty() {
-                self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc)
+                let covariant_result =
+                    self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
+                // If covariant resolution yields never or unknown but we have contra-candidates,
+                // prefer the contra-candidates. This handles cases like f([], callback) where
+                // [] gives T=unknown/never covariant but the callback gives T=number contravariant.
+                if matches!(covariant_result, TypeId::NEVER | TypeId::UNKNOWN)
+                    && !info.contra_candidates.is_empty()
+                {
+                    self.resolve_from_contra_candidates(&info.contra_candidates)
+                } else {
+                    covariant_result
+                }
             } else if !info.contra_candidates.is_empty() {
                 self.resolve_from_contra_candidates(&info.contra_candidates)
             } else {

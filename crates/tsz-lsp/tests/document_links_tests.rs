@@ -498,3 +498,172 @@ export { y } from './y';
     assert_eq!(links[0].target.as_deref(), Some("./x"));
     assert_eq!(links[1].target.as_deref(), Some("./y"));
 }
+
+// =========================================================================
+// Additional tests to reach 65+
+// =========================================================================
+
+#[test]
+fn test_import_with_cts_extension() {
+    let source = r#"import { helper } from './helper.cts';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./helper.cts"));
+}
+
+#[test]
+fn test_import_with_cjs_extension() {
+    let source = r#"import { helper } from './helper.cjs';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./helper.cjs"));
+}
+
+#[test]
+fn test_import_with_tsx_extension() {
+    let source = r#"import App from './App.tsx';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./App.tsx"));
+}
+
+#[test]
+fn test_import_with_jsx_extension() {
+    let source = r#"import Component from './Component.jsx';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./Component.jsx"));
+}
+
+#[test]
+fn test_import_bare_module_name() {
+    let source = r#"import lodash from 'lodash';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("lodash"));
+}
+
+#[test]
+fn test_import_subpath_export() {
+    let source = r#"import { something } from 'pkg/subpath';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("pkg/subpath"));
+}
+
+#[test]
+fn test_require_double_quoted() {
+    let source = r#"const m = require("./module");"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./module"));
+}
+
+#[test]
+fn test_export_named_multiple_from_with_renames() {
+    let source = r#"export { a as x, b as y, c as z } from './remap';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./remap"));
+}
+
+#[test]
+fn test_import_with_dot_in_path() {
+    let source = r#"import { config } from './config.prod';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./config.prod"));
+}
+
+#[test]
+fn test_import_with_at_in_path() {
+    let source = r#"import utils from '@myorg/utils/string';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("@myorg/utils/string"));
+}
+
+#[test]
+fn test_export_default_class_no_link() {
+    let source = "export default class Foo {}";
+    let links = get_links(source);
+    assert!(
+        links.is_empty(),
+        "export default class should have no document link"
+    );
+}
+
+#[test]
+fn test_export_const_no_link() {
+    let source = "export const x = 42;";
+    let links = get_links(source);
+    assert!(
+        links.is_empty(),
+        "export const should have no document link"
+    );
+}
+
+#[test]
+fn test_many_imports_produces_correct_count() {
+    let source = r#"import { a } from './a';
+import { b } from './b';
+import { c } from './c';
+import { d } from './d';
+import { e } from './e';
+import { f } from './f';
+import { g } from './g';
+import { h } from './h';
+import { i } from './i';
+import { j } from './j';
+"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 10, "Should find exactly 10 links");
+}
+
+#[test]
+fn test_link_tooltip_contains_module_name() {
+    let source = r#"import { foo } from './my-module';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    if let Some(tooltip) = &links[0].tooltip {
+        assert!(
+            tooltip.contains("my-module"),
+            "Tooltip should contain the module name, got '{tooltip}'"
+        );
+    }
+}
+
+#[test]
+fn test_import_with_hash_in_specifier() {
+    let source = r#"import styles from './styles.css#some-anchor';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./styles.css#some-anchor"));
+}
+
+#[test]
+fn test_only_import_no_other_statements() {
+    let source = r#"import './setup';"#;
+    let links = get_links(source);
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./setup"));
+    assert_eq!(links[0].range.start.line, 0);
+}
+
+#[test]
+fn test_import_with_empty_specifier() {
+    // Edge case: empty string specifier
+    let source = r#"import '' ;"#;
+    let links = get_links(source);
+    // Should not panic; may or may not produce a link
+    let _ = links;
+}
+
+#[test]
+fn test_require_inside_function_body() {
+    let source = r#"function load() { const m = require('./lazy'); }"#;
+    let links = get_links(source);
+    // require inside a function body should still be found
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target.as_deref(), Some("./lazy"));
+}
