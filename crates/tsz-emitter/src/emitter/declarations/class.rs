@@ -1,6 +1,8 @@
 use super::super::{Printer, ScriptTarget};
+use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::private_fields_es5::{
-    PrivateFieldInfo, collect_private_fields, get_private_field_name,
+    PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo, collect_private_accessors,
+    collect_private_fields, collect_private_methods, get_private_field_name,
 };
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -1424,32 +1426,170 @@ impl<'a> Printer<'a> {
         } else {
             Vec::new()
         };
+        let private_methods: Vec<PrivateMethodInfo> = if needs_private_field_lowering {
+            collect_private_methods(self.arena, _idx, &class_name)
+        } else {
+            Vec::new()
+        };
+        let private_accessors: Vec<PrivateAccessorInfo> = if needs_private_field_lowering {
+            collect_private_accessors(self.arena, _idx, &class_name)
+        } else {
+            Vec::new()
+        };
+
+        // Determine if we need a WeakSet for instance methods/accessors
+        let has_instance_methods_or_accessors = private_methods.iter().any(|m| !m.is_static)
+            || private_accessors.iter().any(|a| !a.is_static);
+        let instances_weakset_name = if has_instance_methods_or_accessors {
+            Some(format!("_{class_name}_instances"))
+        } else {
+            None
+        };
+
+        // Determine if we need a class alias for static private fields
+        let has_static_privates = private_fields.iter().any(|f| f.is_static)
+            || private_methods.iter().any(|m| m.is_static)
+            || private_accessors.iter().any(|a| a.is_static);
+        let private_class_alias = if has_static_privates {
+            Some(self.make_unique_name())
+        } else {
+            None
+        };
 
         // Save the previous private field map (for nested classes)
         let prev_private_field_weakmaps = std::mem::take(&mut self.private_field_weakmaps);
         let prev_pending_weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+        let prev_private_member_info = std::mem::take(&mut self.private_member_info);
 
-        if !private_fields.is_empty() {
-            // Emit `var _C_field1, _C_field2;` before the class
-            self.write("var ");
-            for (i, field) in private_fields.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write(&field.weakmap_name);
+        let has_any_private_lowering = !private_fields.is_empty()
+            || !private_methods.is_empty()
+            || !private_accessors.is_empty();
+
+        if has_any_private_lowering {
+            // Collect all variable names needed for `var` declaration
+            let mut var_names: Vec<String> = Vec::new();
+
+            // Class alias for static members
+            if let Some(ref alias) = private_class_alias {
+                var_names.push(alias.clone());
             }
-            self.write(";");
-            self.write_line();
+
+            // WeakSet for instance methods/accessors
+            if let Some(ref ws_name) = instances_weakset_name {
+                var_names.push(ws_name.clone());
+            }
+
+            // Instance field WeakMaps
+            for field in &private_fields {
+                if !field.is_static {
+                    var_names.push(field.weakmap_name.clone());
+                }
+            }
+
+            // Static field value containers
+            for field in &private_fields {
+                if field.is_static {
+                    var_names.push(field.weakmap_name.clone());
+                }
+            }
+
+            // Private method function vars
+            for method in &private_methods {
+                var_names.push(method.fn_var_name.clone());
+            }
+
+            // Private accessor function vars
+            for accessor in &private_accessors {
+                if let Some(ref name) = accessor.get_var_name {
+                    if accessor.getter_body.is_some() {
+                        var_names.push(name.clone());
+                    }
+                }
+                if let Some(ref name) = accessor.set_var_name {
+                    if accessor.setter_body.is_some() {
+                        var_names.push(name.clone());
+                    }
+                }
+            }
+
+            if !var_names.is_empty() {
+                self.write("var ");
+                self.write(&var_names.join(", "));
+                self.write(";");
+                self.write_line();
+            }
 
             // Set up the private field map for expression lowering
             for field in &private_fields {
                 self.private_field_weakmaps
                     .insert(field.name.clone(), field.weakmap_name.clone());
+                if field.is_static {
+                    self.private_member_info.insert(
+                        field.name.clone(),
+                        PrivateMemberInfo {
+                            kind: "f",
+                            fn_ref: Some(field.weakmap_name.clone()),
+                            setter_ref: None,
+                            is_static: true,
+                            state_var: private_class_alias.clone(),
+                        },
+                    );
+                }
             }
 
-            // Mark helpers as needed (TODO: wire through lowering pass)
-            // self.ctx.helpers.class_private_field_get = true;
-            // self.ctx.helpers.class_private_field_set = true;
+            // Register methods
+            for method in &private_methods {
+                self.private_field_weakmaps
+                    .insert(method.name.clone(), method.fn_var_name.clone());
+                self.private_member_info.insert(
+                    method.name.clone(),
+                    PrivateMemberInfo {
+                        kind: "m",
+                        fn_ref: Some(method.fn_var_name.clone()),
+                        setter_ref: None,
+                        is_static: method.is_static,
+                        state_var: if method.is_static {
+                            private_class_alias.clone()
+                        } else {
+                            instances_weakset_name.clone()
+                        },
+                    },
+                );
+            }
+
+            // Register accessors
+            for accessor in &private_accessors {
+                // Use the instances weakset name as the weakmap entry for lookup
+                let weakmap_entry = if accessor.is_static {
+                    private_class_alias.clone().unwrap_or_default()
+                } else {
+                    instances_weakset_name.clone().unwrap_or_default()
+                };
+                self.private_field_weakmaps
+                    .insert(accessor.name.clone(), weakmap_entry);
+                self.private_member_info.insert(
+                    accessor.name.clone(),
+                    PrivateMemberInfo {
+                        kind: "a",
+                        fn_ref: accessor
+                            .get_var_name
+                            .as_ref()
+                            .filter(|_| accessor.getter_body.is_some())
+                            .cloned(),
+                        setter_ref: accessor
+                            .set_var_name
+                            .as_ref()
+                            .filter(|_| accessor.setter_body.is_some())
+                            .cloned(),
+                        is_static: accessor.is_static,
+                        state_var: if accessor.is_static {
+                            private_class_alias.clone()
+                        } else {
+                            instances_weakset_name.clone()
+                        },
+                    },
+                );
+            }
 
             // Prepare WeakMap initializations for after the class body
             self.pending_weakmap_inits = private_fields
@@ -2527,6 +2667,7 @@ impl<'a> Printer<'a> {
         // Restore private field state (for nested classes)
         self.private_field_weakmaps = prev_private_field_weakmaps;
         self.pending_weakmap_inits = prev_pending_weakmap_inits;
+        self.private_member_info = prev_private_member_info;
 
         // Track class name to prevent duplicate var declarations for merged namespaces.
         // When a class and namespace have the same name (declaration merging), the class

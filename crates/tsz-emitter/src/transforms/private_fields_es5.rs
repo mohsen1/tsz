@@ -293,6 +293,80 @@ pub fn collect_private_accessors(
         .collect()
 }
 
+/// Information about a private method in a class
+#[derive(Debug, Clone)]
+pub struct PrivateMethodInfo {
+    /// The private method name without # (e.g., "method" for "#method")
+    pub name: String,
+    /// The function variable name (e.g., "_C_method")
+    pub fn_var_name: String,
+    /// The node index of the method body
+    pub body: Option<NodeIndex>,
+    /// The node index of the parameter list
+    pub parameters: Vec<NodeIndex>,
+    /// Whether this is a static private method
+    pub is_static: bool,
+    /// Whether this is an async method
+    pub is_async: bool,
+    /// Whether this is a generator method
+    pub is_generator: bool,
+}
+
+/// Collect private methods from a class
+pub fn collect_private_methods(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+) -> Vec<PrivateMethodInfo> {
+    let mut methods = Vec::new();
+
+    let Some(class_node) = arena.get(class_idx) else {
+        return methods;
+    };
+    let Some(class_data) = arena.get_class(class_node) else {
+        return methods;
+    };
+
+    for &member_idx in &class_data.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+
+        if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            let Some(method_data) = arena.get_method_decl(member_node) else {
+                continue;
+            };
+
+            // Check if this is a private method
+            if !is_private_identifier(arena, method_data.name) {
+                continue;
+            }
+
+            let field_name = get_private_field_name(arena, method_data.name).unwrap_or_default();
+            let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+            let fn_var_name = format!("_{class_name}_{clean_name}");
+            let is_static = arena.has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword);
+            let is_async = arena.has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
+
+            methods.push(PrivateMethodInfo {
+                name: clean_name.to_string(),
+                fn_var_name,
+                body: if method_data.body.is_some() {
+                    Some(method_data.body)
+                } else {
+                    None
+                },
+                parameters: method_data.parameters.nodes.clone(),
+                is_static,
+                is_async,
+                is_generator: method_data.asterisk_token,
+            });
+        }
+    }
+
+    methods
+}
+
 /// Generate the `WeakMap` variable declaration line
 /// Returns: "var _`C_field1`, _`C_field2`;"
 pub fn generate_weakmap_var_declaration(fields: &[PrivateFieldInfo]) -> String {

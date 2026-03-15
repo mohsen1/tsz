@@ -52,10 +52,33 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.emit(access.expression);
                     self.write(", ");
-                    self.write(&weakmap_name);
-                    self.write(", ");
-                    self.emit(binary.right);
-                    self.write(", \"f\")");
+                    if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                        if let Some(ref state_var) = info.state_var {
+                            self.write(state_var);
+                        } else {
+                            self.write(&weakmap_name);
+                        }
+                        self.write(", ");
+                        self.emit(binary.right);
+                        self.write(", \"");
+                        self.write(info.kind);
+                        self.write("\"");
+                        if let Some(ref setter) = info.setter_ref {
+                            self.write(", ");
+                            self.write(setter);
+                        } else if info.kind == "a" {
+                            // Accessor with no setter - omit the fn ref (tsc emits no 5th arg)
+                        } else if let Some(ref fn_ref) = info.fn_ref {
+                            self.write(", ");
+                            self.write(fn_ref);
+                        }
+                    } else {
+                        self.write(&weakmap_name);
+                        self.write(", ");
+                        self.emit(binary.right);
+                        self.write(", \"f\"");
+                    }
+                    self.write(")");
                     return;
                 }
             }
@@ -74,22 +97,54 @@ impl<'a> Printer<'a> {
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
                 if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
                     let base_op = self.get_compound_base_operator(binary.operator_token);
+                    let info = self.private_member_info.get(clean_name).cloned();
                     self.write_helper("__classPrivateFieldSet");
                     self.write("(");
                     self.emit(access.expression);
                     self.write(", ");
-                    self.write(&weakmap_name);
+                    let state_var = info.as_ref().and_then(|i| i.state_var.clone());
+                    if let Some(ref sv) = state_var {
+                        self.write(sv);
+                    } else {
+                        self.write(&weakmap_name);
+                    }
                     self.write(", ");
                     self.write_helper("__classPrivateFieldGet");
                     self.write("(");
                     self.emit(access.expression);
                     self.write(", ");
-                    self.write(&weakmap_name);
-                    self.write(", \"f\") ");
+                    if let Some(ref sv) = state_var {
+                        self.write(sv);
+                    } else {
+                        self.write(&weakmap_name);
+                    }
+                    let kind = info.as_ref().map_or("f", |i| i.kind);
+                    self.write(", \"");
+                    self.write(kind);
+                    self.write("\"");
+                    if let Some(ref i) = info {
+                        if let Some(ref fn_ref) = i.fn_ref {
+                            self.write(", ");
+                            self.write(fn_ref);
+                        }
+                    }
+                    self.write(") ");
                     self.write(&base_op);
                     self.write(" ");
                     self.emit(binary.right);
-                    self.write(", \"f\")");
+                    self.write(", \"");
+                    self.write(kind);
+                    self.write("\"");
+                    if let Some(ref i) = info {
+                        if let Some(ref setter) = i.setter_ref {
+                            self.write(", ");
+                            self.write(setter);
+                        } else if let Some(ref fn_ref) = i.fn_ref {
+                            self.write(", ");
+                            self.write(fn_ref);
+                        }
+                    }
+                    self.write(")");
                     return;
                 }
             }

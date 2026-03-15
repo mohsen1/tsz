@@ -15,6 +15,26 @@ use tsz_scanner::SyntaxKind;
 /// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
 pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
 
+/// Info about a private class member for lowering.
+/// Determines the kind argument for `__classPrivateFieldGet`/`__classPrivateFieldSet`.
+#[derive(Debug, Clone)]
+pub(crate) struct PrivateMemberInfo {
+    /// The kind: "f" for field, "m" for method, "a" for accessor.
+    pub kind: &'static str,
+    /// For static fields: the function ref variable name (e.g., `_C_field`).
+    /// For methods: the function variable name (e.g., `_C_method`).
+    /// For accessors: the getter variable name (e.g., `_C_prop_get`).
+    pub fn_ref: Option<String>,
+    /// For accessors: the setter variable name (e.g., `_C_prop_set`).
+    pub setter_ref: Option<String>,
+    /// Whether this is a static member.
+    pub is_static: bool,
+    /// The WeakSet/class-alias variable used as the `state` argument.
+    /// For instance methods/accessors: `_ClassName_instances`.
+    /// For static members: the class alias variable.
+    pub state_var: Option<String>,
+}
+
 /// How a class property name should be emitted in `ClassName.name = ...` assignments.
 #[derive(Clone)]
 pub(crate) enum PropertyNameEmit {
@@ -428,6 +448,12 @@ pub struct Printer<'a> {
     /// `__classPrivateFieldGet`/`__classPrivateFieldSet` helper calls.
     pub(crate) private_field_weakmaps: FxHashMap<String, String>,
 
+    /// Private member kind info for ES2015-ES2021 lowering.
+    /// Maps `field_name` (without `#`) → `PrivateMemberKind`.
+    /// Used to determine the correct kind argument ("f", "m", "a") and
+    /// additional function ref for `__classPrivateFieldGet`/`__classPrivateFieldSet`.
+    pub(crate) private_member_info: FxHashMap<String, PrivateMemberInfo>,
+
     /// Pending `WeakMap` initializations to emit after the class body.
     /// Each entry is `_ClassName_fieldName = new WeakMap()`.
     pub(crate) pending_weakmap_inits: Vec<String>,
@@ -575,6 +601,7 @@ impl<'a> Printer<'a> {
             prior_enum_member_values: FxHashMap::default(),
             prior_enum_string_members: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
+            private_member_info: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
