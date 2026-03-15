@@ -840,6 +840,7 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_decorator_info(ClassDecoratorInfo {
                     class_decorators,
                     has_member_decorators,
+                    emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
                 });
             }
         }

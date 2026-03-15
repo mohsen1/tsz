@@ -92,6 +92,152 @@ use tsz_parser::syntax::transform_utils::contains_this_reference;
 use tsz_parser::syntax::transform_utils::is_private_identifier;
 use tsz_scanner::SyntaxKind;
 
+/// Serialize a type annotation to a metadata runtime type string.
+/// Mirrors the `Printer::serialize_type_for_metadata` logic for ES5 context.
+fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String {
+    let Some(type_node) = arena.get(type_idx) else {
+        return "Object".to_string();
+    };
+    let sk = |s: SyntaxKind| s as u16;
+    match type_node.kind {
+        k if k == sk(SyntaxKind::StringKeyword) => "String".to_string(),
+        k if k == sk(SyntaxKind::NumberKeyword) => "Number".to_string(),
+        k if k == sk(SyntaxKind::BooleanKeyword) => "Boolean".to_string(),
+        k if k == sk(SyntaxKind::SymbolKeyword) => "Symbol".to_string(),
+        k if k == sk(SyntaxKind::BigIntKeyword) => "BigInt".to_string(),
+        k if k == sk(SyntaxKind::VoidKeyword)
+            || k == sk(SyntaxKind::UndefinedKeyword)
+            || k == sk(SyntaxKind::NullKeyword)
+            || k == sk(SyntaxKind::NeverKeyword) =>
+        {
+            "void 0".to_string()
+        }
+        k if k == sk(SyntaxKind::AnyKeyword)
+            || k == sk(SyntaxKind::UnknownKeyword)
+            || k == sk(SyntaxKind::ObjectKeyword) =>
+        {
+            "Object".to_string()
+        }
+        k if k == syntax_kind_ext::TYPE_REFERENCE => {
+            if let Some(type_ref) = arena.get_type_ref(type_node) {
+                let name = get_identifier_text(arena, type_ref.type_name).unwrap_or_default();
+                match name.as_str() {
+                    "string" => "String".to_string(),
+                    "number" => "Number".to_string(),
+                    "boolean" => "Boolean".to_string(),
+                    "symbol" => "Symbol".to_string(),
+                    "bigint" => "BigInt".to_string(),
+                    "void" | "undefined" | "null" | "never" => "void 0".to_string(),
+                    "any" | "unknown" | "object" => "Object".to_string(),
+                    "" => "Object".to_string(),
+                    _ => name,
+                }
+            } else {
+                "Object".to_string()
+            }
+        }
+        k if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE => {
+            "Array".to_string()
+        }
+        k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+            "Function".to_string()
+        }
+        k if k == syntax_kind_ext::UNION_TYPE => {
+            if let Some(composite) = arena.get_composite_type(type_node) {
+                let meaningful: Vec<NodeIndex> = composite
+                    .types
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter(|&m_idx| {
+                        let Some(m) = arena.get(m_idx) else {
+                            return false;
+                        };
+                        m.kind != sk(SyntaxKind::NullKeyword)
+                            && m.kind != sk(SyntaxKind::UndefinedKeyword)
+                            && m.kind != sk(SyntaxKind::VoidKeyword)
+                            && m.kind != sk(SyntaxKind::NeverKeyword)
+                    })
+                    .collect();
+                if meaningful.len() == 1 {
+                    return serialize_type_for_metadata(arena, meaningful[0]);
+                }
+                if meaningful.len() > 1 {
+                    let first = serialize_type_for_metadata(arena, meaningful[0]);
+                    if first != "Object"
+                        && meaningful[1..]
+                            .iter()
+                            .all(|&m| serialize_type_for_metadata(arena, m) == first)
+                    {
+                        return first;
+                    }
+                }
+                if meaningful.is_empty() {
+                    return "void 0".to_string();
+                }
+            }
+            "Object".to_string()
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+            if let Some(wrapped) = arena.get_wrapped_type(type_node) {
+                return serialize_type_for_metadata(arena, wrapped.type_node);
+            }
+            "Object".to_string()
+        }
+        k if k == syntax_kind_ext::LITERAL_TYPE => {
+            if let Some(lit) = arena.get_literal_type(type_node)
+                && let Some(lit_node) = arena.get(lit.literal)
+            {
+                return match lit_node.kind {
+                    lk if lk == sk(SyntaxKind::StringLiteral) => "String".to_string(),
+                    lk if lk == sk(SyntaxKind::NumericLiteral) => "Number".to_string(),
+                    lk if lk == sk(SyntaxKind::BigIntLiteral) => "BigInt".to_string(),
+                    lk if lk == sk(SyntaxKind::TrueKeyword)
+                        || lk == sk(SyntaxKind::FalseKeyword) =>
+                    {
+                        "Boolean".to_string()
+                    }
+                    lk if lk == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
+                    lk if lk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => "Number".to_string(),
+                    _ => "Object".to_string(),
+                };
+            }
+            "Object".to_string()
+        }
+        k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => "String".to_string(),
+        k if k == syntax_kind_ext::TYPE_OPERATOR => {
+            if let Some(type_op) = arena.get_type_operator(type_node) {
+                return serialize_type_for_metadata(arena, type_op.type_node);
+            }
+            "Object".to_string()
+        }
+        k if k == syntax_kind_ext::OPTIONAL_TYPE => {
+            if let Some(wrapped) = arena.get_wrapped_type(type_node) {
+                return serialize_type_for_metadata(arena, wrapped.type_node);
+            }
+            "Object".to_string()
+        }
+        _ => "Object".to_string(),
+    }
+}
+
+/// Serialize parameter types for `design:paramtypes` metadata.
+fn serialize_param_types(arena: &NodeArena, parameters: &NodeList) -> String {
+    let mut parts = Vec::new();
+    for &param_idx in &parameters.nodes {
+        if let Some(param_node) = arena.get(param_idx)
+            && let Some(param) = arena.get_parameter(param_node)
+        {
+            if param.type_annotation.is_some() {
+                parts.push(serialize_type_for_metadata(arena, param.type_annotation));
+            } else {
+                parts.push("Object".to_string());
+            }
+        }
+    }
+    parts.join(", ")
+}
+
 #[derive(Debug, Clone)]
 struct AutoAccessorFieldInfo {
     member_idx: NodeIndex,
@@ -117,6 +263,8 @@ pub struct ES5ClassTransformer<'a> {
     class_decorators: Vec<NodeIndex>,
     /// Whether to emit member decorator __decorate calls inside the IIFE
     legacy_decorators: bool,
+    /// Whether to emit `__metadata` calls in `__decorate` arrays
+    emit_decorator_metadata: bool,
     /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
     indent_base: u32,
 }
@@ -135,6 +283,7 @@ impl<'a> ES5ClassTransformer<'a> {
             source_text: None,
             class_decorators: Vec::new(),
             legacy_decorators: false,
+            emit_decorator_metadata: false,
             indent_base: 0,
         }
     }
@@ -152,6 +301,11 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Enable legacy decorator lowering (emits __decorate calls for members inside the IIFE)
     pub const fn set_legacy_decorators(&mut self, enabled: bool) {
         self.legacy_decorators = enabled;
+    }
+
+    /// Enable `__metadata` emission in `__decorate` arrays
+    pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
+        self.emit_decorator_metadata = enabled;
     }
 
     /// Set transform directives from `LoweringPass`
@@ -456,12 +610,27 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            let (modifiers, name_idx, is_property, is_accessor) = match member_node.kind {
+            enum MemberMeta {
+                Property {
+                    type_annotation: NodeIndex,
+                },
+                Method {
+                    parameters: NodeList,
+                    return_type: NodeIndex,
+                },
+                Accessor,
+            }
+
+            let (modifiers, name_idx, is_property, is_accessor, meta) = match member_node.kind {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
                     let Some(method) = self.arena.get_method_decl(member_node) else {
                         continue;
                     };
-                    (&method.modifiers, method.name, false, false)
+                    let meta = MemberMeta::Method {
+                        parameters: method.parameters.clone(),
+                        return_type: method.type_annotation,
+                    };
+                    (&method.modifiers, method.name, false, false, meta)
                 }
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                     let Some(prop) = self.arena.get_property_decl(member_node) else {
@@ -470,13 +639,22 @@ impl<'a> ES5ClassTransformer<'a> {
                     let is_auto_accessor = self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    (&prop.modifiers, prop.name, !is_auto_accessor, false)
+                    let meta = MemberMeta::Property {
+                        type_annotation: prop.type_annotation,
+                    };
+                    (&prop.modifiers, prop.name, !is_auto_accessor, false, meta)
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     let Some(accessor) = self.arena.get_accessor(member_node) else {
                         continue;
                     };
-                    (&accessor.modifiers, accessor.name, false, true)
+                    (
+                        &accessor.modifiers,
+                        accessor.name,
+                        false,
+                        true,
+                        MemberMeta::Accessor,
+                    )
                 }
                 _ => continue,
             };
@@ -512,6 +690,35 @@ impl<'a> ES5ClassTransformer<'a> {
             };
             let desc_str = if is_property { "void 0" } else { "null" };
 
+            // Collect metadata strings if emit_decorator_metadata is enabled
+            let metadata_strs: Vec<String> = if self.emit_decorator_metadata && !is_accessor {
+                match &meta {
+                    MemberMeta::Property { type_annotation } => {
+                        let serialized = serialize_type_for_metadata(self.arena, *type_annotation);
+                        vec![format!("__metadata(\"design:type\", {serialized})")]
+                    }
+                    MemberMeta::Method {
+                        parameters,
+                        return_type,
+                    } => {
+                        let param_types = serialize_param_types(self.arena, parameters);
+                        let ret_type = if return_type.is_some() {
+                            serialize_type_for_metadata(self.arena, *return_type)
+                        } else {
+                            "void 0".to_string()
+                        };
+                        vec![
+                            "__metadata(\"design:type\", Function)".to_string(),
+                            format!("__metadata(\"design:paramtypes\", [{param_types}])"),
+                            format!("__metadata(\"design:returntype\", {ret_type})"),
+                        ]
+                    }
+                    MemberMeta::Accessor => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+
             // Format matching tsc:
             // __decorate([\n        dec1,\n        dec2\n    ], target, "name", desc)
             // Note: first line indent is handled by the body emitter's write_indent().
@@ -519,12 +726,21 @@ impl<'a> ES5ClassTransformer<'a> {
             // The indent_base accounts for nesting (e.g., namespace IIFE body).
             let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
             let outer_indent = "    ".repeat((self.indent_base + 1) as usize);
+            let total_entries = dec_strs.len() + metadata_strs.len();
             let mut raw = String::from("__decorate([");
             for (i, dec_str) in dec_strs.iter().enumerate() {
                 raw.push('\n');
                 raw.push_str(&inner_indent);
                 raw.push_str(dec_str);
-                if i + 1 < dec_strs.len() {
+                if i + 1 < total_entries {
+                    raw.push(',');
+                }
+            }
+            for (i, meta_str) in metadata_strs.iter().enumerate() {
+                raw.push('\n');
+                raw.push_str(&inner_indent);
+                raw.push_str(meta_str);
+                if dec_strs.len() + i + 1 < total_entries {
                     raw.push(',');
                 }
             }

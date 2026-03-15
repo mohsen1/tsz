@@ -819,6 +819,7 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_decorator_info(ClassDecoratorInfo {
                     class_decorators: legacy_class_decorators,
                     has_member_decorators: has_legacy_member_decorators,
+                    emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
                 });
                 let output = es5_emitter.emit_class_with_name(idx, &class_name);
                 let mappings = es5_emitter.take_mappings();
