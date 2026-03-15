@@ -1108,8 +1108,9 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|e| {
                 let rest = if e.rest { "..." } else { "" };
-                let optional = if e.optional { "?" } else { "" };
-                let type_str: String = if e.optional {
+                // Rest elements are never printed with `?` in tsc
+                let optional = if e.optional && !e.rest { "?" } else { "" };
+                let type_str: String = if e.optional && !e.rest {
                     self.format_stripping_undefined(e.type_id)
                 } else {
                     self.format(e.type_id).into_owned()
