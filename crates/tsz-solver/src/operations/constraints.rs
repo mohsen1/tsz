@@ -506,8 +506,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .collect();
 
                     if !structural_matches.is_empty() {
-                        // Prefer structural matches over naked type params
-                        for member in structural_matches {
+                        // Discriminated union inference: if the source is an object
+                        // with discriminant properties (literal-typed properties that
+                        // appear in target union members), narrow to only the matching
+                        // variant(s). This matches tsc's behavior for patterns like:
+                        //   type Item<T> = { kind: 'a', data: T } | { kind: 'b', data: T[] }
+                        //   foo({ kind: 'b', data: [1, 2] }) → infer only from kind:'b' variant
+                        let infer_targets = if structural_matches.len() > 1 {
+                            self.filter_by_discriminant(source, &structural_matches)
+                        } else {
+                            structural_matches
+                        };
+
+                        for member in infer_targets {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     } else {
@@ -1999,6 +2010,76 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Tuple(_), TypeData::Tuple(_))
             | (TypeData::Array(_), TypeData::Array(_)) => true,
             _ => false,
+        }
+    }
+
+    /// Filter target union members by discriminant properties.
+    ///
+    /// When the source is an object with properties whose types are unit/literal
+    /// types (e.g., `kind: 'b'`), check each target member for corresponding
+    /// properties with literal types. Only keep members whose discriminant values
+    /// match the source's discriminant values. If no discriminant is found or
+    /// filtering eliminates all members, return the original list.
+    fn filter_by_discriminant(&self, source: TypeId, targets: &[TypeId]) -> Vec<TypeId> {
+        // Get source object properties
+        let source_shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+            _ => return targets.to_vec(),
+        };
+        let source_obj = self.interner.object_shape(source_shape_id);
+
+        // Find discriminant properties in the source: properties with literal types.
+        // Store (property_name_atom_raw, literal_type_id) pairs.
+        let mut discriminants: Vec<(tsz_common::interner::Atom, TypeId)> = Vec::new();
+        for prop in &source_obj.properties {
+            if let Some(TypeData::Literal(_)) = self.interner.lookup(prop.type_id) {
+                discriminants.push((prop.name, prop.type_id));
+            }
+        }
+
+        if discriminants.is_empty() {
+            return targets.to_vec();
+        }
+
+        // Filter targets: keep members whose discriminant properties match
+        let filtered: Vec<TypeId> = targets
+            .iter()
+            .filter(|&&target_member| {
+                let target_shape_id = match self.interner.lookup(target_member) {
+                    Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+                    _ => return true, // Non-object targets pass through
+                };
+                let target_obj = self.interner.object_shape(target_shape_id);
+
+                // For each source discriminant, check if the target has a matching
+                // property with a specific literal type
+                for &(disc_name, disc_type) in &discriminants {
+                    if let Some(target_prop) =
+                        target_obj.properties.iter().find(|p| p.name == disc_name)
+                    {
+                        // Target has this property - check if it has a specific literal
+                        // type that differs from the source's literal
+                        if let Some(TypeData::Literal(_)) =
+                            self.interner.lookup(target_prop.type_id)
+                        {
+                            if target_prop.type_id != disc_type {
+                                return false; // Discriminant mismatch
+                            }
+                        }
+                        // If target property is a type parameter (contains placeholder),
+                        // it's not a discriminant in the target - skip this property
+                    }
+                }
+                true
+            })
+            .copied()
+            .collect();
+
+        // Only use filtered result if it's non-empty
+        if filtered.is_empty() {
+            targets.to_vec()
+        } else {
+            filtered
         }
     }
 
