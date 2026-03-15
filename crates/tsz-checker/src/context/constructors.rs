@@ -72,7 +72,10 @@ impl<'a> CheckerContext<'a> {
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
-            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
+            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                128,
+                Default::default(),
+            )),
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_worklist: RefCell::new(VecDeque::with_capacity(32)),
@@ -265,7 +268,10 @@ impl<'a> CheckerContext<'a> {
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
-            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
+            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                128,
+                Default::default(),
+            )),
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_worklist: RefCell::new(VecDeque::with_capacity(32)),
@@ -449,7 +455,10 @@ impl<'a> CheckerContext<'a> {
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
-            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
+            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                128,
+                Default::default(),
+            )),
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_worklist: RefCell::new(VecDeque::with_capacity(32)),
@@ -1028,7 +1037,10 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
-            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
+            flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                128,
+                Default::default(),
+            )),
             flow_switch_reference_cache: RefCell::new(FxHashMap::default()),
             flow_numeric_atom_cache: RefCell::new(FxHashMap::default()),
             flow_worklist: RefCell::new(VecDeque::with_capacity(32)),
