@@ -344,7 +344,7 @@ A single 1330-line test file (`architecture_contract_tests.rs`) is the only
 automated guard for architectural invariants across 186K lines of checker code.
 This is insufficient to prevent regression.
 
-### Prompt 4.1 — Catalog Existing Architecture Invariants
+### Prompt 4.1 — Catalog Existing Architecture Invariants ✅ DONE (2026-03-15)
 
 ```
 Read the CLAUDE.md architecture rules (sections 3-6, 11-12, 15, 22) and the
@@ -366,7 +366,7 @@ C) Runtime assertion (check behavior during test execution)
 Output the complete checklist. Do NOT write any code.
 ```
 
-### Prompt 4.2 — Implement Dependency Direction Tests
+### Prompt 4.2 — Implement Dependency Direction Tests ✅ DONE (2026-03-15)
 
 ```
 Add tests to architecture_contract_tests.rs that enforce dependency direction
@@ -395,7 +395,7 @@ Run all tests and fix any violations found. Commit with message
 "test(checker): add dependency direction architecture tests".
 ```
 
-### Prompt 4.3 — Implement Solver Encapsulation Tests
+### Prompt 4.3 — Implement Solver Encapsulation Tests ✅ DONE (2026-03-15)
 
 ```
 Add tests that enforce solver encapsulation rules:
@@ -427,7 +427,7 @@ Run tests and document any violations found. Commit with message
 "test(checker): add solver encapsulation architecture tests".
 ```
 
-### Prompt 4.4 — Implement Structural Health Tests
+### Prompt 4.4 — Implement Structural Health Tests ✅ DONE (2026-03-15)
 
 ```
 Add tests that enforce structural health rules:
@@ -458,7 +458,7 @@ Test 5: "Checker modules stay within responsibility boundaries"
 Run tests, document violations, commit.
 ```
 
-### Prompt 4.5 — Create Architecture Test Runner Script
+### Prompt 4.5 — Create Architecture Test Runner Script ✅ DONE (2026-03-15)
 
 ```
 Create scripts/architecture-check.sh that:
