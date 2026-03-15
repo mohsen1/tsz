@@ -707,13 +707,16 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Instantiate the constraint with all provided type arguments so that
-                // forward-referencing constraints (e.g., `T extends U` where U comes
-                // after T) are fully resolved before validation.
+                // Evaluate type arguments before substitution so that unevaluated
+                // IndexAccess types (e.g., `SettingsTypes["audio" | "video"]`) are
+                // resolved to their concrete types. This prevents the instantiated
+                // constraint from containing unresolvable Lazy(DefId) references
+                // inside nested types (KeyOf, IndexAccess, Mapped).
                 let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
-                        subst.insert(p.name, arg);
+                        let evaluated_arg = self.evaluate_type_with_env(arg);
+                        subst.insert(p.name, evaluated_arg);
                     }
                 }
                 let instantiated_constraint = if subst.is_empty() {
