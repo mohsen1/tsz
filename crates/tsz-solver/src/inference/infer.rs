@@ -51,17 +51,17 @@ where
 /// An inference variable representing an unknown type.
 /// These are created when instantiating generic functions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct InferenceVar(pub u32);
+pub(crate) struct InferenceVar(pub(crate) u32);
 
 // Uses TypeScript-standard InferencePriority from types.rs
 
 /// A candidate type for an inference variable.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct InferenceCandidate {
-    pub type_id: TypeId,
-    pub priority: InferencePriority,
-    pub is_fresh_literal: bool,
-    pub from_object_property: bool,
+pub(crate) struct InferenceCandidate {
+    pub(crate) type_id: TypeId,
+    pub(crate) priority: InferencePriority,
+    pub(crate) is_fresh_literal: bool,
+    pub(crate) from_object_property: bool,
     pub from_index_signature: bool,
     pub object_property_index: Option<u32>,
     pub object_property_name: Option<Atom>,
@@ -78,18 +78,18 @@ struct CandidateContext {
 
 /// Value stored for each inference variable root.
 #[derive(Clone, Debug, Default)]
-pub struct InferenceInfo {
-    pub candidates: Vec<InferenceCandidate>,
+pub(crate) struct InferenceInfo {
+    pub(crate) candidates: Vec<InferenceCandidate>,
     /// Candidates from contravariant positions (e.g., function parameters).
     /// When only `contra_candidates` exist (no covariant candidates), the
     /// resolution uses intersection instead of union, matching tsc behavior.
-    pub contra_candidates: Vec<InferenceCandidate>,
-    pub upper_bounds: Vec<TypeId>,
-    pub resolved: Option<TypeId>,
+    pub(crate) contra_candidates: Vec<InferenceCandidate>,
+    pub(crate) upper_bounds: Vec<TypeId>,
+    pub(crate) resolved: Option<TypeId>,
 }
 
 impl InferenceInfo {
-    pub const fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.candidates.is_empty()
             && self.contra_candidates.is_empty()
             && self.upper_bounds.is_empty()
@@ -134,7 +134,7 @@ impl UnifyValue for InferenceInfo {
 
 /// Inference error
 #[derive(Clone, Debug)]
-pub enum InferenceError {
+pub(crate) enum InferenceError {
     /// Two incompatible types were unified
     Conflict(TypeId, TypeId),
     /// Inference variable was not resolved
@@ -158,13 +158,13 @@ pub enum InferenceError {
 /// Constraint set for an inference variable.
 /// Tracks both lower bounds (L <: α) and upper bounds (α <: U).
 #[derive(Clone, Debug, Default)]
-pub struct ConstraintSet {
+pub(crate) struct ConstraintSet {
     /// Lower bounds: types that must be subtypes of this variable
     /// e.g., from argument types being assigned to a parameter
-    pub lower_bounds: Vec<TypeId>,
+    pub(crate) lower_bounds: Vec<TypeId>,
     /// Upper bounds: types that this variable must be a subtype of
     /// e.g., from `extends` constraints on type parameters
-    pub upper_bounds: Vec<TypeId>,
+    pub(crate) upper_bounds: Vec<TypeId>,
 }
 
 impl ConstraintSet {
@@ -220,13 +220,13 @@ impl ConstraintSet {
 }
 
 /// Maximum iterations for constraint strengthening loops to prevent infinite loops.
-pub const MAX_CONSTRAINT_ITERATIONS: usize = 100;
+pub(crate) const MAX_CONSTRAINT_ITERATIONS: usize = 100;
 
 /// Maximum recursion depth for type containment checks.
-pub const MAX_TYPE_RECURSION_DEPTH: usize = 100;
+pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 
 /// Type inference context for a single function call or expression.
-pub struct InferenceContext<'a> {
+pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Type resolver for semantic lookups (e.g., base class queries)
     pub(crate) resolver: Option<&'a dyn crate::TypeResolver>,
