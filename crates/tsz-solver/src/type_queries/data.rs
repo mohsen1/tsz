@@ -330,7 +330,7 @@ pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -
     }
 }
 
-/// Collect TypeIds of callable properties from an object type.
+/// Collect `TypeIds` of callable properties from an object type.
 ///
 /// Iterates the object's named properties and returns those whose type is a
 /// Function or Callable. Also includes the string index signature value type
@@ -347,16 +347,14 @@ pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -
             result.push(prop.type_id);
         }
     }
-    if let Some(index) = &shape.string_index {
-        if is_callable_type(db, index.value_type) {
+    if let Some(index) = &shape.string_index
+        && is_callable_type(db, index.value_type) {
             result.push(index.value_type);
         }
-    }
-    if let Some(index) = &shape.number_index {
-        if is_callable_type(db, index.value_type) {
+    if let Some(index) = &shape.number_index
+        && is_callable_type(db, index.value_type) {
             result.push(index.value_type);
         }
-    }
     result
 }
 

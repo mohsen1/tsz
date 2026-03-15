@@ -2978,7 +2978,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
 
             let ctx_for_return = if return_type_is_param_shared_with_params {
-                self.contextual_type.and_then(|ctx| {
+                self.contextual_type.map(|ctx| {
                     // Only extract return type from CONCRETE function types
                     // (no type parameters). When the contextual is generic
                     // (e.g. (x: U) => T from outer inference), keep the full
@@ -2987,14 +2987,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.interner.as_type_database(),
                         ctx,
                     ) {
-                        Some(ctx)
+                        ctx
                     } else if let Some(fn_shape) = crate::type_queries::get_function_shape(
                         self.interner.as_type_database(),
                         ctx,
                     ) {
-                        Some(fn_shape.return_type)
+                        fn_shape.return_type
                     } else {
-                        Some(ctx)
+                        ctx
                     }
                 })
             } else {
