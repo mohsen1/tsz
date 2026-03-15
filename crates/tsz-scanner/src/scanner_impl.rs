@@ -3034,3 +3034,438 @@ const fn is_regex_flag(ch: u32) -> bool {
         | CharacterCodes::LOWER_D // d - has indices
     )
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: create a scanner that skips trivia and collect all tokens.
+    fn scan_all(source: &str) -> Vec<(SyntaxKind, String)> {
+        let mut scanner = ScannerState::new(source.to_string(), true);
+        let mut tokens = Vec::new();
+        loop {
+            let kind = scanner.scan();
+            if kind == SyntaxKind::EndOfFileToken {
+                break;
+            }
+            tokens.push((kind, scanner.get_token_value()));
+        }
+        tokens
+    }
+
+    /// Helper: create a scanner that preserves trivia and collect all tokens.
+    fn scan_all_with_trivia(source: &str) -> Vec<(SyntaxKind, String)> {
+        let mut scanner = ScannerState::new(source.to_string(), false);
+        let mut tokens = Vec::new();
+        loop {
+            let kind = scanner.scan();
+            if kind == SyntaxKind::EndOfFileToken {
+                break;
+            }
+            tokens.push((kind, scanner.get_token_text()));
+        }
+        tokens
+    }
+
+    // ── Empty input ───────────────────────────────────────────────────
+
+    #[test]
+    fn empty_input_returns_eof() {
+        let mut scanner = ScannerState::new(String::new(), true);
+        assert_eq!(scanner.scan(), SyntaxKind::EndOfFileToken);
+    }
+
+    // ── Identifiers ───────────────────────────────────────────────────
+
+    #[test]
+    fn scan_identifiers() {
+        let tokens = scan_all("foo bar _baz $qux");
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens[0], (SyntaxKind::Identifier, "foo".to_string()));
+        assert_eq!(tokens[1], (SyntaxKind::Identifier, "bar".to_string()));
+        assert_eq!(tokens[2], (SyntaxKind::Identifier, "_baz".to_string()));
+        assert_eq!(tokens[3], (SyntaxKind::Identifier, "$qux".to_string()));
+    }
+
+    // ── Keywords ──────────────────────────────────────────────────────
+
+    #[test]
+    fn scan_keywords() {
+        let tokens = scan_all("if else while for const let var");
+        assert_eq!(tokens.len(), 7);
+        assert_eq!(tokens[0].0, SyntaxKind::IfKeyword);
+        assert_eq!(tokens[1].0, SyntaxKind::ElseKeyword);
+        assert_eq!(tokens[2].0, SyntaxKind::WhileKeyword);
+        assert_eq!(tokens[3].0, SyntaxKind::ForKeyword);
+        assert_eq!(tokens[4].0, SyntaxKind::ConstKeyword);
+        assert_eq!(tokens[5].0, SyntaxKind::LetKeyword);
+        assert_eq!(tokens[6].0, SyntaxKind::VarKeyword);
+    }
+
+    // ── Numeric literals ──────────────────────────────────────────────
+
+    #[test]
+    fn scan_numeric_literals() {
+        let tokens = scan_all("0 42 3.14 0xFF 0b1010 0o777 1_000");
+        assert_eq!(tokens.len(), 7);
+        for (kind, _) in &tokens {
+            assert_eq!(*kind, SyntaxKind::NumericLiteral);
+        }
+        assert_eq!(tokens[0].1, "0");
+        assert_eq!(tokens[1].1, "42");
+        assert_eq!(tokens[2].1, "3.14");
+        assert_eq!(tokens[3].1, "0xFF");
+        assert_eq!(tokens[4].1, "0b1010");
+        assert_eq!(tokens[5].1, "0o777");
+        assert_eq!(tokens[6].1, "1_000");
+    }
+
+    // ── String literals ───────────────────────────────────────────────
+
+    #[test]
+    fn scan_string_literals() {
+        let tokens = scan_all(r#""hello" 'world'"#);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].0, SyntaxKind::StringLiteral);
+        assert_eq!(tokens[0].1, "hello");
+        assert_eq!(tokens[1].0, SyntaxKind::StringLiteral);
+        assert_eq!(tokens[1].1, "world");
+    }
+
+    // ── Template literals ─────────────────────────────────────────────
+
+    #[test]
+    fn scan_no_substitution_template() {
+        let tokens = scan_all("`hello world`");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].0, SyntaxKind::NoSubstitutionTemplateLiteral);
+        assert_eq!(tokens[0].1, "hello world");
+    }
+
+    // ── Punctuation ───────────────────────────────────────────────────
+
+    #[test]
+    fn scan_punctuation() {
+        let tokens = scan_all("{ } ( ) [ ] ; , . ...");
+        let kinds: Vec<SyntaxKind> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::OpenBraceToken,
+                SyntaxKind::CloseBraceToken,
+                SyntaxKind::OpenParenToken,
+                SyntaxKind::CloseParenToken,
+                SyntaxKind::OpenBracketToken,
+                SyntaxKind::CloseBracketToken,
+                SyntaxKind::SemicolonToken,
+                SyntaxKind::CommaToken,
+                SyntaxKind::DotToken,
+                SyntaxKind::DotDotDotToken,
+            ]
+        );
+    }
+
+    // ── Operators ─────────────────────────────────────────────────────
+
+    #[test]
+    fn scan_comparison_operators() {
+        // Note: > is always scanned as GreaterThanToken; the parser calls
+        // re_scan_greater_token() to disambiguate >= / >> / >>> etc.
+        let tokens = scan_all("== != === !== < <=");
+        let kinds: Vec<SyntaxKind> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::EqualsEqualsToken,
+                SyntaxKind::ExclamationEqualsToken,
+                SyntaxKind::EqualsEqualsEqualsToken,
+                SyntaxKind::ExclamationEqualsEqualsToken,
+                SyntaxKind::LessThanToken,
+                SyntaxKind::LessThanEqualsToken,
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_greater_than_is_single_token() {
+        // The scanner always produces GreaterThanToken for '>'.
+        // Multi-char variants (>=, >>, >>>, >>=, >>>=) require re_scan_greater_token().
+        let tokens = scan_all(">");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].0, SyntaxKind::GreaterThanToken);
+
+        // ">=" is scanned as ">" then "=" by the raw scanner
+        let tokens = scan_all(">=");
+        assert_eq!(tokens[0].0, SyntaxKind::GreaterThanToken);
+    }
+
+    #[test]
+    fn scan_assignment_operators() {
+        // Exclude >>= and >>>= which need re_scan_greater_token from parser context
+        let tokens = scan_all("= += -= *= **= /= %= <<= &= |= ^= ||= &&= ??=");
+        let kinds: Vec<SyntaxKind> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::EqualsToken,
+                SyntaxKind::PlusEqualsToken,
+                SyntaxKind::MinusEqualsToken,
+                SyntaxKind::AsteriskEqualsToken,
+                SyntaxKind::AsteriskAsteriskEqualsToken,
+                SyntaxKind::SlashEqualsToken,
+                SyntaxKind::PercentEqualsToken,
+                SyntaxKind::LessThanLessThanEqualsToken,
+                SyntaxKind::AmpersandEqualsToken,
+                SyntaxKind::BarEqualsToken,
+                SyntaxKind::CaretEqualsToken,
+                SyntaxKind::BarBarEqualsToken,
+                SyntaxKind::AmpersandAmpersandEqualsToken,
+                SyntaxKind::QuestionQuestionEqualsToken,
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_logical_operators() {
+        let tokens = scan_all("&& || ?? !");
+        let kinds: Vec<SyntaxKind> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::AmpersandAmpersandToken,
+                SyntaxKind::BarBarToken,
+                SyntaxKind::QuestionQuestionToken,
+                SyntaxKind::ExclamationToken,
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_arrow_function() {
+        let tokens = scan_all("=>");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].0, SyntaxKind::EqualsGreaterThanToken);
+    }
+
+    // ── Trivia handling ───────────────────────────────────────────────
+
+    #[test]
+    fn trivia_skip_mode() {
+        let tokens = scan_all("  a  b  ");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn trivia_preserve_mode() {
+        let tokens = scan_all_with_trivia(" a ");
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].0, SyntaxKind::WhitespaceTrivia);
+        assert_eq!(tokens[1].0, SyntaxKind::Identifier);
+        assert_eq!(tokens[2].0, SyntaxKind::WhitespaceTrivia);
+    }
+
+    #[test]
+    fn newline_trivia_preserved() {
+        let tokens = scan_all_with_trivia("a\nb");
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].0, SyntaxKind::Identifier);
+        assert_eq!(tokens[1].0, SyntaxKind::NewLineTrivia);
+        assert_eq!(tokens[2].0, SyntaxKind::Identifier);
+    }
+
+    // ── Comments ──────────────────────────────────────────────────────
+
+    #[test]
+    fn single_line_comment_skipped() {
+        let tokens = scan_all("a // comment\nb");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    #[test]
+    fn multi_line_comment_skipped() {
+        let tokens = scan_all("a /* comment */ b");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].1, "a");
+        assert_eq!(tokens[1].1, "b");
+    }
+
+    // ── Scanner state methods ─────────────────────────────────────────
+
+    #[test]
+    fn scanner_position_tracking() {
+        let mut scanner = ScannerState::new("abc def".to_string(), true);
+        scanner.scan(); // "abc"
+        assert_eq!(scanner.get_token_start(), 0);
+        assert_eq!(scanner.get_token_end(), 3);
+
+        scanner.scan(); // "def"
+        assert_eq!(scanner.get_token_start(), 4);
+        assert_eq!(scanner.get_token_end(), 7);
+    }
+
+    #[test]
+    fn scanner_set_text() {
+        let mut scanner = ScannerState::new("abc".to_string(), true);
+        scanner.scan();
+        assert_eq!(scanner.get_token_value(), "abc");
+
+        scanner.set_text("xyz".to_string(), None, None);
+        scanner.scan();
+        assert_eq!(scanner.get_token_value(), "xyz");
+    }
+
+    #[test]
+    fn scanner_reset_token_state() {
+        let mut scanner = ScannerState::new("ab cd".to_string(), true);
+        scanner.scan(); // "ab"
+        scanner.scan(); // "cd"
+        scanner.reset_token_state(0);
+        scanner.scan();
+        assert_eq!(scanner.get_token_value(), "ab");
+    }
+
+    // ── Preceding line break ──────────────────────────────────────────
+
+    #[test]
+    fn preceding_line_break_detection() {
+        let mut scanner = ScannerState::new("a\nb".to_string(), true);
+        scanner.scan(); // "a"
+        assert!(!scanner.has_preceding_line_break());
+        scanner.scan(); // "b"
+        assert!(scanner.has_preceding_line_break());
+    }
+
+    // ── BigInt literals ───────────────────────────────────────────────
+
+    #[test]
+    fn scan_bigint_literal() {
+        let tokens = scan_all("42n 0xFFn");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].0, SyntaxKind::BigIntLiteral);
+        assert_eq!(tokens[1].0, SyntaxKind::BigIntLiteral);
+    }
+
+    // ── Optional chaining ─────────────────────────────────────────────
+
+    #[test]
+    fn scan_optional_chaining() {
+        let tokens = scan_all("a?.b");
+        let kinds: Vec<SyntaxKind> = tokens.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SyntaxKind::Identifier,
+                SyntaxKind::QuestionDotToken,
+                SyntaxKind::Identifier,
+            ]
+        );
+    }
+
+    // ── Hash/private identifier ───────────────────────────────────────
+
+    #[test]
+    fn scan_private_identifier() {
+        let tokens = scan_all("#field");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].0, SyntaxKind::PrivateIdentifier);
+        assert_eq!(tokens[0].1, "#field");
+    }
+
+    // ── Helper function tests ─────────────────────────────────────────
+
+    #[test]
+    fn is_line_break_chars() {
+        assert!(is_line_break(CharacterCodes::LINE_FEED));
+        assert!(is_line_break(CharacterCodes::CARRIAGE_RETURN));
+        assert!(is_line_break(CharacterCodes::LINE_SEPARATOR));
+        assert!(is_line_break(CharacterCodes::PARAGRAPH_SEPARATOR));
+        assert!(!is_line_break(CharacterCodes::SPACE));
+        assert!(!is_line_break(CharacterCodes::TAB));
+    }
+
+    #[test]
+    fn is_white_space_single_line_chars() {
+        assert!(is_white_space_single_line(CharacterCodes::SPACE));
+        assert!(is_white_space_single_line(CharacterCodes::TAB));
+        assert!(is_white_space_single_line(CharacterCodes::FORM_FEED));
+        assert!(is_white_space_single_line(
+            CharacterCodes::NON_BREAKING_SPACE
+        ));
+        assert!(!is_white_space_single_line(CharacterCodes::LINE_FEED));
+        assert!(!is_white_space_single_line(CharacterCodes::CARRIAGE_RETURN));
+        assert!(!is_white_space_single_line(0x41)); // 'A'
+    }
+
+    #[test]
+    fn is_identifier_start_chars() {
+        assert!(is_identifier_start(CharacterCodes::LOWER_A));
+        assert!(is_identifier_start(CharacterCodes::UPPER_Z));
+        assert!(is_identifier_start(CharacterCodes::UNDERSCORE));
+        assert!(is_identifier_start(CharacterCodes::DOLLAR));
+        assert!(!is_identifier_start(CharacterCodes::_0));
+        assert!(!is_identifier_start(CharacterCodes::SPACE));
+        assert!(!is_identifier_start(CharacterCodes::PLUS));
+    }
+
+    #[test]
+    fn is_digit_chars() {
+        assert!(is_digit(CharacterCodes::_0));
+        assert!(is_digit(CharacterCodes::_9));
+        assert!(!is_digit(CharacterCodes::LOWER_A));
+        assert!(!is_digit(CharacterCodes::SPACE));
+    }
+
+    #[test]
+    fn is_regex_flag_chars() {
+        assert!(is_regex_flag(CharacterCodes::LOWER_G));
+        assert!(is_regex_flag(CharacterCodes::LOWER_I));
+        assert!(is_regex_flag(CharacterCodes::LOWER_M));
+        assert!(is_regex_flag(CharacterCodes::LOWER_S));
+        assert!(is_regex_flag(CharacterCodes::LOWER_U));
+        assert!(is_regex_flag(CharacterCodes::LOWER_V));
+        assert!(is_regex_flag(CharacterCodes::LOWER_Y));
+        assert!(is_regex_flag(CharacterCodes::LOWER_D));
+        assert!(!is_regex_flag(CharacterCodes::LOWER_A));
+        assert!(!is_regex_flag(CharacterCodes::LOWER_Z));
+    }
+
+    // ── Scanner snapshot/restore ──────────────────────────────────────
+
+    #[test]
+    fn scanner_snapshot_and_restore() {
+        let mut scanner = ScannerState::new("a + b".to_string(), true);
+        scanner.scan(); // "a"
+        let snapshot = scanner.save_state();
+        scanner.scan(); // "+"
+        scanner.scan(); // "b"
+        assert_eq!(scanner.get_token_value(), "b");
+        scanner.restore_state(snapshot);
+        assert_eq!(scanner.get_token(), SyntaxKind::Identifier);
+        // After restoring, scanning again should give "+"
+        let next = scanner.scan();
+        assert_eq!(next, SyntaxKind::PlusToken);
+    }
+
+    // ── Rescan methods ────────────────────────────────────────────────
+
+    #[test]
+    fn rescan_greater_than_token() {
+        // The scanner always scans ">" as GreaterThanToken.
+        // re_scan_greater_token() is used by the parser to check if it could be >=, >>, etc.
+        let mut scanner = ScannerState::new(">= x".to_string(), true);
+        scanner.scan(); // scans ">"
+        assert_eq!(scanner.get_token(), SyntaxKind::GreaterThanToken);
+
+        // Rescan to get >=
+        let rescanned = scanner.re_scan_greater_token();
+        assert_eq!(rescanned, SyntaxKind::GreaterThanEqualsToken);
+    }
+}
