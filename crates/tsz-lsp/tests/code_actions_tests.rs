@@ -3486,3 +3486,147 @@ fn test_extract_variable_math_max_call() {
         assert!(actions[0].title.contains("Extract"));
     }
 }
+
+#[test]
+fn test_code_actions_empty_range() {
+    let source = "const x = 1;\nconst y = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_on_class_declaration() {
+    let source = "class Foo {\n  x: number = 0;\n  method() {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = range_for_substring(source, &line_map, "class Foo");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_on_interface() {
+    let source = "interface Bar {\n  x: number;\n  y: string;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = range_for_substring(source, &line_map, "interface Bar");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_on_arrow_function_body() {
+    let source = "const add = (a: number, b: number) => a + b;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = range_for_substring(source, &line_map, "a + b");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_on_empty_source() {
+    let source = "";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+    assert!(actions.is_empty());
+}
+
+#[test]
+fn test_code_actions_on_enum_declaration() {
+    let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = range_for_substring(source, &line_map, "enum Color");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+    let _ = actions;
+}
