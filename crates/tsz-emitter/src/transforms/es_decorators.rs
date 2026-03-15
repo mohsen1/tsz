@@ -56,6 +56,8 @@ pub struct TC39DecoratorEmitter<'a> {
     use_static_blocks: bool,
     /// When true, prefix helper calls with `tslib_1.` (importHelpers + commonjs).
     tslib_prefix: bool,
+    /// When true, emit as an expression (no `let C = ` wrapper) for class expressions.
+    expression_mode: bool,
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
@@ -66,6 +68,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             indent: 0,
             use_static_blocks: false,
             tslib_prefix: false,
+            expression_mode: false,
         }
     }
 
@@ -83,6 +86,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub const fn set_tslib_prefix(&mut self, prefix: bool) {
         self.tslib_prefix = prefix;
+    }
+
+    pub const fn set_expression_mode(&mut self, expr: bool) {
+        self.expression_mode = expr;
     }
 
     /// Returns the helper function name with optional tslib prefix.
@@ -106,6 +113,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let class_name = self
             .get_identifier_text(class_data.name)
             .unwrap_or_default();
+        // For anonymous class expressions, generate a temp name
+        let class_name = if class_name.is_empty() {
+            "class_1".to_string()
+        } else {
+            class_name
+        };
         let class_decorators = self.collect_class_decorator_exprs(&class_data.modifiers);
         let decorated_members = self.collect_decorated_members(&class_data.members);
         let has_extends = self.has_extends_clause(&class_data.heritage_clauses);
@@ -145,7 +158,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let i4 = indent_str(self.indent + 4);
 
         // --- IIFE header ---
-        out.push_str(&format!("let {class_name} = (() => {{\n"));
+        if self.expression_mode {
+            out.push_str("(() => {\n");
+        } else {
+            out.push_str(&format!("let {class_name} = (() => {{\n"));
+        }
 
         // Var declarations (class alias only when IIFE without class decorators)
         if !self.use_static_blocks && !has_class_decorators {
@@ -239,6 +256,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2022: with class decorators, emit _classThis capture block first
             if has_class_decorators {
                 out.push_str(&format!("{i2}static {{ _classThis = this; }}\n"));
+                // For class expressions, emit __setFunctionName with the original class name
+                if self.expression_mode {
+                    let original_name = self
+                        .get_identifier_text(class_data.name)
+                        .unwrap_or_default();
+                    if !original_name.is_empty() {
+                        let set_fn = self.helper("__setFunctionName");
+                        out.push_str(&format!(
+                            "{i2}static {{ {set_fn}(_classThis, \"{original_name}\"); }}\n"
+                        ));
+                    }
+                }
             }
 
             // ES2022: emit decorator assignments in a separate static block
@@ -358,7 +387,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // Close IIFE
-        out.push_str("})();\n");
+        if self.expression_mode {
+            out.push_str("})()");
+        } else {
+            out.push_str("})();\n");
+        }
 
         out
     }
