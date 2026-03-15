@@ -1614,6 +1614,39 @@ impl<'a> Printer<'a> {
                 .collect();
         }
 
+        // For class expressions with static field initializers, we need to wrap
+        // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`
+        // Pre-detect this case before emitting the class keyword.
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (tsz_common::ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let needs_static_comma_expr = node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|m| {
+                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(m).is_some_and(|p| {
+                            self.arena
+                                .has_modifier(&p.modifiers, SyntaxKind::StaticKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&p.modifiers, SyntaxKind::DeclareKeyword)
+                        })
+                })
+            });
+        let class_expr_static_temp = if needs_static_comma_expr {
+            let temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            Some(temp)
+        } else {
+            None
+        };
+
         self.write("class");
 
         // Determine the class expression name.
@@ -2550,8 +2583,45 @@ impl<'a> Printer<'a> {
             self.write("() => { };");
         }
 
-        // Emit static field initializers after class body: ClassName.field = value;
-        if !static_field_inits.is_empty() && !class_name.is_empty() {
+        // Emit static field initializers after class body
+        // For class expressions: use comma expression `(_a = class C {}, _a.field = value, _a)`
+        // For class declarations: use separate statements `ClassName.field = value;`
+        if !static_field_inits.is_empty()
+            && !class_name.is_empty()
+            && class_expr_static_temp.is_some()
+        {
+            // Class expression comma-expression: `(_a = class C {}, _a.a = 1, _a)`
+            // The `(_a = ` prefix was already emitted before the `class` keyword.
+            let temp = class_expr_static_temp.as_ref().unwrap();
+            for (name_emit, init_idx, _member_pos, _leading_comments, _trailing_comments) in
+                &static_field_inits
+            {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(temp);
+                match name_emit {
+                    PropertyNameEmit::Dot(name) => {
+                        self.write(".");
+                        self.write(name);
+                    }
+                    PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                        self.write("[");
+                        self.write(name);
+                        self.write("]");
+                    }
+                }
+                self.write(" = ");
+                self.emit_expression(*init_idx);
+                self.decrease_indent();
+            }
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(temp);
+            self.write(")");
+            self.decrease_indent();
+        } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
