@@ -1370,8 +1370,10 @@ impl ParserState {
                 );
                 let modifiers = self.make_node_list(vec![declare_modifier, export_modifier]);
                 // TS1029: 'export' modifier must precede 'declare' modifier.
-                // Skip for `declare export as namespace` which is a valid UMD pattern.
-                if !self.is_token(SyntaxKind::AsKeyword) {
+                // Skip for `declare export as namespace` (valid UMD pattern) and
+                // `declare export = expr` (export assignment — TS1120 handles it).
+                if !self.is_token(SyntaxKind::AsKeyword) && !self.is_token(SyntaxKind::EqualsToken)
+                {
                     self.parse_error_at(
                         export_start,
                         export_end - export_start,
