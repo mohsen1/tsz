@@ -1208,21 +1208,37 @@ impl<'a> CheckerState<'a> {
                     }
                 });
             if decl_idx.is_some() {
-                let decl_arena = self
+                // When the type alias declaration was found in the user arena
+                // (the `find` closure above checks `self.ctx.arena.get(d)`),
+                // we MUST use the user arena for node lookup.  The `symbol_arenas`
+                // fallback may point to a lib arena (e.g., when a user-defined
+                // `type Proxy<T>` merges with the global `declare var Proxy`),
+                // causing the user-arena NodeIndex to fail lookup in the lib arena
+                // and incorrectly returning TypeId::UNKNOWN.
+                let found_in_user_arena = self
                     .ctx
-                    .binder
-                    .declaration_arenas
-                    .get(&(sym_id, decl_idx))
-                    .and_then(|v| v.first())
-                    .map(std::convert::AsRef::as_ref)
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .symbol_arenas
-                            .get(&sym_id)
-                            .map(std::convert::AsRef::as_ref)
-                    })
-                    .unwrap_or(self.ctx.arena);
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|n| self.ctx.arena.get_type_alias(n))
+                    .is_some();
+                let decl_arena = if found_in_user_arena {
+                    self.ctx.arena
+                } else {
+                    self.ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .and_then(|v| v.first())
+                        .map(std::convert::AsRef::as_ref)
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .symbol_arenas
+                                .get(&sym_id)
+                                .map(std::convert::AsRef::as_ref)
+                        })
+                        .unwrap_or(self.ctx.arena)
+                };
 
                 let Some(node) = decl_arena.get(decl_idx) else {
                     return (TypeId::UNKNOWN, Vec::new());
