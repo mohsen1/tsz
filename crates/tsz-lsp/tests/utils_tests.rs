@@ -514,3 +514,178 @@ fn test_find_nodes_in_range_empty() {
         "Should find no nodes in out-of-range region"
     );
 }
+
+#[test]
+fn test_find_node_at_offset_multiline() {
+    let source = "const a = 1;\nconst b = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    // Offset 19 should be at 'b' on the second line
+    let node = find_node_at_offset(arena, 19);
+    assert!(
+        node.is_some(),
+        "Should find a node at offset 19 (second line)"
+    );
+}
+
+#[test]
+fn test_find_node_at_offset_at_zero() {
+    let source = "const x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    // Offset 0 should find the first node (likely SourceFile or const keyword)
+    let node = find_node_at_offset(arena, 0);
+    assert!(node.is_some(), "Should find a node at offset 0");
+}
+
+#[test]
+fn test_find_nodes_in_range_full_file() {
+    let source = "let x = 1;\nlet y = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _ = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    // Range covering the entire file
+    let nodes = find_nodes_in_range(arena, 0, source.len() as u32);
+    assert!(
+        nodes.len() >= 2,
+        "Should find multiple nodes covering entire file, got {}",
+        nodes.len()
+    );
+}
+
+#[test]
+fn test_node_range_multiline() {
+    let source = "const x = 1;\nconst y = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let line_map = LineMap::build(source);
+
+    // Find 'y' on the second line (offset ~19)
+    let node_idx = find_node_at_offset(arena, 19);
+    if let Some(_) = arena.get(node_idx) {
+        let range = node_range(arena, &line_map, source, node_idx);
+        assert_eq!(range.start.line, 1, "Second line node should be on line 1");
+    }
+}
+
+#[test]
+fn test_is_comment_context_after_block_comment() {
+    let source = "/* comment */ code";
+    // Offset 14 is at 'c' in 'code', outside the block comment
+    assert!(
+        !is_comment_context(source, 14),
+        "Should not detect comment context after closed block comment"
+    );
+}
+
+#[test]
+fn test_is_comment_context_jsdoc() {
+    let source = "/** jsdoc comment */";
+    assert!(
+        is_comment_context(source, 5),
+        "Should detect inside JSDoc block comment"
+    );
+}
+
+#[test]
+fn test_should_backtrack_after_dollar_sign() {
+    let source = "foo$ ";
+    // Offset 4 is at the space after 'foo$'
+    assert!(
+        should_backtrack_to_previous_symbol(source, 4),
+        "Should backtrack after $ identifier"
+    );
+}
+
+#[test]
+fn test_should_backtrack_after_underscore() {
+    let source = "_private ";
+    // Offset 8 is at the space after '_private'
+    assert!(
+        should_backtrack_to_previous_symbol(source, 8),
+        "Should backtrack after underscore identifier"
+    );
+}
+
+#[test]
+fn test_calculate_new_relative_path_deep_nesting() {
+    let result = calculate_new_relative_path(
+        Path::new("/project/src/a/b/main.ts"),
+        Path::new("/project/src/utils.ts"),
+        Path::new("/project/lib/helpers/utils.ts"),
+        "../../utils",
+    );
+    assert!(
+        result.is_some(),
+        "Should calculate path for deeply nested file"
+    );
+    let path = result.unwrap();
+    assert!(
+        path.contains("lib") && path.contains("utils"),
+        "Path should reference the new location, got '{path}'"
+    );
+}
+
+#[test]
+fn test_calculate_new_relative_path_no_extension_style() {
+    // When the specifier has no extension, result should still include the extension
+    let result = calculate_new_relative_path(
+        Path::new("/project/main.ts"),
+        Path::new("/project/old.ts"),
+        Path::new("/project/sub/new.ts"),
+        "./old",
+    );
+    assert!(
+        result.is_some(),
+        "Should produce a result for no-extension specifier"
+    );
+}
+
+#[test]
+fn test_find_symbol_query_node_at_or_before_in_code() {
+    let source = "const myVar = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    // Position after 'myVar' (offset 11 = after 'myVar ')
+    let result = find_symbol_query_node_at_or_before(arena, source, 11);
+    if let Some(node_idx) = result {
+        assert!(
+            is_symbol_query_node(arena, node_idx),
+            "Found node should be a symbol query node"
+        );
+    }
+}
+
+#[test]
+fn test_is_require_identifier_for_require() {
+    let source = "const x = require('foo');";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    // Find the 'require' identifier
+    let require_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let text = source.get(node.pos as usize..node.end as usize)?;
+            if text == "require" {
+                return Some(tsz_parser::NodeIndex(idx as u32));
+            }
+        }
+        None
+    });
+
+    if let Some(node_idx) = require_node {
+        assert!(
+            is_require_identifier(arena, node_idx),
+            "'require' identifier should be detected as require"
+        );
+    }
+}

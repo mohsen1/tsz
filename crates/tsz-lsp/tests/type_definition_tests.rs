@@ -409,3 +409,250 @@ fn test_type_definition_on_type_annotation_itself() {
         assert_eq!(locations[0].range.start.line, 0);
     }
 }
+
+#[test]
+fn test_type_definition_multiple_variables_same_type() {
+    let source = "interface Shared { x: number; }\nlet a: Shared;\nlet b: Shared;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Both variables should resolve to the same type definition
+    let result_a = provider.get_type_definition(root, Position::new(1, 4));
+    let result_b = provider.get_type_definition(root, Position::new(2, 4));
+
+    if let (Some(locs_a), Some(locs_b)) = (&result_a, &result_b) {
+        assert_eq!(
+            locs_a[0].range.start.line, locs_b[0].range.start.line,
+            "Both variables should point to the same type definition"
+        );
+    }
+}
+
+#[test]
+fn test_type_definition_property_with_interface_type() {
+    let source = "interface Addr { city: string; }\ninterface Person { address: Addr; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position on 'address' property name should look for Addr type def
+    let pos = Position::new(1, 21);
+    let result = provider.get_type_definition(root, pos);
+
+    // Defensive: may or may not resolve depending on implementation
+    // Just ensure no panic
+    let _ = result;
+}
+
+#[test]
+fn test_type_definition_out_of_bounds_position() {
+    let source = "let x: number;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position well beyond the file
+    let pos = Position::new(100, 100);
+    let result = provider.get_type_definition(root, pos);
+
+    assert!(
+        result.is_none(),
+        "Out of bounds position should return None"
+    );
+}
+
+#[test]
+fn test_type_definition_class_with_methods() {
+    let source = "class MyService {\n  getData(): string { return \"\"; }\n}\nlet svc: MyService;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at 'svc'
+    let pos = Position::new(3, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(
+            locations[0].range.start.line, 0,
+            "Should point to MyService class"
+        );
+    }
+}
+
+#[test]
+fn test_type_definition_const_no_type() {
+    let source = "const pi = 3.14;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at 'pi' - no type annotation
+    let pos = Position::new(0, 6);
+    let result = provider.get_type_definition(root, pos);
+
+    // Without type annotation, should return None
+    assert!(
+        result.is_none(),
+        "Const without type annotation should return None"
+    );
+}
+
+#[test]
+fn test_type_definition_function_multiple_params() {
+    let source = "interface Config { x: number; }\ninterface Logger { log(msg: string): void; }\nfunction init(cfg: Config, logger: Logger) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at 'cfg' param
+    let pos_cfg = Position::new(2, 14);
+    let result_cfg = provider.get_type_definition(root, pos_cfg);
+
+    if let Some(locs) = result_cfg {
+        assert!(!locs.is_empty());
+        assert_eq!(locs[0].range.start.line, 0, "cfg should point to Config");
+    }
+}
+
+#[test]
+fn test_type_definition_at_start_of_file() {
+    let source = "interface First { x: number; }\nlet f: First;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at very start of file (0,0)
+    let pos = Position::new(0, 0);
+    let result = provider.get_type_definition(root, pos);
+
+    // At position 0,0 we hit the interface keyword, not a variable
+    // Should handle gracefully - may return None
+    let _ = result;
+}
+
+#[test]
+fn test_type_definition_abstract_class_type() {
+    let source = "abstract class Animal {\n  abstract speak(): void;\n}\nlet a: Animal;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at 'a'
+    let pos = Position::new(3, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(
+            locations[0].range.start.line, 0,
+            "Should point to abstract class Animal"
+        );
+    }
+}
+
+#[test]
+fn test_type_definition_only_whitespace() {
+    let source = "   \n   \n   ";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 1);
+    let result = provider.get_type_definition(root, pos);
+
+    assert!(result.is_none(), "Whitespace-only file should return None");
+}
+
+#[test]
+fn test_type_definition_return_type_location() {
+    let source =
+        "interface Result { ok: boolean; }\nfunction check(): Result { return { ok: true }; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at 'check' function name
+    let pos = Position::new(1, 9);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(
+            locations[0].file_path, "test.ts",
+            "Location should have correct file path"
+        );
+    }
+}
