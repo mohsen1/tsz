@@ -157,12 +157,16 @@ where
     }
 
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
-        // For id 0 (empty), we can return without initializing
-        if id == 0 {
-            return Some(Arc::from(Vec::new()));
-        }
-        self.inner
-            .get()?
+        // For id 0, return from the initialized inner (which has the pre-allocated
+        // empty Arc) instead of creating a new Arc::from(Vec::new()) on every call.
+        let inner = if id == 0 {
+            // If inner isn't initialized yet, the only valid id is 0 (empty).
+            // Initialize lazily so we reuse the pre-allocated empty Arc.
+            self.get_inner()
+        } else {
+            self.inner.get()?
+        };
+        inner
             .items
             .get(&id)
             .map(|e| std::sync::Arc::clone(e.value()))
