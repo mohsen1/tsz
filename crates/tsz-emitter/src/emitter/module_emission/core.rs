@@ -551,6 +551,12 @@ impl<'a> Printer<'a> {
             Some(ModuleKind::AMD) | Some(ModuleKind::UMD)
         );
 
+        // System modules: `export =` is not valid and tsc suppresses it.
+        // Don't emit `module.exports = expr;` inside System.register bodies.
+        if self.in_system_execute_body && export_assign.is_export_equals {
+            return;
+        }
+
         if is_amd_or_umd && export_assign.is_export_equals {
             // AMD/UMD: export = expr → return expr;
             self.write("return ");
