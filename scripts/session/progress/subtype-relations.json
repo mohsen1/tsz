@@ -1,0 +1,52 @@
+{
+  "campaign": "subtype-relations",
+  "baseline_at_creation": 10799,
+  "status": "diminishing",
+  "sessions": [
+    {
+      "date": "2026-03-15",
+      "start_pass": 10799,
+      "end_pass": 10805,
+      "delta": 6,
+      "commits": 1,
+      "notes": "Fixed ObjectWithIndex inference gap."
+    },
+    {
+      "date": "2026-03-15",
+      "start_pass": 10805,
+      "end_pass": 10811,
+      "delta": 6,
+      "commits": 2,
+      "notes": "Defensive literal identity fix + intersection this-type binding fix."
+    },
+    {
+      "date": "2026-03-15",
+      "start_pass": 10811,
+      "end_pass": 10816,
+      "delta": 5,
+      "commits": 2,
+      "notes": "Cross-type Function/Callable inference (+4) + Lazy resolution in inference (+1)."
+    },
+    {
+      "date": "2026-03-15",
+      "start_pass": 10816,
+      "end_pass": 10816,
+      "delta": 0,
+      "commits": 1,
+      "notes": "Build fix (stale call site). Tried BCT union fallback (-14 regressions, reverted). Tried targeted from_index_signature union (-19 regressions, reverted). Index sig inference requires a new candidate flag that distinguishes 'named property against index sig' from other index sig contexts."
+    }
+  ],
+  "known_dead_ends": [
+    "BCT get_common_supertype_for_inference union fallback: too broad, causes 14 regressions.",
+    "from_index_signature flag union combination: too broad, causes 19 regressions. The flag is set for multiple contexts, not just named-property-to-index-sig.",
+    "Union source distribution in inference: causes 11 regressions.",
+    "infer_matching.rs Object-to-index-sig: code not reached for generic calls.",
+    "Most remaining FPs need generic call inference improvements, not core subtyping."
+  ],
+  "promising_leads": [
+    "Need a NEW candidate context flag: 'from_named_property_to_index_signature' (distinct from general 'from_index_signature'). Only candidates with this specific flag should be combined via union. This would fix inferenceOptionalPropertiesToIndexSignatures without regressions.",
+    "TS2741 diagnostic code mismatch (24 tests).",
+    "Callable overload matching with generic signatures."
+  ],
+  "cross_cutting_blockers": []
+}

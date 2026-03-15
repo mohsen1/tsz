@@ -330,6 +330,45 @@ pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -
     }
 }
 
+/// Collect TypeIds of callable properties from an object type.
+///
+/// Iterates the object's named properties and returns those whose type is a
+/// Function or Callable. Also includes the string index signature value type
+/// if it's callable. Used for contextual typing of callback-bearing objects.
+pub fn collect_callable_property_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    let shape_id = match db.lookup(type_id) {
+        Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+        _ => return Vec::new(),
+    };
+    let shape = db.object_shape(shape_id);
+    let mut result = Vec::new();
+    for prop in &shape.properties {
+        if is_callable_type(db, prop.type_id) {
+            result.push(prop.type_id);
+        }
+    }
+    if let Some(index) = &shape.string_index {
+        if is_callable_type(db, index.value_type) {
+            result.push(index.value_type);
+        }
+    }
+    if let Some(index) = &shape.number_index {
+        if is_callable_type(db, index.value_type) {
+            result.push(index.value_type);
+        }
+    }
+    result
+}
+
+/// Check if a type is a callable type (Function or Callable with call signatures).
+fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Function(_)) => true,
+        Some(TypeData::Callable(id)) => !db.callable_shape(id).call_signatures.is_empty(),
+        _ => false,
+    }
+}
+
 /// Check if a type is or evaluates to a homomorphic mapped type.
 ///
 /// A homomorphic mapped type has constraint `keyof T` for some type parameter T,
@@ -1947,5 +1986,92 @@ mod tests {
             !crate::contains_type_parameters(&interner, return_type),
             "Concrete application should not contain type parameters"
         );
+    }
+
+    #[test]
+    fn test_union_has_direct_type_parameter() {
+        let interner = crate::intern::TypeInterner::new();
+
+        // Single type parameter
+        let tp = interner.type_param(crate::types::TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        // Not a union — returns false
+        assert!(!super::union_has_direct_type_parameter(&interner, tp));
+
+        // Union containing a type parameter
+        let union_with_tp = interner.union(vec![TypeId::STRING, tp]);
+        assert!(super::union_has_direct_type_parameter(
+            &interner,
+            union_with_tp
+        ));
+
+        // Union without type parameters
+        let plain_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        assert!(!super::union_has_direct_type_parameter(
+            &interner,
+            plain_union
+        ));
+
+        // Non-union type
+        assert!(!super::union_has_direct_type_parameter(
+            &interner,
+            TypeId::STRING
+        ));
+    }
+
+    #[test]
+    fn test_collect_callable_property_types() {
+        let interner = crate::intern::TypeInterner::new();
+        use crate::types::{FunctionShape, PropertyInfo, Visibility};
+
+        // Create a function type (callable property)
+        let fn_type = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        // Create an object with one callable and one non-callable property
+        let obj = interner.object(vec![
+            PropertyInfo {
+                name: interner.intern_string("callback"),
+                type_id: fn_type,
+                write_type: fn_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+            },
+            PropertyInfo {
+                name: interner.intern_string("value"),
+                type_id: TypeId::STRING,
+                write_type: TypeId::STRING,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 1,
+            },
+        ]);
+
+        let result = super::collect_callable_property_types(&interner, obj);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], fn_type);
+
+        // Non-object type returns empty
+        assert!(super::collect_callable_property_types(&interner, TypeId::STRING).is_empty());
     }
 }
