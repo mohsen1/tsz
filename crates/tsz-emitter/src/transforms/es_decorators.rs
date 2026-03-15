@@ -407,7 +407,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // Close IIFE
+        let i0 = indent_str(self.indent);
         if self.expression_mode {
+            out.push_str(&i0);
             out.push_str("})()");
         } else {
             out.push_str("})();\n");
