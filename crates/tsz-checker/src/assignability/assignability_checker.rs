@@ -1,7 +1,5 @@
 //! Type assignability and excess property checking.
-//!
-//! Subtype, identity, and redeclaration compatibility live in
-//! `subtype_identity_checker`.
+//! Subtype, identity, and redeclaration compatibility live in `subtype_identity_checker`.
 
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, ExcessPropertiesKind,
