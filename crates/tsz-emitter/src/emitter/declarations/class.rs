@@ -1223,6 +1223,7 @@ impl<'a> Printer<'a> {
             assignment_prefix
                 .as_ref()
                 .map(|(_, binding_name)| binding_name.clone())
+                .or_else(|| self.anonymous_default_export_name.clone())
                 .unwrap_or_default()
         } else {
             self.get_identifier_text_idx(class.name)
