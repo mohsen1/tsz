@@ -8,6 +8,20 @@ pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 
+/// Thin wrapper around `tsz_solver::TypeEvaluator`.
+///
+/// Evaluates a complex type (conditional, mapped, index access, etc.) using
+/// the provided `TypeResolver` to resolve lazy references. This delegates to
+/// `TypeEvaluator::with_resolver` + `evaluate` in a single call.
+pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> TypeId {
+    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    evaluator.evaluate(type_id)
+}
+
 pub(crate) fn application_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,

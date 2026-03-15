@@ -51,7 +51,7 @@ Output a prioritized list sorted by number of call sites (most used first).
 Do NOT make code changes yet.
 ```
 
-### Prompt 1.3 — Create Wrappers for Top-10 Most-Used Bypasses
+### Prompt 1.3 — Create Wrappers for Top-10 Most-Used Bypasses ✅ DONE (2026-03-15)
 
 ```
 Using the coverage gap analysis, implement query_boundaries wrappers for the 10
