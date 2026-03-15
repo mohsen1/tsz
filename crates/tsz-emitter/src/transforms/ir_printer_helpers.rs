@@ -256,9 +256,13 @@ impl<'a> IRPrinter<'a> {
         self.increase_indent();
         self.write_indent();
         self.write(&rest.name);
-        self.write("[_i - ");
-        self.write(&rest_index.to_string());
-        self.write("] = arguments[_i];");
+        if rest_index == 0 {
+            self.write("[_i] = arguments[_i];");
+        } else {
+            self.write("[_i - ");
+            self.write(&rest_index.to_string());
+            self.write("] = arguments[_i];");
+        }
         self.write_line();
         self.decrease_indent();
         self.write_indent();
