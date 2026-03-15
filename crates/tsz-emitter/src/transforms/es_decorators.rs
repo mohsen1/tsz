@@ -54,6 +54,8 @@ pub struct TC39DecoratorEmitter<'a> {
     indent: usize,
     /// When true, uses `static { }` blocks (ES2022+) instead of IIFE pattern (ES2015).
     use_static_blocks: bool,
+    /// When true, prefix helper calls with `tslib_1.` (importHelpers + commonjs).
+    tslib_prefix: bool,
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
@@ -63,6 +65,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             source_text: None,
             indent: 0,
             use_static_blocks: false,
+            tslib_prefix: false,
         }
     }
 
@@ -76,6 +79,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub const fn set_use_static_blocks(&mut self, use_static: bool) {
         self.use_static_blocks = use_static;
+    }
+
+    pub const fn set_tslib_prefix(&mut self, prefix: bool) {
+        self.tslib_prefix = prefix;
+    }
+
+    /// Returns the helper function name with optional tslib prefix.
+    fn helper(&self, name: &str) -> String {
+        if self.tslib_prefix {
+            format!("tslib_1.{name}")
+        } else {
+            name.to_string()
+        }
     }
 
     /// Emit the TC39 decorator transform for a class declaration.
@@ -332,8 +348,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         // Class-level __esDecorate if needed
+        let es_decorate = self.helper("__esDecorate");
+        let run_initializers = self.helper("__runInitializers");
         if !class_decorators.is_empty() {
-            out.push_str(&format!("{indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
+            out.push_str(&format!("{indent}{es_decorate}(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n"));
             out.push_str(&format!(
                 "{indent}{class_name} = _classThis = _classDescriptor.value;\n"
             ));
@@ -345,14 +363,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // Static extra initializers
         if has_any_static {
             out.push_str(&format!(
-                "{indent}__runInitializers({ctor_ref}, _staticExtraInitializers);\n"
+                "{indent}{run_initializers}({ctor_ref}, _staticExtraInitializers);\n"
             ));
         }
 
         // Class extra initializers (when class decorators exist)
         if !class_decorators.is_empty() {
             out.push_str(&format!(
-                "{indent}__runInitializers({ctor_ref}, _classExtraInitializers);\n"
+                "{indent}{run_initializers}({ctor_ref}, _classExtraInitializers);\n"
             ));
         }
     }
@@ -377,6 +395,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
         inner_indent: &str,
         out: &mut String,
     ) {
+        let run_init = self.helper("__runInitializers");
+
         // Build the decorator assignment comma expression that goes in the sink member
         let mut assignment_parts: Vec<String> = Vec::new();
         for (i, member) in decorated_members.iter().enumerate() {
@@ -390,7 +410,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 && let MemberName::Computed(expr_idx) = &member.name
             {
                 assignment_parts.push(format!(
-                    "{var_name} = __propKey({})",
+                    "{var_name} = {}({})",
+                    self.helper("__propKey"),
                     self.node_text(*expr_idx)
                 ));
             }
@@ -459,7 +480,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 }
                 if has_any_instance {
                     out.push_str(&format!(
-                        "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
+                        "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
                     ));
                 }
                 out.push_str(&format!("{indent}}}\n"));
@@ -467,7 +488,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 out.push_str(") {\n");
                 if has_any_instance {
                     out.push_str(&format!(
-                        "{inner_indent}__runInitializers(this, _instanceExtraInitializers);\n"
+                        "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
                     ));
                 }
                 out.push_str(&format!("{indent}}}\n"));
@@ -944,8 +965,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
             "_instanceExtraInitializers"
         };
 
+        let es_decorate = self.helper("__esDecorate");
         out.push_str(&format!(
-            "{indent}__esDecorate({ctor_arg}, null, {}, {{ kind: \"{kind_str}\", name: {name_str}, static: {}, private: {}, access: {{ {access_str} }}, metadata: _metadata }}, null, {extra_init_arg});\n",
+            "{indent}{es_decorate}({ctor_arg}, null, {}, {{ kind: \"{kind_str}\", name: {name_str}, static: {}, private: {}, access: {{ {access_str} }}, metadata: _metadata }}, null, {extra_init_arg});\n",
             var_info.decorators_var,
             member.is_static,
             member.is_private,
