@@ -4670,9 +4670,62 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let object_node = self.arena.get(object_expr_idx)?;
         let object = self.arena.get_literal_expr(object_node)?;
-        let mut members = Vec::new();
 
+        // Pre-scan: collect setter and getter names for accessor pair handling
+        let mut setter_names = rustc_hash::FxHashSet::<String>::default();
+        let mut getter_names = rustc_hash::FxHashSet::<String>::default();
+        for &idx in &object.elements.nodes {
+            if let Some(n) = self.arena.get(idx) {
+                if n.kind == syntax_kind_ext::SET_ACCESSOR {
+                    if let Some(acc) = self.arena.get_accessor(n) {
+                        if let Some(name) = self.infer_property_name_text(acc.name) {
+                            setter_names.insert(name);
+                        }
+                    }
+                } else if n.kind == syntax_kind_ext::GET_ACCESSOR {
+                    if let Some(acc) = self.arena.get_accessor(n) {
+                        if let Some(name) = self.infer_property_name_text(acc.name) {
+                            getter_names.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut members = Vec::new();
         for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            // Skip setters that have a matching getter (merged into one property)
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                if let Some(acc) = self.arena.get_accessor(member_node) {
+                    if let Some(name) = self.infer_property_name_text(acc.name) {
+                        if getter_names.contains(&name) {
+                            continue;
+                        }
+                    }
+                }
+            }
+            // For getters: handle readonly based on setter existence + infer body type
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                if let Some(acc) = self.arena.get_accessor(member_node) {
+                    if let Some(name) = self.infer_property_name_text(acc.name) {
+                        let type_text = self
+                            .infer_fallback_type_text_at(acc.type_annotation, depth + 1)
+                            .or_else(|| self.function_body_preferred_return_type_text(acc.body))
+                            .unwrap_or_else(|| "any".to_string());
+                        let readonly = if setter_names.contains(&name) {
+                            ""
+                        } else {
+                            "readonly "
+                        };
+                        members.push(format!("{readonly}{name}: {type_text}"));
+                        continue;
+                    }
+                }
+            }
+
             if let Some(member_text) = self.infer_object_member_type_text_at(member_idx, depth + 1)
             {
                 members.push(member_text);
@@ -4726,9 +4779,10 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 let data = self.arena.get_accessor(member_node)?;
                 let name = self.infer_property_name_text(data.name)?;
-                // Prefer explicit return type annotation, then fall back to any
+                // Infer return type: explicit annotation > body inference > any
                 let type_text = self
                     .infer_fallback_type_text_at(data.type_annotation, depth)
+                    .or_else(|| self.function_body_preferred_return_type_text(data.body))
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("readonly {name}: {type_text}"))
             }
