@@ -1691,7 +1691,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        let mut formatted = self.format_type_diagnostic_with_display(display_ty);
+        let mut formatted = self.format_type_diagnostic(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')
