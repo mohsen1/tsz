@@ -1,10 +1,9 @@
 use super::*;
-use crate::TypeInterner;
 use crate::types::Visibility;
 
-fn create_test_interner() -> TypeInterner {
-    TypeInterner::new()
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::create_test_interner;
 
 #[test]
 fn test_def_id_validity() {

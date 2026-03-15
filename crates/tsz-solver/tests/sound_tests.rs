@@ -1,9 +1,8 @@
 use super::*;
-use crate::TypeInterner;
 
-fn create_test_interner() -> TypeInterner {
-    TypeInterner::new()
-}
+#[path = "common/mod.rs"]
+mod common;
+use common::create_test_interner;
 
 #[test]
 fn test_sound_diagnostic_formatting() {
