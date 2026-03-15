@@ -206,11 +206,17 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
-        // Auto-accessors always need both GET and SET helpers because
-        // the generated getter/setter access the backing private storage field.
+        // Private field helpers (__classPrivateFieldGet/__classPrivateFieldSet) are only
+        // needed when the target doesn't support native private fields (< ES2022).
+        // For ES2022+, private fields use native #field syntax and no helpers are emitted.
+        // Auto-accessors always need helpers because the generated getter/setter pair
+        // accesses the backing private storage field via WeakMap.
         let has_auto_accessors = self.class_has_auto_accessor_members(class_data);
+        let needs_private_lowering = self.ctx.needs_es2022_lowering;
 
-        if has_auto_accessors || self.class_has_private_members(class_data) {
+        if needs_private_lowering
+            && (has_auto_accessors || self.class_has_private_members(class_data))
+        {
             // Compute which helpers are actually needed before taking the mutable borrow.
             let needs_get = has_auto_accessors || self.class_has_private_field_reads(class_data);
             let needs_set = has_auto_accessors || self.class_has_private_field_writes(class_data);
