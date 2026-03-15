@@ -146,12 +146,15 @@ impl<'a> CheckerState<'a> {
     /// Validate explicit type arguments against their constraints for call expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
     /// Reports TS2558 when a non-generic function is called with type arguments.
+    /// Returns `true` when a type argument count mismatch was detected (TS2558 emitted),
+    /// signaling that the caller should skip argument type checking against the
+    /// incorrectly-instantiated signature.
     pub(crate) fn validate_call_type_arguments(
         &mut self,
         callee_type: TypeId,
         type_args_list: &tsz_parser::parser::NodeList,
         call_idx: NodeIndex,
-    ) {
+    ) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(call_expr) = self.ctx.arena.get_call_expr_at(call_idx)
@@ -172,7 +175,9 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
                 crate::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
             );
-            return;
+            // super<T>() is always invalid — not a count mismatch per se,
+            // but the caller already handles the super bail-out separately.
+            return false;
         }
 
         let callee_type_orig = callee_type;
@@ -205,7 +210,7 @@ impl<'a> CheckerState<'a> {
             for &arg_idx in &type_args_list.nodes {
                 self.get_type_of_node(arg_idx);
             }
-            return;
+            return false;
         }
 
         // Get the type parameters from the callee type. For callables with overloads,
@@ -217,7 +222,7 @@ impl<'a> CheckerState<'a> {
             got,
         ) else {
             // None = multiple overloads match or not a callable type; skip validation.
-            return;
+            return false;
         };
 
         let max_expected = type_params.len();
@@ -231,8 +236,9 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                     &["0", &got.to_string()],
                 );
+                return true;
             }
-            return;
+            return false;
         }
 
         if got < min_required || got > max_expected {
@@ -248,10 +254,11 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                 &[&expected_str, &got.to_string()],
             );
-            return;
+            return true;
         }
 
         self.validate_type_args_against_params(&type_params, type_args_list);
+        false
     }
 
     /// Validate type arguments against their constraints for type references (e.g., `A<X, Y>`).
