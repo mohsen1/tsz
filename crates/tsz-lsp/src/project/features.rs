@@ -548,4 +548,197 @@ impl Project {
 
         provider.subtypes(file.root(), position)
     }
+
+    // ── Provider-based features (document-local, no type checking) ──────
+
+    /// Get document symbols for a file.
+    pub fn get_document_symbols(
+        &self,
+        file_name: &str,
+    ) -> Option<Vec<crate::symbols::DocumentSymbol>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::symbols::DocumentSymbolProvider::new(
+            file.arena(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.get_document_symbols(file.root()))
+    }
+
+    /// Get folding ranges for a file.
+    pub fn get_folding_ranges(
+        &self,
+        file_name: &str,
+    ) -> Option<Vec<crate::editor_ranges::folding::FoldingRange>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::editor_ranges::folding::FoldingRangeProvider::new(
+            file.arena(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.get_folding_ranges(file.root()))
+    }
+
+    /// Get selection ranges for given positions in a file.
+    pub fn get_selection_ranges(
+        &self,
+        file_name: &str,
+        positions: &[Position],
+    ) -> Option<Vec<Option<crate::editor_ranges::selection_range::SelectionRange>>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::editor_ranges::selection_range::SelectionRangeProvider::new(
+            file.arena(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.get_selection_ranges(positions))
+    }
+
+    /// Get semantic tokens for a file (encoded as delta array).
+    pub fn get_semantic_tokens_full(&self, file_name: &str) -> Option<Vec<u32>> {
+        let file = self.files.get(file_name)?;
+        let mut provider = crate::highlighting::semantic_tokens::SemanticTokensProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.get_semantic_tokens(file.root()))
+    }
+
+    /// Get document highlights for a position in a file.
+    pub fn get_document_highlighting(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Option<Vec<crate::highlighting::DocumentHighlight>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::highlighting::DocumentHighlightProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.source_text(),
+        );
+        provider.get_document_highlights(file.root(), position)
+    }
+
+    /// Get inlay hints for a range in a file.
+    pub fn get_inlay_hints(
+        &self,
+        file_name: &str,
+        range: Range,
+    ) -> Option<Vec<crate::editor_decorations::inlay_hints::InlayHint>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::editor_decorations::inlay_hints::InlayHintsProvider {
+            arena: file.arena(),
+            binder: file.binder(),
+            line_map: file.line_map(),
+            source: file.source_text(),
+            interner: &file.type_interner,
+            file_name: file.file_name().to_string(),
+        };
+        Some(provider.provide_inlay_hints(file.root(), range))
+    }
+
+    /// Prepare call hierarchy at a position.
+    pub fn prepare_call_hierarchy(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Option<crate::hierarchy::call_hierarchy::CallHierarchyItem> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+        provider.prepare(file.root(), position)
+    }
+
+    /// Get incoming calls at a position.
+    pub fn get_incoming_calls(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Vec<crate::hierarchy::call_hierarchy::CallHierarchyIncomingCall> {
+        let file = match self.files.get(file_name) {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+        provider.incoming_calls(file.root(), position)
+    }
+
+    /// Get outgoing calls at a position.
+    pub fn get_outgoing_calls(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Vec<crate::hierarchy::call_hierarchy::CallHierarchyOutgoingCall> {
+        let file = match self.files.get(file_name) {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.file_name().to_string(),
+            file.source_text(),
+        );
+        provider.outgoing_calls(file.root(), position)
+    }
+
+    /// Get document links for a file.
+    pub fn get_document_links(
+        &self,
+        file_name: &str,
+    ) -> Option<Vec<crate::document_links::DocumentLink>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::document_links::DocumentLinkProvider::new(
+            file.arena(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.provide_document_links(file.root()))
+    }
+
+    /// Get linked editing ranges for JSX tags.
+    pub fn get_linked_editing_ranges(
+        &self,
+        file_name: &str,
+        position: Position,
+    ) -> Option<crate::rename::linked_editing::LinkedEditingRanges> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::rename::linked_editing::LinkedEditingProvider::new(
+            file.arena(),
+            file.line_map(),
+            file.source_text(),
+        );
+        provider.provide_linked_editing_ranges(file.root(), position)
+    }
+
+    /// Format a document using the built-in formatter.
+    pub fn format_document(
+        &self,
+        file_name: &str,
+        options: &crate::formatting::FormattingOptions,
+    ) -> Option<Result<Vec<crate::formatting::TextEdit>, String>> {
+        let file = self.files.get(file_name)?;
+        Some(
+            crate::formatting::DocumentFormattingProvider::format_document(
+                file_name,
+                file.source_text(),
+                options,
+            ),
+        )
+    }
 }
