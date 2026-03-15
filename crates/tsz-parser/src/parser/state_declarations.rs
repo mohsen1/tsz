@@ -72,10 +72,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::DotToken) {
             use tsz_common::diagnostics::diagnostic_codes;
             // Emit '{' expected at the dot position (tsc expects { after the name)
-            self.parse_error_at_current_token(
-                "'{' expected.",
-                diagnostic_codes::EXPECTED,
-            );
+            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             // Skip over the dotted name segments (e.g., `.I1`)
             while self.is_token(SyntaxKind::DotToken) {
                 self.next_token(); // skip '.'
@@ -1392,8 +1389,8 @@ impl ParserState {
                 );
                 let modifiers = self.make_node_list(vec![declare_modifier, export_modifier]);
                 // TS1029: 'export' modifier must precede 'declare' modifier.
-                // Skip for `declare export as namespace` which is a valid UMD pattern.
-                // Skip for `declare export = expr` — TS1120 will be emitted instead.
+                // Skip for `declare export as namespace` (valid UMD pattern) and
+                // `declare export = expr` (export assignment — TS1120 handles it).
                 if !self.is_token(SyntaxKind::AsKeyword) && !self.is_token(SyntaxKind::EqualsToken)
                 {
                     self.parse_error_at(
