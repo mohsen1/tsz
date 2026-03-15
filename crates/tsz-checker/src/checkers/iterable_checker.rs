@@ -68,11 +68,18 @@ impl<'a> CheckerState<'a> {
             }
             FullIterableTypeKind::Object(shape_id) => {
                 // Check if object has a [Symbol.iterator] method in its shape.
-                // If found (Some), use that result directly (valid or invalid).
+                // If found (Some), verify the full iterator protocol (the return
+                // value of [Symbol.iterator]() must have a `next()` method).
                 // If not found (None), fall back to property access resolution for
                 // computed properties from lib types or inherited properties.
                 match self.object_has_iterator_method(shape_id) {
-                    Some(result) => result,
+                    Some(true) => {
+                        // [Symbol.iterator] exists and is callable, but we must also
+                        // verify that calling it returns a valid iterator (has next()).
+                        // Use the full property access chain to verify.
+                        self.type_has_symbol_iterator_via_property_access(type_id)
+                    }
+                    Some(false) => false,
                     None => self.type_has_symbol_iterator_via_property_access(type_id),
                 }
             }
@@ -150,14 +157,116 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Check if a type has [Symbol.iterator] using the full property access resolution.
+    /// Check if a type has [Symbol.iterator] using the full property access resolution,
+    /// AND that calling it returns an iterator (something with a `next()` method).
+    ///
     /// This handles Application types (Set<T>, Map<K,V>) with Lazy(DefId) bases from lib
     /// files, Callable types with iterator properties, and other complex cases where simple
     /// shape inspection fails but the full checker resolution machinery can find the property.
     fn type_has_symbol_iterator_via_property_access(&mut self, type_id: TypeId) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
         let result = self.resolve_property_access_with_env(type_id, "[Symbol.iterator]");
-        matches!(result, PropertyAccessResult::Success { .. })
+        match result {
+            PropertyAccessResult::Success {
+                type_id: iterator_fn_type,
+                ..
+            } => {
+                // Verify the full iterator protocol: calling [Symbol.iterator]()
+                // must return something with a `next()` method.
+                self.iterator_fn_returns_valid_iterator(type_id, iterator_fn_type)
+            }
+            _ => false,
+        }
+    }
+
+    /// Verify that calling an iterator factory function returns a valid iterator
+    /// (i.e., an object with a `next()` method).
+    ///
+    /// This catches cases like:
+    /// ```ts
+    /// class Bad { [Symbol.iterator]() { return this; } }
+    /// // Bad has [Symbol.iterator] but no next() → NOT a valid iterable
+    /// ```
+    fn iterator_fn_returns_valid_iterator(
+        &mut self,
+        iterable_type: TypeId,
+        iterator_fn_type: TypeId,
+    ) -> bool {
+        // Get the return type of calling [Symbol.iterator]()
+        let iterator_type = self.get_call_return_type(iterator_fn_type);
+
+        // If the return type is any/unknown/error, accept it (don't flag)
+        if iterator_type == TypeId::ANY
+            || iterator_type == TypeId::UNKNOWN
+            || iterator_type == TypeId::ERROR
+        {
+            return true;
+        }
+
+        // If the iterator function returns `ThisType` (polymorphic `this` from
+        // `return this` in class methods), substitute with the iterable type itself.
+        let iterator_type = if tsz_solver::type_queries::is_this_type(self.ctx.types, iterator_type)
+        {
+            iterable_type
+        } else {
+            iterator_type
+        };
+
+        // Check if the iterator type has a `next` property by inspecting
+        // the object shape directly, rather than using property access resolution
+        // which may return `any` as a fallback for missing properties.
+        self.type_has_next_method(iterator_type)
+            || (iterator_type != iterable_type && self.type_has_next_method(iterable_type))
+    }
+
+    /// Check if a type has a `next` method by examining its object shape directly.
+    ///
+    /// This is more precise than `resolve_property_access_with_env` because it
+    /// doesn't fall back to `any` for missing properties. Used to verify the
+    /// iterator protocol: the return value of `[Symbol.iterator]()` must have `next()`.
+    fn type_has_next_method(&self, type_id: TypeId) -> bool {
+        // For any/unknown/error, accept
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return true;
+        }
+
+        let kind = classify_full_iterable_type(self.ctx.types, type_id);
+        match kind {
+            FullIterableTypeKind::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                shape.properties.iter().any(|prop| {
+                    let name = self.ctx.types.resolve_atom_ref(prop.name);
+                    name.as_ref() == "next"
+                })
+            }
+            FullIterableTypeKind::Union(members) => {
+                // All union members must have next()
+                members.iter().all(|&m| self.type_has_next_method(m))
+            }
+            FullIterableTypeKind::Intersection(members) => {
+                // At least one intersection member must have next()
+                members.iter().any(|&m| self.type_has_next_method(m))
+            }
+            FullIterableTypeKind::Readonly(inner) => self.type_has_next_method(inner),
+            FullIterableTypeKind::Application { .. }
+            | FullIterableTypeKind::TypeParameter { .. }
+            | FullIterableTypeKind::ComplexType => {
+                // For Application types (IterableIterator<T>, etc.), type parameters,
+                // and complex types, assume valid — they likely resolve to lib types
+                // that have next().
+                true
+            }
+            FullIterableTypeKind::Array(_) | FullIterableTypeKind::Tuple(_) => {
+                // Arrays and tuples have next() via their iterator protocol
+                true
+            }
+            FullIterableTypeKind::StringLiteral(_) => true,
+            FullIterableTypeKind::FunctionOrCallable | FullIterableTypeKind::NotIterable => {
+                // Functions and NotIterable (Lazy/DefId types that couldn't be resolved,
+                // or truly non-iterable types) do NOT have next().
+                false
+            }
+        }
     }
 
     /// Check if a type has a numeric index signature, making it "array-like".
