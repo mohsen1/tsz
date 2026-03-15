@@ -2,9 +2,9 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~1856/2000 sample (92.8%) on latest main (2026-03-15). All contextual-typing commits merged.
+**Conformance**: ~93% on 2000-test sample, ~91.4% on 3000-test sample (2026-03-15). All contextual-typing commits merged.
 
-**What was fixed** (11 commits, all merged):
+**What was fixed** (12 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
 2. Literal type preservation with primitive constraints (`<T extends string>`)
 3. Contextual return type for zero-arg generic calls (`from<T>(): T[]`)
@@ -16,6 +16,7 @@
 9. Bare type param targets + nested object recursion in intra-expression inference
 10. Preserve callback return-type TS2322 through arg collection filter (circularResolvedSignature)
 11. Fix `recover_property_from_implemented_interfaces` — was using `get_type_from_type_node` on ExpressionWithTypeArguments (returns ERROR → ANY via solver default), now uses `resolve_heritage_symbol` + `type_reference_symbol_type` for correct instance type resolution. Also added `TypeData::Error` handling in solver property access to return ERROR instead of ANY.
+12. Fix TS7018 false positives — was emitting "implicitly has 'any' type" for object literal properties when initializer evaluates to explicit `any` (from `any` variable). tsc only emits TS7018 when `any` comes from null/undefined widening. Fixes ~15 tests (+6 net on 3000-sample).
 
 **Tests newly passing** (confirmed on latest main):
 - `contextualPropertyOfGenericMappedType.ts` — now passes (fixed by recent main changes)
