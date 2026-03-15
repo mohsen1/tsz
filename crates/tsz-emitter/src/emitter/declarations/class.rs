@@ -21,6 +21,99 @@ type StaticFieldInit = (
 );
 type AutoAccessorInfo = (NodeIndex, String, Option<NodeIndex>, bool);
 
+/// Check if a class body contains self-references to the class name.
+/// This is needed for the `C_1` alias pattern in legacy decorator lowering.
+/// When a decorated class references itself (e.g. `static x() { return C.y; }`),
+/// tsc creates an alias `var C_1;` so the decorator can replace the class binding
+/// without breaking internal references.
+///
+/// Uses source text scanning within member spans to detect references.
+fn class_has_self_references(
+    arena: &tsz_parser::parser::node::NodeArena,
+    source_text: Option<&str>,
+    class_name: &str,
+    members: &[NodeIndex],
+) -> bool {
+    if class_name.is_empty() {
+        return false;
+    }
+    let Some(src) = source_text else {
+        return false;
+    };
+
+    for &member_idx in members {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+
+        // Get the span of the member body/initializer
+        let body_span = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                arena
+                    .get(method.body)
+                    .map(|n| (n.pos as usize, n.end as usize))
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                arena
+                    .get(prop.initializer)
+                    .map(|n| (n.pos as usize, n.end as usize))
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(acc) = arena.get_accessor(member_node) else {
+                    continue;
+                };
+                arena
+                    .get(acc.body)
+                    .map(|n| (n.pos as usize, n.end as usize))
+            }
+            _ => continue,
+        };
+
+        if let Some((start, end)) = body_span {
+            if start < end && end <= src.len() {
+                let body_text = &src[start..end];
+                if text_contains_identifier(body_text, class_name) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if `text` contains `name` as an identifier (word boundary match).
+fn text_contains_identifier(text: &str, name: &str) -> bool {
+    let name_bytes = name.as_bytes();
+    let text_bytes = text.as_bytes();
+    let name_len = name_bytes.len();
+    if name_len == 0 || text_bytes.len() < name_len {
+        return false;
+    }
+    let mut i = 0;
+    while i + name_len <= text_bytes.len() {
+        if &text_bytes[i..i + name_len] == name_bytes {
+            let before_ok = i == 0 || !is_ident_char(text_bytes[i - 1]);
+            let after_ok =
+                i + name_len == text_bytes.len() || !is_ident_char(text_bytes[i + name_len]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Classes
@@ -857,15 +950,111 @@ impl<'a> Printer<'a> {
                     false
                 };
 
+            // Detect if the class body has self-references that need aliasing.
+            // When a decorated class references itself (e.g. `static x() { return C.y; }`),
+            // tsc emits: `var C_1; let C = C_1 = class C { static x() { return C_1.y; } };`
+            let needs_alias = !legacy_class_decorators.is_empty()
+                && class_has_self_references(
+                    self.arena,
+                    self.source_text_for_map(),
+                    &class_name,
+                    &class.members.nodes,
+                );
+
+            let alias_name = if needs_alias {
+                let alias = format!("{class_name}_1");
+                // Emit `var C_1;\n` before the class declaration
+                self.write("var ");
+                self.write(&alias);
+                self.write(";");
+                self.write_line();
+                Some(alias)
+            } else {
+                None
+            };
+
             // When there are class-level decorators, emit as `let Name = class { ... };`
             // When only member decorators, emit as normal `class Name { ... }`
             if !legacy_class_decorators.is_empty() {
-                self.emit_class_es6_with_options(
-                    node,
-                    idx,
-                    true,
-                    Some(("let", class_name.clone())),
-                );
+                if let Some(ref alias) = alias_name {
+                    // Emit: `let Name = Name_1 = class Name { ... };`
+                    // First capture the class body, then replace self-refs
+                    let before_len = self.writer.len();
+                    self.emit_class_es6_with_options(
+                        node,
+                        idx,
+                        true,
+                        Some(("let", class_name.clone())),
+                    );
+                    let after_len = self.writer.len();
+
+                    // Post-process: replace class name with alias in class body
+                    let full_output = self.writer.get_output().to_string();
+                    let emitted_str = &full_output[before_len..after_len];
+
+                    // The emitted text starts with `let Name = class Name {`
+                    // We need to insert `Name_1 = ` after `let Name = `
+                    // and replace body references to Name with Name_1
+                    let prefix = format!("let {class_name} = class {class_name}");
+                    let alias_prefix = format!("let {class_name} = {alias} = class {class_name}");
+
+                    let mut replaced = emitted_str.replacen(&prefix, &alias_prefix, 1);
+
+                    // Replace self-references ONLY inside the class body (between { and };)
+                    // Static fields after the class close brace should keep the original name.
+                    if let Some(brace_pos) = replaced.find('{') {
+                        // Find the matching close of the class expression: `};\n` or `};`
+                        // The class body ends at `\n};` (the closing brace of the class expr)
+                        let close_pattern = "\n};";
+                        let body_end =
+                            if let Some(close_pos) = replaced[brace_pos..].find(close_pattern) {
+                                brace_pos + close_pos + close_pattern.len()
+                            } else {
+                                replaced.len()
+                            };
+
+                        let header = &replaced[..brace_pos];
+                        let class_body = &replaced[brace_pos..body_end];
+                        let after_class = &replaced[body_end..];
+
+                        // Only replace identifiers within the class body
+                        let mut new_body = String::with_capacity(class_body.len());
+                        let name_bytes = class_name.as_bytes();
+                        let body_bytes = class_body.as_bytes();
+                        let mut i = 0;
+                        while i < body_bytes.len() {
+                            if i + name_bytes.len() <= body_bytes.len()
+                                && &body_bytes[i..i + name_bytes.len()] == name_bytes
+                            {
+                                let before_ok = i == 0 || !is_ident_char(body_bytes[i - 1]);
+                                let after_ok = i + name_bytes.len() == body_bytes.len()
+                                    || !is_ident_char(body_bytes[i + name_bytes.len()]);
+                                if before_ok && after_ok {
+                                    new_body.push_str(alias);
+                                    i += name_bytes.len();
+                                    continue;
+                                }
+                            }
+                            new_body.push(body_bytes[i] as char);
+                            i += 1;
+                        }
+                        replaced = format!("{header}{new_body}{after_class}");
+                    }
+
+                    // Replace the emitted range with the modified text.
+                    // Trim trailing newline to avoid double blank line before __decorate.
+                    let replaced = replaced.trim_end_matches('\n');
+                    self.writer.truncate(before_len);
+                    self.write(replaced);
+                    self.write_line();
+                } else {
+                    self.emit_class_es6_with_options(
+                        node,
+                        idx,
+                        true,
+                        Some(("let", class_name.clone())),
+                    );
+                }
             } else {
                 self.emit_class_es6_with_options(node, idx, false, None);
             }
@@ -914,14 +1103,38 @@ impl<'a> Printer<'a> {
                 && self
                     .arena
                     .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
-            self.emit_legacy_class_decorator_assignment(
-                &class_name,
-                &legacy_class_decorators,
-                commonjs_exported,
-                commonjs_default,
-                false,
-                &class.members.nodes,
-            );
+            if let Some(ref alias) = alias_name {
+                // Emit: `Name = Name_1 = __decorate([...], Name);`
+                // We intercept the normal pattern and insert the alias assignment
+                let before_len = self.writer.len();
+                self.emit_legacy_class_decorator_assignment(
+                    &class_name,
+                    &legacy_class_decorators,
+                    commonjs_exported,
+                    commonjs_default,
+                    false,
+                    &class.members.nodes,
+                );
+                let after_len = self.writer.len();
+                let full_output = self.writer.get_output().to_string();
+                let emitted = &full_output[before_len..after_len];
+
+                // Replace `Name = __decorate` with `Name = Name_1 = __decorate`
+                let pattern = format!("{class_name} = __decorate");
+                let replacement = format!("{class_name} = {alias} = __decorate");
+                let modified = emitted.replacen(&pattern, &replacement, 1);
+                self.writer.truncate(before_len);
+                self.write(&modified);
+            } else {
+                self.emit_legacy_class_decorator_assignment(
+                    &class_name,
+                    &legacy_class_decorators,
+                    commonjs_exported,
+                    commonjs_default,
+                    false,
+                    &class.members.nodes,
+                );
+            }
 
             // Clear type parameter names after decorator emission
             self.metadata_class_type_params = None;
