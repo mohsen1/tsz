@@ -623,6 +623,94 @@ function f(obj: Obj) {
 }
 
 #[test]
+fn test_generic_rest_spread_preserves_type_parameter() {
+    // When a generic function destructures `{ a, ...rest } = obj` where `obj: T`,
+    // and returns `{ ...rest, b: a }`, the return type must preserve T's identity
+    // so that when the function is called with a concrete type, the return type
+    // is properly instantiated. Without this, rest resolves to {} and the return
+    // type becomes { b: string } regardless of T, causing false TS2741.
+    let source = r#"
+function test<T extends { a: string }>(obj: T) {
+    let { a, ...rest } = obj;
+    return { ...rest, b: a };
+}
+let o1 = { a: 'hello', x: 42 };
+let o2: { b: string, x: number } = test(o1);
+"#;
+    let diagnostics = check_source(source);
+    let ts2741_count = diagnostics.iter().filter(|d| d.code == 2741).count();
+    assert_eq!(
+        ts2741_count,
+        0,
+        "Expected no TS2741 for generic rest spread return, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_generic_rest_spread_with_multiple_properties() {
+    // Variant with multiple destructured properties and multiple extra properties.
+    let source = r#"
+function pick<T extends { x: number, y: number }>(obj: T) {
+    let { x, y, ...rest } = obj;
+    return { ...rest, sum: x + y };
+}
+let input = { x: 1, y: 2, z: 'hello', w: true };
+let output: { sum: number, z: string, w: boolean } = pick(input);
+"#;
+    let diagnostics = check_source(source);
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| d.code == 2741 || d.code == 2322)
+        .count();
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2741/TS2322 for generic rest spread with multiple properties"
+    );
+}
+
+#[test]
+fn test_generic_rest_destructuring_named_property_type() {
+    // Destructuring a named property from a generic parameter should resolve
+    // to the constraint's property type.
+    let source = r#"
+function getName<T extends { name: string }>(obj: T): string {
+    let { name } = obj;
+    return name;
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Expected no TS2322: destructured named property should have constraint type"
+    );
+}
+
+#[test]
+fn test_generic_rest_spread_still_catches_real_errors() {
+    // Real type errors should still be caught even with generic rest/spread.
+    let source = r#"
+function test<T extends { a: string }>(obj: T) {
+    let { a, ...rest } = obj;
+    return { ...rest, b: a };
+}
+let o1 = { a: 'hello', x: 42 };
+let o2: { b: number } = test(o1);
+"#;
+    let diagnostics = check_source(source);
+    // b is string, not number — should have an error
+    let has_type_error = diagnostics.iter().any(|d| d.code == 2322 || d.code == 2741);
+    assert!(
+        has_type_error,
+        "Expected a type error when assigning {{ b: string }} to {{ b: number }}"
+    );
+}
+
+#[test]
 fn test_object_rest_excludes_private_class_members() {
     let source = r#"
 class C {

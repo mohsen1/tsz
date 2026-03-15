@@ -55,6 +55,11 @@ impl<'a> CheckerState<'a> {
         let mut has_spread = false;
         let mut has_union_spread = false;
         let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
+        // Track type-parameter-containing spread types for intersection creation.
+        // When a type parameter (or type containing type parameters) is spread
+        // alongside other properties, we create an intersection of the type parameter
+        // with the explicit properties, preserving generic identity for instantiation.
+        let mut generic_spread_types: Vec<TypeId> = Vec::new();
         // Track getter/setter names to allow getter+setter pairs with the same name
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
@@ -1595,12 +1600,33 @@ impl<'a> CheckerState<'a> {
                         // don't include pre-union ones when applied at the end
                         properties.clear();
                     } else {
+                        // When the spread type is/contains a type parameter,
+                        // track it for intersection creation at the end.
+                        // This preserves generic identity so that return types
+                        // of generic functions are properly instantiated at
+                        // call sites. Without this, spreading a type parameter
+                        // resolves to constraint properties, losing the generic
+                        // information and causing false TS2741/TS2322 errors.
+                        let is_generic_spread = is_valid_spread
+                            && (tsz_solver::type_param_info(self.ctx.types, spread_type).is_some()
+                                || tsz_solver::type_queries::contains_type_parameters_db(
+                                    self.ctx.types,
+                                    spread_type,
+                                ));
+
+                        if is_generic_spread {
+                            generic_spread_types.push(spread_type);
+                        }
+
                         let spread_props = self.collect_object_spread_properties(spread_type);
 
                         // TS2783: Check if any earlier named properties will be
                         // overwritten by required properties from this spread.
                         // Only when strict null checks are enabled.
-                        if self.ctx.strict_null_checks() {
+                        // Skip for generic spreads — the constraint properties
+                        // are approximations and may include properties that
+                        // aren't actually present in the concrete type.
+                        if self.ctx.strict_null_checks() && !is_generic_spread {
                             for sp in &spread_props {
                                 if !sp.optional
                                     && let Some((prop_node, prop_name)) =
@@ -1749,6 +1775,20 @@ impl<'a> CheckerState<'a> {
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // This fixes the "Zombie Freshness" bug by distinguishing fresh vs
         // non-fresh object types at interning time.
+
+        // When type-parameter-containing types were spread alongside explicit
+        // properties, create an intersection to preserve the generic identity.
+        // E.g., `{ ...rest, b: a }` where `rest: T` produces `T & { b: string }`
+        // instead of just `{ b: string }`. This ensures the return type of
+        // generic functions contains the type parameter, enabling proper
+        // instantiation at call sites.
+        let object_type = if !generic_spread_types.is_empty() {
+            let mut members = generic_spread_types;
+            members.push(object_type);
+            self.ctx.types.factory().intersection(members)
+        } else {
+            object_type
+        };
 
         // Pop this type from stack if we pushed it earlier
         if marker_this_type.is_some() {
