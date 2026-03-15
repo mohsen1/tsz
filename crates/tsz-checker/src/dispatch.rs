@@ -1108,7 +1108,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                             let evaluated = self.checker.evaluate_type_with_env(ty);
                             evaluator.is_arithmetic_operand(evaluated)
-                                || self.checker.is_enum_like_type(ty)
+                                || (self.checker.is_enum_like_type(ty)
+                                    && self.checker.is_unresolved_lazy_type(evaluated))
                         });
                         if self.checker.ctx.strict_null_checks()
                             && let Some(cause) = nullish_cause
@@ -1123,8 +1124,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // Type aliases like `YesNo = Choice.Yes | Choice.No` may stay as
                         // Lazy(DefId) which the visitor can't recurse into.
                         let resolved_type = self.checker.evaluate_type_with_env(operand_type);
+                        // Only use is_enum_like_type as fallback when evaluation couldn't
+                        // resolve the type (stays Lazy). When resolved, is_arithmetic_operand
+                        // correctly handles Enum types via visit_enum, distinguishing
+                        // numeric enums (valid) from string enums (invalid for arithmetic).
                         let is_valid = evaluator.is_arithmetic_operand(resolved_type)
-                            || self.checker.is_enum_like_type(operand_type);
+                            || (self.checker.is_enum_like_type(operand_type)
+                                && self.checker.is_unresolved_lazy_type(resolved_type));
                         if arithmetic_ok && !is_valid {
                             arithmetic_ok = false;
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
