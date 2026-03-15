@@ -8,6 +8,7 @@ use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_parser::syntax::transform_utils::contains_this_reference;
 use tsz_scanner::SyntaxKind;
 
 use super::super::core::PropertyNameEmit;
@@ -1934,6 +1935,19 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Check if any static field initializer references `this`.
+        // tsc transforms `this` in static field initializers to use a temp alias
+        // (`var _a; ... _a = C; C.foo = _a;`), even for ES2022+ targets.
+        let static_this_alias = if !static_field_inits.is_empty()
+            && static_field_inits
+                .iter()
+                .any(|(_, init_idx, _, _, _)| contains_this_reference(self.arena, *init_idx))
+        {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+
         // Check if class has an explicit constructor
         let has_constructor = class.members.nodes.iter().any(|&idx| {
             self.arena
@@ -2681,6 +2695,15 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
+            // If static field initializers reference `this`, emit `_a = ClassName;`
+            // so that `this` can be replaced with the temp alias.
+            if let Some(ref alias) = static_this_alias {
+                self.write(alias);
+                self.write(" = ");
+                self.write(&class_name);
+                self.write(";");
+                self.write_line();
+            }
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
@@ -2711,6 +2734,18 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.write("value: ");
                     self.emit_expression(*init_idx);
+                    // Replace `this` with alias in the emitted expression
+                    if let Some(ref alias) = static_this_alias {
+                        let full = self.writer.get_output().to_string();
+                        // Find the "value: " we just emitted and replace `this` in it
+                        let value_start = full.rfind("value: ").unwrap_or(full.len());
+                        let segment = &full[value_start..];
+                        let replaced = replace_identifier(segment, "this", alias);
+                        if replaced != segment {
+                            self.writer.truncate(value_start);
+                            self.write(&replaced);
+                        }
+                    }
                     self.write_line();
                     self.decrease_indent();
                     self.write("});");
@@ -2729,7 +2764,19 @@ impl<'a> Printer<'a> {
                         }
                     }
                     self.write(" = ");
+                    // Emit the initializer, then substitute `this` with alias if needed
+                    let before = self.writer.len();
                     self.emit_expression(*init_idx);
+                    if let Some(ref alias) = static_this_alias {
+                        let after = self.writer.len();
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = replace_identifier(segment, "this", alias);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
+                    }
                     self.write(";");
                 }
                 // Emit saved trailing comments (e.g. `// ok` from
