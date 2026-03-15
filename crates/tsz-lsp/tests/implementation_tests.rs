@@ -1445,7 +1445,10 @@ fn test_interface_with_method_and_property_implementor() {
     let pos = Position::new(0, 10);
     let result = provider.get_implementations(root, pos);
 
-    assert!(result.is_some(), "Should find ConsoleLogger implementing Logger");
+    assert!(
+        result.is_some(),
+        "Should find ConsoleLogger implementing Logger"
+    );
     let locs = result.unwrap();
     assert_eq!(locs.len(), 1);
 }
@@ -1516,7 +1519,10 @@ fn test_interface_single_method_multiple_implementors() {
     let pos = Position::new(0, 10);
     let result = provider.get_implementations(root, pos);
 
-    assert!(result.is_some(), "Should find three implementors of Runnable");
+    assert!(
+        result.is_some(),
+        "Should find three implementors of Runnable"
+    );
     let locs = result.unwrap();
     assert_eq!(locs.len(), 3);
 }
