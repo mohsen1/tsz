@@ -138,9 +138,6 @@ pub mod computation {
         substitute_this_type,
     };
 
-    // Inference
-    pub use crate::inference::infer::InferenceContext;
-
     // Contextual typing
     pub use crate::contextual::{
         ContextualTypeContext, apply_contextual_type, rest_argument_element_type,
