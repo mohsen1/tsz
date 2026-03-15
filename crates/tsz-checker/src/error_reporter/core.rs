@@ -267,7 +267,14 @@ impl<'a> CheckerState<'a> {
                 index.value_type = normalized;
             }
             if changed {
-                self.ctx.types.factory().object_with_index(shape)
+                let new_ty = self.ctx.types.factory().object_with_index(shape);
+                // Carry forward display properties from the original TypeId.
+                if let Some(display_props) = self.ctx.types.get_display_properties(ty) {
+                    self.ctx
+                        .types
+                        .store_display_properties(new_ty, display_props.as_ref().clone());
+                }
+                new_ty
             } else {
                 ty
             }
@@ -1684,7 +1691,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        let mut formatted = self.format_type_diagnostic(display_ty);
+        let mut formatted = self.format_type_diagnostic_with_display(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')

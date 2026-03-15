@@ -172,21 +172,9 @@ fn widen_type_cached(
                         db.object(new_props)
                     };
 
-                // Carry forward display properties from the original fresh object.
-                // When widening creates a new ObjectShapeId, preserve the
-                // pre-widened literal types for error messages.
-                if let Some(
-                    crate::TypeData::Object(new_shape_id)
-                    | crate::TypeData::ObjectWithIndex(new_shape_id),
-                ) = db.lookup(widened_type_id)
-                {
-                    // Use existing display properties if available, otherwise
-                    // use the original (pre-widened) properties as display properties.
-                    let display_props = db
-                        .get_display_properties(shape_id)
-                        .map(|p| p.as_ref().clone())
-                        .unwrap_or_else(|| shape.properties.clone());
-                    db.store_display_properties(new_shape_id, display_props);
+                // Carry forward display properties from the original TypeId.
+                if let Some(display_props) = db.get_display_properties(type_id) {
+                    db.store_display_properties(widened_type_id, display_props.as_ref().clone());
                 }
 
                 widened_type_id

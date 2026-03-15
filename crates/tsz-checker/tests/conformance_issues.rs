@@ -488,11 +488,11 @@ z = false;
 
     assert_eq!(relevant.len(), 4, "unexpected diagnostics: {relevant:?}");
     assert!(
-        messages.contains(&"Property 'one' is missing in type '{ [index: string]: any; }' but required in type '{ one: number; }'."),
+        messages.contains(&"Property 'one' is missing in type '{ [index: string]: any; }' but required in type '{ one: 1; }'."),
         "missing TS2741 for x = y: {relevant:?}"
     );
     assert!(
-        messages.contains(&"Property 'one' is missing in type '{ [index: number]: any; }' but required in type '{ one: number; }'."),
+        messages.contains(&"Property 'one' is missing in type '{ [index: number]: any; }' but required in type '{ one: 1; }'."),
         "missing TS2741 for x = z: {relevant:?}"
     );
     assert!(

@@ -266,22 +266,34 @@ impl<'a> CheckerState<'a> {
                         // produces `{ x: string }`. Only preserve literals when:
                         // - A const assertion is active (`as const`)
                         // - A contextual type narrows the property to a literal
-                        if !self.ctx.in_const_assertion
+                        let final_type = if !self.ctx.in_const_assertion
                             && !self.ctx.preserve_literal_types
                             && property_context_type.is_none()
                             && !had_object_context
                         {
-                            let widened = self.widen_literal_type(value_type);
-                            // Track the pre-widened type for display in error messages
-                            // (tsc's freshness model: show literal types in diagnostics)
-                            if widened != value_type {
-                                let name_atom = self.ctx.types.intern_string(&name);
-                                display_type_overrides.insert(name_atom, value_type);
-                            }
-                            widened
+                            self.widen_literal_type(value_type)
                         } else {
                             value_type
+                        };
+
+                        // Freshness model: extract the original literal type from the
+                        // AST (not from the type system) for display in error messages.
+                        // This is needed because get_type_of_node already widens
+                        // literals at the expression level (resolve_literal).
+                        // tsc shows `{ x: "hello" }` in errors even though the type
+                        // system uses `{ x: string }`.
+                        if prop.initializer != prop.name {
+                            if let Some(lit_type) =
+                                self.literal_type_from_initializer(prop.initializer)
+                            {
+                                if lit_type != final_type {
+                                    let name_atom = self.ctx.types.intern_string(&name);
+                                    display_type_overrides.insert(name_atom, lit_type);
+                                }
+                            }
                         }
+
+                        final_type
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
@@ -1659,28 +1671,33 @@ impl<'a> CheckerState<'a> {
             if string_index_types.is_empty() && number_index_types.is_empty() {
                 if has_spread {
                     self.ctx.types.factory().object(properties)
-                } else if !display_type_overrides.is_empty() {
-                    // Build display properties: clone widened properties, then
-                    // substitute pre-widened types for display in error messages.
-                    let display_props: Vec<tsz_solver::PropertyInfo> = properties
-                        .iter()
-                        .map(|prop| {
-                            if let Some(&display_type) = display_type_overrides.get(&prop.name) {
-                                tsz_solver::PropertyInfo {
-                                    type_id: display_type,
-                                    ..prop.clone()
-                                }
-                            } else {
-                                prop.clone()
-                            }
-                        })
-                        .collect();
-                    self.ctx
-                        .types
-                        .factory()
-                        .object_fresh_with_display(properties, display_props)
                 } else {
-                    self.ctx.types.factory().object_fresh(properties)
+                    let type_id = self.ctx.types.factory().object_fresh(properties.clone());
+                    // Store display properties for freshness model.
+                    // Build display properties with original literal types from AST.
+                    if !display_type_overrides.is_empty() {
+                        let mut display_props: Vec<tsz_solver::PropertyInfo> = properties
+                            .iter()
+                            .map(|prop| {
+                                if let Some(&display_type) = display_type_overrides.get(&prop.name)
+                                {
+                                    tsz_solver::PropertyInfo {
+                                        type_id: display_type,
+                                        ..prop.clone()
+                                    }
+                                } else {
+                                    prop.clone()
+                                }
+                            })
+                            .collect();
+                        display_props.sort_by_key(|a| a.name);
+                        // Store display properties keyed by TypeId (not ObjectShapeId)
+                        // to avoid polluting shared shapes after freshness widening.
+                        self.ctx
+                            .types
+                            .store_display_properties(type_id, display_props);
+                    }
+                    type_id
                 }
             } else {
                 use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};

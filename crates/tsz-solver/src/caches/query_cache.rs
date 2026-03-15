@@ -635,6 +635,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.string_intrinsic(kind, type_arg)
     }
 
+    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        self.interner.store_display_properties(type_id, props);
+    }
+
+    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        self.interner.get_display_properties(type_id)
+    }
+
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
         // Delegate to the interner
         self.interner.get_class_base_type(symbol_id)
