@@ -1320,3 +1320,157 @@ fn test_find_symbols_overlapping_names() {
     assert!(results.len() >= 3, "Should find parse, parser, parseJSON");
     assert_eq!(results[0].name, "parse");
 }
+
+#[test]
+fn test_find_symbols_single_char_m_query() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("m");
+    let _ = results;
+}
+
+#[test]
+fn test_find_symbols_full_name_exact() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("MyClass");
+    assert!(!results.is_empty());
+    assert_eq!(results[0].name, "MyClass");
+}
+
+#[test]
+fn test_find_symbols_no_partial_match() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("abcdef", make_location("a.ts", 0, 0, 6));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("xyz");
+    assert!(results.is_empty());
+}
+
+#[test]
+fn test_find_symbols_mixed_case_definitions() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("HTTPClient", make_location("a.ts", 0, 0, 10));
+    index.add_definition("httpServer", make_location("b.ts", 0, 0, 10));
+    index.add_definition("HttpHandler", make_location("c.ts", 0, 0, 11));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("http");
+    let _ = results;
+}
+
+#[test]
+fn test_find_symbols_very_long_query() {
+    let index = setup_index();
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("thisIsAVeryLongQueryThatMatchesNothing");
+    assert!(results.is_empty());
+}
+
+#[test]
+fn test_find_symbols_numeric_suffix_in_name() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("handler1", make_location("a.ts", 0, 0, 8));
+    index.add_definition("handler2", make_location("a.ts", 1, 0, 8));
+    index.add_definition("handler10", make_location("a.ts", 2, 0, 9));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("handler");
+    assert!(results.len() >= 3);
+}
+
+#[test]
+fn test_find_symbols_with_kind_class() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "MyWidget",
+        make_location("a.ts", 0, 0, 8),
+        SymbolKind::Class,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("MyWidget");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Class);
+}
+
+#[test]
+fn test_find_symbols_with_kind_function() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "processData",
+        make_location("a.ts", 0, 0, 11),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("processData");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Function);
+}
+
+#[test]
+fn test_find_symbols_with_kind_interface() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "IService",
+        make_location("a.ts", 0, 0, 8),
+        SymbolKind::Interface,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("IService");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Interface);
+}
+
+#[test]
+fn test_find_symbols_with_kind_enum() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("Status", make_location("a.ts", 0, 0, 6), SymbolKind::Enum);
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Status");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SymbolKind::Enum);
+}
+
+#[test]
+fn test_find_symbols_many_files() {
+    let mut index = SymbolIndex::new();
+    for i in 0..20 {
+        index.add_definition(
+            &format!("sym{}", i),
+            make_location(&format!("file{}.ts", i), 0, 0, 4),
+        );
+    }
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("sym");
+    assert!(results.len() >= 20);
+}
+
+#[test]
+fn test_find_symbols_after_clear_and_readd() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("foo", make_location("a.ts", 0, 0, 3));
+    index.remove_file("a.ts");
+    index.add_definition("foo", make_location("b.ts", 0, 0, 3));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("foo");
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn test_find_symbols_dollar_prefix() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("$scope", make_location("a.ts", 0, 0, 6));
+    index.add_definition("$rootScope", make_location("b.ts", 0, 0, 10));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("$scope");
+    assert!(!results.is_empty());
+}
+
+#[test]
+fn test_find_symbols_location_info_preserved() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("target", make_location("src/deep/file.ts", 42, 5, 11));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("target");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].location.range.start.line, 42);
+    assert_eq!(results[0].location.range.start.character, 5);
+}

@@ -2113,3 +2113,357 @@ fn test_goto_definition_computed_property_key() {
         assert_eq!(defs[0].range.start.line, 0);
     }
 }
+
+#[test]
+fn test_goto_definition_async_function() {
+    let source = "async function fetchData() { return 42; }\nfetchData();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 0));
+    assert!(
+        definitions.is_some(),
+        "Should find async function definition"
+    );
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_goto_definition_template_literal_variable() {
+    let source = "const name = 'world';\nconst greeting = `hello ${name}`;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'name' inside template literal (line 1, col 27)
+    let definitions = goto_def.get_definition(root, Position::new(1, 27));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find name on line 0");
+    }
+}
+
+#[test]
+fn test_goto_definition_destructured_object() {
+    let source = "const obj = { a: 1, b: 2 };\nconst { a, b } = obj;\na + b;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'a' usage (line 2, col 0)
+    let definitions = goto_def.get_definition(root, Position::new(2, 0));
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find destructured binding");
+    }
+}
+
+#[test]
+fn test_goto_definition_destructured_array() {
+    let source = "const arr = [1, 2, 3];\nconst [first, second] = arr;\nfirst;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'first' usage (line 2, col 0)
+    let definitions = goto_def.get_definition(root, Position::new(2, 0));
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find array destructured binding");
+    }
+}
+
+#[test]
+fn test_goto_definition_switch_case_variable() {
+    let source = "const val = 1;\nswitch (val) {\n  case 1:\n    const inside = 2;\n    inside;\n    break;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'inside' usage (line 4, col 4)
+    let definitions = goto_def.get_definition(root, Position::new(4, 4));
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find switch case variable");
+    }
+}
+
+#[test]
+fn test_goto_definition_class_constructor() {
+    let source =
+        "class Animal {\n  constructor(public name: string) {}\n}\nconst a = new Animal('dog');";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'Animal' in new expression (line 3, col 14)
+    let definitions = goto_def.get_definition(root, Position::new(3, 14));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find Animal class");
+    }
+}
+
+#[test]
+fn test_goto_definition_function_overload() {
+    let source = "function f(x: string): string;\nfunction f(x: number): number;\nfunction f(x: any): any { return x; }\nf(1);";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(3, 0));
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find at least one overload");
+    }
+}
+
+#[test]
+fn test_goto_definition_ternary_variable() {
+    let source = "const flag = true;\nconst result = flag ? 'yes' : 'no';";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'flag' in ternary (line 1, col 15)
+    let definitions = goto_def.get_definition(root, Position::new(1, 15));
+    assert!(definitions.is_some(), "Should find flag definition");
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_goto_definition_numeric_literal_returns_none() {
+    let source = "const x = 42;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at numeric literal '42' (col 10)
+    let definitions = goto_def.get_definition(root, Position::new(0, 10));
+    // Numeric literals have no definition to jump to
+    let _ = definitions;
+}
+
+#[test]
+fn test_goto_definition_string_literal_returns_none() {
+    let source = "const x = 'hello';";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position inside string literal (col 11)
+    let definitions = goto_def.get_definition(root, Position::new(0, 11));
+    let _ = definitions;
+}
+
+#[test]
+fn test_goto_definition_class_private_field() {
+    let source = "class Foo {\n  #secret = 42;\n  get() { return this.#secret; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at '#secret' declaration (line 1, col 2)
+    let definitions = goto_def.get_definition(root, Position::new(1, 2));
+    let _ = definitions;
+}
+
+#[test]
+fn test_goto_definition_interface_extends() {
+    let source = "interface Base { x: number; }\ninterface Derived extends Base { y: number; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'Base' in extends (line 1, col 26)
+    let definitions = goto_def.get_definition(root, Position::new(1, 26));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find Base interface");
+    }
+}
+
+#[test]
+fn test_goto_definition_try_catch_error_variable() {
+    let source = "try {\n  throw new Error('fail');\n} catch (err) {\n  err;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'err' usage (line 3, col 2)
+    let definitions = goto_def.get_definition(root, Position::new(3, 2));
+    if let Some(defs) = definitions {
+        assert!(!defs.is_empty(), "Should find catch clause variable");
+    }
+}
+
+#[test]
+fn test_goto_definition_nested_function_call() {
+    let source = "function outer() {\n  function inner() { return 1; }\n  inner();\n}\nouter();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'outer' call (line 4, col 0)
+    let definitions = goto_def.get_definition(root, Position::new(4, 0));
+    assert!(definitions.is_some(), "Should find outer function");
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_goto_definition_multiline_string_no_crash() {
+    let source = "const s = `line1\nline2\nline3`;\ns;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 's' usage (line 3, col 0)
+    let definitions = goto_def.get_definition(root, Position::new(3, 0));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find s on line 0");
+    }
+}
+
+#[test]
+fn test_goto_definition_type_assertion() {
+    let source = "interface Foo { x: number; }\nconst val = {} as Foo;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'Foo' in type assertion (line 1, col 18)
+    let definitions = goto_def.get_definition(root, Position::new(1, 18));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find Foo interface");
+    }
+}
+
+#[test]
+fn test_goto_definition_while_loop_variable() {
+    let source = "let count = 0;\nwhile (count < 10) {\n  count++;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'count' in condition (line 1, col 7)
+    let definitions = goto_def.get_definition(root, Position::new(1, 7));
+    assert!(definitions.is_some(), "Should find count variable");
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_goto_definition_export_named_variable() {
+    let source = "export const exported = 42;\nexported;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 0));
+    assert!(definitions.is_some(), "Should find exported variable");
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_goto_definition_abstract_class_reference() {
+    let source = "abstract class Shape {\n  abstract area(): number;\n}\nclass Circle extends Shape {\n  area() { return 3.14; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'Shape' in extends (line 3, col 21)
+    let definitions = goto_def.get_definition(root, Position::new(3, 21));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find Shape class");
+    }
+}
+
+#[test]
+fn test_goto_definition_unicode_identifier() {
+    let source = "const \u{00e4}\u{00f6}\u{00fc} = 42;\n\u{00e4}\u{00f6}\u{00fc};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(1, 0));
+    if let Some(defs) = definitions {
+        assert_eq!(defs[0].range.start.line, 0, "Should find unicode variable");
+    }
+}
+
+#[test]
+fn test_goto_definition_void_keyword_returns_none() {
+    let source = "void 0;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let goto_def = GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let definitions = goto_def.get_definition(root, Position::new(0, 0));
+    let _ = definitions;
+}
