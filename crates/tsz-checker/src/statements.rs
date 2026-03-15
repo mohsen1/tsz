@@ -177,6 +177,16 @@ pub trait StatementCheckCallbacks {
         // Default: no exhaustiveness checking
     }
 
+    /// Get the type of a case expression with contextual typing from the switch
+    /// expression type. In tsc, case expressions use the switch discriminant type
+    /// as their contextual type, which enables excess property checking (TS2353)
+    /// for object literal case expressions.
+    fn get_type_of_case_expression(&mut self, case_expr: NodeIndex, switch_type: TypeId) -> TypeId {
+        // Default: no contextual typing
+        let _ = switch_type;
+        self.get_type_of_node(case_expr)
+    }
+
     /// Check that a case expression type is comparable to the switch expression type.
     /// Emits TS2678 if the types have no overlap.
     fn check_switch_case_comparable(
@@ -655,8 +665,11 @@ impl StatementChecker {
                                 if clause_expr.is_none() {
                                     has_default = true;
                                 } else {
-                                    // Check case expression and comparability with switch expression
-                                    let case_type = state.get_type_of_node(clause_expr);
+                                    // Check case expression with switch type as contextual type.
+                                    // This enables excess property checking (TS2353) for object
+                                    // literal case expressions, matching tsc behavior.
+                                    let case_type =
+                                        state.get_type_of_case_expression(clause_expr, switch_type);
                                     state.check_switch_case_comparable(
                                         switch_type,
                                         case_type,
