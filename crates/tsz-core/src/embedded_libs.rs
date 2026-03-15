@@ -4,7 +4,7 @@
 //! Comments are removed at build time to reduce parse work by ~58%.
 
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub const LIB_FILE_COUNT: usize = 103;
 
@@ -20,8 +20,11 @@ pub fn all_lib_filenames() -> impl Iterator<Item = &'static str> {
     EMBEDDED_LIBS.keys().copied()
 }
 
-static EMBEDDED_LIBS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
-    let mut m = HashMap::with_capacity(103);
+// Use FxHashMap instead of std HashMap — FxHash is ~2x faster than SipHash
+// for short string keys (lib filenames are 15-30 chars). Since this map is
+// initialized once and queried on every lib resolution, the faster hash matters.
+static EMBEDDED_LIBS: Lazy<FxHashMap<&'static str, &'static str>> = Lazy::new(|| {
+    let mut m = FxHashMap::with_capacity_and_hasher(103, Default::default());
     m.insert(
         "decorators.d.ts",
         include_str!("lib-assets-stripped/decorators.d.ts"),
