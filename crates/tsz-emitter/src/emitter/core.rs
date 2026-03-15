@@ -28,6 +28,8 @@ pub(crate) struct PrivateMemberInfo {
     /// For accessors: the setter variable name (e.g., `_C_prop_set`).
     pub setter_ref: Option<String>,
     /// Whether this is a static member.
+    /// Currently set but not read — reserved for future static private member emission.
+    #[allow(dead_code)]
     pub is_static: bool,
     /// The WeakSet/class-alias variable used as the `state` argument.
     /// For instance methods/accessors: `_ClassName_instances`.
