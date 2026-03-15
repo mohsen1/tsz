@@ -305,6 +305,32 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
+    /// For TS2353 diagnostics on union targets, strip non-object members (primitives,
+    /// undefined, null, void, never, etc.) so the displayed type matches tsc.
+    /// For example, `IProps | number` becomes `IProps`, and
+    /// `{ testBool?: boolean | undefined; } | undefined` becomes `{ testBool?: boolean | undefined; }`.
+    fn strip_non_object_union_members_for_excess_display(&self, ty: TypeId) -> TypeId {
+        let ty = tsz_solver::evaluate_type(self.ctx.types, ty);
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            let object_like: Vec<_> = members
+                .iter()
+                .copied()
+                .filter(|member| {
+                    let evaluated = tsz_solver::evaluate_type(self.ctx.types, *member);
+                    !tsz_solver::is_primitive_type(self.ctx.types, evaluated)
+                })
+                .collect();
+            // Only strip if we actually removed something and have at least one member left
+            if !object_like.is_empty() && object_like.len() < members.len() {
+                if object_like.len() == 1 {
+                    return object_like[0];
+                }
+                return tsz_solver::utils::union_or_single(self.ctx.types, object_like);
+            }
+        }
+        ty
+    }
+
     fn split_wildcard_object_for_excess_display(&mut self, ty: TypeId) -> Option<String> {
         let ty = self
             .materialize_finite_mapped_type_for_display(ty)
@@ -420,6 +446,12 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.split_wildcard_object_for_excess_display(ty) {
             return display;
         }
+
+        // For union targets, tsc strips non-object members (primitives like number,
+        // undefined, null, etc.) from the displayed type. Excess property checking
+        // only applies to object-like members, so the diagnostic should reference
+        // only those members rather than the full union.
+        let ty = self.strip_non_object_union_members_for_excess_display(ty);
 
         if let Some(members) = query::intersection_members(self.ctx.types, ty) {
             let mut changed = false;
