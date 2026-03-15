@@ -118,6 +118,7 @@ impl<'a> CheckerState<'a> {
             }?;
             let prop_atom = self.ctx.types.intern_string(&prop_name_str);
 
+            // Try direct object shape first
             if let Some(shape) = object_shape_for_type(self.ctx.types, ann_type)
                 && let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom)
             {
@@ -129,6 +130,34 @@ impl<'a> CheckerState<'a> {
                     t = tsz_solver::remove_undefined(self.ctx.types, t);
                 }
                 return Some(t);
+            }
+
+            // For union types (e.g., { kind: 'A', payload: number } | { kind: 'B', payload: string }),
+            // collect the property type from each union member and return their union.
+            // This enables correlated narrowing for dependent destructured variables.
+            if let Some(members) =
+                tsz_solver::type_queries::get_union_members(self.ctx.types, ann_type)
+            {
+                let mut prop_types = Vec::new();
+                for &member in &members {
+                    let evaluated = self.evaluate_type_for_assignability(member);
+                    if let Some(shape) = object_shape_for_type(self.ctx.types, evaluated)
+                        && let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom)
+                    {
+                        let mut t = prop.type_id;
+                        if prop.optional && self.ctx.strict_null_checks() {
+                            t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
+                        }
+                        prop_types.push(t);
+                    }
+                }
+                if !prop_types.is_empty() {
+                    let mut t = tsz_solver::utils::union_or_single(self.ctx.types, prop_types);
+                    if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
+                        t = tsz_solver::remove_undefined(self.ctx.types, t);
+                    }
+                    return Some(t);
+                }
             }
         }
 
