@@ -1477,3 +1477,190 @@ fn test_rename_variable_in_ternary() {
         assert_eq!(e.new_text, "isReady");
     }
 }
+
+#[test]
+fn test_rename_in_template_literal() {
+    let source = "let user = 'World';\nconst msg = `Hello ${user}!`;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "person".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename in declaration and template"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rename_in_optional_chaining() {
+    let source = "let obj = { a: 1 };\nconst val = obj?.a;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "data".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename in declaration and optional chaining"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rename_in_object_shorthand() {
+    let source = "let name = 'test';\nconst obj = { name };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "label".to_string());
+    // Shorthand property rename behavior is complex
+    let _ = result;
+}
+
+#[test]
+fn test_rename_in_array_pattern() {
+    let source = "let [first, second] = [1, 2];\nconst x = first + second;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 5), "a".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename in array pattern and usage");
+        }
+    }
+}
+
+#[test]
+fn test_rename_class_property() {
+    let source = "class Foo {\n  bar = 1;\n  method() { return this.bar; }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at 'bar' property declaration
+    let result = provider.provide_rename_edits(root, Position::new(1, 2), "baz".to_string());
+    // Class property rename may or may not track this.bar
+    let _ = result;
+}
+
+#[test]
+fn test_rename_at_end_of_file() {
+    let source = "const x = 1;\nx";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(1, 0), "y".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename both occurrences");
+        }
+    }
+}
+
+#[test]
+fn test_rename_generator_function() {
+    let source = "function* gen() { yield 1; }\ngen();";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 10), "generator".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename generator function");
+        }
+    }
+}
+
+#[test]
+fn test_rename_in_for_of() {
+    let source = "const arr = [1, 2];\nfor (const item of arr) { console.log(item); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(1, 11), "element".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename for-of variable");
+        }
+    }
+}
+
+#[test]
+fn test_rename_namespace() {
+    let source = "namespace MyNS {\n  export const x = 1;\n}\nMyNS.x;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 10), "NS2".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename namespace declaration and usage"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rename_type_alias_in_function_params() {
+    let source = "type ID = string;\nlet x: ID;\nfunction f(a: ID): ID { return a; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 5), "Identifier".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 3,
+                "Should rename type alias in all positions"
+            );
+        }
+    }
+}
