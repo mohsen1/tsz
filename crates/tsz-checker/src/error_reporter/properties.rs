@@ -650,9 +650,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress TS7053 for for-in variables too — same reason as TS7015 above.
+        // Suppress TS7053 for for-in variables ONLY when the target type has an
+        // index signature (string or number). Arrays and other indexable types are
+        // safe to index with for-in string keys. But non-indexable types like `{}`
+        // should still emit TS7053 — the string key genuinely can't be used.
         if is_for_in_index {
-            return;
+            let has_string_index = if let Some(members) =
+                tsz_solver::type_queries::get_union_members(self.ctx.types, object_type)
+            {
+                members.iter().all(|&m| {
+                    resolver.resolve_string_index(m).is_some()
+                        || resolver.resolve_number_index(m).is_some()
+                })
+            } else {
+                resolver.resolve_string_index(object_type).is_some() || has_number_index
+            };
+            if has_string_index {
+                return;
+            }
         }
 
         let mut formatter = self.ctx.create_type_formatter();
