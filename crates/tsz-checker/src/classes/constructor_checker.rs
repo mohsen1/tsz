@@ -319,12 +319,14 @@ impl<'a> CheckerState<'a> {
                     )?;
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
-                InstanceTypeKind::Function(shape_id) => {
-                    let shape = self.ctx.types.function_shape(shape_id);
-                    if !shape.is_constructor {
-                        return None;
-                    }
-                    return Some(self.resolve_type_for_property_access(shape.return_type));
+                InstanceTypeKind::Function(_) => {
+                    // Delegate to solver query for Function constructor return type
+                    let return_type =
+                        tsz_solver::type_queries::data::construct_return_type_for_type(
+                            self.ctx.types,
+                            current,
+                        )?;
+                    return Some(self.resolve_type_for_property_access(return_type));
                 }
                 InstanceTypeKind::Intersection(members) => {
                     let instance_types: Vec<TypeId> = members
