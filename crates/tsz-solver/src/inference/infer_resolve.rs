@@ -356,11 +356,18 @@ impl<'a> InferenceContext<'a> {
         let preserve_literals = is_const
             || self.constraint_implies_literals(upper_bounds)
             || declared_constraint.is_some_and(|c| self.declared_constraint_is_primitive(c));
-        // Match tsc's order: union/reduce candidates FIRST, then widen.
-        // tsc calls getUnionType(candidates, SubtypeReduction) then getWidenedLiteralType.
-        // If we widen before reducing, a fresh literal `1` widens to `number` and
-        // prevents subtype reduction from eliminating it against a non-fresh union
-        // like `Bit = 0 | 1`, leading to `number` instead of `Bit`.
+        // Match tsc's inference resolution order.
+        //
+        // tsc's getCovariantInference checks `priority & PriorityImpliesCombination`:
+        //   - If combination priority (ReturnType, MappedTypeConstraint, LiteralKeyof):
+        //     use getUnionType (creates a union of all candidates)
+        //   - Otherwise (NakedTypeVariable, HomomorphicMappedType, etc.):
+        //     use getCommonSupertype which does NOT create unions for incompatible types.
+        //     Instead, it picks the first non-superseded candidate (via reduceLeft).
+        //
+        // This distinction is critical: for `foo<T>(n: {x: T, y: T}, m: T)` called as
+        // `foo({x: 3, y: ""}, 4)`, tsc infers T = number (first candidate wins),
+        // NOT T = number | string (union). The string property then gets TS2322.
         let candidate_types: Vec<TypeId> = if is_const {
             filtered_no_never
                 .iter()
@@ -369,7 +376,37 @@ impl<'a> InferenceContext<'a> {
         } else {
             filtered_no_never.iter().map(|c| c.type_id).collect()
         };
-        let resolved = self.best_common_type(&candidate_types);
+        let priority_implies_combination = filtered_no_never
+            .first()
+            .map(|c| {
+                matches!(
+                    c.priority,
+                    InferencePriority::ReturnType | InferencePriority::LowPriority
+                )
+            })
+            .unwrap_or(false);
+        let resolved = if priority_implies_combination {
+            // Union: used for return type inference and low-priority contexts
+            self.best_common_type(&candidate_types)
+        } else {
+            // Common supertype: used for NakedTypeVariable and other direct inference.
+            // tsc widens literal candidates BEFORE getCommonSupertype (via baseCandidates =
+            // sameMap(candidates, getWidenedLiteralType)). This ensures the tournament
+            // operates on widened types (number, string) not literals (3, "").
+            let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+            let widened_candidates: Vec<TypeId> = if !preserve_literals
+                && !is_const
+                && !has_non_fresh
+            {
+                candidate_types
+                    .iter()
+                    .map(|&ty| crate::operations::widening::widen_literal_type(self.interner, ty))
+                    .collect()
+            } else {
+                candidate_types.clone()
+            };
+            self.get_common_supertype_for_inference(&widened_candidates)
+        };
         // Widen the resolved type if literals should not be preserved.
         // After best_common_type, subtype reduction has already eliminated redundant
         // fresh literals (e.g., `1` is absorbed by `0 | 1`).

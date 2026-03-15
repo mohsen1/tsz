@@ -112,6 +112,130 @@ impl<'a> InferenceContext<'a> {
         self.interner.union(unique)
     }
 
+    /// Common supertype resolution for inference, matching tsc's `getCommonSupertype`.
+    ///
+    /// Unlike `best_common_type` (which creates unions as fallback), this function
+    /// matches tsc's behavior for covariant inference:
+    /// 1. If all candidates are literals with the same base type → union (e.g., `3 | 4`)
+    /// 2. Otherwise → find single common supertype via tournament reduction
+    ///    If no single supertype exists, picks the first non-superseded candidate
+    ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
+    pub fn get_common_supertype_for_inference(&self, types: &[TypeId]) -> TypeId {
+        if types.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        if types.len() == 1 {
+            return types[0];
+        }
+
+        // Deduplicate and filter never
+        let mut seen = FxHashSet::default();
+        let mut unique: Vec<TypeId> = Vec::new();
+        for &ty in types {
+            if ty == TypeId::ANY {
+                return TypeId::ANY;
+            }
+            if ty == TypeId::NEVER {
+                continue;
+            }
+            if seen.insert(ty) {
+                unique.push(ty);
+            }
+        }
+        if unique.is_empty() {
+            return TypeId::NEVER;
+        }
+        if unique.len() == 1 {
+            return unique[0];
+        }
+
+        // Step 1: Check if all candidates are literals with the same base type.
+        // If so, create a union (e.g., [3, 4] → 3 | 4, ["a", "b"] → "a" | "b").
+        // This matches tsc's `literalTypesWithSameBaseType` check.
+        if self.all_literals_same_base(&unique) {
+            return self.interner.union(unique);
+        }
+
+        // Step 2: Try common base type (literal widening)
+        let common_base = crate::utils::find_common_base_type(&unique, |ty| self.get_base_type(ty));
+        if let Some(base) = common_base {
+            if unique.len() > 1 {
+                return base;
+            }
+        }
+
+        // Step 3: Tournament reduction with strict subtype
+        let mut best = unique[0];
+        for &candidate in &unique[1..] {
+            if self.is_subtype(best, candidate) {
+                best = candidate;
+            }
+        }
+        if self.is_suitable_common_type(best, &unique) {
+            return best;
+        }
+
+        // Step 4: Common base class
+        if let Some(common_class) = self.find_common_base_class(&unique) {
+            return common_class;
+        }
+
+        // Step 5: tsc's fallback — pick the single common supertype.
+        // tsc uses reduceLeft which picks the first non-superseded candidate, relying
+        // on candidates being in source order. Since our property matching may use
+        // different ordering (by Atom interning order), we use a frequency-based
+        // tiebreaker: prefer the candidate that appears most often in the ORIGINAL
+        // (pre-deduplicated) set, as tsc's source-order heuristic effectively picks
+        // the type that more arguments agree on.
+        // For [number, string, number] (or [string, number, number]):
+        //   number appears 2x, string 1x → pick number.
+        let count_in_original =
+            |ty: TypeId| -> usize { types.iter().filter(|&&t| t == ty).count() };
+        let mut best = unique[0];
+        let mut best_count = count_in_original(best);
+        for &candidate in &unique[1..] {
+            if self.is_subtype(best, candidate) {
+                best = candidate;
+                best_count = count_in_original(candidate);
+            } else {
+                // Tiebreaker: when neither is a subtype, prefer the one that
+                // appears more frequently in the original candidate list.
+                let candidate_count = count_in_original(candidate);
+                if candidate_count > best_count {
+                    best = candidate;
+                    best_count = candidate_count;
+                }
+            }
+        }
+        best
+    }
+
+    /// Check if all types are literal types with the same primitive base.
+    /// E.g., [3, 4, 5] → true (all number literals), ["a", 1] → false (mixed).
+    fn all_literals_same_base(&self, types: &[TypeId]) -> bool {
+        if types.is_empty() {
+            return false;
+        }
+        let first_base = self.get_literal_base_kind(types[0]);
+        let Some(base) = first_base else {
+            return false;
+        };
+        types[1..]
+            .iter()
+            .all(|&ty| self.get_literal_base_kind(ty) == Some(base))
+    }
+
+    /// Get the base primitive kind for a literal type.
+    fn get_literal_base_kind(&self, type_id: TypeId) -> Option<u8> {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Literal(LiteralValue::String(_))) => Some(0),
+            Some(TypeData::Literal(LiteralValue::Number(_))) => Some(1),
+            Some(TypeData::Literal(LiteralValue::Boolean(_))) => Some(2),
+            Some(TypeData::Literal(LiteralValue::BigInt(_))) => Some(3),
+            _ => None,
+        }
+    }
+
     /// Get the base type of a type.
     ///
     /// This handles both:
