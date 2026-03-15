@@ -257,20 +257,16 @@ impl<'a> CheckerState<'a> {
                             property_context_type,
                         );
 
-                        // Widen literal types for object literal properties (tsc behavior).
-                        // Object literal properties are mutable by default, so `{ x: "a" }`
-                        // produces `{ x: string }`.  Only preserve literals when:
-                        // - A const assertion is active (`as const`)
-                        // - A contextual type narrows the property to a literal
-                        if !self.ctx.in_const_assertion
-                            && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none()
-                            && !had_object_context
-                        {
-                            self.widen_literal_type(value_type)
-                        } else {
-                            value_type
-                        }
+                        // tsc does NOT widen literal types at object literal
+                        // construction time — it preserves the literal type in
+                        // the "fresh" object type. Widening happens later at the
+                        // point of use (e.g., variable binding via
+                        // `widen_initializer_type_for_mutable_binding`).
+                        // Preserving literals here is important for:
+                        // - Accurate error messages (`"frizzlebizzle"` not `string`)
+                        // - Generic inference (T inferred as `{ x: "hello" }`)
+                        // - Excess property checks against discriminated unions
+                        value_type
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
@@ -643,16 +639,9 @@ impl<'a> CheckerState<'a> {
                             property_context_type,
                         );
 
-                        // Widen literal types for shorthand properties (same as named properties)
-                        if !self.ctx.in_const_assertion
-                            && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none()
-                            && !had_object_context
-                        {
-                            self.widen_literal_type(value_type)
-                        } else {
-                            value_type
-                        }
+                        // Literal types preserved at construction time — widening
+                        // happens at variable binding (same rationale as named properties).
+                        value_type
                     };
 
                     // Note: TS7008 is NOT emitted for object literal properties.
