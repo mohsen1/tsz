@@ -2950,7 +2950,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let structural_return_subst = if has_context_sensitive_args {
             TypeSubstitution::new()
         } else {
-            self.compute_return_context_substitution(func, self.contextual_type)
+            // When the source function's return type is a bare type parameter
+            // that also appears in its parameter list (like `f<T>(x: T): T`),
+            // and the contextual type is a function (from
+            // instantiate_generic_function_argument_against_target), extract
+            // the function's RETURN TYPE for return context substitution.
+            // Without this, `f<T>(x: T): T` passed as `(x: number) => number`
+            // would substitute T → (x: number) => number (the full function type)
+            // instead of T → number (the return type), causing false TS2322.
+            let return_type_is_param_shared_with_params = func.type_params.iter().any(|tp| {
+                let ret_is_this_param = matches!(
+                    self.interner.lookup(func.return_type),
+                    Some(TypeData::TypeParameter(ref info)) if info.name == tp.name
+                );
+                let param_uses_this_param = func.params.iter().any(|p| {
+                    crate::visitor::collect_referenced_types(
+                        self.interner.as_type_database(),
+                        p.type_id,
+                    )
+                    .into_iter()
+                    .any(|ty| {
+                        crate::type_param_info(self.interner.as_type_database(), ty)
+                            .is_some_and(|info| info.name == tp.name)
+                    })
+                });
+                ret_is_this_param && param_uses_this_param
+            });
+
+            let ctx_for_return = if return_type_is_param_shared_with_params {
+                self.contextual_type.and_then(|ctx| {
+                    // Only extract return type from CONCRETE function types
+                    // (no type parameters). When the contextual is generic
+                    // (e.g. (x: U) => T from outer inference), keep the full
+                    // function type so inner inference sees the structure.
+                    if crate::visitor::contains_type_parameters(
+                        self.interner.as_type_database(),
+                        ctx,
+                    ) {
+                        Some(ctx)
+                    } else if let Some(fn_shape) = crate::type_queries::get_function_shape(
+                        self.interner.as_type_database(),
+                        ctx,
+                    ) {
+                        Some(fn_shape.return_type)
+                    } else {
+                        Some(ctx)
+                    }
+                })
+            } else {
+                self.contextual_type
+            };
+            self.compute_return_context_substitution(func, ctx_for_return)
         };
         if !structural_return_subst.is_empty() {
             for (&name, &ty) in structural_return_subst.map().iter() {
