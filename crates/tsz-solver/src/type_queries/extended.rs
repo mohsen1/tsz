@@ -138,8 +138,9 @@ fn is_invalid_index_type_inner(
             value,
             crate::LiteralValue::Boolean(_) | crate::LiteralValue::BigInt(_)
         ),
-        // Unique symbols cannot be used as index types (TS2538)
-        Some(TypeData::UniqueSymbol(_)) => true,
+        // Note: UniqueSymbol IS a valid index type — it's used for computed
+        // properties like `obj[Symbol.iterator]`. Only the base `symbol` type
+        // (IntrinsicKind::Symbol above) is rejected as an index type.
         // Note: Lazy types are intentionally NOT listed here. They are
         // deferred references (type aliases, etc.) that could resolve to
         // valid index types like `string`. They fall through to the default
