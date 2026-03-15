@@ -276,20 +276,17 @@ impl<'a> CheckerState<'a> {
                             value_type
                         };
 
-                        // Freshness model: extract the original literal type from the
-                        // AST (not from the type system) for display in error messages.
-                        // This is needed because get_type_of_node already widens
-                        // literals at the expression level (resolve_literal).
-                        // tsc shows `{ x: "hello" }` in errors even though the type
-                        // system uses `{ x: string }`.
+                        // Freshness model: always record literal property values
+                        // from the AST for display in error messages. Store even
+                        // when lit_type == final_type — inference-time widening
+                        // may change the property type later, and we need the
+                        // original literal for error display.
                         if prop.initializer != prop.name {
                             if let Some(lit_type) =
                                 self.literal_type_from_initializer(prop.initializer)
                             {
-                                if lit_type != final_type {
-                                    let name_atom = self.ctx.types.intern_string(&name);
-                                    display_type_overrides.insert(name_atom, lit_type);
-                                }
+                                let name_atom = self.ctx.types.intern_string(&name);
+                                display_type_overrides.insert(name_atom, lit_type);
                             }
                         }
 
