@@ -739,11 +739,20 @@ impl<'a> CheckerState<'a> {
                         else {
                             continue;
                         };
-                        if let Some(partial) = self.extract_inference_contributing_object_type(
-                            arg_idx,
-                            param_type,
-                            &type_param_names,
-                        ) {
+                        if let Some(partial) = self
+                            .extract_inference_contributing_object_type(
+                                arg_idx,
+                                param_type,
+                                &type_param_names,
+                            )
+                            .or_else(|| {
+                                self.extract_inference_contributing_array_type(
+                                    arg_idx,
+                                    param_type,
+                                    &type_param_names,
+                                )
+                            })
+                        {
                             round1_arg_types[i] = partial;
                             extracted_round1_partials[i] = true;
                         }
