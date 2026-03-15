@@ -1110,6 +1110,42 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // After filtering brands, if exactly 1 property remains, emit TS2741
+                // (single missing property) instead of TS2739 (multiple missing).
+                // This happens when a class with private members has one non-brand
+                // missing property — e.g. `c2 = c` where C implements A (private x).
+                if filtered_names.len() == 1 {
+                    let prop_atom = filtered_names[0];
+                    let prop_name = self.ctx.types.resolve_atom_ref(prop_atom).to_string();
+                    let widened_source = self.widen_type_for_display(*source_type);
+                    let (src_str, tgt_str_qualified) = if depth == 0 {
+                        let src = if *source_type == TypeId::OBJECT {
+                            "{}".to_string()
+                        } else {
+                            self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                        };
+                        (
+                            src,
+                            self.format_assignability_type_for_message(target, source),
+                        )
+                    } else if *source_type == TypeId::OBJECT {
+                        ("{}".to_string(), self.format_type_diagnostic(*target_type))
+                    } else {
+                        self.format_type_pair_diagnostic(widened_source, target)
+                    };
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &src_str, &tgt_str_qualified],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    );
+                }
+
                 // TS2739: Type 'A' is missing the following properties from type 'B': x, y, z
                 // TS2740: Type 'A' is missing the following properties from type 'B': x, y, z, and N more.
                 let display_source = if self
