@@ -19,7 +19,7 @@
 //! ```
 
 use super::super::Printer;
-use crate::transforms::block_scoping_es5::{analyze_loop_capture, LoopCaptureInfo};
+use crate::transforms::block_scoping_es5::{LoopCaptureInfo, analyze_loop_capture};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
@@ -138,9 +138,7 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
             }
         }
 
-        k if k == syntax_kind_ext::FOR_IN_STATEMENT
-            || k == syntax_kind_ext::FOR_OF_STATEMENT =>
-        {
+        k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
             if let Some(for_in_of) = arena.get_for_in_of(node) {
                 collect_vars_recursive(arena, for_in_of.initializer, info);
                 collect_vars_recursive(arena, for_in_of.statement, info);
@@ -174,9 +172,14 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
 
         // Switch
         k if k == syntax_kind_ext::SWITCH_STATEMENT => {
-            if let Some(switch_stmt) = arena.get_switch_statement(node) {
-                for &clause_idx in &switch_stmt.case_block.nodes {
-                    collect_vars_recursive(arena, clause_idx, info);
+            if let Some(switch_stmt) = arena.get_switch(node) {
+                // case_block is a CaseBlock node — its clauses are in arena.blocks
+                if let Some(case_block_node) = arena.get(switch_stmt.case_block)
+                    && let Some(block_data) = arena.blocks.get(case_block_node.data_index as usize)
+                {
+                    for &clause_idx in &block_data.statements.nodes {
+                        collect_vars_recursive(arena, clause_idx, info);
+                    }
                 }
             }
         }
@@ -191,7 +194,7 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
 
         // Try statement
         k if k == syntax_kind_ext::TRY_STATEMENT => {
-            if let Some(try_stmt) = arena.get_try_statement(node) {
+            if let Some(try_stmt) = arena.get_try(node) {
                 collect_vars_recursive(arena, try_stmt.try_block, info);
                 collect_vars_recursive(arena, try_stmt.catch_clause, info);
                 collect_vars_recursive(arena, try_stmt.finally_block, info);
@@ -206,8 +209,7 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
         }
 
         // Class declaration (don't recurse into methods)
-        k if k == syntax_kind_ext::CLASS_DECLARATION
-            || k == syntax_kind_ext::CLASS_EXPRESSION => {}
+        k if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::CLASS_EXPRESSION => {}
 
         _ => {}
     }
@@ -259,11 +261,7 @@ pub(in crate::emitter) fn check_loop_needs_capture(
     }
 
     let info = analyze_loop_capture(arena, body_idx, &all_vars);
-    if info.needs_capture {
-        Some(info)
-    } else {
-        None
-    }
+    if info.needs_capture { Some(info) } else { None }
 }
 
 impl<'a> Printer<'a> {
@@ -281,8 +279,7 @@ impl<'a> Printer<'a> {
         }
 
         let flags = node.flags as u32;
-        let is_block_scoped =
-            (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
+        let is_block_scoped = (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
 
         if !is_block_scoped {
             return Vec::new();
@@ -317,8 +314,7 @@ impl<'a> Printer<'a> {
         }
 
         let flags = node.flags as u32;
-        let is_block_scoped =
-            (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
+        let is_block_scoped = (flags & node_flags::LET != 0) || (flags & node_flags::CONST != 0);
 
         if !is_block_scoped {
             return Vec::new();
@@ -568,16 +564,14 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
                     let flags = node.flags as u32;
-                    let is_var =
-                        (flags & node_flags::LET == 0) && (flags & node_flags::CONST == 0);
+                    let is_var = (flags & node_flags::LET == 0) && (flags & node_flags::CONST == 0);
 
                     if is_var {
                         // Var declarations: emit just the assignments without `var`
                         let mut has_initializer = false;
                         for &decl_idx in &var_stmt.declarations.nodes {
                             if let Some(decl_node) = self.arena.get(decl_idx)
-                                && let Some(decl) =
-                                    self.arena.get_variable_declaration(decl_node)
+                                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                                 && decl.initializer.is_some()
                             {
                                 has_initializer = true;

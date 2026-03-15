@@ -1,6 +1,9 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
 use crate::query_boundaries::checkers::property as query;
+use crate::query_boundaries::type_computation::complex::{
+    ClassDeclTypeKind, classify_for_class_decl,
+};
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
 use tsz_parser::parser::NodeIndex;
@@ -289,8 +292,7 @@ impl<'a> CheckerState<'a> {
                     None => false,
                     Some(cur) => {
                         cur == access_info.declaring_class_idx
-                            || self
-                                .is_class_derived_from(cur, access_info.declaring_class_idx)
+                            || self.is_class_derived_from(cur, access_info.declaring_class_idx)
                     }
                 },
             };
@@ -328,10 +330,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect all class declaration candidates from brand properties on a type.
-    fn collect_brand_class_candidates(
-        &self,
-        object_type: tsz_solver::TypeId,
-    ) -> Vec<NodeIndex> {
+    fn collect_brand_class_candidates(&self, object_type: tsz_solver::TypeId) -> Vec<NodeIndex> {
         use crate::query_boundaries::checkers::property as query;
 
         let mut candidates = Vec::new();
@@ -356,8 +355,8 @@ impl<'a> CheckerState<'a> {
             type_id: tsz_solver::TypeId,
             out: &mut Vec<NodeIndex>,
         ) {
-            match query::classify_for_class_decl(checker.ctx.types, type_id) {
-                query::ClassDeclTypeKind::Object(shape_id) => {
+            match classify_for_class_decl(checker.ctx.types, type_id) {
+                ClassDeclTypeKind::Object(shape_id) => {
                     let shape = checker.ctx.types.object_shape(shape_id);
                     for prop in &shape.properties {
                         let name = checker.ctx.types.resolve_atom_ref(prop.name);
@@ -372,17 +371,34 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                query::ClassDeclTypeKind::Members(members) => {
+                ClassDeclTypeKind::Members(members) => {
                     for member in members {
                         collect(checker, member, out);
                     }
                 }
-                query::ClassDeclTypeKind::NotObject => {}
+                ClassDeclTypeKind::NotObject => {}
             }
         }
 
         collect(self, object_type, &mut candidates);
         candidates
+    }
+
+    /// Find accessor visibility levels in a class hierarchy for divergent get/set.
+    /// Returns (getter_level, setter_level, declaring_class_idx) if the property
+    /// has accessors with different visibility levels.
+    fn find_accessor_levels_in_hierarchy(
+        &mut self,
+        _class_idx: NodeIndex,
+        _property_name: &str,
+        _is_static: bool,
+    ) -> Option<(
+        Option<MemberAccessLevel>,
+        Option<MemberAccessLevel>,
+        NodeIndex,
+    )> {
+        // TODO: Implement accessor level checking across class hierarchy
+        None
     }
 
     /// Determine if a property access is in a write context (LHS of assignment).
@@ -402,24 +418,15 @@ impl<'a> CheckerState<'a> {
         let Some(grandparent_node) = self.ctx.arena.get(grandparent_idx) else {
             return false;
         };
-        if grandparent_node.kind
-            != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION
-        {
+        if grandparent_node.kind != tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
             // Also check for prefix/postfix increment/decrement.
-            if grandparent_node.kind
-                == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            if grandparent_node.kind == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 || grandparent_node.kind
                     == tsz_parser::parser::syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
             {
-                if let Some(unary) = self.ctx.arena.get_prefix_unary(grandparent_node) {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(grandparent_node) {
                     return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
-                        || unary.operator
-                            == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
-                }
-                if let Some(unary) = self.ctx.arena.get_postfix_unary(grandparent_node) {
-                    return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
-                        || unary.operator
-                            == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
+                        || unary.operator == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
                 }
             }
             return false;
