@@ -206,7 +206,7 @@ Rules: each file under 1000 LOC, complete function groups, cargo check after
 each move, cargo test at end. Commit each file split separately.
 ```
 
-### Prompt 2.5 — Add LOC Budget Enforcement
+### Prompt 2.5 — Add LOC Budget Enforcement ✅ DONE
 
 ```
 Add a test in crates/tsz-checker/src/tests/architecture_contract_tests.rs that
