@@ -3811,7 +3811,7 @@ mod tests {
     }
 
     #[test]
-    
+
     fn test_ts5024_emitted_for_lib_replacement_string_value() {
         let source = r#"{"compilerOptions":{"libReplacement":"true"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
