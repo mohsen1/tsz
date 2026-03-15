@@ -1245,6 +1245,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             }
                             _ => {}
                         }
+
+                        // String primitives implement Iterable<string>.
+                        // When source is string/literal-string and target is an
+                        // iterable-like Application, infer the type argument from
+                        // the string element type.
+                        if matches!(source, TypeId::STRING)
+                            || matches!(
+                                self.interner.lookup(source),
+                                Some(TypeData::Literal(crate::LiteralValue::String(_)))
+                                    | Some(TypeData::TemplateLiteral(_))
+                            )
+                        {
+                            self.constrain_types(
+                                ctx,
+                                var_map,
+                                TypeId::STRING,
+                                t_app_args[0],
+                                priority,
+                            );
+                            return;
+                        }
                     }
                 }
 

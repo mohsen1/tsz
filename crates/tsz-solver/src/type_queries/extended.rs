@@ -145,9 +145,10 @@ fn is_invalid_index_type_inner(
         // deferred references (type aliases, etc.) that could resolve to
         // valid index types like `string`. They fall through to the default
         // `false` case below.
+        // Note: UniqueSymbol is intentionally NOT here — unique symbols are
+        // valid index types (used for computed properties like obj[Symbol.iterator]).
         Some(
-            TypeData::UniqueSymbol(_)
-            | TypeData::Array(_)
+            TypeData::Array(_)
             | TypeData::Tuple(_)
             | TypeData::Object(_)
             | TypeData::ObjectWithIndex(_)
