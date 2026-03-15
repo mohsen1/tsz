@@ -1366,13 +1366,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (result, _instantiated_predicate, _) = self.resolve_call_with_checker_adapter(
-                resolved_func_type,
-                &arg_types,
-                force_bivariant_callbacks,
-                self.ctx.contextual_type,
-                None,
-            );
+            let (result, _instantiated_predicate, instantiated_params) = self
+                .resolve_call_with_checker_adapter(
+                    resolved_func_type,
+                    &arg_types,
+                    force_bivariant_callbacks,
+                    self.ctx.contextual_type,
+                    None,
+                );
 
             match &result {
                 CallResult::ArgumentTypeMismatch {
@@ -1401,8 +1402,65 @@ impl<'a> CheckerState<'a> {
                         );
                         continue;
                     }
-                    // Merge the node types inferred during argument collection
-                    self.ctx.node_types.extend(temp_node_types);
+
+                    // When the matched overload is generic and has contextual refresh args,
+                    // re-collect argument types with instantiated parameter types. The first
+                    // pass used the union-contextual type which has unresolved type parameters,
+                    // causing false diagnostics in callback bodies (e.g., TS2339 for `this.b`
+                    // when `this` has type `TContext` instead of the inferred `{b: string}`).
+                    let mut did_instantiated_retry = false;
+                    let final_arg_types = if !sig.type_params.is_empty()
+                        && !contextual_refresh_args.is_empty()
+                        && let Some(instantiated_params) = instantiated_params.as_ref()
+                    {
+                        self.ctx
+                            .diagnostics
+                            .truncate(first_pass_diagnostics_checkpoint);
+                        self.ctx.emitted_diagnostics = saved_emitted_diagnostics.clone();
+                        self.ctx.emitted_ts2454_errors = initial_ts2454_errors.clone();
+                        self.ctx.node_types = Default::default();
+                        refresh_all_args(self);
+
+                        let prev_callable_type = self.ctx.current_callable_type;
+                        self.ctx.current_callable_type = Some(func_type);
+                        let refreshed_contextual_types: Vec<Option<TypeId>> = (0..args.len())
+                            .map(|i| {
+                                let param = if i < instantiated_params.len() {
+                                    instantiated_params.get(i)
+                                } else {
+                                    instantiated_params.last().filter(|param| param.rest)
+                                }?;
+                                let evaluated = self.evaluate_type_with_env(param.type_id);
+                                Some(
+                                    if param.rest
+                                        && i >= instantiated_params.len().saturating_sub(1)
+                                    {
+                                        self.rest_argument_element_type_with_env(param.type_id)
+                                    } else {
+                                        evaluated
+                                    },
+                                )
+                            })
+                            .collect();
+                        let refreshed_arg_types = self.collect_call_argument_types_with_context(
+                            args,
+                            |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
+                            false,
+                            None,
+                        );
+                        self.ctx.current_callable_type = prev_callable_type;
+                        did_instantiated_retry = true;
+                        refreshed_arg_types
+                    } else {
+                        arg_types.clone()
+                    };
+
+                    // Merge the node types inferred during argument collection.
+                    // If we did the instantiated retry, node_types already contains the
+                    // refreshed entries; otherwise merge the first-pass temp_node_types.
+                    if !did_instantiated_retry {
+                        self.ctx.node_types.extend(temp_node_types);
+                    }
                     self.validate_non_tuple_spreads_for_signature(args, func_type);
 
                     // CRITICAL FIX - Check excess properties against the MATCHED signature,
@@ -1413,12 +1471,14 @@ impl<'a> CheckerState<'a> {
                         func_type,
                         self.ctx.compiler_options.no_implicit_any,
                     );
-                    self.check_call_argument_excess_properties(args, &arg_types, |i, arg_count| {
-                        matched_sig_helper.get_parameter_type_for_call(i, arg_count)
-                    });
+                    self.check_call_argument_excess_properties(
+                        args,
+                        &final_arg_types,
+                        |i, arg_count| matched_sig_helper.get_parameter_type_for_call(i, arg_count),
+                    );
 
                     return Some(OverloadResolution {
-                        arg_types: arg_types.clone(),
+                        arg_types: final_arg_types,
                         result: CallResult::Success(return_type),
                     });
                 }
