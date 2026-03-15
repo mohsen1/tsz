@@ -345,6 +345,10 @@ impl<'a> TypeFormatter<'a> {
                 // This implements tsc's freshness model where error messages show
                 // literal types even though the type system uses widened types.
                 if let Some(display_props) = self.interner.get_display_properties(*shape_id) {
+                    eprintln!(
+                        "@@@ TypeFormatter: using display props for shape_id={}",
+                        shape_id.0
+                    );
                     return self.format_object(display_props.as_slice()).into();
                 }
                 self.format_object(shape.properties.as_slice()).into()
