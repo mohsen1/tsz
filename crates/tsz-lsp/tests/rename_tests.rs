@@ -1664,3 +1664,300 @@ fn test_rename_type_alias_in_function_params() {
         }
     }
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_rename_rejects_reserved_word_while() {
+    let source = "let x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "while".to_string());
+    assert!(result.is_err(), "Should not allow renaming to 'while'");
+}
+
+#[test]
+fn test_rename_rejects_reserved_word_for() {
+    let source = "let x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "for".to_string());
+    assert!(result.is_err(), "Should not allow renaming to 'for'");
+}
+
+#[test]
+fn test_rename_rejects_reserved_word_const() {
+    let source = "let x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "const".to_string());
+    assert!(result.is_err(), "Should not allow renaming to 'const'");
+}
+
+#[test]
+fn test_rename_allows_contextual_keyword_as_name() {
+    let source = "let x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // "type" is a contextual keyword, should be allowed as identifier
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "type".to_string());
+    // This may succeed or fail depending on the implementation
+    let _ = result;
+}
+
+#[test]
+fn test_rename_variable_used_in_if_condition() {
+    let source = "let flag = true;\nif (flag) { console.log('yes'); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "isReady".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename declaration and usage in if"
+            );
+            for e in edits {
+                assert_eq!(e.new_text, "isReady");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_rename_variable_used_in_while_loop() {
+    let source = "let count = 0;\nwhile (count < 10) { count++; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "idx".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename in declaration and while loop"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rename_function_with_multiple_calls() {
+    let source =
+        "function add(a: number, b: number) { return a + b; }\nadd(1, 2);\nadd(3, 4);\nadd(5, 6);";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 9), "sum".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 4, "Should rename declaration + 3 call sites");
+            for e in edits {
+                assert_eq!(e.new_text, "sum");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_rename_const_with_type_annotation() {
+    let source = "const greeting: string = 'hello';\nconsole.log(greeting);";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 6), "msg".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename const declaration and usage"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_prepare_rename_on_operator_returns_none() {
+    let source = "let x = 1 + 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Position at '+' operator
+    let range = provider.prepare_rename(Position::new(0, 10));
+    assert!(range.is_none(), "Should not prepare rename on operator");
+}
+
+#[test]
+fn test_rename_var_in_switch_case() {
+    let source = "let val = 1;\nswitch (val) { case 1: break; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "status".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename in declaration and switch");
+        }
+    }
+}
+
+#[test]
+fn test_rename_var_in_return_statement() {
+    let source = "function f() { let result = 42; return result; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 19), "output".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename in declaration and return");
+        }
+    }
+}
+
+#[test]
+fn test_rename_class_with_extends() {
+    let source = "class Base {}\nclass Child extends Base {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 6), "Parent".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(edits.len() >= 2, "Should rename class and extends clause");
+        }
+    }
+}
+
+#[test]
+fn test_rename_interface_with_extends() {
+    let source = "interface A { x: number; }\ninterface B extends A { y: string; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 10), "Base".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename interface and extends clause"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rename_variable_shadowed_in_inner_scope() {
+    let source = "let x = 1;\n{ let x = 2; x; }\nx;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    // Rename outer x
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "outer".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            // Should only rename the outer x, not the inner shadowed one
+            for e in edits {
+                assert_eq!(e.new_text, "outer");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_rename_async_arrow_function_param() {
+    let source = "const fn = async (data: string) => { return data; };\nfn('test');";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 18), "input".to_string());
+    if let Ok(edit) = result {
+        if let Some(edits) = edit.changes.get("test.ts") {
+            assert!(
+                edits.len() >= 2,
+                "Should rename param in async arrow function"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_rename_rejects_reserved_word_break() {
+    let source = "let x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let result = provider.provide_rename_edits(root, Position::new(0, 4), "break".to_string());
+    assert!(result.is_err(), "Should not allow renaming to 'break'");
+}

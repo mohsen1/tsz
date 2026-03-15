@@ -1070,3 +1070,253 @@ fn test_infer_symbol_kind_underscore_only() {
         kind
     );
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_find_symbols_query_longer_than_any_name() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("ab", make_location("a.ts", 0, 0, 2));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("abcdefghijklmnop");
+    assert!(
+        results.is_empty(),
+        "Query longer than symbol name should not match"
+    );
+}
+
+#[test]
+fn test_find_symbols_exact_case_sensitive_priority() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("Item", make_location("a.ts", 0, 0, 4));
+    index.add_definition("item", make_location("b.ts", 0, 0, 4));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("item");
+    assert!(results.len() >= 2, "Should find both 'Item' and 'item'");
+}
+
+#[test]
+fn test_add_definition_with_kind_preserves_location() {
+    let mut index = SymbolIndex::new();
+    let loc = make_location("deep/nested/file.ts", 99, 10, 25);
+    index.add_definition_with_kind("deepSymbol", loc, SymbolKind::Function);
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("deepSymbol");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].location.file_path, "deep/nested/file.ts");
+    assert_eq!(results[0].location.range.start.line, 99);
+    assert_eq!(results[0].location.range.start.character, 10);
+    assert_eq!(results[0].location.range.end.character, 25);
+}
+
+#[test]
+fn test_find_symbols_trailing_whitespace_in_query() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("myFunc", make_location("a.ts", 0, 0, 6));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("myFunc ");
+    // "myFunc " won't be a substring of "myFunc" so should be empty
+    assert!(
+        results.is_empty(),
+        "Query with trailing space should not match"
+    );
+}
+
+#[test]
+fn test_find_symbols_multiple_kinds_same_query() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "DataClass",
+        make_location("a.ts", 0, 0, 9),
+        SymbolKind::Class,
+    );
+    index.add_definition_with_kind(
+        "DataInterface",
+        make_location("b.ts", 0, 0, 13),
+        SymbolKind::Interface,
+    );
+    index.add_definition_with_kind("DataEnum", make_location("c.ts", 0, 0, 8), SymbolKind::Enum);
+    index.add_definition_with_kind(
+        "dataHelper",
+        make_location("d.ts", 0, 0, 10),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Data");
+    assert_eq!(
+        results.len(),
+        4,
+        "Should find all 4 symbols starting with Data"
+    );
+    let kinds: Vec<SymbolKind> = results.iter().map(|r| r.kind).collect();
+    assert!(kinds.contains(&SymbolKind::Class));
+    assert!(kinds.contains(&SymbolKind::Interface));
+    assert!(kinds.contains(&SymbolKind::Enum));
+    assert!(kinds.contains(&SymbolKind::Function));
+}
+
+#[test]
+fn test_remove_file_with_multiple_symbols() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "alpha",
+        make_location("multi.ts", 0, 0, 5),
+        SymbolKind::Variable,
+    );
+    index.add_definition_with_kind(
+        "beta",
+        make_location("multi.ts", 1, 0, 4),
+        SymbolKind::Variable,
+    );
+    index.add_definition_with_kind(
+        "gamma",
+        make_location("multi.ts", 2, 0, 5),
+        SymbolKind::Variable,
+    );
+    index.add_definition_with_kind(
+        "other",
+        make_location("other.ts", 0, 0, 5),
+        SymbolKind::Variable,
+    );
+
+    index.remove_file("multi.ts");
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    assert!(
+        provider.find_symbols("alpha").is_empty(),
+        "alpha should be removed"
+    );
+    assert!(
+        provider.find_symbols("beta").is_empty(),
+        "beta should be removed"
+    );
+    assert!(
+        provider.find_symbols("gamma").is_empty(),
+        "gamma should be removed"
+    );
+    assert!(
+        !provider.find_symbols("other").is_empty(),
+        "other from other.ts should remain"
+    );
+}
+
+#[test]
+fn test_infer_symbol_kind_two_char_uppercase() {
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("IO");
+    assert!(
+        kind == SymbolKind::Constant || kind == SymbolKind::Class,
+        "Two uppercase chars should be Constant or Class, got: {:?}",
+        kind
+    );
+}
+
+#[test]
+fn test_infer_symbol_kind_mixed_with_numbers() {
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("item2Count");
+    assert!(
+        kind == SymbolKind::Variable || kind == SymbolKind::Function,
+        "camelCase with numbers should be Variable or Function, got: {:?}",
+        kind
+    );
+}
+
+#[test]
+fn test_infer_symbol_kind_pascal_with_numbers() {
+    let kind = WorkspaceSymbolsProvider::infer_symbol_kind("Vec3D");
+    assert_eq!(
+        kind,
+        SymbolKind::Class,
+        "PascalCase with numbers should be Class"
+    );
+}
+
+#[test]
+fn test_find_symbols_emoji_query() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("test_symbol", make_location("a.ts", 0, 0, 11));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("\u{1F600}");
+    assert!(results.is_empty(), "Emoji query should not match");
+}
+
+#[test]
+fn test_find_symbols_numeric_only_query() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("error404Handler", make_location("a.ts", 0, 0, 15));
+    index.add_definition("route200", make_location("b.ts", 0, 0, 8));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("200");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "route200");
+}
+
+#[test]
+fn test_kind_from_index_constant() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "piValue",
+        make_location("math.ts", 0, 0, 7),
+        SymbolKind::Constant,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("piValue");
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0].kind,
+        SymbolKind::Constant,
+        "piValue should be Constant from index, not Variable from heuristic"
+    );
+}
+
+#[test]
+fn test_find_symbols_single_symbol_index() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "onlyOne",
+        make_location("sole.ts", 0, 0, 7),
+        SymbolKind::Function,
+    );
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let exact = provider.find_symbols("onlyOne");
+    assert_eq!(exact.len(), 1);
+    let partial = provider.find_symbols("only");
+    assert_eq!(partial.len(), 1);
+    let none = provider.find_symbols("nope");
+    assert!(none.is_empty());
+}
+
+#[test]
+fn test_find_symbols_very_long_symbol_name() {
+    let mut index = SymbolIndex::new();
+    let long_name = "a".repeat(200);
+    index.add_definition(&long_name, make_location("long.ts", 0, 0, 200));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols(&long_name);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, long_name);
+}
+
+#[test]
+fn test_remove_file_twice_does_not_panic() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("sym", make_location("rm.ts", 0, 0, 3));
+    index.remove_file("rm.ts");
+    index.remove_file("rm.ts");
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("sym");
+    assert!(results.is_empty());
+}
+
+#[test]
+fn test_find_symbols_overlapping_names() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("parse", make_location("a.ts", 0, 0, 5));
+    index.add_definition("parser", make_location("b.ts", 0, 0, 6));
+    index.add_definition("parseJSON", make_location("c.ts", 0, 0, 9));
+    index.add_definition("JSONParser", make_location("d.ts", 0, 0, 10));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("parse");
+    assert!(results.len() >= 3, "Should find parse, parser, parseJSON");
+    assert_eq!(results[0].name, "parse");
+}
