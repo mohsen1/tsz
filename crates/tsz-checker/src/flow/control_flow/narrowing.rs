@@ -264,29 +264,17 @@ impl<'a> FlowAnalyzer<'a> {
             callee_type
         };
         match classify_for_predicate_signature(self.interner, resolved_type) {
-            PredicateSignatureKind::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                let predicate = shape.type_predicate.clone()?;
+            PredicateSignatureKind::Function(_) | PredicateSignatureKind::Callable(_) => {
+                // Delegate to solver query for Function and Callable types.
+                // For Callable, this picks the first signature with a predicate (heuristic).
+                let extracted = tsz_solver::type_queries::flow::extract_predicate_signature(
+                    self.interner,
+                    resolved_type,
+                )?;
                 Some(PredicateSignature {
-                    predicate,
-                    params: shape.params.clone(),
+                    predicate: extracted.predicate,
+                    params: extracted.params,
                 })
-            }
-            PredicateSignatureKind::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                // TODO(Safety): This is a heuristic. We are picking the first signature with a predicate.
-                // Correct behavior requires using the specific overload selected by the checker during resolution.
-                // If the checker selected a non-predicate overload (e.g. (x: number) => boolean),
-                // but we pick a predicate overload (x: string) => x is string, we may narrow incorrectly.
-                for sig in &shape.call_signatures {
-                    if let Some(predicate) = &sig.type_predicate {
-                        return Some(PredicateSignature {
-                            predicate: predicate.clone(),
-                            params: sig.params.clone(),
-                        });
-                    }
-                }
-                None
             }
             PredicateSignatureKind::Union(members) => {
                 // For unions, collect predicates from members that have them.
