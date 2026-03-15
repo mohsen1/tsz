@@ -1070,3 +1070,282 @@ fn test_type_definition_multiple_type_params() {
         assert_eq!(locations[0].range.start.line, 0);
     }
 }
+
+#[test]
+fn test_type_definition_generic_class_type() {
+    let source = "class Container<T> {\n  value: T;\n}\nlet c: Container<string>;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(3, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(locations[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_type_definition_interface_with_methods() {
+    let source = "interface Service {\n  start(): void;\n  stop(): void;\n}\nlet svc: Service;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(4, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(locations[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_type_definition_enum_member_type() {
+    let source = "enum Status {\n  Active = 'active',\n  Inactive = 'inactive'\n}\nlet s: Status;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(4, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(locations[0].range.start.line, 0);
+    }
+}
+
+#[test]
+fn test_type_definition_any_type() {
+    let source = "let x: any;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    // any is a built-in type, no user-defined location
+    if let Some(locations) = result {
+        assert!(locations.is_empty() || locations[0].file_path.contains("lib"));
+    }
+}
+
+#[test]
+fn test_type_definition_never_type() {
+    let source = "let n: never;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    // never is a built-in type
+    if let Some(locations) = result {
+        assert!(locations.is_empty() || locations[0].file_path.contains("lib"));
+    }
+}
+
+#[test]
+fn test_type_definition_unknown_type() {
+    let source = "let u: unknown;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    // unknown is a built-in type
+    if let Some(locations) = result {
+        assert!(locations.is_empty() || locations[0].file_path.contains("lib"));
+    }
+}
+
+#[test]
+fn test_type_definition_promise_like_type_alias() {
+    let source = "type AsyncResult<T> = Promise<T>;\nlet r: AsyncResult<number>;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        if !locations.is_empty() {
+            assert_eq!(locations[0].range.start.line, 0);
+        }
+    }
+}
+
+#[test]
+fn test_type_definition_record_type_alias() {
+    let source = "type Dict = Record<string, number>;\nlet d: Dict;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        if !locations.is_empty() {
+            assert_eq!(locations[0].range.start.line, 0);
+        }
+    }
+}
+
+#[test]
+fn test_type_definition_class_with_generics_and_constraints() {
+    let source = "interface Comparable {\n  compareTo(other: any): number;\n}\nclass SortedList<T extends Comparable> {\n  items: T[] = [];\n}\nlet list: SortedList<Comparable>;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(6, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        if !locations.is_empty() {
+            assert_eq!(locations[0].range.start.line, 3);
+        }
+    }
+}
+
+#[test]
+fn test_type_definition_interface_extending_interface() {
+    let source = "interface Base {\n  id: number;\n}\ninterface Extended extends Base {\n  name: string;\n}\nlet e: Extended;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(6, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(
+            locations[0].range.start.line, 3,
+            "Should point to Extended interface, not Base"
+        );
+    }
+}
+
+#[test]
+fn test_type_definition_only_comments() {
+    let source = "// This is a comment\n/* Block comment */";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 5);
+    let result = provider.get_type_definition(root, pos);
+
+    assert!(result.is_none(), "Comment-only file should return None");
+}
+
+#[test]
+fn test_type_definition_let_with_explicit_string_literal_type() {
+    let source = "type Mode = 'read' | 'write';\nlet m: Mode;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        TypeDefinitionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 4);
+    let result = provider.get_type_definition(root, pos);
+
+    if let Some(locations) = result {
+        assert!(!locations.is_empty());
+        assert_eq!(locations[0].range.start.line, 0);
+    }
+}
