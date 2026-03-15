@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> bool {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let members =
             crate::query_boundaries::state::checking::union_members(self.ctx.types, object_type)
@@ -267,7 +267,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> bool {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let Some(constraint) = crate::query_boundaries::state::checking::type_parameter_constraint(
             self.ctx.types,
@@ -550,9 +550,9 @@ impl<'a> CheckerState<'a> {
 mod tests {
     use super::*;
     use crate::context::CheckerOptions;
+    use crate::query_boundaries::type_construction::TypeInterner;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
 
     fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -974,7 +974,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(rn)
             {
                 let obj = self.resolve_type_for_property_access(left_type);
-                use tsz_solver::operations::property::PropertyAccessResult;
+                use crate::query_boundaries::common::PropertyAccessResult;
                 match self.resolve_property_access_with_env(obj, &ident.escaped_text) {
                     PropertyAccessResult::Success { type_id, .. } => {
                         self.resolve_type_query_type(type_id)
@@ -1120,7 +1120,7 @@ impl<'a> CheckerState<'a> {
                             let prop_name = ident.escaped_text.clone();
                             let object_type = self.resolve_type_for_property_access(left_type);
                             trace!(object_type = ?object_type, prop_name = %prop_name, "type_query qualified: property access");
-                            use tsz_solver::operations::property::PropertyAccessResult;
+                            use crate::query_boundaries::common::PropertyAccessResult;
                             match self.resolve_property_access_with_env(object_type, &prop_name) {
                                 PropertyAccessResult::Success { type_id, .. }
                                     if type_id != TypeId::ANY && type_id != TypeId::ERROR =>

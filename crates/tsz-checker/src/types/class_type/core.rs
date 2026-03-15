@@ -1,6 +1,7 @@
 //! Core implementation for class instance type resolution.
 
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -12,7 +13,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
-    TypeParamInfo, TypeSubstitution, Visibility, instantiate_type,
+    TypeParamInfo, Visibility,
 };
 
 #[inline]

@@ -1,13 +1,14 @@
 //! Call-result handling helpers shared by call expression computation.
 
 use crate::query_boundaries::assignability as assign_query;
+use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 use tsz_solver::visitor;
-use tsz_solver::{CallResult, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -132,7 +133,7 @@ impl<'a> CheckerState<'a> {
 
         let tracked_type_params: FxHashSet<_> =
             source_fn.type_params.iter().map(|tp| tp.name).collect();
-        let mut substitution = tsz_solver::TypeSubstitution::new();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
 
         for (source_param, target_param) in source_fn.params.iter().zip(target_fn.params.iter()) {
             let target_type = if target_param.optional {
@@ -161,8 +162,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let return_type =
-            tsz_solver::instantiate_type(self.ctx.types, source_fn.return_type, &substitution);
+        let return_type = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            source_fn.return_type,
+            &substitution,
+        );
         Some(
             self.ctx
                 .types

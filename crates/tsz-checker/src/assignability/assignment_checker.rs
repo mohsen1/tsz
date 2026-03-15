@@ -232,7 +232,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
         match self.resolve_property_access_with_env(object_type, property_name) {
             PropertyAccessResult::Success { type_id, .. } => Some(type_id),
             _ => None,
@@ -1403,7 +1403,10 @@ impl<'a> CheckerState<'a> {
             let eval_left = self.evaluate_type_for_binary_ops(left_read_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
             let result = evaluator.evaluate(eval_left, eval_right, "+");
-            if let tsz_solver::BinaryOpResult::TypeError { .. } = result {
+            if let crate::query_boundaries::type_computation::core::BinaryOpResult::TypeError {
+                ..
+            } = result
+            {
                 // For the diagnostic message, tsc uses widened types for most
                 // operands (e.g., `0` → `number`, `true` → `boolean`).
                 // Widen literal types to base types and enum members to
@@ -1554,7 +1557,8 @@ impl<'a> CheckerState<'a> {
         right_type: TypeId,
         operator: u16,
     ) -> TypeId {
-        use tsz_solver::{BinaryOpEvaluator, BinaryOpResult};
+        use crate::query_boundaries::type_computation::core::BinaryOpResult;
+        use tsz_solver::BinaryOpEvaluator;
 
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
         let op_str = match operator {

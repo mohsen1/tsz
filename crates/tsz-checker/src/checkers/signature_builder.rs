@@ -225,7 +225,8 @@ impl<'a> CheckerState<'a> {
         sig: &tsz_solver::CallSignature,
         type_args: &[TypeId],
     ) -> tsz_solver::CallSignature {
-        use tsz_solver::{ParamInfo, TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use tsz_solver::ParamInfo;
 
         let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
         let params: Vec<ParamInfo> = sig

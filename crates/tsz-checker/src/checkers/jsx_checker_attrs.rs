@@ -436,7 +436,7 @@ impl<'a> CheckerState<'a> {
             if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
                 continue;
             }
-            use tsz_solver::operations::property::PropertyAccessResult;
+            use crate::query_boundaries::common::PropertyAccessResult;
             if let PropertyAccessResult::Success { type_id, .. } =
                 self.resolve_property_access_with_env(props_type, &attr.name)
             {
@@ -614,7 +614,7 @@ impl<'a> CheckerState<'a> {
 
             // Check 1: All provided attribute values are assignable to member properties
             let all_attrs_compatible = provided_attrs.iter().all(|(name, attr_type)| {
-                use tsz_solver::operations::property::PropertyAccessResult;
+                use crate::query_boundaries::common::PropertyAccessResult;
                 match self.resolve_property_access_with_env(member_resolved, name) {
                     PropertyAccessResult::Success { type_id, .. } => {
                         // Strip undefined from optional properties (write-position)
@@ -712,7 +712,7 @@ impl<'a> CheckerState<'a> {
         overridden_names: &rustc_hash::FxHashSet<&str>,
         display_target: &str,
     ) {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         // Safety guard: skip when types involve unresolved generics or errors
         if tsz_solver::contains_type_parameters(self.ctx.types, spread_type)
@@ -979,7 +979,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         text_child_indices: &[NodeIndex],
     ) {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let resolved = self.resolve_type_for_property_access(props_type);
         let children_type = match self.resolve_property_access_with_env(resolved, "children") {

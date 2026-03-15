@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
         depth: usize,
     ) -> ContextualPropertyPresence {
         use crate::query_boundaries::assignability::ExcessPropertiesKind;
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         if depth == 0 || matches!(type_id, TypeId::ANY | TypeId::ERROR) {
             return ContextualPropertyPresence::Unknown;
@@ -495,10 +495,10 @@ impl<'a> CheckerState<'a> {
 
                 let mut alternate_member_for_property_access = None;
                 if property_type.is_none() || property_type == Some(tsz_solver::TypeId::ANY) {
-                    use tsz_solver::TypeEvaluator;
+                    use crate::query_boundaries::state::type_environment::evaluate_type_with_resolver;
 
-                    let mut evaluator = TypeEvaluator::with_resolver(this.ctx.types, &this.ctx);
-                    let alternate_member = evaluator.evaluate(member);
+                    let alternate_member =
+                        evaluate_type_with_resolver(this.ctx.types, &this.ctx, member);
                     let alternate_member = this.resolve_type_for_property_access(alternate_member);
                     let alternate_member = this.resolve_lazy_type(alternate_member);
                     let alternate_member = this.evaluate_application_type(alternate_member);
@@ -705,10 +705,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let alternate_contextual_type = {
-            use tsz_solver::TypeEvaluator;
-
-            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
-            evaluator.evaluate(original_contextual_type)
+            use crate::query_boundaries::state::type_environment::evaluate_type_with_resolver;
+            evaluate_type_with_resolver(self.ctx.types, &self.ctx, original_contextual_type)
         };
         if alternate_contextual_type != contextual_type {
             let alternate_contextual_type =

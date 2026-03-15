@@ -1455,7 +1455,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1608,7 +1608,7 @@ impl<'a> CheckerState<'a> {
                 // If not found: TS2339 (property does not exist on type).
                 let mut found = false;
 
-                use tsz_solver::operations::property::PropertyAccessResult;
+                use crate::query_boundaries::common::PropertyAccessResult;
                 match self
                     .ctx
                     .types

@@ -25,7 +25,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::checkers::iterable::{
             call_signatures_for_type, function_shape_for_type,
         };
-        use tsz_solver::instantiate_type;
+        use crate::query_boundaries::common::instantiate_type;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;

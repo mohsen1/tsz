@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
         exports_table: &tsz_binder::SymbolTable,
         import_name: &str,
     ) -> bool {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let Some(export_equals_sym) = exports_table.get("export=") else {
             return false;

@@ -798,12 +798,16 @@ impl<'a> CheckerState<'a> {
             && !interface_params.is_empty()
             && interface_params.len() == type_args.len()
         {
-            let substitution = tsz_solver::TypeSubstitution::from_args(
+            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                 checker.ctx.types,
                 &interface_params,
                 type_args,
             );
-            result = tsz_solver::instantiate_type(checker.ctx.types, result, &substitution);
+            result = crate::query_boundaries::common::instantiate_type(
+                checker.ctx.types,
+                result,
+                &substitution,
+            );
         }
         checker.pop_type_parameters(interface_updates);
 

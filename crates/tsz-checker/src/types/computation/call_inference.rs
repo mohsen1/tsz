@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -9,7 +10,7 @@ use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{CallResult, FunctionShape, TypeId};
+use tsz_solver::{FunctionShape, TypeId};
 
 /// Count the number of non-`any` parameter types in a callable type.
 ///
@@ -98,7 +99,7 @@ pub(crate) fn should_preserve_contextual_application_shape(
 fn instantiate_function_shape_with_substitution(
     types: &dyn tsz_solver::QueryDatabase,
     func: &tsz_solver::FunctionShape,
-    substitution: &tsz_solver::TypeSubstitution,
+    substitution: &crate::query_boundaries::common::TypeSubstitution,
 ) -> tsz_solver::FunctionShape {
     tsz_solver::FunctionShape {
         params: func
@@ -106,15 +107,23 @@ fn instantiate_function_shape_with_substitution(
             .iter()
             .map(|param| tsz_solver::ParamInfo {
                 name: param.name,
-                type_id: tsz_solver::instantiate_type(types, param.type_id, substitution),
+                type_id: crate::query_boundaries::common::instantiate_type(
+                    types,
+                    param.type_id,
+                    substitution,
+                ),
                 optional: param.optional,
                 rest: param.rest,
             })
             .collect(),
-        return_type: tsz_solver::instantiate_type(types, func.return_type, substitution),
-        this_type: func
-            .this_type
-            .map(|this_type| tsz_solver::instantiate_type(types, this_type, substitution)),
+        return_type: crate::query_boundaries::common::instantiate_type(
+            types,
+            func.return_type,
+            substitution,
+        ),
+        this_type: func.this_type.map(|this_type| {
+            crate::query_boundaries::common::instantiate_type(types, this_type, substitution)
+        }),
         type_params: vec![],
         type_predicate: func
             .type_predicate
@@ -122,9 +131,9 @@ fn instantiate_function_shape_with_substitution(
             .map(|predicate| tsz_solver::TypePredicate {
                 asserts: predicate.asserts,
                 target: predicate.target.clone(),
-                type_id: predicate
-                    .type_id
-                    .map(|tid| tsz_solver::instantiate_type(types, tid, substitution)),
+                type_id: predicate.type_id.map(|tid| {
+                    crate::query_boundaries::common::instantiate_type(types, tid, substitution)
+                }),
                 parameter_index: predicate.parameter_index,
             }),
         is_constructor: func.is_constructor,
@@ -140,7 +149,7 @@ fn instantiate_contextual_target_shape_for_return_context(
         return func.clone();
     }
 
-    let mut substitution = tsz_solver::TypeSubstitution::new();
+    let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
     for tp in &func.type_params {
         let Some(replacement) = tp.default.or(tp.constraint) else {
             continue;
@@ -159,8 +168,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn widen_round2_contextual_substitution(
         &mut self,
         shape: &FunctionShape,
-        substitution: &tsz_solver::TypeSubstitution,
-    ) -> tsz_solver::TypeSubstitution {
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
         let mut widened = substitution.clone();
 
         for tp in &shape.type_params {
@@ -177,8 +186,11 @@ impl<'a> CheckerState<'a> {
             }
 
             let preserve_literals = tp.constraint.is_some_and(|constraint| {
-                let instantiated =
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, substitution);
+                let instantiated = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    constraint,
+                    substitution,
+                );
                 contextual_constraint_preserves_literals(self.ctx.types, instantiated)
             });
             if preserve_literals {
@@ -191,8 +203,11 @@ impl<'a> CheckerState<'a> {
             }
 
             let chosen = if let Some(constraint) = tp.constraint {
-                let instantiated_constraint =
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, substitution);
+                let instantiated_constraint = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    constraint,
+                    substitution,
+                );
                 let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
                 if !self.is_assignable_to(widened_current, evaluated_constraint)
                     && self.is_assignable_to(current, evaluated_constraint)
@@ -235,7 +250,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_param_type: TypeId,
         tp_info: &tsz_solver::TypeParamInfo,
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
     ) -> Option<TypeId> {
         let constraint = tp_info.constraint?;
         let should_drop_self = substitution.get(tp_info.name).is_some_and(|ty| {
@@ -243,7 +258,7 @@ impl<'a> CheckerState<'a> {
                 || ty == TypeId::UNKNOWN
                 || tsz_solver::type_queries::contains_infer_types_db(self.ctx.types, ty)
         });
-        let mut contextual_substitution = tsz_solver::TypeSubstitution::new();
+        let mut contextual_substitution = crate::query_boundaries::common::TypeSubstitution::new();
         for (&name, &type_id) in substitution.map() {
             let aliases_current_type_param = type_id == type_param_type;
             if (should_drop_self && name == tp_info.name) || aliases_current_type_param {
@@ -251,7 +266,7 @@ impl<'a> CheckerState<'a> {
             }
             contextual_substitution.insert(name, type_id);
         }
-        Some(tsz_solver::instantiate_type(
+        Some(crate::query_boundaries::common::instantiate_type(
             self.ctx.types,
             constraint,
             &contextual_substitution,
@@ -261,7 +276,7 @@ impl<'a> CheckerState<'a> {
     fn unresolved_contextual_substitution_target(
         &self,
         tp_info: &tsz_solver::TypeParamInfo,
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
     ) -> Option<TypeId> {
         let ty = substitution.get(tp_info.name)?;
         (ty == TypeId::ERROR
@@ -323,7 +338,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
         tracked_type_params: &FxHashSet<Atom>,
-        substitution: &mut tsz_solver::TypeSubstitution,
+        substitution: &mut crate::query_boundaries::common::TypeSubstitution,
         visited: &mut FxHashSet<(TypeId, TypeId)>,
     ) {
         if !visited.insert((source, target)) {
@@ -518,17 +533,17 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
         contextual_type: Option<TypeId>,
-    ) -> tsz_solver::TypeSubstitution {
+    ) -> crate::query_boundaries::common::TypeSubstitution {
         let Some(contextual_type) = contextual_type else {
-            return tsz_solver::TypeSubstitution::new();
+            return crate::query_boundaries::common::TypeSubstitution::new();
         };
         let tracked_type_params: FxHashSet<_> =
             shape.type_params.iter().map(|tp| tp.name).collect();
         if tracked_type_params.is_empty() {
-            return tsz_solver::TypeSubstitution::new();
+            return crate::query_boundaries::common::TypeSubstitution::new();
         }
 
-        let mut substitution = tsz_solver::TypeSubstitution::new();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
         let mut visited = FxHashSet::default();
         self.collect_return_context_substitution(
             shape.return_type,
@@ -798,7 +813,7 @@ impl<'a> CheckerState<'a> {
         shape: &tsz_solver::FunctionShape,
         round1_instantiated_params: Option<&[tsz_solver::ParamInfo]>,
         sensitive_args: &[bool],
-        current_substitution: &tsz_solver::TypeSubstitution,
+        current_substitution: &crate::query_boundaries::common::TypeSubstitution,
         arg_count: usize,
     ) -> Vec<Option<TypeId>> {
         let mut round2_contextual_types: Vec<Option<TypeId>> = Vec::with_capacity(arg_count);
@@ -829,7 +844,7 @@ impl<'a> CheckerState<'a> {
             let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
                 let fresh_instantiated_from_shape =
                     shape_round2_param.map(|(shape_param_type, _)| {
-                        tsz_solver::instantiate_type(
+                        crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
                             shape_param_type,
                             current_substitution,
@@ -928,21 +943,21 @@ impl<'a> CheckerState<'a> {
                                 current_substitution,
                             )
                             .unwrap_or_else(|| {
-                                tsz_solver::instantiate_type(
+                                crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
                                     base_param_type,
                                     current_substitution,
                                 )
                             })
                         } else {
-                            tsz_solver::instantiate_type(
+                            crate::query_boundaries::common::instantiate_type(
                                 self.ctx.types,
                                 base_param_type,
                                 current_substitution,
                             )
                         }
                     } else {
-                        tsz_solver::instantiate_type(
+                        crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
                             base_param_type,
                             current_substitution,

@@ -296,8 +296,8 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::diagnostics::diagnostic_codes;
+        use crate::query_boundaries::common::CallResult;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::CallResult;
 
         let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
             return TypeId::ERROR; // Missing new expression data - propagate error
@@ -873,7 +873,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                             let instantiated = promise_executor_context.unwrap_or_else(|| {
-                                tsz_solver::instantiate_type(
+                                crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
                                     param_type,
                                     &round2_substitution,
@@ -889,11 +889,12 @@ impl<'a> CheckerState<'a> {
                                 tsz_solver::type_param_info(self.ctx.types, instantiated)
                                 && let Some(constraint) = tp_info.constraint
                             {
-                                let instantiated_constraint = tsz_solver::instantiate_type(
-                                    self.ctx.types,
-                                    constraint,
-                                    &round2_substitution,
-                                );
+                                let instantiated_constraint =
+                                    crate::query_boundaries::common::instantiate_type(
+                                        self.ctx.types,
+                                        constraint,
+                                        &round2_substitution,
+                                    );
                                 let evaluated =
                                     self.evaluate_type_with_env(instantiated_constraint);
                                 if !tsz_solver::type_queries::contains_type_parameters_db(

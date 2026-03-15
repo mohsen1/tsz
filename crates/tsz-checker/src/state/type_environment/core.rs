@@ -290,7 +290,8 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::{TypeSubstitution, instantiate_type, instantiate_type_with_depth_status};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use tsz_solver::instantiate_type_with_depth_status;
 
         let Some((base, args)) = query::application_info(self.ctx.types, type_id) else {
             return type_id;
@@ -515,7 +516,7 @@ impl<'a> CheckerState<'a> {
         signatures: &[CallSignature],
         type_args: &[TypeId],
     ) -> Option<Vec<CallSignature>> {
-        use tsz_solver::{TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
         let mut changed = false;
         let new_sigs: Vec<CallSignature> = signatures
@@ -623,7 +624,8 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         mapped_id: MappedTypeId,
     ) -> TypeId {
-        use tsz_solver::{PropertyInfo, TypeSubstitution, instantiate_type};
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use tsz_solver::PropertyInfo;
         let factory = self.ctx.types.factory();
 
         let mapped = self.ctx.types.mapped_type(mapped_id);

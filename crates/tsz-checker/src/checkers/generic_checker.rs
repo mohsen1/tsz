@@ -614,7 +614,8 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                             let constraint_resolved = self.resolve_lazy_type(constraint);
-                            let mut subst = tsz_solver::TypeSubstitution::new();
+                            let mut subst =
+                                crate::query_boundaries::common::TypeSubstitution::new();
                             for (j, p) in type_params.iter().enumerate() {
                                 if let Some(&arg) = type_args.get(j) {
                                     subst.insert(p.name, arg);
@@ -623,7 +624,7 @@ impl<'a> CheckerState<'a> {
                             let inst_constraint = if subst.is_empty() {
                                 constraint_resolved
                             } else {
-                                tsz_solver::instantiate_type(
+                                crate::query_boundaries::common::instantiate_type(
                                     self.ctx.types,
                                     constraint_resolved,
                                     &subst,
@@ -689,7 +690,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         // Instantiate the constraint with all provided type arguments
-                        let mut subst = tsz_solver::TypeSubstitution::new();
+                        let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
                         for (j, p) in type_params.iter().enumerate() {
                             if let Some(&arg) = type_args.get(j) {
                                 subst.insert(p.name, arg);
@@ -698,7 +699,7 @@ impl<'a> CheckerState<'a> {
                         let inst_constraint = if subst.is_empty() {
                             constraint_resolved
                         } else {
-                            tsz_solver::instantiate_type(
+                            crate::query_boundaries::common::instantiate_type(
                                 self.ctx.types,
                                 constraint_resolved,
                                 &subst,
@@ -740,7 +741,7 @@ impl<'a> CheckerState<'a> {
                 // Instantiate the constraint with all provided type arguments so that
                 // forward-referencing constraints (e.g., `T extends U` where U comes
                 // after T) are fully resolved before validation.
-                let mut subst = tsz_solver::TypeSubstitution::new();
+                let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
                         subst.insert(p.name, arg);
@@ -749,7 +750,11 @@ impl<'a> CheckerState<'a> {
                 let instantiated_constraint = if subst.is_empty() {
                     constraint
                 } else {
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        constraint,
+                        &subst,
+                    )
                 };
 
                 // Skip if the instantiated constraint still contains type parameters.

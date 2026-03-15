@@ -908,7 +908,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            use tsz_solver::operations::property::PropertyAccessResult;
+            use crate::query_boundaries::common::PropertyAccessResult;
             let prop_access_result =
                 self.resolve_property_access_with_env(parent_type, prop_name_str);
             match prop_access_result {

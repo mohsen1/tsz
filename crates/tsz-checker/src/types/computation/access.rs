@@ -163,7 +163,7 @@ impl<'a> CheckerState<'a> {
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::operations::property::PropertyAccessResult;
+        use crate::query_boundaries::common::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1690,10 +1690,10 @@ impl<'a> CheckerState<'a> {
 mod tests {
     use crate::context::CheckerOptions;
     use crate::diagnostics::Diagnostic;
+    use crate::query_boundaries::type_construction::TypeInterner;
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
 
     fn check_source_with_default_libs(source: &str) -> Vec<Diagnostic> {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

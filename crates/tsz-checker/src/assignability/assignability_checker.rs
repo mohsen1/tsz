@@ -904,7 +904,7 @@ impl<'a> CheckerState<'a> {
         self.check_assignability_cached(
             source,
             target,
-            RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES,
+            crate::query_boundaries::assignability::RelationFlags::STRICT_FUNCTION_TYPES,
             "is_assignable_to_strict",
         )
     }
@@ -922,7 +922,7 @@ impl<'a> CheckerState<'a> {
         self.check_assignability_cached(
             source,
             target,
-            RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+            crate::query_boundaries::assignability::RelationFlags::STRICT_NULL_CHECKS,
             "is_assignable_to_strict_null",
         )
     }
@@ -1031,7 +1031,8 @@ impl<'a> CheckerState<'a> {
 
         // For bivariant checks, we strip the strict_function_types flag
         // so the cache key is distinct from regular assignability checks.
-        let flags = self.ctx.pack_relation_flags() & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+        let flags = self.ctx.pack_relation_flags()
+            & !crate::query_boundaries::assignability::RelationFlags::STRICT_FUNCTION_TYPES;
 
         if is_cacheable {
             // Note: For assignability checks, we use AnyPropagationMode::All (0)

@@ -20,8 +20,8 @@ impl<'a> CheckerState<'a> {
         substitution: &tsz_solver::TypeSubstitution,
         mut class_extends_error_reported: bool,
     ) {
+        use crate::query_boundaries::common::instantiate_type;
         use tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE;
-        use tsz_solver::instantiate_type;
 
         // Collect derived class index signatures
         let mut derived_string_index: Option<(TypeId, NodeIndex)> = None;
@@ -173,10 +173,10 @@ impl<'a> CheckerState<'a> {
         _iface_idx: NodeIndex,
         iface_data: &tsz_parser::parser::node::InterfaceData,
     ) {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, INDEX_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{TypeSubstitution, instantiate_type};
 
         // Get heritage clauses (extends) — must have at least one across all declarations
         if iface_data.heritage_clauses.is_none() {
@@ -1001,7 +1001,7 @@ impl<'a> CheckerState<'a> {
                             let base_prop_type = if let Some(ref bp) = base_prop {
                                 Some(bp.type_id)
                             } else {
-                                use tsz_solver::operations::property::PropertyAccessResult;
+                                use crate::query_boundaries::common::PropertyAccessResult;
                                 match self.resolve_property_access_with_env(base_type, member_name)
                                 {
                                     PropertyAccessResult::Success { type_id, .. } => Some(type_id),
