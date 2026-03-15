@@ -1139,7 +1139,9 @@ impl<'a> CheckerState<'a> {
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                         let evaluated = self.evaluate_type_with_env(ty);
-                        evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
+                        evaluator.is_arithmetic_operand(evaluated)
+                            || (self.is_enum_like_type(ty)
+                                && self.is_unresolved_lazy_type(evaluated))
                     });
                     if self.ctx.strict_null_checks()
                         && let Some(cause) = nullish_cause
@@ -1155,8 +1157,13 @@ impl<'a> CheckerState<'a> {
                     let resolved_type = self.evaluate_type_with_env(operand_type);
                     // When strictNullChecks is off, null/undefined are silently
                     // assignable to number, so skip arithmetic check for them.
+                    // Only use is_enum_like_type as fallback when evaluation couldn't
+                    // resolve the type (stays Lazy). When resolved, is_arithmetic_operand
+                    // correctly handles Enum types via visit_enum, distinguishing
+                    // numeric enums (valid) from string enums (invalid for arithmetic).
                     let is_valid = evaluator.is_arithmetic_operand(resolved_type)
-                        || self.is_enum_like_type(operand_type)
+                        || (self.is_enum_like_type(operand_type)
+                            && self.is_unresolved_lazy_type(resolved_type))
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 

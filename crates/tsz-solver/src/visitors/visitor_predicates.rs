@@ -35,6 +35,18 @@ pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bo
     matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
 }
 
+/// Check if a type is an unresolved `Lazy(DefId)` reference.
+///
+/// Returns true if the type has not been evaluated/resolved yet. This is used
+/// by the checker to determine whether the solver's `is_arithmetic_operand`
+/// result is authoritative. When the type is resolved (e.g., to `Enum`, `Literal`,
+/// etc.), `is_arithmetic_operand` can inspect the structural type and distinguish
+/// numeric from string enums. When it's still `Lazy`, the checker may need to
+/// use symbol-based fallback checks.
+pub fn is_lazy_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(types.lookup(type_id), Some(TypeData::Lazy(_)))
+}
+
 /// Check if a type is a function type (Function or Callable).
 ///
 /// This also handles intersections containing function types.
