@@ -58,6 +58,7 @@
 - **Evolving array types** (`controlFlowArrays.ts`): `let x; x = []; x.push(5)` — narrowing campaign territory.
 - **Multi-file tests**: Tests with `// @Filename:` directives need cross-file compilation support.
 - **Missing lib types** (AsyncGenerator, Disposable): Need lib definition additions, not type system fixes.
+- **TS2741→TS2322 in explain.rs**: The `explain_failure_inner` function receives fully-evaluated types (Object shapes), NOT the original Application/Lazy types. So checking for Application same-base or intersection at that level doesn't work — the type structure is already lost. The fix needs to happen at a HIGHER level (checker's error reporting path) where the original type information is still available. `recursiveIntersectionTypes.ts` uses `type LinkedList<T> = T & { next: LinkedList<T> }` (intersection alias) which gets merged into a single Object during evaluation.
 
 ## Key Learnings / Gotchas
 
