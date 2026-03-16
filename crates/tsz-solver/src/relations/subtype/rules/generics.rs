@@ -194,6 +194,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check `TypeQuery` to `TypeQuery` subtype with optional identity shortcut.
+    ///
+    /// Uses `resolve_type_query` to get value-space types (constructor for classes)
+    /// rather than instance types, since `typeof X` refers to the value-space type.
     pub(crate) fn check_typequery_typequery_subtype(
         &mut self,
         source: TypeId,
@@ -205,31 +208,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(s_sym, self.interner)
-        };
-        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(t_sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(t_sym, self.interner)
-        };
+        let s_resolved = self.resolver.resolve_type_query(s_sym, self.interner);
+        let t_resolved = self.resolver.resolve_type_query(t_sym, self.interner);
         self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
     }
 
     /// Check `TypeQuery` (typeof) to structural type subtype.
+    ///
+    /// Uses `resolve_type_query` to get the value-space type (constructor for classes).
     pub(crate) fn check_typequery_subtype(
         &mut self,
         _source: TypeId,
         target: TypeId,
         sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(sym, self.interner)
-        };
+        let resolved = self.resolver.resolve_type_query(sym, self.interner);
         match resolved {
             Some(s_resolved) => self.check_subtype(s_resolved, target),
             None => SubtypeResult::False,
@@ -237,17 +230,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check structural type to `TypeQuery` (typeof) subtype.
+    ///
+    /// Uses `resolve_type_query` to get the value-space type (constructor for classes).
     pub(crate) fn check_to_typequery_subtype(
         &mut self,
         source: TypeId,
         _target: TypeId,
         sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(sym, self.interner)
-        };
+        let resolved = self.resolver.resolve_type_query(sym, self.interner);
         match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
             None => SubtypeResult::False,

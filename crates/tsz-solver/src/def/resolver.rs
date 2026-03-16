@@ -34,6 +34,18 @@ pub trait TypeResolver {
         }
     }
 
+    /// Resolve a `TypeQuery` (`typeof X`) symbol to its value-space type.
+    ///
+    /// For classes, `resolve_lazy`/`resolve_symbol_ref` return the **instance** type
+    /// (type-space), but `typeof X` needs the **constructor** type (value-space).
+    /// This method returns the value type from `symbol_types` for classes.
+    ///
+    /// Default implementation falls back to `resolve_ref`, which returns from
+    /// `symbol_types` (the value/constructor type cache).
+    fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.resolve_ref(symbol, interner)
+    }
+
     /// Resolve a `DefId` reference to its structural type.
     ///
     /// This is the `DefId` equivalent of `resolve_ref`, used for `TypeData::Lazy(DefId)`.
@@ -241,6 +253,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn resolve_symbol_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         (**self).resolve_symbol_ref(symbol, interner)
+    }
+
+    fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).resolve_type_query(symbol, interner)
     }
 
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
