@@ -1034,42 +1034,39 @@ impl<'a> CheckerState<'a> {
                 // properties are truly absent. Cross-check with the helper to
                 // upgrade TS2741 → TS2739 when there are more missing properties
                 // (matching tsc which reports all missing properties at once).
-                if depth == 0 {
-                    if let Some(all_missing) =
+                if depth == 0
+                    && let Some(all_missing) =
                         self.missing_required_properties_from_index_signature_source(source, target)
-                    {
-                        if all_missing.len() > 1 {
-                            let src_str = self
-                                .format_assignment_source_type_for_diagnostic(source, target, idx);
-                            let tgt_str =
-                                self.format_assignability_type_for_message(target, source);
-                            let prop_list: Vec<String> = all_missing
-                                .iter()
-                                .take(4)
-                                .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
-                                .collect();
-                            let props_joined = prop_list.join(", ");
-                            let (message, code) = if all_missing.len() > 4 {
-                                let more_count = (all_missing.len() - 4).to_string();
-                                (
+                    && all_missing.len() > 1
+                {
+                    let src_str =
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                    let tgt_str = self.format_assignability_type_for_message(target, source);
+                    let prop_list: Vec<String> = all_missing
+                        .iter()
+                        .take(4)
+                        .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                        .collect();
+                    let props_joined = prop_list.join(", ");
+                    let (message, code) = if all_missing.len() > 4 {
+                        let more_count = (all_missing.len() - 4).to_string();
+                        (
                                     format_message(
                                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                         &[&src_str, &tgt_str, &props_joined, &more_count],
                                     ),
                                     diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                 )
-                            } else {
-                                (
+                    } else {
+                        (
                                     format_message(
                                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                                         &[&src_str, &tgt_str, &props_joined],
                                     ),
                                     diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
                                 )
-                            };
-                            return Diagnostic::error(file_name, start, length, message, code);
-                        }
-                    }
+                    };
+                    return Diagnostic::error(file_name, start, length, message, code);
                 }
 
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.

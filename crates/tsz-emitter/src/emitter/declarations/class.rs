@@ -2234,8 +2234,8 @@ impl<'a> Printer<'a> {
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
                 // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
                 // blocks, not deferred to external assignments.
-                && !(self.arena.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
-                    && !needs_static_block_lowering)
+                && (!self.arena.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                    || needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved

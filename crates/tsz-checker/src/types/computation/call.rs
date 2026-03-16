@@ -217,33 +217,32 @@ impl<'a> CheckerState<'a> {
             // TS1325: Check for spread elements in import arguments
             if let Some(ref args_list) = call.arguments {
                 for &arg_idx in &args_list.nodes {
-                    if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
-                        if arg_node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT {
-                            self.error_at_node(
+                    if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                        && arg_node.kind == tsz_parser::parser::syntax_kind_ext::SPREAD_ELEMENT
+                    {
+                        self.error_at_node(
                                 arg_idx,
                                 crate::diagnostics::diagnostic_messages::ARGUMENT_OF_DYNAMIC_IMPORT_CANNOT_BE_SPREAD_ELEMENT,
                                 diagnostic_codes::ARGUMENT_OF_DYNAMIC_IMPORT_CANNOT_BE_SPREAD_ELEMENT,
                             );
-                        }
                     }
                 }
             }
 
             // TS1324: Second argument only supported for certain module kinds
-            if let Some(ref args_list) = call.arguments {
-                if args_list.nodes.len() >= 2
-                    && !self
-                        .ctx
-                        .compiler_options
-                        .module
-                        .supports_dynamic_import_options()
-                {
-                    self.error_at_node(
+            if let Some(ref args_list) = call.arguments
+                && args_list.nodes.len() >= 2
+                && !self
+                    .ctx
+                    .compiler_options
+                    .module
+                    .supports_dynamic_import_options()
+            {
+                self.error_at_node(
                         args_list.nodes[1],
                         crate::diagnostics::diagnostic_messages::DYNAMIC_IMPORTS_ONLY_SUPPORT_A_SECOND_ARGUMENT_WHEN_THE_MODULE_OPTION_IS_SET_TO,
                         diagnostic_codes::DYNAMIC_IMPORTS_ONLY_SUPPORT_A_SECOND_ARGUMENT_WHEN_THE_MODULE_OPTION_IS_SET_TO,
                     );
-                }
             }
 
             // TS7036: Check specifier type is assignable to `string`
@@ -2389,7 +2388,7 @@ impl<'a> CheckerState<'a> {
 
 impl<'a> CheckerState<'a> {
     /// When a call expression like `this.foo<T>()` has callee type ANY
-    /// (from this_type_stack suppression of a non-existent property), TSC emits
+    /// (from `this_type_stack` suppression of a non-existent property), TSC emits
     /// TS2339 (property not found) rather than TS2347 (untyped function calls).
     /// This checks if the callee is a `this.x` property access in a class where
     /// the property doesn't exist, and if so emits TS2339.

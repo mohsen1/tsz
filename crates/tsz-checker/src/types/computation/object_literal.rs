@@ -286,13 +286,12 @@ impl<'a> CheckerState<'a> {
                         // when lit_type == final_type — inference-time widening
                         // may change the property type later, and we need the
                         // original literal for error display.
-                        if prop.initializer != prop.name {
-                            if let Some(lit_type) =
+                        if prop.initializer != prop.name
+                            && let Some(lit_type) =
                                 self.literal_type_from_initializer(prop.initializer)
-                            {
-                                let name_atom = self.ctx.types.intern_string(&name);
-                                display_type_overrides.insert(name_atom, lit_type);
-                            }
+                        {
+                            let name_atom = self.ctx.types.intern_string(&name);
+                            display_type_overrides.insert(name_atom, lit_type);
                         }
 
                         final_type

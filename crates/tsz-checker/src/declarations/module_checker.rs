@@ -1642,26 +1642,25 @@ impl<'a> CheckerState<'a> {
 
             // TS2748: Cannot access ambient const enums when VMS is enabled.
             // For re-exports like `export { E } from "pkg"` where E is an ambient const enum.
-            if option_name == "verbatimModuleSyntax" {
-                if let Some(ref module_spec) = module_specifier_text
-                    && self.is_import_specifier_ambient_const_enum(module_spec, &source_name)
-                {
-                    let msg = format_message(
-                        diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                        &["verbatimModuleSyntax"],
-                    );
-                    self.error_at_node(
-                        source_name_idx,
-                        &msg,
-                        diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
-                    );
-                }
+            if option_name == "verbatimModuleSyntax"
+                && let Some(ref module_spec) = module_specifier_text
+                && self.is_import_specifier_ambient_const_enum(module_spec, &source_name)
+            {
+                let msg = format_message(
+                    diagnostic_messages::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                    &["verbatimModuleSyntax"],
+                );
+                self.error_at_node(
+                    source_name_idx,
+                    &msg,
+                    diagnostic_codes::CANNOT_ACCESS_AMBIENT_CONST_ENUMS_WHEN_IS_ENABLED,
+                );
             }
         }
     }
 
     /// TS1269: Check `export import X = require("...")` when the target is type-only.
-    /// Called when the export clause of an export declaration is an ImportEqualsDeclaration.
+    /// Called when the export clause of an export declaration is an `ImportEqualsDeclaration`.
     pub(crate) fn check_export_import_equals_type_only(
         &mut self,
         export_idx: NodeIndex,
