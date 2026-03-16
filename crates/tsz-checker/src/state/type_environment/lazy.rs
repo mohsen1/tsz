@@ -229,6 +229,25 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
         match query::classify_for_type_resolution(self.ctx.types, type_id) {
             query::TypeResolutionKind::Lazy(def_id) => {
+                // When a bare Lazy(DefId) represents a generic interface/class with
+                // all-defaulted type parameters (e.g., `Int32Array` which is
+                // `Int32Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike>`),
+                // wrap it in Application(Lazy, defaults) and evaluate that instead.
+                // In tsc, bare `Int32Array` in type position always means
+                // `Int32Array<ArrayBufferLike>`. Without this, overload resolution
+                // fails because assignability compares against the raw interface
+                // with unresolved type parameters.
+                if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
+                    if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                        let default_args: Vec<tsz_solver::TypeId> = type_params
+                            .iter()
+                            .map(|p| p.default.unwrap_or(tsz_solver::TypeId::UNKNOWN))
+                            .collect();
+                        let app = self.ctx.types.application(type_id, default_args);
+                        return self.evaluate_application_type(app);
+                    }
+                }
+
                 // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type
                 // Prefer `resolve_and_insert_def_type` to ensure class instance mapping is respected
                 // and the environment contains a concrete type for the definition.
