@@ -1006,18 +1006,45 @@ impl<'a> CheckerState<'a> {
         // emit TS7031 for each leaf binding element under noImplicitAny.
         // This must be done before the symbol check since destructuring declarations
         // don't get a symbol assigned to the declaration node itself.
+        // Skip for for-in/for-of loop variables (type inferred from iterable) and
+        // catch clause variables (type is `any` or `unknown`).
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
             && var_decl.type_annotation.is_none()
             && var_decl.initializer.is_none()
         {
-            let is_destructuring_pattern =
-                self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
-                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                });
-            if is_destructuring_pattern {
-                self.emit_implicit_any_for_var_destructuring(var_decl.name);
+            // Check if this declaration is in a for-in/for-of loop or catch clause.
+            // For-in/for-of: VarDecl → VarDeclList → ForInStatement/ForOfStatement
+            // Catch clause: VarDecl → CatchClause
+            let is_loop_or_catch = self.ctx.arena.get_extended(decl_idx).is_some_and(|ext| {
+                // Direct parent is CatchClause?
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    if parent_node.kind == syntax_kind_ext::CATCH_CLAUSE {
+                        return true;
+                    }
+                }
+                // Grandparent is ForInStatement/ForOfStatement?
+                if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
+                    if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
+                        if gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                            || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            });
+
+            if !is_loop_or_catch {
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if is_destructuring_pattern {
+                    self.emit_implicit_any_for_var_destructuring(var_decl.name);
+                }
             }
         }
 
