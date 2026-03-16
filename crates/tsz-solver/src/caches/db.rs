@@ -670,7 +670,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         index_type: TypeId,
         literal_index: Option<usize>,
     ) -> ElementAccessResult {
-        let evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        let mut evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        let flag = self.no_unchecked_indexed_access();
+        evaluator.set_no_unchecked_indexed_access(flag);
         evaluator.resolve_element_access(object_type, index_type, literal_index)
     }
 

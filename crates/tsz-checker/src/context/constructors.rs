@@ -431,7 +431,7 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        let compiler_options = Self::normalize_options(types, compiler_options.clone(), false);
+        let compiler_options = Self::normalize_options(types, compiler_options.clone(), true);
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 

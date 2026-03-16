@@ -1363,11 +1363,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(root_ident) = self.ctx.arena.get_identifier(root_node)
             {
                 let root_name = root_ident.escaped_text.as_str();
-                if self
-                    .ctx
-                    .binder
-                    .resolve_identifier(self.ctx.arena, root_idx)
-                    .is_none()
+                let is_global_name = matches!(
+                    root_name,
+                    "undefined" | "NaN" | "Infinity" | "globalThis" | "arguments"
+                );
+                if !is_global_name
+                    && self
+                        .ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, root_idx)
+                        .is_none()
                     && !self.ctx.typeof_param_scope.contains_key(root_name)
                 {
                     use crate::diagnostics::{
@@ -1396,18 +1401,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let factory = self.ctx.types.factory();
                 return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
             }
-            // Name not found in any scope — emit TS2304
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &[name]);
-            if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
-                self.ctx.error(
-                    expr_node.pos,
-                    expr_node.end - expr_node.pos,
-                    msg,
-                    diagnostic_codes::CANNOT_FIND_NAME,
-                );
+            // Skip TS2304 for well-known globals that may not be in local binder scope
+            // but are valid in typeof position (undefined, NaN, Infinity, globalThis, etc.)
+            let is_global_name = matches!(
+                name,
+                "undefined" | "NaN" | "Infinity" | "globalThis" | "arguments"
+            );
+            if is_global_name {
+                // Fall through to TypeLowering
+            } else {
+                // Name not found in any scope — emit TS2304
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &[name]);
+                if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
+                    self.ctx.error(
+                        expr_node.pos,
+                        expr_node.end - expr_node.pos,
+                        msg,
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                }
+                return TypeId::ERROR;
             }
-            return TypeId::ERROR;
         }
 
         // Fall back to TypeLowering with proper value resolvers
