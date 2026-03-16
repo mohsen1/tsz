@@ -1183,252 +1183,38 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // TS2705: Async function requires the Promise constructor.
-            // Emits when Promise value is not available in the loaded libs
-            // (e.g., @lib: es5 lacks `declare var Promise: PromiseConstructor`).
-            // tsc checks lib availability, not just target level.
-            if is_async && !is_generator {
-                let should_check_promise_constructor =
-                    !is_function_declaration || has_type_annotation;
-                let missing_promise = !self.ctx.has_promise_constructor_in_scope();
-                if should_check_promise_constructor && missing_promise {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            // TS2705/TS2468: Check async Promise constructor availability
+            self.check_async_promise_constructor_availability(
+                is_async,
+                is_generator,
+                is_function_declaration,
+                has_type_annotation,
+                async_node_idx,
+                idx,
+            );
 
-                    // Find the `async` keyword position for error anchoring.
-                    // For async arrow functions (no name node), the node `pos` starts at
-                    // the first parameter, not the `async` keyword. We scan backward
-                    // in the source to locate the keyword.
-                    let async_keyword_span = if async_node_idx.is_none() {
-                        // Arrow function — scan backward from node start to find `async`
-                        self.ctx.arena.get(idx).and_then(|n| {
-                            let sf = self.ctx.arena.source_files.first()?;
-                            let text = sf.text.as_bytes();
-                            let node_pos = n.pos as usize;
-                            // Scan backward over whitespace to find end of `async`
-                            let mut end = node_pos;
-                            while end > 0 && text.get(end - 1).copied() == Some(b' ') {
-                                end -= 1;
-                            }
-                            // Check that the 5 chars before `end` are "async"
-                            if end >= 5 && &text[end - 5..end] == b"async" {
-                                Some((end as u32 - 5, 5u32))
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    };
+            // TS2705/TS1055/TS1064: Check async return type is Promise
+            self.check_async_return_type_is_promise(
+                has_type_annotation,
+                is_async,
+                is_generator,
+                return_type,
+                type_annotation,
+            );
 
-                    // TS2468: Cannot find global value 'Promise'.
-                    // tsc emits this as a program-level diagnostic (no file location).
-                    if !is_function_declaration {
-                        let message = crate::diagnostics::format_message(
-                            diagnostic_messages::CANNOT_FIND_GLOBAL_VALUE,
-                            &["Promise"],
-                        );
-                        self.error_program_level(
-                            message,
-                            diagnostic_codes::CANNOT_FIND_GLOBAL_VALUE,
-                        );
-                    }
-
-                    // TS2705: anchored at the `async` keyword
-                    if let Some((start, length)) = async_keyword_span {
-                        self.error_at_position(
-                            start,
-                            length,
-                            diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
-                            diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
-                        );
-                    } else {
-                        let diagnostic_node = if async_node_idx.is_none() {
-                            idx
-                        } else {
-                            async_node_idx
-                        };
-                        self.error_at_node(
-                            diagnostic_node,
-                            diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
-                            diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
-                        );
-                    }
-                }
-            }
-
-            // TS2705: Async function must return Promise
-            // Check ALL async functions (not just arrow functions and function expressions)
-            // Note: Async generators (async function* or async *method) should NOT trigger TS2705
-            // because they return AsyncGenerator or AsyncIterator, not Promise
-            if has_type_annotation {
-                // Only check non-generator async functions with explicit return types that aren't Promise
-                // Skip this check if:
-                // 1. The return type is ERROR (unresolved reference, likely Promise not in lib)
-                // 2. The return type annotation text looks like it references Promise
-                if is_async && !is_generator {
-                    use tsz_scanner::SyntaxKind;
-                    let should_emit_ts2705 = if self.is_global_promise_type(return_type) {
-                        // Return type is exactly the global Promise<T> - OK
-                        false
-                    } else if self.is_non_promise_application_type(return_type) {
-                        // Return type is an Application with a non-Promise base (e.g., MyPromise<T>).
-                        // TSC requires exactly Promise<T>, not subclasses.
-                        true
-                    } else if return_type != TypeId::ERROR {
-                        // Return type evaluated to a non-Application form (e.g., Object).
-                        // Fall back to syntactic check on the annotation text. This handles
-                        // type aliases like `type PromiseAlias<T> = Promise<T>` which resolve
-                        // to the same Object type as Promise<T>.
-                        !self.return_type_annotation_looks_like_promise(type_annotation)
-                    } else {
-                        // Return type is ERROR - use syntactic fallback
-                        // Check if the type annotation is a primitive keyword (never valid for async function)
-                        let type_node_result = self.ctx.arena.get(type_annotation);
-                        match type_node_result {
-                            Some(type_node) => {
-                                // Primitives are definitely not valid async function return types
-                                matches!(
-                                    type_node.kind as u32,
-                                    k if k == SyntaxKind::StringKeyword as u32
-                                        || k == SyntaxKind::NumberKeyword as u32
-                                        || k == SyntaxKind::BooleanKeyword as u32
-                                        || k == SyntaxKind::VoidKeyword as u32
-                                        || k == SyntaxKind::UndefinedKeyword as u32
-                                        || k == SyntaxKind::NullKeyword as u32
-                                        || k == SyntaxKind::NeverKeyword as u32
-                                        || k == SyntaxKind::ObjectKeyword as u32
-                                )
-                            }
-                            None => false,
-                        }
-                    };
-                    if should_emit_ts2705 {
-                        use crate::context::ScriptTarget;
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        // For ES5/ES3 targets, emit TS1055 instead of TS2705
-                        // TS1055: "Type 'X' is not a valid async function return type in ES5 because
-                        //          it does not refer to a Promise-compatible constructor value."
-                        // TS2705: "Async function return type must be Promise."
-                        let is_es5_or_lower = matches!(
-                            self.ctx.compiler_options.target,
-                            ScriptTarget::ES3 | ScriptTarget::ES5
-                        );
-                        if is_es5_or_lower {
-                            let type_name = self.format_type(return_type);
-                            self.error_at_node(
-                                type_annotation,
-                                &format_message(
-                                    diagnostic_messages::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
-                                    &[&type_name],
-                                ),
-                                diagnostic_codes::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
-                            );
-                        } else {
-                            // TS1064: For ES6+ targets, the return type must be Promise<T>
-                            // TSC uses getAwaitedTypeNoAlias(returnType) || voidType for the message.
-                            // Extract the promise type argument (e.g., void from MyPromise<void>).
-                            let inner_type = self
-                                .promise_like_return_type_argument(return_type)
-                                .unwrap_or(TypeId::VOID);
-                            let type_name = self.format_type(inner_type);
-                            self.error_at_node(
-                                type_annotation,
-                                &format_message(
-                                    diagnostic_messages::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
-                                    &[&type_name],
-                                ),
-                                diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE,
-                            );
-                        }
-                    }
-                }
-                // Note: TS2705 check for functions without explicit return types has been removed.
-                // TypeScript only emits TS2705 when there's an explicit non-Promise return type.
-                // The "Promise not in lib" check was also removed as it was emitting false positives.
-            }
-
-            // TS2366 (not all code paths return value) for function expressions and arrow functions
-            // Check if all code paths return a value when return type requires it
-            if !is_function_declaration && body.is_some() {
-                // Determine if this is an async function or generator
-                let (is_async, is_generator) = if let Some(func) = self.ctx.arena.get_function(node)
-                {
-                    (func.is_async, func.asterisk_token)
-                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    (
-                        self.has_async_modifier(&method.modifiers),
-                        method.asterisk_token,
-                    )
-                } else {
-                    (false, false)
-                };
-                let effective_return_type = annotated_return_type.unwrap_or(return_type);
-                let mut check_return_type = self.return_type_for_implicit_return_check(
-                    effective_return_type,
-                    is_async,
-                    is_generator,
-                );
-                // For async functions, if we couldn't unwrap Promise<T> (e.g. lib files not loaded),
-                // fall back to the annotation syntax. If it looks like Promise<...>, suppress TS2355.
-                if is_async
-                    && check_return_type == effective_return_type
-                    && has_type_annotation
-                    && self.return_type_annotation_looks_like_promise(type_annotation)
-                {
-                    check_return_type = TypeId::VOID;
-                }
-                let requires_return = self.requires_return_value(check_return_type);
-                let has_return = self.body_has_return_with_value(body);
-                let falls_through = self.function_body_falls_through(body);
-                if has_type_annotation
-                    && requires_return
-                    && falls_through
-                    && check_return_type != TypeId::VOID
-                {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    if !has_return {
-                        self.error_at_node(
-                            type_annotation,
-                            "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                            diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
-                        );
-                    } else {
-                        // TS2366: always emit when return type doesn't include undefined
-                        self.error_at_node(
-                            type_annotation,
-                            diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
-                            diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
-                        );
-                    }
-                } else if self.ctx.no_implicit_returns() && has_return && falls_through {
-                    // TS7030: noImplicitReturns - not all code paths return a value
-                    // TSC skips TS7030 for functions returning void, any, or unions containing void/any
-                    let ts7030_check_type = self.return_type_for_implicit_return_check(
-                        annotated_return_type.unwrap_or(return_type),
-                        is_async,
-                        function_is_generator,
-                    );
-                    if !self.should_skip_no_implicit_return_check(
-                        ts7030_check_type,
-                        has_type_annotation,
-                    ) {
-                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        // TSC points TS7030 to: return type annotation > function name > node itself
-                        let error_node = if has_type_annotation {
-                            type_annotation
-                        } else if let Some(nn) = name_node {
-                            nn
-                        } else {
-                            idx
-                        };
-                        self.error_at_node(
-                            error_node,
-                            diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
-                            diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
-                        );
-                    }
-                }
-            }
+            // TS2366/TS2355/TS7030: Check return completeness
+            self.check_function_return_completeness(
+                is_function_declaration,
+                body,
+                idx,
+                annotated_return_type,
+                return_type,
+                has_type_annotation,
+                type_annotation,
+                function_is_generator,
+                name_node,
+                idx,
+            );
 
             // Determine if this is an async function for context tracking
             let is_async_for_context = if let Some(func) = self.ctx.arena.get_function(node) {
@@ -2070,23 +1856,6 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(function_type)
-    }
-
-    /// Check if a return context type is or references a const type parameter.
-    /// Used to propagate const context into callback bodies during generic inference.
-    fn return_context_has_const_type_param(&self, ret_ctx: TypeId) -> bool {
-        // Direct check: is the return context itself a const type parameter?
-        if let Some(tp_info) = tsz_solver::type_param_info(self.ctx.types, ret_ctx)
-            && tp_info.is_const
-        {
-            return true;
-        }
-
-        // General check: does the return context reference any const type parameter?
-        let referenced = tsz_solver::collect_referenced_types(self.ctx.types, ret_ctx);
-        referenced.into_iter().any(|ty| {
-            tsz_solver::type_param_info(self.ctx.types, ty).is_some_and(|info| info.is_const)
-        })
     }
 }
 

@@ -132,13 +132,13 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_await_expression(&mut self, node: &Node) {
         // AwaitExpression is stored with UnaryExprDataEx
         let Some(unary) = self.arena.get_unary_expr_ex(node) else {
-            self.write(if self.ctx.emit_await_as_yield_await {
-                "yield"
-            } else if self.ctx.emit_await_as_yield {
-                "yield"
-            } else {
-                "await"
-            });
+            self.write(
+                if self.ctx.emit_await_as_yield_await || self.ctx.emit_await_as_yield {
+                    "yield"
+                } else {
+                    "await"
+                },
+            );
             return;
         };
 

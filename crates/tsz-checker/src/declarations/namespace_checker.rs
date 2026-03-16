@@ -205,19 +205,18 @@ impl<'a> CheckerState<'a> {
                 // skip TS2300 — the class checker handles it as TS2417 instead.
                 let found_direct = self.report_duplicate_on_class_static_member(sym_id, name);
 
-                if found_direct {
-                    if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
-                        let decl_node = export_symbol.value_declaration;
-                        if decl_node != NodeIndex::NONE {
-                            let error_node = self
-                                .get_declaration_name_node(decl_node)
-                                .unwrap_or(decl_node);
-                            self.error_at_node_msg(
-                                error_node,
-                                diagnostic_codes::DUPLICATE_IDENTIFIER,
-                                &[name],
-                            );
-                        }
+                if found_direct && let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id)
+                {
+                    let decl_node = export_symbol.value_declaration;
+                    if decl_node != NodeIndex::NONE {
+                        let error_node = self
+                            .get_declaration_name_node(decl_node)
+                            .unwrap_or(decl_node);
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[name],
+                        );
                     }
                 }
                 continue;
