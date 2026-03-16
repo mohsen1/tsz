@@ -207,14 +207,58 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 );
             }
 
-            // TS2435: Ambient modules cannot be nested in other modules or namespaces
+            // TS2435 / TS1234: Ambient modules cannot be nested or placed in wrong context.
             // Check if this is an ambient external module (declare module "string")
-            // inside another namespace/module
             if let Some(name_node) = self.ctx.arena.get(module.name)
                 && name_node.kind == SyntaxKind::StringLiteral as u16
             {
-                // This is an ambient external module with a string name
-                // Check if it's nested inside a namespace
+                // First check: is the direct parent a valid context (SourceFile or ModuleBlock)?
+                // If not, emit TS1234 (wrong context takes priority over nesting check).
+                let is_valid_context = if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
+                    let parent = ext.parent;
+                    if parent.is_none() {
+                        true
+                    } else if let Some(parent_node) = self.ctx.arena.get(parent) {
+                        parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                            || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+
+                if !is_valid_context {
+                    // TS1234: An ambient module declaration is only allowed at the top level in a file.
+                    // This fires when `declare module "string"` is inside a block or function body.
+                    if !self.ctx.has_syntax_parse_errors {
+                        let decl_start = self.ctx.arena.get(module_idx).map(|n| n.pos).unwrap_or(0);
+                        let start = if let Some(sf) = self.ctx.arena.source_files.first() {
+                            let bytes = sf.text.as_bytes();
+                            let mut pos = decl_start as usize;
+                            while pos < bytes.len()
+                                && matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n')
+                            {
+                                pos += 1;
+                            }
+                            pos as u32
+                        } else {
+                            decl_start
+                        };
+                        self.ctx.error(
+                            start,
+                            name_node.end - start,
+                            diagnostic_messages::AN_AMBIENT_MODULE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_IN_A_FILE.to_string(),
+                            diagnostic_codes::AN_AMBIENT_MODULE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_IN_A_FILE,
+                        );
+                    }
+                    // Don't also emit TS2435 when TS1234 fires
+                    return;
+                }
+
+                // TS2435: Ambient modules cannot be nested in other modules or namespaces.
+                // Only check when in a valid syntactic context (ModuleBlock) but nested
+                // inside a namespace.
                 if self.is_inside_namespace(module_idx) {
                     self.ctx.error(
                         name_node.pos,
@@ -223,7 +267,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             .to_string(),
                         diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED_IN_OTHER_MODULES_OR_NAMESPACES,
                     );
-                    return; // Don't emit other errors for nested ambient modules
+                    return;
                 }
             }
 

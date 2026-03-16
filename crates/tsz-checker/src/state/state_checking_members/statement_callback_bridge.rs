@@ -1621,6 +1621,122 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             );
         }
     }
+
+    fn check_grammar_module_element_context(&mut self, stmt_idx: NodeIndex) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // Suppress grammar errors when file has parse errors (matches tsc behavior)
+        if self.ctx.has_syntax_parse_errors {
+            return false;
+        }
+
+        // Check if the parent is a valid module-element context (SourceFile or ModuleBlock).
+        // For import-equals inside `export import X = N;`, the direct parent is
+        // EXPORT_DECLARATION — look through it to the grandparent.
+        let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+        let parent_kind = parent_idx
+            .and_then(|p| self.ctx.arena.get(p))
+            .map(|p| p.kind);
+        let effective_parent_kind = if matches!(parent_kind, Some(k) if k == syntax_kind_ext::EXPORT_DECLARATION)
+        {
+            parent_idx
+                .and_then(|p| self.ctx.arena.get_extended(p))
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .map(|p| p.kind)
+        } else {
+            parent_kind
+        };
+
+        let is_valid_context = match effective_parent_kind {
+            Some(k) if k == syntax_kind_ext::SOURCE_FILE || k == syntax_kind_ext::MODULE_BLOCK => {
+                true
+            }
+            None => true, // Top-level
+            _ => false,
+        };
+
+        if is_valid_context {
+            return false;
+        }
+
+        // Determine which error to emit based on the statement kind
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        let (message, code) = match node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
+            {
+                (
+                    diagnostic_messages::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                    diagnostic_codes::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                )
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
+                    // Check if the export wraps a class/function declaration
+                    // (e.g., `export function foo()`, `export default class C`).
+                    // In tsc, these get TS1184 "Modifiers cannot appear here" instead.
+                    let clause_kind = self
+                        .ctx
+                        .arena
+                        .get(export_decl.export_clause)
+                        .map(|n| n.kind);
+                    let is_class_or_function = matches!(
+                        clause_kind,
+                        Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::CLASS_EXPRESSION
+                            || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    );
+
+                    let is_namespace_or_module = matches!(
+                        clause_kind,
+                        Some(k) if k == syntax_kind_ext::MODULE_DECLARATION
+                    );
+
+                    if is_namespace_or_module {
+                        // Namespace/module gets its own error (TS1235/TS1234) from
+                        // check_module_declaration. Don't also emit TS1233 for the export.
+                        return false;
+                    } else if is_class_or_function {
+                        // TS1184: Modifiers cannot appear here.
+                        (
+                            diagnostic_messages::MODIFIERS_CANNOT_APPEAR_HERE,
+                            diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                        )
+                    } else if export_decl.is_default_export {
+                        // TS1258: A default export must be at the top level
+                        (
+                            diagnostic_messages::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                            diagnostic_codes::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                        )
+                    } else {
+                        // TS1233: An export declaration can only be used at the top level
+                        (
+                            diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                            diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                        )
+                    }
+                } else {
+                    (
+                        diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                        diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                    )
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                (
+                    diagnostic_messages::AN_EXPORT_ASSIGNMENT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                    diagnostic_codes::AN_EXPORT_ASSIGNMENT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                )
+            }
+            _ => return false,
+        };
+
+        self.error_at_node(stmt_idx, message, code);
+        true
+    }
 }
 
 impl<'a> CheckerState<'a> {

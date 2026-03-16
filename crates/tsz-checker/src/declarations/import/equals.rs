@@ -209,6 +209,9 @@ impl<'a> CheckerState<'a> {
         let mut force_module_not_found = false;
         let mut force_module_not_found_as_2307 = false;
         let mut inside_namespace = false;
+        // When in a wrong context (inside block/function), skip module resolution
+        // errors. The grammar error (TS1232) is the primary diagnostic.
+        let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
         if require_module_specifier.is_some()
             && self.ctx.arena.get(import.module_specifier).is_some()
         {
@@ -638,12 +641,16 @@ impl<'a> CheckerState<'a> {
         // Exception: `import type X = require(...)` is a type-only form and never emits TS1202.
         // Exception: When the import is inside a namespace, TS1147 takes priority and
         // tsc does not also emit TS1202.
+        // Exception: When the import is inside a function body,
+        // TS1232 takes priority and tsc does not emit TS1202.
         let is_ambient_context = self.is_ambient_declaration(stmt_idx);
+        let in_function = self.is_inside_function_body(stmt_idx);
         if self.ctx.compiler_options.module.is_es_module()
             && self.ctx.compiler_options.module != ModuleKind::Preserve
             && !is_ambient_context
             && !import.is_type_only
             && !inside_namespace
+            && !in_function
         {
             self.error_at_node(
                 stmt_idx,
@@ -680,6 +687,12 @@ impl<'a> CheckerState<'a> {
         let Some(module_name) = require_module_specifier.as_deref() else {
             return;
         };
+
+        // When the import-equals is inside a function body (not just a block),
+        // skip module resolution errors. tsc doesn't resolve require() inside functions.
+        if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+            return;
+        }
 
         if force_module_not_found {
             let (message, code) = self.module_not_found_diagnostic(module_name);
