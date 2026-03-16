@@ -1276,6 +1276,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+        // Propagate weak type enforcement into nested structural comparisons.
+        // This ensures TS2559 is detected not just at the top-level assignment,
+        // but also when comparing nested property types (e.g., { a: { y: string } }
+        // assigned to { a: { x?: number } }).
+        self.subtype.enforce_weak_types = true;
         // Any propagation is controlled by the Lawyer's allow_any_suppression flag
         // Standard TypeScript allows any to propagate through arrays/objects regardless
         // of strictFunctionTypes - it only affects function parameter variance
@@ -1482,23 +1487,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source_props: &[PropertyInfo],
         target_props: &[PropertyInfo],
     ) -> bool {
-        let mut source_idx = 0;
-        let mut target_idx = 0;
-
-        while source_idx < source_props.len() && target_idx < target_props.len() {
-            let source_name = source_props[source_idx].name;
-            let target_name = target_props[target_idx].name;
-            if source_name == target_name {
-                return true;
-            }
-            if source_name < target_name {
-                source_idx += 1;
-            } else {
-                target_idx += 1;
-            }
-        }
-
-        false
+        crate::utils::has_common_property_name(source_props, target_props)
     }
 
     fn resolve_weak_type_ref(&self, type_id: TypeId) -> TypeId {

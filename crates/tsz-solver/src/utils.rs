@@ -269,6 +269,29 @@ pub(crate) fn optional_property_write_type(db: &dyn TypeDatabase, prop: &Propert
     }
 }
 
+/// Check if two sorted property lists share at least one property name.
+/// Used by both compat (top-level weak type detection) and subtype (nested weak type checks).
+pub(crate) fn has_common_property_name(
+    source_props: &[PropertyInfo],
+    target_props: &[PropertyInfo],
+) -> bool {
+    let mut s_idx = 0;
+    let mut t_idx = 0;
+    while s_idx < source_props.len() && t_idx < target_props.len() {
+        let s_name = source_props[s_idx].name;
+        let t_name = target_props[t_idx].name;
+        if s_name == t_name {
+            return true;
+        }
+        if s_name < t_name {
+            s_idx += 1;
+        } else {
+            t_idx += 1;
+        }
+    }
+    false
+}
+
 /// Expansion of a tuple rest element into its constituent parts.
 ///
 /// Used to normalize variadic tuples for subtype checking, call argument
