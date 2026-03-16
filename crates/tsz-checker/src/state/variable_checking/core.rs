@@ -1006,6 +1006,7 @@ impl<'a> CheckerState<'a> {
         // emit TS7031 for each leaf binding element under noImplicitAny.
         // This must be done before the symbol check since destructuring declarations
         // don't get a symbol assigned to the declaration node itself.
+        // Skip for for-in/for-of loops: the iterable/object expression provides the type.
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
             && var_decl.type_annotation.is_none()
@@ -1016,7 +1017,19 @@ impl<'a> CheckerState<'a> {
                     name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                 });
-            if is_destructuring_pattern {
+            // Check if this destructuring is inside a for-in/for-of loop.
+            // Structure: ForOfStatement -> VariableDeclarationList -> VariableDeclaration
+            let is_in_for_in_or_of = self
+                .ctx
+                .arena
+                .get_extended(decl_idx)
+                .and_then(|ext| self.ctx.arena.get_extended(ext.parent))
+                .and_then(|parent_ext| self.ctx.arena.get(parent_ext.parent))
+                .is_some_and(|gp_node| {
+                    gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                });
+            if is_destructuring_pattern && !is_in_for_in_or_of && !is_catch_variable {
                 self.emit_implicit_any_for_var_destructuring(var_decl.name);
             }
         }
