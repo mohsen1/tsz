@@ -1468,6 +1468,9 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         // It is a grammar check, not a structural parse failure. The AST for
         // `function f(...x, y)` is valid — both parameters are parsed correctly.
         // tsc still emits TS7019/TS7006 alongside TS1014.
+        //
+        // Note: TS1047 (A rest parameter cannot be optional) is excluded for the
+        // same reason — the parameter is syntactically valid and should be type-checked.
         | 1036 // Statements are not allowed in ambient contexts
         | 1109 // Expression expected
         | 1110 // Type expected
@@ -1562,6 +1565,35 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal
         | 1382 // Unexpected token in JSX
         | 1442 // Identifier or expression expected
+    )
+}
+
+/// Parse error codes that should NOT cause `has_syntax_parse_errors` to suppress
+/// semantic diagnostics like TS7006/TS7019 (implicit any).
+///
+/// These are grammar/constraint errors on otherwise well-formed AST nodes:
+/// - TS1009: Trailing comma not allowed
+/// - TS1014: A rest parameter must be last in a parameter list
+/// - TS1047: A rest parameter cannot be optional
+/// - TS1048: A rest parameter cannot have an initializer
+/// - TS1185: Merge conflict marker encountered
+/// - TS1214: Identifier expected (strict mode reserved word)
+/// - TS1262: 'await' at top level
+/// - TS1359: 'await' in async context
+///
+/// tsc emits TS7006/TS7019 even in the presence of these errors because
+/// the parameter identity (name) is still valid and can be type-checked.
+pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
+    matches!(
+        code,
+        1009  // Trailing comma not allowed
+        | 1014 // A rest parameter must be last in a parameter list
+        | 1047 // A rest parameter cannot be optional
+        | 1048 // A rest parameter cannot have an initializer
+        | 1185 // Merge conflict marker
+        | 1214 // Identifier expected (strict mode reserved word)
+        | 1262 // 'await' at top level
+        | 1359 // 'await' in async context
     )
 }
 

@@ -846,11 +846,11 @@ pub(super) fn collect_diagnostics(
             checker.ctx.has_syntax_parse_errors = file
                 .parse_diagnostics
                 .iter()
-                .any(|d| !matches!(d.code, 1009 | 1014 | 1185 | 1214 | 1262 | 1359));
+                .any(|d| !is_non_suppressing_parse_error(d.code));
             checker.ctx.syntax_parse_error_positions = file
                 .parse_diagnostics
                 .iter()
-                .filter(|d| !matches!(d.code, 1009 | 1014 | 1185 | 1214 | 1262 | 1359))
+                .filter(|d| !is_non_suppressing_parse_error(d.code))
                 .map(|d| d.start)
                 .collect();
             // Track whether the file has "real" syntax errors (actual parse
@@ -1203,11 +1203,11 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.has_syntax_parse_errors = file
         .parse_diagnostics
         .iter()
-        .any(|d| !matches!(d.code, 1009 | 1014 | 1185));
+        .any(|d| !is_non_suppressing_parse_error(d.code));
     checker.ctx.syntax_parse_error_positions = file
         .parse_diagnostics
         .iter()
-        .filter(|d| !matches!(d.code, 1009 | 1014 | 1185))
+        .filter(|d| !is_non_suppressing_parse_error(d.code))
         .map(|d| d.start)
         .collect();
     checker.ctx.has_real_syntax_errors = file
