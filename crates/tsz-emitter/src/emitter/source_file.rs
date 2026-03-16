@@ -794,14 +794,14 @@ impl<'a> Printer<'a> {
             self.ctx.module_state.hoisted_func_exports = func_exports.clone();
             // Emit other exports: exports.X = exports.Y = void 0;
             // tsc chunks into groups of 50 and reverses each chunk (reduceLeft).
+            // Names that are not valid JS identifiers use bracket notation.
             if !other_exports.is_empty() {
                 for chunk in other_exports.chunks(50) {
                     for (i, name) in chunk.iter().rev().enumerate() {
                         if i > 0 {
                             self.write(" = ");
                         }
-                        self.write("exports.");
-                        self.write(name);
+                        self.write_export_property_access(name);
                     }
                     self.write(" = void 0;");
                     self.write_line();

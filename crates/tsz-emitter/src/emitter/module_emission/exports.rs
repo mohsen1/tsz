@@ -4,6 +4,19 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    /// Write `exports.name` or `exports["name"]` depending on whether the name
+    /// is a valid JS identifier. Does NOT write ` = `.
+    pub(in crate::emitter) fn write_export_property_access(&mut self, export_name: &str) {
+        if super::super::is_valid_identifier_name(export_name) {
+            self.write("exports.");
+            self.write(export_name);
+        } else {
+            self.write("exports[\"");
+            self.write(export_name);
+            self.write("\"]");
+        }
+    }
+
     /// Write a CJS/System export assignment for a named or default export.
     /// In System modules, uses `exports_1("name", value)` format.
     /// In CJS modules, uses `exports.name = value` format.
@@ -57,9 +70,11 @@ impl<'a> Printer<'a> {
                 return;
             };
 
-            let module_var = self.next_commonjs_module_var(&module_spec);
-
+            // Handle `export * as ns from "mod"` -> `exports.ns = require("mod")` or
+            // `exports.ns = __importStar(require("mod"))` when esModuleInterop is enabled.
+            // This does NOT consume a module_var counter (tsc emits inline require).
             if export.export_clause.is_none() {
+                let module_var = self.next_commonjs_module_var(&module_spec);
                 // TSC emits `var` for CommonJS re-export helper bindings.
                 self.write("var ");
                 self.write(&module_var);
@@ -124,24 +139,10 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
-                for &spec_idx in &named_exports.elements.nodes {
-                    if let Some(spec_node) = self.arena.get(spec_idx)
-                        && let Some(spec) = self.arena.get_specifier(spec_node)
-                    {
-                        if spec.is_type_only {
-                            continue;
-                        }
-                        let export_name = self.get_identifier_text_idx(spec.name);
-                        if export_name.is_empty() {
-                            continue;
-                        }
-                        self.write("exports.");
-                        self.write(&export_name);
-                        self.write(" = void 0;");
-                        self.write_line();
-                    }
-                }
+                // Re-export void 0 initialization is handled in the preamble
+                // (collect_export_names_with_options) so it's chained with local exports.
 
+                let module_var = self.next_commonjs_module_var(&module_spec);
                 // TSC emits `var` for CommonJS re-export helper bindings.
                 self.write("var ");
                 self.write(&module_var);
@@ -157,10 +158,13 @@ impl<'a> Printer<'a> {
                         if spec.is_type_only {
                             continue;
                         }
-                        // Get export name and import name
-                        let export_name = self.get_identifier_text_idx(spec.name);
+                        // Get export name and import name (can be string literals)
+                        let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                            continue;
+                        };
                         let import_name = if spec.property_name.is_some() {
-                            self.get_identifier_text_idx(spec.property_name)
+                            self.get_specifier_name_text(spec.property_name)
+                                .unwrap_or_else(|| export_name.clone())
                         } else {
                             export_name.clone()
                         };
@@ -169,9 +173,7 @@ impl<'a> Printer<'a> {
                         self.write("Object.defineProperty(exports, \"");
                         self.write(&export_name);
                         self.write("\", { enumerable: true, get: function () { return ");
-                        self.write(&module_var);
-                        self.write(".");
-                        self.write(&import_name);
+                        self.write_module_property_access(&module_var, &import_name);
                         self.write("; } });");
                         self.write_line();
                     }
@@ -619,9 +621,14 @@ impl<'a> Printer<'a> {
                             if let Some(spec_node) = self.arena.get(spec_idx)
                                 && let Some(spec) = self.arena.get_specifier(spec_node)
                             {
-                                let export_name = self.get_identifier_text_idx(spec.name);
+                                let Some(export_name) =
+                                    self.get_specifier_name_text(spec.name)
+                                else {
+                                    continue;
+                                };
                                 let local_name = if spec.property_name.is_some() {
-                                    self.get_identifier_text_idx(spec.property_name)
+                                    self.get_specifier_name_text(spec.property_name)
+                                        .unwrap_or_else(|| export_name.clone())
                                 } else {
                                     export_name.clone()
                                 };
@@ -659,8 +666,7 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
-                                self.write("exports.");
-                                self.write(&export_name);
+                                self.write_export_property_access(&export_name);
                                 self.write(" = ");
                                 // When the local name was inlined (no local var exists),
                                 // use exports.local_name. Otherwise use local name.

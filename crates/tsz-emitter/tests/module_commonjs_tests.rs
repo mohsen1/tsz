@@ -423,9 +423,11 @@ fn test_collect_export_names_ignores_declare_exports() {
 }
 
 #[test]
-fn test_collect_export_names_ignores_reexports() {
+fn test_collect_export_names_includes_named_reexports() {
     use tsz_parser::parser::ParserState;
 
+    // `export * from "x"` does NOT produce void 0 exports (no named specifiers).
+    // `export { bar } from "x"` DOES produce void 0 exports (tsc emits exports.bar = void 0;).
     let source = "export * from \"./foo\"; export { bar } from \"./bar\";";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -441,16 +443,18 @@ fn test_collect_export_names_ignores_reexports() {
 
     let export_names = collect_export_names(&parser.arena, &source_file.statements.nodes);
 
-    assert!(
-        export_names.is_empty(),
-        "Expected no runtime exports for re-exports"
+    assert_eq!(
+        export_names,
+        vec!["bar".to_string()],
+        "Named re-exports should produce void 0 preamble entries"
     );
 }
 
 #[test]
-fn test_collect_export_names_ignores_default_reexport() {
+fn test_collect_export_names_includes_default_reexport() {
     use tsz_parser::parser::ParserState;
 
+    // tsc emits `exports.default = void 0;` for `export { default } from "x"`.
     let source = "export { default } from \"./foo\";";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -466,9 +470,10 @@ fn test_collect_export_names_ignores_default_reexport() {
 
     let export_names = collect_export_names(&parser.arena, &source_file.statements.nodes);
 
-    assert!(
-        export_names.is_empty(),
-        "Expected no runtime exports for default re-export"
+    assert_eq!(
+        export_names,
+        vec!["default".to_string()],
+        "Default re-export should produce void 0 preamble entry"
     );
 }
 
