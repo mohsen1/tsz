@@ -63,6 +63,10 @@ impl<'a> CheckerState<'a> {
         // Check for duplicate type parameters
         self.check_duplicate_type_parameters(&iface.type_parameters);
 
+        // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
+        // and circular defaults (TS2716)
+        self.check_type_parameters_for_missing_names(&iface.type_parameters);
+
         // Collect interface type parameter names for TS2304 checking in heritage clauses
         let interface_type_param_names: Vec<String> = type_param_updates
             .iter()

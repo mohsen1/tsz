@@ -126,6 +126,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
 
+        // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
+        // and circular defaults (TS2716)
+        self.check_type_parameters_for_missing_names(&func.type_parameters);
+
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&func.type_parameters, func_idx);
 
