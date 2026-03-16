@@ -266,7 +266,7 @@ fn type_definition_variable_with_annotation() {
     );
     let result = t.go_to_type_definition("ref");
     // Type definition should resolve to the interface declaration
-    if result.locations.is_some() && !result.locations.as_ref().unwrap().is_empty() {
+    if result.locations.as_ref().is_some_and(|v| !v.is_empty()) {
         result.expect_at_marker("def");
     }
 }
@@ -291,7 +291,7 @@ fn type_definition_class_typed_variable() {
     ",
     );
     let result = t.go_to_type_definition("ref");
-    if result.locations.is_some() && !result.locations.as_ref().unwrap().is_empty() {
+    if result.locations.as_ref().is_some_and(|v| !v.is_empty()) {
         result.expect_at_marker("def");
     }
 }
@@ -1599,7 +1599,7 @@ fn implementation_interface() {
     ",
     );
     let result = t.go_to_implementation("iface");
-    if result.locations.is_some() && !result.locations.as_ref().unwrap().is_empty() {
+    if result.locations.as_ref().is_some_and(|v| !v.is_empty()) {
         result.expect_at_marker("impl");
     }
 }
@@ -1617,7 +1617,7 @@ fn implementation_abstract_class() {
     ",
     );
     let result = t.go_to_implementation("abs");
-    if result.locations.is_some() && !result.locations.as_ref().unwrap().is_empty() {
+    if result.locations.as_ref().is_some_and(|v| !v.is_empty()) {
         result.expect_at_marker("impl");
     }
 }
