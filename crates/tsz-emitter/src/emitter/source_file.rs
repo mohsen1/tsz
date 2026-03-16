@@ -1502,20 +1502,19 @@ impl<'a> Printer<'a> {
                         );
                     }
                     // Recurse into exported function bodies
-                    if let Some(func) = self.arena.get_function(clause_node) {
-                        if let Some(body_node) = self.arena.get(func.body)
-                            && let Some(block) = self.arena.get_block(body_node)
-                        {
-                            // Entering a new function scope — use the function's range
-                            let fn_start = clause_node.pos as u32;
-                            let fn_end = clause_node.end as u32;
-                            self.collect_const_enums_recursive(
-                                evaluator,
-                                &block.statements,
-                                fn_start,
-                                fn_end,
-                            );
-                        }
+                    if let Some(func) = self.arena.get_function(clause_node)
+                        && let Some(body_node) = self.arena.get(func.body)
+                        && let Some(block) = self.arena.get_block(body_node)
+                    {
+                        // Entering a new function scope — use the function's range
+                        let fn_start = clause_node.pos;
+                        let fn_end = clause_node.end;
+                        self.collect_const_enums_recursive(
+                            evaluator,
+                            &block.statements,
+                            fn_start,
+                            fn_end,
+                        );
                     }
                 }
                 continue;
@@ -1527,8 +1526,8 @@ impl<'a> Printer<'a> {
                     && let Some(block) = self.arena.get_block(body_node)
                 {
                     // Entering a new function scope — use the function's range
-                    let fn_start = stmt_node.pos as u32;
-                    let fn_end = stmt_node.end as u32;
+                    let fn_start = stmt_node.pos;
+                    let fn_end = stmt_node.end;
                     self.collect_const_enums_recursive(
                         evaluator,
                         &block.statements,
@@ -1628,10 +1627,7 @@ impl<'a> Printer<'a> {
                 scope_end,
                 values,
             };
-            self.const_enum_values
-                .entry(name)
-                .or_insert_with(Vec::new)
-                .push(entry);
+            self.const_enum_values.entry(name).or_default().push(entry);
         }
     }
 
@@ -1658,10 +1654,10 @@ impl<'a> Printer<'a> {
             return;
         }
         // Try ModuleBlock (namespace bodies use this)
-        if let Some(module_block) = self.arena.get_module_block(body_node) {
-            if let Some(statements) = &module_block.statements {
-                self.collect_const_enums_recursive(evaluator, statements, scope_start, scope_end);
-            }
+        if let Some(module_block) = self.arena.get_module_block(body_node)
+            && let Some(statements) = &module_block.statements
+        {
+            self.collect_const_enums_recursive(evaluator, statements, scope_start, scope_end);
         }
     }
 

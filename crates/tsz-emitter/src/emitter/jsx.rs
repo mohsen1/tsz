@@ -644,17 +644,17 @@ impl<'a> Printer<'a> {
             };
             match prop_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    if let Some(pa) = self.arena.get_property_assignment(prop_node) {
-                        if self.is_literal_proto_name(pa.name) {
-                            return false;
-                        }
+                    if let Some(pa) = self.arena.get_property_assignment(prop_node)
+                        && self.is_literal_proto_name(pa.name)
+                    {
+                        return false;
                     }
                 }
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                    if let Some(sp) = self.arena.get_shorthand_property(prop_node) {
-                        if self.is_literal_proto_name(sp.name) {
-                            return false;
-                        }
+                    if let Some(sp) = self.arena.get_shorthand_property(prop_node)
+                        && self.is_literal_proto_name(sp.name)
+                    {
+                        return false;
                     }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION
@@ -679,20 +679,20 @@ impl<'a> Printer<'a> {
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return false;
         }
-        if name_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.arena.get_identifier(name_node) {
-                return ident.escaped_text == "__proto__";
-            }
+        if name_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(name_node)
+        {
+            return ident.escaped_text == "__proto__";
         }
-        if name_node.kind == SyntaxKind::StringLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
-                return lit.text == "__proto__";
-            }
+        if name_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            return lit.text == "__proto__";
         }
         false
     }
 
-    /// Merge Spread groups with inlinable object literals into InlinedObjectLiteral.
+    /// Merge Spread groups with inlinable object literals into `InlinedObjectLiteral`.
     fn merge_inlinable_spread_groups(&self, groups: Vec<AttrGroup>) -> Vec<AttrGroup> {
         groups
             .into_iter()

@@ -577,12 +577,11 @@ impl<'a> Printer<'a> {
     /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
     /// If the type is not an array type or has no annotation, returns "Object".
     fn serialize_rest_param_element_type(&self, type_annotation: NodeIndex) -> String {
-        if let Some(type_node) = self.arena.get(type_annotation) {
-            if type_node.kind == syntax_kind_ext::ARRAY_TYPE {
-                if let Some(arr) = self.arena.get_array_type(type_node) {
-                    return self.serialize_type_for_metadata(arr.element_type);
-                }
-            }
+        if let Some(type_node) = self.arena.get(type_annotation)
+            && type_node.kind == syntax_kind_ext::ARRAY_TYPE
+            && let Some(arr) = self.arena.get_array_type(type_node)
+        {
+            return self.serialize_type_for_metadata(arr.element_type);
         }
         "Object".to_string()
     }

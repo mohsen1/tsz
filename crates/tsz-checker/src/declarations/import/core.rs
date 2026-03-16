@@ -1450,9 +1450,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Emit TS2528 only when there are conflicting value exports
-            // (interface-only or interface + one value group is OK)
-            let is_conflict = value_count > 1 || (!has_interface && !all_same_function);
+            // Emit TS2528 for any multiple default exports that are not
+            // function overloads. tsc only allows multiple export default
+            let is_conflict = !all_same_function || value_count > 1;
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
