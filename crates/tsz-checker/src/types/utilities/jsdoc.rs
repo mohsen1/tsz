@@ -644,10 +644,9 @@ impl<'a> CheckerState<'a> {
                 // Parse arrow function types: `(params) => ReturnType` or `<T>(params) => ReturnType`
                 if (type_expr.starts_with('(') || type_expr.starts_with('<'))
                     && type_expr.contains("=>")
+                    && let Some(result) = self.parse_jsdoc_arrow_function_type(type_expr)
                 {
-                    if let Some(result) = self.parse_jsdoc_arrow_function_type(type_expr) {
-                        return Some(result);
-                    }
+                    return Some(result);
                 }
                 if let Some(rest) = type_expr.strip_prefix("function") {
                     let rest = rest.trim_start();
