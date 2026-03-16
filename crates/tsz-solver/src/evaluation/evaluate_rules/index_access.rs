@@ -1228,6 +1228,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(result);
         }
 
+        // Template literal types (e.g., `foo${string}`), string intrinsic types
+        // (e.g., Lowercase<T>), and intersections containing string (e.g., string & { brand: any })
+        // are all subtypes of string. When the object has a string index signature,
+        // these index types should resolve to the string index signature's value type,
+        // just like TypeId::STRING does.
+        if let Some(string_index) = shape.string_index.as_ref() {
+            if self.is_string_like_index(index_type) {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+        }
+
         TypeId::UNDEFINED
     }
 
@@ -1312,7 +1323,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(result);
         }
 
+        // String-like index types (template literals, string intrinsics, branded strings)
+        // should use the string index signature when available.
+        if let Some(string_index) = shape.string_index.as_ref() {
+            if self.is_string_like_index(index_type) {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+        }
+
         TypeId::UNDEFINED
+    }
+
+    /// Check if an index type is a subtype of string for index signature resolution.
+    ///
+    /// Template literal types (`\`foo${string}\``), string intrinsic types
+    /// (Lowercase<T>, Uppercase<T>, etc.), and intersections that contain string
+    /// or a string literal are all subtypes of string. When used as an index
+    /// on an object with a string index signature, they should resolve to the
+    /// string index signature's value type.
+    fn is_string_like_index(&self, index_type: TypeId) -> bool {
+        match self.interner().lookup(index_type) {
+            Some(TypeData::TemplateLiteral(_)) => true,
+            Some(TypeData::StringIntrinsic { .. }) => true,
+            Some(TypeData::Intersection(list_id)) => {
+                // An intersection is string-like if any member is string or a string literal
+                let members = self.interner().type_list(list_id);
+                members.iter().any(|&m| {
+                    m == TypeId::STRING
+                        || matches!(
+                            self.interner().lookup(m),
+                            Some(
+                                TypeData::Literal(LiteralValue::String(_))
+                                    | TypeData::TemplateLiteral(_)
+                                    | TypeData::StringIntrinsic { .. }
+                            )
+                        )
+                })
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn union_property_types(&self, props: &[PropertyInfo]) -> TypeId {
