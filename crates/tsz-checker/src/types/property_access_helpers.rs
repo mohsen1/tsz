@@ -120,7 +120,34 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0 {
+                return false;
+            }
+            // For class declarations, don't treat as expando if the property
+            // exists as an instance member. Accessing instance members on the
+            // constructor type (e.g., `Base.instanceProp = 2`) should produce
+            // TS2339, not be silently accepted as an expando.
+            if (symbol.flags & symbol_flags::CLASS) != 0 {
+                let prop_name = self
+                    .ctx
+                    .arena
+                    .get(property_access_idx)
+                    .and_then(|n| self.ctx.arena.get_access_expr(n))
+                    .and_then(|a| {
+                        self.ctx
+                            .arena
+                            .get(a.name_or_argument)
+                            .and_then(|n| self.ctx.arena.get_identifier(n))
+                            .map(|id| id.escaped_text.as_str())
+                    });
+                if let Some(prop_name) = prop_name {
+                    let obj_key = symbol.escaped_name.as_str();
+                    if self.class_has_instance_member(obj_key, prop_name) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         // Namespace member fallback: allow expando assignment for function-typed
@@ -186,6 +213,16 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Don't treat as expando if the object is a class and the property exists
+        // as an instance member of that class. In that case, accessing it on the
+        // constructor type (typeof ClassName) should produce TS2339, not silently
+        // succeed as an expando. This distinguishes `Base.a = 2` where `a` is an
+        // instance getter/setter (should error) from `Base.newProp = 2` where
+        // `newProp` is a genuine expando (should succeed).
+        if self.class_has_instance_member(&obj_key, property_name) {
+            return false;
+        }
+
         // 1. Check current file's binder
         if self
             .ctx
@@ -224,6 +261,99 @@ impl<'a> CheckerState<'a> {
                     {
                         return true;
                     }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a class has an instance member (property, method, or accessor) with the given name.
+    /// Used to prevent expando property detection from masking TS2339 errors when accessing
+    /// instance members on the class constructor type.
+    fn class_has_instance_member(&self, obj_key: &str, property_name: &str) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Only check simple identifiers (not qualified chains like `a.B`)
+        let root_name = obj_key.split('.').next().unwrap_or_default();
+        if root_name != obj_key {
+            return false;
+        }
+
+        let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Only check class declarations
+        if (symbol.flags & symbol_flags::CLASS) == 0 {
+            return false;
+        }
+
+        // Check the class's members table for the property name.
+        // Members table stores instance members by name, so a match here
+        // means the property is a declared instance member.
+        if let Some(ref members) = symbol.members {
+            if members.get(property_name).is_some() {
+                return true;
+            }
+        }
+
+        // Also check the class AST for accessor declarations (get/set),
+        // which may not always be in the members table.
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            let Some(class) = self.ctx.arena.get_class(decl_node) else {
+                continue;
+            };
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let is_instance_member = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .is_some_and(|p| {
+                            !self.has_static_modifier(&p.modifiers)
+                                && self
+                                    .get_property_name(p.name)
+                                    .is_some_and(|n| n == property_name)
+                        }),
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|m| {
+                            !self.has_static_modifier(&m.modifiers)
+                                && self
+                                    .get_property_name(m.name)
+                                    .is_some_and(|n| n == property_name)
+                        }),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.ctx.arena.get_accessor(member_node).is_some_and(|a| {
+                            !self.has_static_modifier(&a.modifiers)
+                                && self
+                                    .get_property_name(a.name)
+                                    .is_some_and(|n| n == property_name)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_instance_member {
+                    return true;
                 }
             }
         }
