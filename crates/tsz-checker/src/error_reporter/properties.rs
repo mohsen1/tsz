@@ -165,10 +165,9 @@ impl<'a> CheckerState<'a> {
         // The deep nesting case occurs with concrete unions like `string | MyArr`
         // where MyArr extends Array<string> -- the resolved object shape may contain
         // type parameters from the generic base, but the union itself is concrete.
-        if tsz_solver::type_queries::data::union_has_direct_type_parameter(self.ctx.types, type_id)
-        {
-            return;
-        }
+        // NOTE: In tsc 6.0, unconstrained type parameters in unions DO trigger
+        // TS2339 when the property doesn't exist on the type parameter member.
+        // We no longer suppress TS2339 for unions with type parameters.
 
         // When a class extends `any`, tsc treats unknown member accesses as `any`
         // and does not emit TS2339. Check this before computing source location
