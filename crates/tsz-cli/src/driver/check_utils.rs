@@ -1065,7 +1065,9 @@ const fn is_parser_grammar_code(code: u32) -> bool {
 pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
     matches!(
         code,
-        1003 // Identifier expected
+        1002 // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1005 // "{0}" expected (missing token)
         | 1014 // A rest parameter must be last in a parameter list
         | 1016 // A required parameter cannot follow an optional parameter
         | 1064 // The return type of an async function must be 'void' or 'Promise<T>'
