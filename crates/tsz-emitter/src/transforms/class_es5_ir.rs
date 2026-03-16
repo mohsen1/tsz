@@ -128,6 +128,7 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
                     "symbol" => "Symbol".to_string(),
                     "bigint" => "BigInt".to_string(),
                     "void" | "undefined" | "null" | "never" => "void 0".to_string(),
+                    "any" | "unknown" | "object" => "Object".to_string(),
                     _ => name,
                 }
             } else {
@@ -234,6 +235,20 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
     }
 }
 
+/// For a rest parameter, serialize the element type of the array type annotation.
+/// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
+/// If the type is not an array type or has no annotation, returns "Object".
+fn serialize_rest_param_element_type(arena: &NodeArena, type_annotation: NodeIndex) -> String {
+    if let Some(type_node) = arena.get(type_annotation) {
+        if type_node.kind == syntax_kind_ext::ARRAY_TYPE {
+            if let Some(arr) = arena.get_array_type(type_node) {
+                return serialize_type_for_metadata(arena, arr.element_type);
+            }
+        }
+    }
+    "Object".to_string()
+}
+
 /// Serialize parameter types for `design:paramtypes` metadata.
 fn serialize_param_types(arena: &NodeArena, parameters: &NodeList) -> String {
     let mut parts = Vec::new();
@@ -254,7 +269,11 @@ fn serialize_param_types(arena: &NodeArena, parameters: &NodeList) -> String {
                     continue;
                 }
             }
-            if param.type_annotation.is_some() {
+            if param.dot_dot_dot_token {
+                // Rest parameter: serialize the element type of the array type.
+                let serialized = serialize_rest_param_element_type(arena, param.type_annotation);
+                parts.push(serialized);
+            } else if param.type_annotation.is_some() {
                 parts.push(serialize_type_for_metadata(arena, param.type_annotation));
             } else {
                 parts.push("Object".to_string());

@@ -2071,6 +2071,15 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.emit_decorator_metadata {
         options.printer.emit_decorator_metadata = true;
     }
+    // Pass strictNullChecks to printer for metadata union serialization.
+    // Only set to true when explicitly enabled via --strict or --strictNullChecks true.
+    // The printer default is false (unlike CheckerOptions which defaults to true).
+    if args.strict {
+        options.printer.strict_null_checks = true;
+    }
+    if let Some(val) = args.strict_null_checks {
+        options.printer.strict_null_checks = val;
+    }
     if args.no_unused_locals {
         options.checker.no_unused_locals = true;
     }

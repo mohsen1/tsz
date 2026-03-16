@@ -135,6 +135,9 @@ pub struct PrinterOptions {
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
     pub suppress_use_strict: bool,
+    /// When true, null and undefined are meaningful types in unions for metadata serialization.
+    /// Matches tsc's strictNullChecks behavior in decorator metadata emission.
+    pub strict_null_checks: bool,
 }
 
 impl Default for PrinterOptions {
@@ -167,6 +170,7 @@ impl Default for PrinterOptions {
             jsx_fragment_factory: None,
             jsx_import_source: None,
             suppress_use_strict: false,
+            strict_null_checks: false,
         }
     }
 }
