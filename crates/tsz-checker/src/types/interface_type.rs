@@ -956,16 +956,13 @@ impl<'a> CheckerState<'a> {
         for &member in &members {
             let resolved_member = self.resolve_type_for_interface_merge(member);
             let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
-            if mergeable_member.is_none()
-                && matches!(
-                    kind,
-                    InterfaceMergeKind::Callable(_)
-                        | InterfaceMergeKind::Object(_)
-                        | InterfaceMergeKind::ObjectWithIndex(_)
-                )
-            {
+            if mergeable_member.is_none() && kind.is_structurally_mergeable() {
+                // Use the resolved form for structural merging
                 mergeable_member = Some(resolved_member);
             } else {
+                // Keep original (unresolved) member for re-wrapping into the
+                // intersection — these are non-mergeable types like `string[]`
+                // that pass through as-is.
                 other_members.push(member);
             }
         }
