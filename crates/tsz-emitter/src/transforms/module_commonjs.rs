@@ -467,21 +467,18 @@ pub fn collect_export_names_with_options(
                                         if spec.is_type_only {
                                             continue;
                                         }
-                                        if let Some(name) =
-                                            specifier_name_text(arena, spec.name)
-                                        {
+                                        if let Some(name) = specifier_name_text(arena, spec.name) {
                                             exports.push(name);
                                         }
                                     }
                                 }
                             }
                             // Also collect `export * as "name" from "mod"`
-                            else if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
-                                if let Some(name) =
+                            else if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
+                                && let Some(name) =
                                     specifier_name_text(arena, export_decl.export_clause)
-                                {
-                                    exports.push(name);
-                                }
+                            {
+                                exports.push(name);
                             }
                             continue;
                         }
