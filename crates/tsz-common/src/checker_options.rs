@@ -150,6 +150,9 @@ pub struct CheckerOptions {
     /// When true, allow accessing UMD globals from modules without importing them.
     /// Suppresses TS2686 ("refers to a UMD global, but the current file is a module").
     pub allow_umd_global_access: bool,
+    /// When true, keep const enum declarations in emitted code.
+    /// When false (default), const enums are erased and don't affect control flow.
+    pub preserve_const_enums: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -229,6 +232,7 @@ impl Default for CheckerOptions {
             verbatim_module_syntax: false,
             ignore_deprecations: false,
             allow_umd_global_access: false,
+            preserve_const_enums: false,
         }
     }
 }
