@@ -800,18 +800,22 @@ impl<'a> CheckerState<'a> {
                     // Check if the failure is due to a weak type violation (TS2559).
                     // In tsc, when the constraint is a "weak type" (all-optional properties)
                     // and the type argument shares no common properties, tsc emits TS2559
-                    // instead of TS2344.
+                    // instead of TS2344. However, primitive types satisfy weak type
+                    // constraints in tsc (e.g., `bigint extends {t?: string}` is valid).
                     let analysis =
                         self.analyze_assignability_failure(type_arg, instantiated_constraint);
                     if matches!(
                         analysis.failure_reason,
                         Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
                     ) {
-                        self.error_no_common_properties_constraint(
-                            type_arg,
-                            instantiated_constraint,
-                            arg_idx,
-                        );
+                        // Primitives satisfy weak type constraints — skip TS2559
+                        if !tsz_solver::is_primitive_type(self.ctx.types, type_arg) {
+                            self.error_no_common_properties_constraint(
+                                type_arg,
+                                instantiated_constraint,
+                                arg_idx,
+                            );
+                        }
                     } else {
                         self.error_type_constraint_not_satisfied(
                             type_arg,

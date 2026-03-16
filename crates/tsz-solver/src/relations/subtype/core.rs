@@ -463,12 +463,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // though their boxed wrappers would be structurally compatible.
                     // Only allow the boxed fallback when the target has named
                     // properties (a mixed interface, not a pure index type).
-                    if !t_shape.properties.is_empty() {
-                        if let Some(s_kind) = source_kind
-                            && self.is_boxed_primitive_subtype(s_kind, target)
-                        {
-                            return SubtypeResult::True;
-                        }
+                    if !t_shape.properties.is_empty()
+                        && let Some(s_kind) = source_kind
+                        && self.is_boxed_primitive_subtype(s_kind, target)
+                    {
+                        return SubtypeResult::True;
                     }
                     if let Some(tracer) = &mut self.tracer
                         && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
