@@ -68,6 +68,9 @@ pub struct TypeLowering<'a> {
     pub(super) preferred_self_def_id: Option<DefId>,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
     pub(super) type_param_scopes: Rc<TypeParamScopeStack>,
+    /// Whether strictNullChecks is enabled. When true, optional parameters
+    /// in function types include `| undefined` in their type.
+    pub(super) strict_null_checks: bool,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -281,6 +284,7 @@ impl<'a> TypeLowering<'a> {
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
             name_def_id_resolver: None,
+            strict_null_checks: false,
         }
     }
 
@@ -303,6 +307,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: None,
             preferred_self_def_id: None,
             name_def_id_resolver: None,
+            strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -328,6 +333,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: None,
             preferred_self_def_id: None,
             name_def_id_resolver: None,
+            strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -357,6 +363,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: None,
             preferred_self_def_id: None,
             name_def_id_resolver: None,
+            strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -386,6 +393,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: None,
             preferred_self_def_id: None,
             name_def_id_resolver: None,
+            strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -410,6 +418,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: self.preferred_self_name.clone(),
             preferred_self_def_id: self.preferred_self_def_id,
             name_def_id_resolver: self.name_def_id_resolver,
+            strict_null_checks: self.strict_null_checks,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             operations: Rc::clone(&self.operations),
@@ -641,6 +650,13 @@ impl<'a> TypeLowering<'a> {
         if !bindings.is_empty() {
             *self.type_param_scopes.borrow_mut() = vec![bindings];
         }
+        self
+    }
+
+    /// Enable strictNullChecks behavior. When set, optional parameters in
+    /// function types include `| undefined` in their type.
+    pub fn with_strict_null_checks(mut self, enabled: bool) -> Self {
+        self.strict_null_checks = enabled;
         self
     }
 
@@ -1281,10 +1297,23 @@ impl<'a> TypeLowering<'a> {
                 continue;
             }
 
+            let type_id = self.lower_type(param_data.type_annotation);
+            let optional = param_data.question_token || param_data.initializer != NodeIndex::NONE;
+            // Under strictNullChecks, optional parameters (?) include undefined.
+            let effective_type = if optional
+                && self.strict_null_checks
+                && type_id != TypeId::ANY
+                && type_id != TypeId::ERROR
+                && type_id != TypeId::UNDEFINED
+            {
+                self.interner.union(vec![type_id, TypeId::UNDEFINED])
+            } else {
+                type_id
+            };
             lowered.push(ParamInfo {
                 name: self.lower_parameter_name(param_data.name),
-                type_id: self.lower_type(param_data.type_annotation),
-                optional: param_data.question_token || param_data.initializer != NodeIndex::NONE,
+                type_id: effective_type,
+                optional,
                 rest: param_data.dot_dot_dot_token,
             });
         }

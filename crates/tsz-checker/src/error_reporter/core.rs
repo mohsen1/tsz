@@ -1431,6 +1431,12 @@ impl<'a> CheckerState<'a> {
                 // Annotation text preserves the user's original order which
                 // differs from tsc's canonical display.
                 && !display.contains(" | ")
+                // Don't use annotation text when the formatted type includes
+                // `| undefined` (added by strictNullChecks for optional params)
+                // that the raw annotation text doesn't have. The annotation text
+                // reflects the source code literally and misses the semantic
+                // `| undefined` injection.
+                && !(formatted.contains("| undefined") && !display.contains("| undefined"))
             {
                 if tsz_solver::type_queries::get_enum_def_id(self.ctx.types, display_type).is_some()
                 {

@@ -770,6 +770,8 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // TS1051: A 'set' accessor cannot have an optional parameter
+        // tsc anchors the error at the `?` token, which is right after the
+        // parameter name.
         if let Some(&first_param) = parameters.nodes.first()
             && let Some(param_node) = self.arena.get(first_param)
         {
@@ -778,9 +780,14 @@ impl ParserState {
                 && param_data.question_token
             {
                 use tsz_common::diagnostics::diagnostic_codes;
+                // Anchor at the `?` token: it starts at param_name.end
+                let question_pos = self
+                    .arena
+                    .get(param_data.name)
+                    .map_or(param_node.pos, |name_node| name_node.end);
                 self.parse_error_at(
-                    param_node.pos,
-                    param_node.end - param_node.pos,
+                    question_pos,
+                    1, // `?` is a single character
                     "A 'set' accessor cannot have an optional parameter.",
                     diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_AN_OPTIONAL_PARAMETER,
                 );
