@@ -462,7 +462,6 @@ createInstance(MenuWorkbenchToolBar, {
 }
 
 #[test]
-#[ignore = "TS2741 for indexed target assignment changed after index signature updates"]
 fn test_assignment_compat_with_indexed_targets_matches_tsc() {
     let source = r#"
 var x = { one: 1 };
@@ -859,7 +858,6 @@ function f4<T extends any[]>(t: T) {
 }
 
 #[test]
-#[ignore = "pre-existing: TS2318 global type resolution missing for generic rest calls"]
 fn test_higher_order_generic_rest_call_accepts_generic_binary_function() {
     let source = r#"
 function call<T extends unknown[], U>(f: (...args: T) => U, ...args: T) {
@@ -2998,7 +2996,6 @@ fn test_lib_global_symbol_call_does_not_emit_ts2454() {
 }
 
 #[test]
-#[ignore = "pre-existing: typed array toLocaleString options parameter type resolution"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type() {
     // TODO: typed-array toLocaleString 2-arg overload not yet resolved;
     // currently emits TS2554 ("Expected 0 arguments, but got 2").
@@ -3025,7 +3022,6 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
 }
 
 #[test]
-#[ignore = "pre-existing: typed array toLocaleString with merged lib contexts"]
 fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
     // TODO: typed-array toLocaleString 2-arg overload not yet resolved;
     // same issue as the non-merged variant above.
@@ -12704,7 +12700,6 @@ var arguments = 1;
 }
 
 #[test]
-#[ignore = "WIP: JS identifier default param JSDoc resolution not yet producing TS2322"]
 fn test_js_identifier_default_parameter_preserves_jsdoc_initializer_type() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "a.js",
@@ -13507,7 +13502,6 @@ async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookW
 }
 
 #[test]
-#[ignore = "async generator yield type inference emits false TS2538"]
 fn test_unannotated_async_generator_method_infers_yield_type_in_return() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -13913,7 +13907,6 @@ if (Strs.A) {}
 }
 
 #[test]
-#[ignore = "TS7053 count changed due to index signature handling updates"]
 fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
@@ -14081,7 +14074,6 @@ const unexpectedlyFailingExample: Mapped = {
 }
 
 #[test]
-#[ignore = "pre-existing: contextual computed non-bindable property callable fallback"]
 fn test_contextual_computed_non_bindable_property_type_uses_callable_fallback() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
@@ -14230,7 +14222,6 @@ const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 1
 }
 
 #[test]
-#[ignore = "pre-existing: generic callback mismatch inference not yet implemented"]
 fn test_contextual_signature_instantiation_reports_generic_callback_mismatch() {
     let source = r#"
 declare function foo<T>(cb: (x: number, y: string) => T): T;
@@ -14262,7 +14253,6 @@ var c = bar(1, "one", g);
 }
 
 #[test]
-#[ignore = "pre-existing: overloaded callback generic call inference not yet implemented"]
 fn test_generic_call_with_overloaded_callback_uses_last_source_signature() {
     let source = r#"
 interface Promise<T> {
