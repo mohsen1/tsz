@@ -42,8 +42,16 @@ impl<'a> CheckerState<'a> {
         // unevaluated TypeApplications where each level references the previous
         // one. Later evaluation of the outermost type re-evaluates the entire
         // chain from scratch, leading to exponential blowup.
+        //
+        // Skip eager evaluation for Promise-like applications (Promise<T>,
+        // PromiseLike<T>). The await expression handler relies on the
+        // Application wrapper to extract T via promise_like_return_type_argument.
+        // Evaluating Promise<T> into its structural Object form destroys the
+        // Application wrapper and causes `await fn()` to produce the structural
+        // Promise object instead of the unwrapped T.
         let return_type = if tsz_solver::query::is_generic_application(self.ctx.types, return_type)
             && !self.contains_type_parameters_cached(return_type)
+            && !self.is_promise_type(return_type)
         {
             self.evaluate_type_with_env(return_type)
         } else {
