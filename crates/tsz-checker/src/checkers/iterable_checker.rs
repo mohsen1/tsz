@@ -250,17 +250,15 @@ impl<'a> CheckerState<'a> {
             FullIterableTypeKind::Readonly(inner) => self.type_has_next_method(inner),
             FullIterableTypeKind::Application { .. }
             | FullIterableTypeKind::TypeParameter { .. }
-            | FullIterableTypeKind::ComplexType => {
-                // For Application types (IterableIterator<T>, etc.), type parameters,
-                // and complex types, assume valid — they likely resolve to lib types
-                // that have next().
+            | FullIterableTypeKind::ComplexType
+            | FullIterableTypeKind::Array(_)
+            | FullIterableTypeKind::Tuple(_)
+            | FullIterableTypeKind::StringLiteral(_) => {
+                // Application types (IterableIterator<T>, etc.), type parameters,
+                // complex types, arrays, tuples, and string literals all have
+                // next() via their iterator protocol or resolve to lib types.
                 true
             }
-            FullIterableTypeKind::Array(_) | FullIterableTypeKind::Tuple(_) => {
-                // Arrays and tuples have next() via their iterator protocol
-                true
-            }
-            FullIterableTypeKind::StringLiteral(_) => true,
             FullIterableTypeKind::FunctionOrCallable | FullIterableTypeKind::NotIterable => {
                 // Functions and NotIterable (Lazy/DefId types that couldn't be resolved,
                 // or truly non-iterable types) do NOT have next().
