@@ -1370,7 +1370,14 @@ impl<'a> CheckerState<'a> {
                         has_type_annotation,
                     ) {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                        let error_node = if let Some(nn) = name_node { nn } else { body };
+                        // TSC points TS7030 to: return type annotation > function name > node itself
+                        let error_node = if has_type_annotation {
+                            type_annotation
+                        } else if let Some(nn) = name_node {
+                            nn
+                        } else {
+                            idx
+                        };
                         self.error_at_node(
                             error_node,
                             diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
