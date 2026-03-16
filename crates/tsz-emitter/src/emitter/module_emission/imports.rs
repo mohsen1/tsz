@@ -549,23 +549,38 @@ impl<'a> Printer<'a> {
             let Some(local_ident) = self.arena.get_identifier(local_name_node) else {
                 continue;
             };
-            let import_name = if spec.property_name.is_some() {
+            // Get the import name (the original module export name).
+            // For `import { "str" as local }`, property_name is the StringLiteral "str".
+            // For `import { foo as local }`, property_name is the Identifier foo.
+            // For `import { foo }`, there's no property_name and name is the Identifier foo.
+            let (import_name, is_string_import) = if spec.property_name.is_some() {
                 if let Some(prop_name_node) = self.arena.get(spec.property_name) {
-                    if let Some(prop_ident) = self.arena.get_identifier(prop_name_node) {
-                        prop_ident.escaped_text.as_str()
+                    if prop_name_node.kind == SyntaxKind::StringLiteral as u16 {
+                        if let Some(lit) = self.arena.get_literal(prop_name_node) {
+                            (lit.text.clone(), true)
+                        } else {
+                            (local_ident.escaped_text.to_string(), false)
+                        }
+                    } else if let Some(prop_ident) = self.arena.get_identifier(prop_name_node) {
+                        (prop_ident.escaped_text.to_string(), false)
                     } else {
-                        local_ident.escaped_text.as_str()
+                        (local_ident.escaped_text.to_string(), false)
                     }
                 } else {
-                    local_ident.escaped_text.as_str()
+                    (local_ident.escaped_text.to_string(), false)
                 }
             } else {
-                local_ident.escaped_text.as_str()
+                (local_ident.escaped_text.to_string(), false)
             };
-            self.commonjs_named_import_substitutions.insert(
-                local_ident.escaped_text.to_string(),
-                format!("{module_var}.{import_name}"),
-            );
+            let substitution = if is_string_import
+                || !super::super::is_valid_identifier_name(&import_name)
+            {
+                format!("{module_var}[\"{import_name}\"]")
+            } else {
+                format!("{module_var}.{import_name}")
+            };
+            self.commonjs_named_import_substitutions
+                .insert(local_ident.escaped_text.to_string(), substitution);
         }
     }
 

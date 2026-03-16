@@ -355,7 +355,15 @@ impl<'a> CheckerState<'a> {
                             // Determine whether to emit TS2713 or TS2702.
                             // TS2713: the property exists on the type — suggest indexed access.
                             // TS2702: the property does NOT exist — generic "used as namespace" error.
-                            let left_type_id = self.get_type_of_symbol(sym_id);
+                            //
+                            // For type parameters, get_type_of_symbol may not return the
+                            // TypeParameter type. Check the type_parameter_scope first.
+                            let left_type_id = self
+                                .ctx
+                                .type_parameter_scope
+                                .get(&left_name)
+                                .copied()
+                                .unwrap_or_else(|| self.get_type_of_symbol(sym_id));
                             let prop_exists =
                                 crate::query_boundaries::property_access::type_has_property(
                                     self.ctx.types,
