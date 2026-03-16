@@ -630,6 +630,15 @@ impl<'a> CheckerState<'a> {
             for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = tsz_binder::SymbolId(symbol_ref.0);
                 let _ = self.get_type_of_symbol(sym_id);
+                // Populate type_env with the VALUE type (constructor for classes) so that
+                // TypeEvaluator::visit_type_query can resolve via TypeEnvironment::resolve_ref.
+                // Without this, resolve_ref returns None and the fallback resolve_lazy returns
+                // the INSTANCE type for classes, causing false TS2345 on `typeof ClassName` args.
+                if let Some(&value_type) = self.ctx.symbol_types.get(&sym_id) {
+                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                        env.insert(tsz_solver::SymbolRef(sym_id.0), value_type);
+                    }
+                }
             }
 
             for def_id in collect_lazy_def_ids(self.ctx.types, current) {
