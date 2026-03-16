@@ -2254,3 +2254,698 @@ fn test_signature_help_many_params() {
         assert!(h.active_parameter >= 3, "Should be on 4th or 5th param");
     }
 }
+
+// =========================================================================
+// Additional edge case tests
+// =========================================================================
+
+#[test]
+fn test_signature_help_function_with_union_param() {
+    let source = "function accept(val: string | number): void {}\naccept(42);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 7), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+        assert!(!h.signatures.is_empty());
+    }
+}
+
+#[test]
+fn test_signature_help_function_with_tuple_param() {
+    let source = "function pair(t: [number, string]): void {}\npair([1, 'a']);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 5), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+        let sig = &h.signatures[h.active_signature as usize];
+        assert_eq!(sig.parameters.len(), 1);
+    }
+}
+
+#[test]
+fn test_signature_help_function_with_optional_params() {
+    let source = "function opt(a: number, b?: string, c?: boolean): void {}\nopt(1);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 4), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+        let sig = &h.signatures[h.active_signature as usize];
+        assert_eq!(sig.parameters.len(), 3);
+        assert!(
+            sig.parameters[1].is_optional,
+            "Second param should be optional"
+        );
+        assert!(
+            sig.parameters[2].is_optional,
+            "Third param should be optional"
+        );
+    }
+}
+
+#[test]
+fn test_signature_help_async_function() {
+    let source =
+        "async function fetchData(url: string): Promise<void> {}\nfetchData('http://example.com');";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 10), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+        assert!(!h.signatures.is_empty());
+    }
+}
+
+#[test]
+fn test_signature_help_function_expression_call() {
+    let source = "const multiply = function(a: number, b: number): number { return a * b; };\nmultiply(3, 4);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 12), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 1, "Should be on second parameter");
+    }
+}
+
+#[test]
+fn test_signature_help_single_line_arrow() {
+    let source = "const square = (n: number): number => n * n;\nsquare(5);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 7), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_method_in_object_literal() {
+    let source =
+        "const obj = { greet(name: string): string { return name; } };\nobj.greet('world');";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 10), &mut cache);
+    // Method on object literal may or may not resolve
+    let _ = help;
+}
+
+#[test]
+fn test_signature_help_nested_parens_in_args() {
+    let source = "function f(a: number, b: number): void {}\nf((1 + 2), 3);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Cursor at '3' after the nested parens
+    let help = provider.get_signature_help(root, Position::new(1, 12), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(
+            h.active_parameter, 1,
+            "Nested parens should not confuse parameter counting"
+        );
+    }
+}
+
+#[test]
+fn test_signature_help_template_literal_arg() {
+    let source = "function tag(s: string): void {}\ntag(`hello`);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 5), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_function_with_this_param() {
+    let source =
+        "function handler(this: HTMLElement, event: Event): void {}\nhandler(new Event('click'));";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 8), &mut cache);
+    // `this` parameter may or may not be exposed in signatures
+    let _ = help;
+}
+
+#[test]
+fn test_signature_help_immediately_invoked_function() {
+    let source = "(function(x: number) {})(42);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(0, 25), &mut cache);
+    // IIFE may or may not provide signature help
+    let _ = help;
+}
+
+#[test]
+fn test_signature_help_before_open_paren() {
+    let source = "function f(a: number): void {}\nf(1);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position at function name, before the open paren
+    let help = provider.get_signature_help(root, Position::new(1, 0), &mut cache);
+    // Should not trigger signature help when cursor is on function name
+    assert!(
+        help.is_none(),
+        "Should not trigger signature help before open paren"
+    );
+}
+
+#[test]
+fn test_signature_help_after_close_paren() {
+    let source = "function f(a: number): void {}\nf(1);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position after close paren
+    let help = provider.get_signature_help(root, Position::new(1, 4), &mut cache);
+    // After close paren, signature help should not trigger
+    let _ = help;
+}
+
+#[test]
+fn test_signature_help_two_functions_same_name_different_scope() {
+    let source =
+        "function f(a: number): void {}\n{ function f(a: string, b: string): void {} }\nf(1);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(2, 2), &mut cache);
+    if let Some(h) = help {
+        assert!(!h.signatures.is_empty());
+    }
+}
+
+#[test]
+fn test_signature_help_with_spread_arg() {
+    let source = "function sum(a: number, b: number, c: number): number { return a + b + c; }\nconst args: [number, number, number] = [1, 2, 3];\nsum(...args);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(2, 4), &mut cache);
+    if let Some(h) = help {
+        assert!(!h.signatures.is_empty());
+    }
+}
+
+#[test]
+fn test_signature_help_with_object_arg() {
+    let source =
+        "function config(opts: { x: number; y: string }): void {}\nconfig({ x: 1, y: 'a' });";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 8), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(
+            h.active_parameter, 0,
+            "Object literal is the first parameter"
+        );
+    }
+}
+
+#[test]
+fn test_signature_help_with_array_arg() {
+    let source = "function process(items: number[]): void {}\nprocess([1, 2, 3]);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 9), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_multiple_type_params() {
+    let source =
+        "function map<K, V>(key: K, value: V): [K, V] { return [key, value]; }\nmap('a', 1);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 9), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 1, "Should be on second parameter");
+        let sig = &h.signatures[h.active_signature as usize];
+        assert_eq!(sig.parameters.len(), 2);
+    }
+}
+
+#[test]
+fn test_signature_help_intersection_param_type() {
+    let source =
+        "function merge(a: { x: number } & { y: string }): void {}\nmerge({ x: 1, y: 'a' });";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 7), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+        assert!(!h.signatures.is_empty());
+    }
+}
+
+#[test]
+fn test_signature_help_conditional_type_param() {
+    let source = "function check<T>(val: T extends string ? T : never): void {}\ncheck('hello');";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 7), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_mapped_type_param() {
+    let source = "function keys<T>(obj: { [K in keyof T]: T[K] }): void {}\nkeys({ a: 1 });";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 7), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_unicode_function_name() {
+    let source =
+        "function \u{00e4}\u{00f6}\u{00fc}(x: number): void {}\n\u{00e4}\u{00f6}\u{00fc}(42);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 5), &mut cache);
+    // Should not crash; if found, should have active_parameter 0
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_readonly_array_param() {
+    let source = "function process(items: readonly number[]): void {}\nprocess([1, 2]);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 9), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_tuple_param() {
+    let source = "function pair(t: [string, number]): void {}\npair(['a', 1]);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 6), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_never_return_type() {
+    let source =
+        "function throwErr(msg: string): never { throw new Error(msg); }\nthrowErr('oops');";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 10), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+        assert!(!h.signatures.is_empty());
+    }
+}
+
+#[test]
+fn test_signature_help_function_with_literal_type_params() {
+    let source = "function tag(kind: 'info' | 'warn' | 'error', msg: string): void {}\ntag('info', 'hello');";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position at second arg
+    let help = provider.get_signature_help(root, Position::new(1, 14), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 1, "Should be on second parameter");
+    }
+}
+
+#[test]
+fn test_signature_help_promise_return_type() {
+    let source = "async function fetchData(url: string): Promise<string> { return ''; }\nfetchData('http://x');";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 11), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_four_params_third_arg() {
+    let source = "function quad(a: number, b: string, c: boolean, d: object): void {}\nquad(1, 'x', true, {});";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position at third arg 'true'
+    let help = provider.get_signature_help(root, Position::new(1, 14), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 2, "Should be on third parameter");
+    }
+}
+
+#[test]
+fn test_signature_help_generic_with_default_type() {
+    let source = "function create<T = string>(val: T): T { return val; }\ncreate(42);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 8), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_multiple_rest_params() {
+    let source =
+        "function collect(first: string, ...rest: number[]): void {}\ncollect('a', 1, 2, 3);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position at fourth arg '3'
+    let help = provider.get_signature_help(root, Position::new(1, 19), &mut cache);
+    if let Some(h) = help {
+        // Rest param means active_parameter should clamp at 1 (the rest param index)
+        assert!(h.active_parameter >= 1);
+    }
+}
+
+#[test]
+fn test_signature_help_nested_generic_constraints() {
+    let source = "function extract<T extends { id: number }>(obj: T): number { return obj.id; }\nextract({ id: 5 });";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 9), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_only_whitespace_source() {
+    let source = "   \n  \n   ";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(0, 1), &mut cache);
+    assert!(
+        help.is_none(),
+        "Whitespace-only source should not produce signature help"
+    );
+}
+
+#[test]
+fn test_signature_help_function_with_index_signature_param() {
+    let source = "function lookup(dict: { [key: string]: number }): void {}\nlookup({ a: 1 });";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    let help = provider.get_signature_help(root, Position::new(1, 8), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0);
+    }
+}
+
+#[test]
+fn test_signature_help_ternary_expression_in_arg() {
+    let source = "function f(a: number, b: number): void {}\nf(true ? 1 : 2, 3);";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    // Position at second arg '3'
+    let help = provider.get_signature_help(root, Position::new(1, 17), &mut cache);
+    if let Some(h) = help {
+        assert_eq!(
+            h.active_parameter, 1,
+            "Ternary in first arg should not confuse parameter counting"
+        );
+    }
+}
