@@ -583,12 +583,8 @@ impl ParserState {
             SyntaxKind::TypeKeyword => self.parse_statement_type_keyword(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::DeclareKeyword => {
-                if self.in_block_context() && self.look_ahead_is_declare_before_declaration() {
-                    self.parse_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                    );
-                }
+                // Note: TS1184 for `declare` in block context is NOT emitted by the parser.
+                // The checker emits TS1234 (ambient module) or TS1235 (namespace) instead.
                 self.parse_statement_declare_or_expression()
             }
             SyntaxKind::NamespaceKeyword
@@ -600,14 +596,9 @@ impl ParserState {
             SyntaxKind::ForKeyword => self.parse_for_statement(),
             SyntaxKind::SemicolonToken => self.parse_empty_statement(),
             SyntaxKind::ExportKeyword => {
-                // Keep parity with tsc recovery for malformed `export =` in blocks:
-                // prefer the parse error from export assignment over generic TS1184.
-                if self.in_block_context() && !self.look_ahead_is_export_assignment() {
-                    self.parse_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                    );
-                }
+                // Note: TS1184 for `export` in block context is NOT emitted by the parser.
+                // The checker emits the specific grammar errors (TS1231, TS1233, TS1258)
+                // and only emits TS1184 for `export` on class/function declarations.
                 self.parse_export_declaration()
             }
             SyntaxKind::ImportKeyword => self.parse_statement_import_keyword(),
