@@ -790,11 +790,10 @@ impl<'a> Printer<'a> {
                 return true;
             }
             // Identifier whose text is a JS reserved keyword
-            if let Some(ident) = self.arena.get_identifier(n) {
-                if let Some(kw) = tsz_scanner::text_to_keyword(&ident.escaped_text) {
+            if let Some(ident) = self.arena.get_identifier(n)
+                && let Some(kw) = tsz_scanner::text_to_keyword(&ident.escaped_text) {
                     return tsz_scanner::token_is_reserved_word(kw);
                 }
-            }
             false
         });
         if is_non_shorthand_name {
