@@ -1501,19 +1501,17 @@ impl<'a> CheckerState<'a> {
         let has_too_few_args = if let Some(shape) =
             crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
         {
-            let max_params = shape.params.len();
-            let has_rest = shape.params.iter().any(|p| p.rest);
-            max_params < 3 && !has_rest
+            shape.params.is_empty()
         } else if let Some(callable) = crate::query_boundaries::class_type::callable_shape_for_type(
             self.ctx.types,
             decorator_type,
         ) {
-            // Check if ALL call signatures accept fewer than 3 args
+            // Check if ALL call signatures accept zero args (decorator factory pattern)
             !callable.call_signatures.is_empty()
-                && callable.call_signatures.iter().all(|sig| {
-                    let has_rest = sig.params.iter().any(|p| p.rest);
-                    sig.params.len() < 3 && !has_rest
-                })
+                && callable
+                    .call_signatures
+                    .iter()
+                    .all(|sig| sig.params.is_empty())
         } else {
             false
         };
