@@ -239,6 +239,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 parent_kind,
                 Some(k) if k == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
                     || k == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+                    || k == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                    || k == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION
             ) && parent_kind.is_some();
             if in_block {
                 // Find the `declare` keyword modifier node for the error span
