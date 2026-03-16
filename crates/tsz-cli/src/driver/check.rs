@@ -485,6 +485,13 @@ pub(super) fn collect_diagnostics(
         }
     });
 
+    // Propagate noUncheckedIndexedAccess to the TypeInterner before creating the
+    // QueryCache.  The `with_options` constructor intentionally skips this (to avoid
+    // repeated writes from each per-file checker), so we set it once here.
+    program
+        .type_interner
+        .set_no_unchecked_indexed_access(options.checker.no_unchecked_indexed_access);
+
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = QueryCache::new(&program.type_interner);
 
@@ -1496,6 +1503,9 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
             .count();
         let rebuilt_binder = create_binder_from_bound_file(&program.files[0], &program, 0);
+        program
+            .type_interner
+            .set_no_unchecked_indexed_access(resolved.checker.no_unchecked_indexed_access);
         let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
             &program.files[0].arena,
