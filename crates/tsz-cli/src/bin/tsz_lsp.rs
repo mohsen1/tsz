@@ -43,7 +43,11 @@
 //! - workspace/symbol
 //! - workspace/didChangeConfiguration
 //! - workspace/didChangeWatchedFiles
+//! - workspace/didChangeWorkspaceFolders
+//! - workspace/willRenameFiles
 //! - workspace/executeCommand
+//! - textDocument/diagnostic (pull model)
+//! - completionItem/resolve
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -317,6 +321,30 @@ impl LspServer {
                 None
             }
 
+            // ── File operations ──────────────────────────────────────
+            Some("workspace/willRenameFiles") => {
+                let r = self.handle_will_rename_files(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── Workspace folders ────────────────────────────────────
+            Some("workspace/didChangeWorkspaceFolders") => {
+                self.handle_did_change_workspace_folders(msg.params);
+                None
+            }
+
+            // ── Pull diagnostics ─────────────────────────────────────
+            Some("textDocument/diagnostic") => {
+                let r = self.handle_pull_diagnostics(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── Completion resolve ───────────────────────────────────
+            Some("completionItem/resolve") => {
+                let r = self.handle_completion_resolve(msg.params);
+                Some(self.make_response(id, r))
+            }
+
             // ── Execute command ────────────────────────────────────────
             Some("workspace/executeCommand") => {
                 let r = self.handle_execute_command(msg.params);
@@ -547,7 +575,11 @@ impl LspServer {
                 "hoverProvider": true,
                 "completionProvider": {
                     "triggerCharacters": [".", "<", "/", "\"", "'", "`", "@"],
-                    "resolveProvider": false,
+                    "resolveProvider": true,
+                },
+                "diagnosticProvider": {
+                    "interFileDependencies": true,
+                    "workspaceDiagnostics": false,
                 },
                 "definitionProvider": true,
                 "declarationProvider": true,
@@ -605,7 +637,13 @@ impl LspServer {
                 "typeHierarchyProvider": true,
                 "workspaceSymbolProvider": true,
                 "executeCommandProvider": {
-                    "commands": ["tsz.organizeImports", "tsz.applyCodeAction"]
+                    "commands": [
+                        "tsz.organizeImports",
+                        "tsz.applyCodeAction",
+                        "tsz.toggleLineComment",
+                        "tsz.toggleBlockComment",
+                        "tsz.matchBrace"
+                    ]
                 },
                 "workspace": {
                     "workspaceFolders": {
@@ -613,6 +651,12 @@ impl LspServer {
                         "changeNotifications": true
                     },
                     "fileOperations": {
+                        "willRename": {
+                            "filters": [{
+                                "scheme": "file",
+                                "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
+                            }]
+                        },
                         "didRename": {
                             "filters": [{
                                 "scheme": "file",
@@ -848,12 +892,54 @@ impl LspServer {
                 if let Some(ref sort_text) = item.sort_text {
                     ci["sortText"] = Value::from(sort_text.as_str());
                 }
-                if let Some(ref insert_text) = item.insert_text {
+
+                // Use textEdit for precise replacement when we have a span
+                if let Some((start, end)) = item.replacement_span {
+                    let file = self.project.file(&file_name);
+                    if let Some(file) = file {
+                        let start_pos = file
+                            .line_map()
+                            .offset_to_position(start, file.source_text());
+                        let end_pos = file
+                            .line_map()
+                            .offset_to_position(end, file.source_text());
+                        let text = item
+                            .insert_text
+                            .as_deref()
+                            .unwrap_or(&item.label);
+                        ci["textEdit"] = serde_json::json!({
+                            "range": {
+                                "start": { "line": start_pos.line, "character": start_pos.character },
+                                "end": { "line": end_pos.line, "character": end_pos.character }
+                            },
+                            "newText": text,
+                        });
+                        if item.is_snippet {
+                            ci["insertTextFormat"] = Value::from(2);
+                        }
+                    }
+                } else if let Some(ref insert_text) = item.insert_text {
                     ci["insertText"] = Value::from(insert_text.as_str());
                     if item.is_snippet {
                         ci["insertTextFormat"] = Value::from(2); // Snippet format
                     }
                 }
+
+                // filterText: help editors match when insert text differs from label
+                if item.insert_text.as_deref().is_some_and(|t| t != item.label) {
+                    ci["filterText"] = Value::from(item.label.as_str());
+                }
+
+                // Deprecated tag (LSP CompletionItemTag.Deprecated = 1)
+                if item
+                    .kind_modifiers
+                    .as_deref()
+                    .is_some_and(|m| m.contains("deprecated"))
+                {
+                    ci["tags"] = serde_json::json!([1]);
+                    ci["deprecated"] = Value::from(true);
+                }
+
                 // Auto-import: include additional text edits (e.g., import statements)
                 if let Some(ref edits) = item.additional_text_edits {
                     let lsp_edits: Vec<Value> = edits
@@ -872,13 +958,26 @@ impl LspServer {
                         ci["detail"] = Value::from(format!("Auto import from '{source}'"));
                     }
                 }
+
+                // Provide data for completionItem/resolve
+                ci["data"] = serde_json::json!({
+                    "uri": &uri,
+                    "label": item.label,
+                });
+
                 ci
             })
             .collect();
 
+        // Commit characters: auto-accept on these when not in new-identifier location
+        let commit_chars = serde_json::json!([".", ",", ";", "("]);
+
         Ok(serde_json::json!({
             "isIncomplete": false,
             "items": lsp_items,
+            "itemDefaults": {
+                "commitCharacters": commit_chars,
+            },
         }))
     }
 
@@ -1907,6 +2006,182 @@ impl LspServer {
         extensions.iter().any(|ext| path.ends_with(ext))
     }
 
+    // ─── Will Rename Files ──────────────────────────────────────────────
+
+    fn handle_will_rename_files(&mut self, params: Option<Value>) -> Result<Value> {
+        let files = params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing files param"))?;
+
+        let renames: Vec<tsz::lsp::FileRename> = files
+            .iter()
+            .filter_map(|f| {
+                let old_uri = f.get("oldUri")?.as_str()?;
+                let new_uri = f.get("newUri")?.as_str()?;
+                Some(tsz::lsp::FileRename {
+                    old_uri: Self::uri_to_file_name(old_uri),
+                    new_uri: Self::uri_to_file_name(new_uri),
+                })
+            })
+            .collect();
+
+        let workspace_edit = self.project.handle_will_rename_files(&renames);
+
+        // Convert WorkspaceEdit to LSP WorkspaceEdit JSON
+        let mut changes = serde_json::Map::new();
+        for (file_path, edits) in &workspace_edit.changes {
+            let lsp_edits: Vec<Value> = edits
+                .iter()
+                .map(|edit| {
+                    serde_json::json!({
+                        "range": Self::range_to_json(&edit.range),
+                        "newText": edit.new_text,
+                    })
+                })
+                .collect();
+            changes.insert(Self::file_name_to_uri(file_path), Value::Array(lsp_edits));
+        }
+
+        Ok(serde_json::json!({ "changes": changes }))
+    }
+
+    // ─── Workspace Folders ──────────────────────────────────────────────
+
+    fn handle_did_change_workspace_folders(&mut self, params: Option<Value>) {
+        let event = match params.as_ref().and_then(|p| p.get("event")) {
+            Some(e) => e,
+            None => return,
+        };
+
+        // Handle added folders: discover and load TS/JS files
+        if let Some(added) = event.get("added").and_then(|a| a.as_array()) {
+            for folder in added {
+                if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
+                    let path = Self::uri_to_file_name(uri);
+                    self.discover_files_in_folder(&path);
+                }
+            }
+        }
+
+        // Handle removed folders: remove tracked files under those paths
+        if let Some(removed) = event.get("removed").and_then(|r| r.as_array()) {
+            for folder in removed {
+                if let Some(uri) = folder.get("uri").and_then(|u| u.as_str()) {
+                    let path = Self::uri_to_file_name(uri);
+                    let files_to_remove: Vec<String> = self
+                        .project
+                        .file_names()
+                        .filter(|f| f.starts_with(&path))
+                        .cloned()
+                        .collect();
+                    for file_name in files_to_remove {
+                        self.project.remove_file(&file_name);
+                        // Clear diagnostics
+                        self.pending_notifications.push(JsonRpcNotification {
+                            jsonrpc: "2.0".to_string(),
+                            method: "textDocument/publishDiagnostics".to_string(),
+                            params: serde_json::json!({
+                                "uri": Self::file_name_to_uri(&file_name),
+                                "diagnostics": [],
+                            }),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Discover and load TS/JS files in a folder (non-recursive for now).
+    fn discover_files_in_folder(&mut self, path: &str) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_file() {
+                let file_name = entry_path.to_string_lossy().to_string();
+                if Self::is_ts_file(&file_name) {
+                    if let Ok(content) = std::fs::read_to_string(&entry_path) {
+                        self.project.set_file(file_name, content);
+                    }
+                }
+            } else if entry_path.is_dir() {
+                let dir_name = entry_path.to_string_lossy().to_string();
+                // Skip node_modules and hidden directories
+                if !dir_name.ends_with("/node_modules")
+                    && !entry_path
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                {
+                    self.discover_files_in_folder(&dir_name);
+                }
+            }
+        }
+    }
+
+    // ─── Pull Diagnostics ───────────────────────────────────────────────
+
+    fn handle_pull_diagnostics(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params)
+            .ok_or_else(|| anyhow::anyhow!("Missing textDocument URI"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        let diagnostics = self.project.get_diagnostics(&file_name).unwrap_or_default();
+        let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
+
+        Ok(serde_json::json!({
+            "kind": "full",
+            "items": lsp_diags,
+        }))
+    }
+
+    // ─── Completion Resolve ─────────────────────────────────────────────
+
+    fn handle_completion_resolve(&mut self, params: Option<Value>) -> Result<Value> {
+        // The client sends back the completion item we gave it.
+        // We can enrich it with documentation, detail, etc.
+        let mut item = params.ok_or_else(|| anyhow::anyhow!("Missing completion item"))?;
+
+        // If we already have documentation, return as-is
+        if item.get("documentation").is_some() {
+            return Ok(item);
+        }
+
+        // Try to resolve additional info from the data field
+        if let Some(data) = item.get("data").cloned() {
+            if let (Some(uri), Some(label)) = (
+                data.get("uri").and_then(|u| u.as_str()),
+                data.get("label").and_then(|l| l.as_str()),
+            ) {
+                let file_name = Self::uri_to_file_name(uri);
+                if let Some(file) = self.project.file(&file_name) {
+                    // Try to find the symbol and get its documentation
+                    if let Some(sym_id) = file.binder().file_locals.get(label)
+                        && let Some(symbol) = file.binder().get_symbol(sym_id)
+                        && let Some(&decl_node) = symbol.declarations.first()
+                    {
+                        let doc = tsz::lsp::jsdoc_for_node(
+                            file.arena(),
+                            file.root(),
+                            decl_node,
+                            file.source_text(),
+                        );
+                        if !doc.is_empty() {
+                            item["documentation"] = serde_json::json!({
+                                "kind": "markdown",
+                                "value": doc,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(item)
+    }
+
     // ─── Execute Command ───────────────────────────────────────────────
 
     fn handle_execute_command(&mut self, params: Option<Value>) -> Result<Value> {
@@ -1954,10 +2229,219 @@ impl LspServer {
                 }
                 Ok(Value::Null)
             }
+            "tsz.toggleLineComment" | "tsz.toggleBlockComment" => {
+                self.handle_comment_toggle(command, arguments)
+            }
+            "tsz.matchBrace" => self.handle_match_brace(arguments),
             _ => {
                 debug!("Unknown command: {}", command);
                 Ok(Value::Null)
             }
+        }
+    }
+
+    // ─── Comment Toggling ───────────────────────────────────────────────
+
+    fn handle_comment_toggle(
+        &mut self,
+        command: &str,
+        arguments: Option<&Vec<Value>>,
+    ) -> Result<Value> {
+        let args = arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?;
+        let uri = args
+            .first()
+            .and_then(|a| a.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing URI argument"))?;
+        let range_val = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("Missing range argument"))?;
+        let range = Self::extract_range(&Some(serde_json::json!({ "range": range_val })), "range")
+            .ok_or_else(|| anyhow::anyhow!("Invalid range"))?;
+
+        let file_name = Self::uri_to_file_name(uri);
+        let file = self
+            .project
+            .file(&file_name)
+            .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+
+        let source = file.source_text();
+        let line_map = file.line_map();
+        let is_block = command == "tsz.toggleBlockComment";
+
+        let mut edits: Vec<Value> = Vec::new();
+
+        if is_block {
+            // Block comment toggle: wrap selection in /* */ or remove existing
+            let start_offset = line_map
+                .position_to_offset(range.start, source)
+                .unwrap_or(0) as usize;
+            let end_offset = line_map.position_to_offset(range.end, source).unwrap_or(0) as usize;
+            let selected = &source[start_offset..end_offset.min(source.len())];
+
+            if selected.starts_with("/*") && selected.ends_with("*/") {
+                // Uncomment: remove /* and */
+                let inner = &selected[2..selected.len() - 2];
+                edits.push(serde_json::json!({
+                    "range": Self::range_to_json(&range),
+                    "newText": inner,
+                }));
+            } else {
+                // Comment: wrap in /* */
+                edits.push(serde_json::json!({
+                    "range": Self::range_to_json(&range),
+                    "newText": format!("/*{selected}*/"),
+                }));
+            }
+        } else {
+            // Line comment toggle: add/remove // prefix for each line in range
+            let start_line = range.start.line;
+            let end_line = range.end.line;
+
+            // Determine if all lines are commented (for toggle direction)
+            let lines: Vec<&str> = source.lines().collect();
+            let mut all_commented = true;
+            for line_num in start_line..=end_line {
+                if let Some(line) = lines.get(line_num as usize) {
+                    if !line.trim_start().starts_with("//") {
+                        all_commented = false;
+                        break;
+                    }
+                }
+            }
+
+            for line_num in start_line..=end_line {
+                if let Some(line) = lines.get(line_num as usize) {
+                    let line_start = Position::new(line_num, 0);
+                    let line_end = Position::new(line_num, line.len() as u32);
+                    let line_range = Range::new(line_start, line_end);
+
+                    if all_commented {
+                        // Uncomment: remove first occurrence of "//" (preserving indent)
+                        if let Some(idx) = line.find("//") {
+                            let remove_len = if line.get(idx + 2..idx + 3) == Some(" ") {
+                                3
+                            } else {
+                                2
+                            };
+                            let new_text = format!("{}{}", &line[..idx], &line[idx + remove_len..]);
+                            edits.push(serde_json::json!({
+                                "range": Self::range_to_json(&line_range),
+                                "newText": new_text,
+                            }));
+                        }
+                    } else {
+                        // Comment: add "// " at the beginning (after leading whitespace)
+                        let indent = line.len() - line.trim_start().len();
+                        let new_text = format!("{}// {}", &line[..indent], &line[indent..]);
+                        edits.push(serde_json::json!({
+                            "range": Self::range_to_json(&line_range),
+                            "newText": new_text,
+                        }));
+                    }
+                }
+            }
+        }
+
+        Ok(serde_json::json!({
+            "changes": {
+                uri: edits,
+            }
+        }))
+    }
+
+    // ─── Brace Matching ─────────────────────────────────────────────────
+
+    fn handle_match_brace(&mut self, arguments: Option<&Vec<Value>>) -> Result<Value> {
+        let args = arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?;
+        let uri = args
+            .first()
+            .and_then(|a| a.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing URI argument"))?;
+        let pos_val = args
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("Missing position argument"))?;
+        let line = pos_val
+            .get("line")
+            .and_then(|l| l.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing line"))? as u32;
+        let character = pos_val
+            .get("character")
+            .and_then(|c| c.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing character"))? as u32;
+        let position = Position::new(line, character);
+
+        let file_name = Self::uri_to_file_name(uri);
+        let file = self
+            .project
+            .file(&file_name)
+            .ok_or_else(|| anyhow::anyhow!("File not found"))?;
+
+        let source = file.source_text();
+        let line_map = file.line_map();
+        let offset = line_map.position_to_offset(position, source).unwrap_or(0) as usize;
+        let bytes = source.as_bytes();
+
+        if offset >= bytes.len() {
+            return Ok(Value::Null);
+        }
+
+        let ch = bytes[offset];
+        let (target, forward) = match ch {
+            b'(' => (b')', true),
+            b')' => (b'(', false),
+            b'[' => (b']', true),
+            b']' => (b'[', false),
+            b'{' => (b'}', true),
+            b'}' => (b'{', false),
+            b'<' => (b'>', true),
+            b'>' => (b'<', false),
+            _ => return Ok(Value::Null),
+        };
+
+        let open = if forward { ch } else { target };
+        let close = if forward { target } else { ch };
+
+        let mut depth: i32 = 0;
+        let matched_offset = if forward {
+            let mut i = offset;
+            loop {
+                if i >= bytes.len() {
+                    break None;
+                }
+                if bytes[i] == open {
+                    depth += 1;
+                } else if bytes[i] == close {
+                    depth -= 1;
+                    if depth == 0 {
+                        break Some(i);
+                    }
+                }
+                i += 1;
+            }
+        } else {
+            let mut i = offset;
+            loop {
+                if bytes[i] == close {
+                    depth += 1;
+                } else if bytes[i] == open {
+                    depth -= 1;
+                    if depth == 0 {
+                        break Some(i);
+                    }
+                }
+                if i == 0 {
+                    break None;
+                }
+                i -= 1;
+            }
+        };
+
+        match matched_offset {
+            Some(m) => {
+                let pos = line_map.offset_to_position(m as u32, source);
+                Ok(Self::position_to_json(&pos))
+            }
+            None => Ok(Value::Null),
         }
     }
 }
