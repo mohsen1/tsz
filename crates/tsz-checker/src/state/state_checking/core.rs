@@ -1659,6 +1659,7 @@ impl<'a> CheckerState<'a> {
         reported
     }
 
+    #[allow(dead_code)]
     fn is_isolated_decl_simple_computed_name(&self, name_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -1699,6 +1700,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn report_isolated_decl_computed_name_dependency(&mut self, name_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_binder::symbol_flags;
