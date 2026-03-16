@@ -1560,6 +1560,16 @@ impl<'a> CheckerState<'a> {
                     // Fall back to inferring from initializer
                     if var_decl.initializer.is_some() {
                         let mut inferred_type = self.get_type_of_node(var_decl.initializer);
+                        // Eagerly evaluate Application types (e.g., merge<A, B>)
+                        // to concrete types. Without this, long chains like
+                        //   const o50 = merge(merge(merge(...)))
+                        // store deeply-nested Application trees that cause O(2^N)
+                        // traversal work in subsequent type operations (inference,
+                        // contains_type_parameters, ensure_application_symbols_resolved).
+                        if tsz_solver::type_queries::is_generic_type(self.ctx.types, inferred_type)
+                        {
+                            inferred_type = self.evaluate_application_type(inferred_type);
+                        }
                         let init_is_direct_empty_array = self
                             .ctx
                             .arena
