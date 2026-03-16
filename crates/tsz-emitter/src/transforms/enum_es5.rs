@@ -795,6 +795,12 @@ impl<'a> EnumES5Transformer<'a> {
         let Some(node) = self.arena.get(name_idx) else {
             return IRNode::StringLiteral(member_name.to_string().into());
         };
+        // Private identifiers (#name) in enum members are parse errors.
+        // tsc's TS transformer replaces them with factory.createIdentifier(""),
+        // which emits as an empty identifier (no quotes), not an empty string literal.
+        if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+            return IRNode::Identifier(String::new().into());
+        }
         if node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.arena.get_literal(node)
             && let Some(val) = Self::parse_numeric_literal_text(&lit.text)
