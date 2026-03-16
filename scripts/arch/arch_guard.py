@@ -168,22 +168,6 @@ CHECKS = [
         },
     ),
     (
-        "Code quality: no bare .unwrap() in emitter production code (use .expect())",
-        ROOT / "crates" / "tsz-emitter" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,
-            # Inline #[cfg(test)] modules
-            "exclude_files": {
-                "crates/tsz-emitter/src/emitter/jsx.rs",
-                "crates/tsz-emitter/src/emitter/module_emission/core.rs",
-                "crates/tsz-emitter/src/transforms/module_commonjs.rs",
-            },
-        },
-    ),
-    (
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),

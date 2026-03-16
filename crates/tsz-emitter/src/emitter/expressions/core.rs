@@ -616,7 +616,8 @@ impl<'a> Printer<'a> {
                 // the `(` and the inner expression. tsc preserves parens when a
                 // comment exists inside them, e.g.:
                 //   `(/* TODO */ expr as T)` -> `(/* TODO */ expr)` (parens kept)
-                let actual_inner_start = self.skip_trivia_forward(inner.pos, inner.pos + 2048);
+                let actual_inner_start =
+                    self.skip_trivia_forward(inner.pos, inner.pos + 2048);
                 let has_inner_comment = if actual_inner_start > node.pos {
                     self.all_comments
                         .iter()
