@@ -804,41 +804,14 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Body type includes `| undefined` for optional params;
-                // ParamInfo.type_id uses declared type (no `| undefined`)
-                // to match tsc error messages. Solver handles optionality
-                // via the `optional` flag in call_args.
-                let body_effective_type = if param.question_token
-                    && self.ctx.strict_null_checks()
-                    && type_id != TypeId::ANY
-                    && type_id != TypeId::ERROR
-                    && type_id != TypeId::UNDEFINED
-                {
-                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
-                } else {
-                    type_id
-                };
-                let effective_binding_context_type = if param.question_token
-                    && self.ctx.strict_null_checks()
-                    && binding_context_type != TypeId::ANY
-                    && binding_context_type != TypeId::ERROR
-                    && binding_context_type != TypeId::UNDEFINED
-                {
-                    self.ctx
-                        .types
-                        .factory()
-                        .union(vec![binding_context_type, TypeId::UNDEFINED])
-                } else {
-                    binding_context_type
-                };
                 params.push(ParamInfo {
                     name,
                     type_id,
                     optional,
                     rest,
                 });
-                param_types.push(Some(body_effective_type));
-                destructuring_context_param_types.push(Some(effective_binding_context_type));
+                param_types.push(Some(type_id));
+                destructuring_context_param_types.push(Some(binding_context_type));
                 contextual_index += 1;
             }
         }
