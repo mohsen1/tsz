@@ -6,5 +6,6 @@
 //! - `subtype_identity_checker` — subtype, identity, and redeclaration compat
 
 pub mod assignability_checker;
+mod assignability_type_param_helpers;
 pub mod assignment_checker;
 pub mod subtype_identity_checker;
