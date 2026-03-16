@@ -1069,6 +1069,20 @@ impl<'a> CheckerState<'a> {
                 // therefore use the inner type, not Promise<inner>.
                 let return_context = if is_async && !is_generator {
                     return_context.map(|ctx_ty| self.unwrap_async_return_type_for_body(ctx_ty))
+                } else if is_generator && !is_async {
+                    // Generator function bodies return TReturn, not Generator<Y, TReturn, N>.
+                    // When the contextual return type is a Generator application, unwrap
+                    // to TReturn so that `return expr` in the body is contextually typed
+                    // against the correct type (matching tsc behavior).
+                    early_gen_return_type
+                        .or(return_context.and_then(|ctx_ty| {
+                            let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                self.ctx.types,
+                                ctx_ty,
+                            );
+                            ret_ctx.get_generator_return_type()
+                        }))
+                        .or(return_context)
                 } else {
                     return_context
                 };
@@ -1933,8 +1947,23 @@ impl<'a> CheckerState<'a> {
             if let Some(base) = lazy_base {
                 // Use contextual generator type params when available, otherwise
                 // fall back to defaults (any/void/unknown).
+                // For TReturn, prefer the body-inferred return type (from return
+                // statements) over the contextual type, falling back to void when
+                // neither is available. This ensures generic type parameters like
+                // `Ret` in `<Ret>(f: () => Generator<never, Ret, never>)` get
+                // inferred from the generator body's return statements.
                 let yield_t = final_generator_yield_type.unwrap_or(TypeId::ANY);
-                let return_t = early_gen_return_type.unwrap_or(TypeId::VOID);
+                let body_return_t = if return_type != TypeId::UNKNOWN
+                    && return_type != TypeId::VOID
+                    && return_type != TypeId::UNDEFINED
+                {
+                    Some(return_type)
+                } else {
+                    None
+                };
+                let return_t = body_return_t
+                    .or(early_gen_return_type)
+                    .unwrap_or(TypeId::VOID);
                 let next_t = early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
                 self.ctx
                     .types
