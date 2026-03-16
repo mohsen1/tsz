@@ -1212,10 +1212,28 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // Use widened types for display — tsc shows widened property types
-            // in error messages: `{ a: string }` not `{ a: "hello" }`.
-            let value_display =
-                self.format_type_for_assignability_message(self.widen_type_for_display(value_type));
+            // For display purposes, preserve literal types from the AST.
+            // tsc shows `{ x: "hello" }` (literal) in error messages even though
+            // the property type is widened to `string` for type checking.
+            let display_value = if let Some(init_node) = self.ctx.arena.get(prop.initializer) {
+                match init_node.kind {
+                    k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                        || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                    {
+                        self.ctx
+                            .arena
+                            .get_literal(init_node)
+                            .map(|lit| format!("\"{}\"", lit.text))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            let value_display = display_value.unwrap_or_else(|| {
+                self.format_type_for_assignability_message(self.widen_type_for_display(value_type))
+            });
             parts.push(format!("{display_name}: {value_display}"));
         }
 
