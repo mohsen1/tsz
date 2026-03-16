@@ -1420,6 +1420,7 @@ impl<'a> CheckerState<'a> {
                 // should be called first: @dec() instead of @dec.
                 if self.ctx.compiler_options.experimental_decorators
                     && !is_abstract
+                    && !legacy_decorator_not_valid
                     && (node.kind == syntax_kind_ext::METHOD_DECLARATION
                         || node.kind == syntax_kind_ext::GET_ACCESSOR
                         || node.kind == syntax_kind_ext::SET_ACCESSOR)
