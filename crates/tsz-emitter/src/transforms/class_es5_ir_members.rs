@@ -14,7 +14,7 @@ use tsz_scanner::SyntaxKind;
 use super::{ES5ClassTransformer, PropertyNameIR, collect_accessor_pairs, get_identifier_text};
 
 impl<'a> ES5ClassTransformer<'a> {
-    /// Emit prototype methods as IR (superseded by emit_all_members_ir)
+    /// Emit prototype methods as IR (superseded by `emit_all_members_ir`)
     #[allow(dead_code)]
     pub(super) fn emit_methods_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
@@ -427,7 +427,7 @@ impl<'a> ES5ClassTransformer<'a> {
         body.insert(0, IRNode::var_decl(rest_name, Some(IRNode::empty_array())));
     }
 
-    /// Emit static members as IR (superseded by emit_all_members_ir).
+    /// Emit static members as IR (superseded by `emit_all_members_ir`).
     /// Returns deferred static block IIFEs (for classes with no non-block static members).
     #[allow(dead_code)]
     pub(super) fn emit_static_members_ir(
@@ -1299,17 +1299,15 @@ impl<'a> ES5ClassTransformer<'a> {
         // all methods/accessors, matching tsc's ES5 class member ordering.
         if !deferred_static_prop_inits.is_empty() {
             // Emit class alias preamble before the first static property init
-            if !class_alias_emitted {
-                if let Some(ref alias) = class_alias {
-                    body.push(IRNode::VarDecl {
-                        name: alias.clone().into(),
-                        initializer: None,
-                    });
-                    body.push(IRNode::expr_stmt(IRNode::assign(
-                        IRNode::id(alias.clone()),
-                        IRNode::id(self.class_name.clone()),
-                    )));
-                }
+            if !class_alias_emitted && let Some(ref alias) = class_alias {
+                body.push(IRNode::VarDecl {
+                    name: alias.clone().into(),
+                    initializer: None,
+                });
+                body.push(IRNode::expr_stmt(IRNode::assign(
+                    IRNode::id(alias.clone()),
+                    IRNode::id(self.class_name.clone()),
+                )));
             }
             body.append(&mut deferred_static_prop_inits);
         }

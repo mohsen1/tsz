@@ -239,12 +239,11 @@ fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String
 /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
 /// If the type is not an array type or has no annotation, returns "Object".
 fn serialize_rest_param_element_type(arena: &NodeArena, type_annotation: NodeIndex) -> String {
-    if let Some(type_node) = arena.get(type_annotation) {
-        if type_node.kind == syntax_kind_ext::ARRAY_TYPE {
-            if let Some(arr) = arena.get_array_type(type_node) {
-                return serialize_type_for_metadata(arena, arr.element_type);
-            }
-        }
+    if let Some(type_node) = arena.get(type_annotation)
+        && type_node.kind == syntax_kind_ext::ARRAY_TYPE
+        && let Some(arr) = arena.get_array_type(type_node)
+    {
+        return serialize_type_for_metadata(arena, arr.element_type);
     }
     "Object".to_string()
 }

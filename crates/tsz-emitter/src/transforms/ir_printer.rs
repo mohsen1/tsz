@@ -1481,23 +1481,22 @@ impl<'a> IRPrinter<'a> {
                         if matches!(
                             directive,
                             crate::context::transform::TransformDirective::ES5TemplateLiteral { .. }
-                        ) {
-                            if let Some(ref transforms) = self.transforms {
-                                let mut printer = AstPrinter::with_transforms_and_options(
-                                    arena,
-                                    transforms.clone(),
-                                    PrinterOptions {
-                                        target: crate::emitter::ScriptTarget::ES5,
-                                        ..PrinterOptions::default()
-                                    },
-                                );
-                                if let Some(source_text) = self.source_text {
-                                    printer.set_source_text(source_text);
-                                }
-                                printer.emit(*idx);
-                                self.write(printer.get_output());
-                                return;
+                        ) && let Some(ref transforms) = self.transforms
+                        {
+                            let mut printer = AstPrinter::with_transforms_and_options(
+                                arena,
+                                transforms.clone(),
+                                PrinterOptions {
+                                    target: crate::emitter::ScriptTarget::ES5,
+                                    ..PrinterOptions::default()
+                                },
+                            );
+                            if let Some(source_text) = self.source_text {
+                                printer.set_source_text(source_text);
                             }
+                            printer.emit(*idx);
+                            self.write(printer.get_output());
+                            return;
                         }
 
                         // Note: For other directive types, fall through to source text copy

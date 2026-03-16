@@ -501,7 +501,7 @@ impl<'a> Printer<'a> {
         if expr_node.kind == SyntaxKind::Identifier as u16 {
             let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
             let members =
-                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
+                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos)?;
             let value = members.get(member_name.as_str())?;
             return if self.ctx.options.remove_comments {
                 Some(value.to_js_literal())
@@ -524,7 +524,7 @@ impl<'a> Printer<'a> {
             }
             let enum_name = &self.arena.get_identifier(inner_name_node)?.escaped_text;
             let members =
-                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
+                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos)?;
             let value = members.get(member_name.as_str())?;
 
             // Build the full qualifier text from source for the comment
@@ -571,8 +571,7 @@ impl<'a> Printer<'a> {
         let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
 
         // Look up in const enum values, scoped to the access position
-        let members =
-            self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
+        let members = self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos)?;
 
         // The argument must be a string literal or no-substitution template literal
         let arg_node = self.arena.get(access.name_or_argument)?;
@@ -653,10 +652,8 @@ impl<'a> Printer<'a> {
                 && name.kind == SyntaxKind::Identifier as u16
                 && let Some(enum_ident) = self.arena.get_identifier(expr)
                 && let Some(member_ident) = self.arena.get_identifier(name)
-                && let Some(members) = self.lookup_scoped_const_enum_values(
-                    enum_ident.escaped_text.as_str(),
-                    expr.pos as u32,
-                )
+                && let Some(members) =
+                    self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
                 && let Some(value) = members.get(member_ident.escaped_text.as_str())
             {
                 return value.is_negative();
@@ -674,10 +671,8 @@ impl<'a> Printer<'a> {
                     || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
                 && let Some(enum_ident) = self.arena.get_identifier(expr)
                 && let Some(lit) = self.arena.get_literal(arg)
-                && let Some(members) = self.lookup_scoped_const_enum_values(
-                    enum_ident.escaped_text.as_str(),
-                    expr.pos as u32,
-                )
+                && let Some(members) =
+                    self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
                 && let Some(value) = members.get(lit.text.as_str())
             {
                 return value.is_negative();
@@ -701,8 +696,8 @@ impl<'a> Printer<'a> {
             && name.kind == SyntaxKind::Identifier as u16
             && let Some(enum_ident) = self.arena.get_identifier(expr)
             && let Some(member_ident) = self.arena.get_identifier(name)
-            && let Some(members) = self
-                .lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos as u32)
+            && let Some(members) =
+                self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
             && let Some(value) = members.get(member_ident.escaped_text.as_str())
         {
             return value.needs_double_dot();
@@ -717,8 +712,8 @@ impl<'a> Printer<'a> {
                 || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
             && let Some(enum_ident) = self.arena.get_identifier(expr)
             && let Some(lit) = self.arena.get_literal(arg)
-            && let Some(members) = self
-                .lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos as u32)
+            && let Some(members) =
+                self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
             && let Some(value) = members.get(lit.text.as_str())
         {
             return value.needs_double_dot();

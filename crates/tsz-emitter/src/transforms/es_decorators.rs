@@ -110,7 +110,7 @@ struct DecoratedFieldInfo {
     is_bracket_access: bool,
     /// The original initializer text (e.g., "1", "2"), or empty for no initializer
     initializer_text: String,
-    /// Index into decorated_members for this field
+    /// Index into `decorated_members` for this field
     member_var_index: usize,
 }
 
@@ -385,14 +385,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     assign_parts.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
                 }
                 for (mi, var_name) in &computed_key_vars {
-                    if let Some(member) = decorated_members.get(*mi) {
-                        if let MemberName::Computed(expr_idx) = &member.name {
-                            assign_parts.push(format!(
-                                "{var_name} = {}({})",
-                                self.helper("__propKey"),
-                                self.node_text(*expr_idx)
-                            ));
-                        }
+                    if let Some(member) = decorated_members.get(*mi)
+                        && let MemberName::Computed(expr_idx) = &member.name
+                    {
+                        assign_parts.push(format!(
+                            "{var_name} = {}({})",
+                            self.helper("__propKey"),
+                            self.node_text(*expr_idx)
+                        ));
                     }
                 }
                 let assign_expr = assign_parts.join(", ");
@@ -648,7 +648,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     /// Emit class body members with field decorator rewriting.
     ///
-    /// Returns (pre_iife_assignments, post_iife_assignments) for ES2015 comma expression placement.
+    /// Returns (`pre_iife_assignments`, `post_iife_assignments`) for ES2015 comma expression placement.
     #[allow(clippy::too_many_arguments)]
     fn emit_class_body(
         &self,
@@ -897,21 +897,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     };
                     out.push_str(&format!("{indent}static {{ {lhs} = {rhs}; }}\n"));
                 }
-                if let Some(last_fi) = static_fields.last() {
-                    if let Some(ref extra_var) =
+                if let Some(last_fi) = static_fields.last()
+                    && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
-                    {
-                        out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
-                    }
+                {
+                    out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
                 }
             } else if self.use_static_blocks && self.use_define_for_class_fields {
                 // ES2022 + useDefine=true: last static field's extra-initializers in static block
-                if let Some(last_fi) = static_fields.last() {
-                    if let Some(ref extra_var) =
+                if let Some(last_fi) = static_fields.last()
+                    && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
-                    {
-                        out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
-                    }
+                {
+                    out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
                 }
             } else {
                 // ES2015: static field inits as comma expressions (post-IIFE)
@@ -953,14 +951,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         post_iife_assignments.push(format!("{lhs} = {rhs}"));
                     }
                 }
-                if let Some(last_fi) = static_fields.last() {
-                    if let Some(ref extra_var) =
+                if let Some(last_fi) = static_fields.last()
+                    && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
-                    {
-                        post_iife_assignments.push(format!(
-                            "__EXTRA_INIT_IIFE__:{run_init}({class_ref}, {extra_var})"
-                        ));
-                    }
+                {
+                    post_iife_assignments.push(format!(
+                        "__EXTRA_INIT_IIFE__:{run_init}({class_ref}, {extra_var})"
+                    ));
                 }
             }
         }
@@ -1036,13 +1033,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     .iter()
                     .rev()
                     .find(|f| !decorated_members[f.member_var_index].is_static)
-                {
-                    if let Some(ref extra_var) =
+                    && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
-                    {
-                        ctor_init_calls
-                            .push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                    }
+                {
+                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
                 }
             } else if fields_in_class_body && has_instance_fields {
                 // Fields in class body: only last instance field's extra-initializers in constructor
@@ -1050,13 +1044,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     .iter()
                     .rev()
                     .find(|f| !decorated_members[f.member_var_index].is_static)
-                {
-                    if let Some(ref extra_var) =
+                    && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
-                    {
-                        ctor_init_calls
-                            .push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                    }
+                {
+                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
                 }
             } else if has_instance_method {
                 ctor_init_calls.push(format!(

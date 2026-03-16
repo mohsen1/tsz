@@ -7632,7 +7632,7 @@ impl<'a> DeclarationEmitter<'a> {
     // =========================================================================
 
     /// Check if an inferred type references symbols from non-portable module paths
-    /// (e.g., nested node_modules or private package subpaths).
+    /// (e.g., nested `node_modules` or private package subpaths).
     ///
     /// If non-portable references are found, emits TS2883 diagnostics.
     ///
@@ -7667,7 +7667,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Scan a type for non-portable symbol references by checking all
-    /// referenced types for symbols from nested node_modules.
+    /// referenced types for symbols from nested `node_modules`.
     ///
     /// Returns `Some((from_path, type_name))` for the first non-portable reference found.
     fn find_non_portable_type_reference(
@@ -7685,26 +7685,23 @@ impl<'a> DeclarationEmitter<'a> {
 
         for &ref_type_id in &referenced_types {
             // Check Lazy(DefId) types - these are named type references
-            if let Some(def_id) = tsz_solver::lazy_def_id(interner, ref_type_id) {
-                if let Some(&sym_id) = cache.def_to_symbol.get(&def_id) {
-                    if let Some(result) =
-                        self.check_symbol_portability(sym_id, binder, current_file_path)
-                    {
-                        return Some(result);
-                    }
-                }
+            if let Some(def_id) = tsz_solver::lazy_def_id(interner, ref_type_id)
+                && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
+                && let Some(result) =
+                    self.check_symbol_portability(sym_id, binder, current_file_path)
+            {
+                return Some(result);
             }
 
             // Check object shapes with symbols - these are structural types
             // that may reference foreign symbols through their shape.symbol field
             if let Some(shape_id) = tsz_solver::object_shape_id(interner, ref_type_id) {
                 let shape = interner.object_shape(shape_id);
-                if let Some(sym_id) = shape.symbol {
-                    if let Some(result) =
+                if let Some(sym_id) = shape.symbol
+                    && let Some(result) =
                         self.check_symbol_portability(sym_id, binder, current_file_path)
-                    {
-                        return Some(result);
-                    }
+                {
+                    return Some(result);
                 }
             }
         }
@@ -7858,38 +7855,33 @@ impl<'a> DeclarationEmitter<'a> {
                     .collect();
 
                 let relative_path = subpath_parts.join("/");
-                if let Some(runtime_path) = self.declaration_runtime_relative_path(&relative_path) {
-                    if self
+                if let Some(runtime_path) = self.declaration_runtime_relative_path(&relative_path)
+                    && self
                         .reverse_export_specifier_for_runtime_path(&package_root, &runtime_path)
                         .is_none()
+                {
+                    let pkg_json_path = package_root.join("package.json");
+                    if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
+                        && let Ok(pkg_json) =
+                            serde_json::from_str::<serde_json::Value>(&pkg_content)
+                        && pkg_json.get("exports").is_some()
                     {
-                        let pkg_json_path = package_root.join("package.json");
-                        if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path) {
-                            if let Ok(pkg_json) =
-                                serde_json::from_str::<serde_json::Value>(&pkg_content)
-                            {
-                                if pkg_json.get("exports").is_some() {
-                                    // Build "from" path: ./node_modules/pkg/subpath
-                                    let mut path_parts: Vec<String> = components[nm_idx..]
-                                        .iter()
-                                        .filter_map(|c| match c {
-                                            Component::Normal(part) => {
-                                                part.to_str().map(str::to_string)
-                                            }
-                                            _ => None,
-                                        })
-                                        .collect();
-                                    if let Some(last) = path_parts.last_mut() {
-                                        *last = self.strip_ts_extensions(last);
-                                    }
-                                    if path_parts.last().is_some_and(|p| p == "index") {
-                                        path_parts.pop();
-                                    }
-                                    let from_path = format!("./{}", path_parts.join("/"));
-                                    return Some((from_path, type_name));
-                                }
-                            }
+                        // Build "from" path: ./node_modules/pkg/subpath
+                        let mut path_parts: Vec<String> = components[nm_idx..]
+                            .iter()
+                            .filter_map(|c| match c {
+                                Component::Normal(part) => part.to_str().map(str::to_string),
+                                _ => None,
+                            })
+                            .collect();
+                        if let Some(last) = path_parts.last_mut() {
+                            *last = self.strip_ts_extensions(last);
                         }
+                        if path_parts.last().is_some_and(|p| p == "index") {
+                            path_parts.pop();
+                        }
+                        let from_path = format!("./{}", path_parts.join("/"));
+                        return Some((from_path, type_name));
                     }
                 }
             }
@@ -7898,7 +7890,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    /// Get the source file path for a symbol via the binder's symbol_arenas and arena_to_path.
+    /// Get the source file path for a symbol via the binder's `symbol_arenas` and `arena_to_path`.
     fn get_symbol_source_path(&self, sym_id: SymbolId, binder: &BinderState) -> Option<String> {
         let source_arena = binder.symbol_arenas.get(&sym_id)?;
         let arena_addr = Arc::as_ptr(source_arena) as usize;
