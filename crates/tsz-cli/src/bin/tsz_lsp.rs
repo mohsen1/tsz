@@ -480,10 +480,7 @@ impl LspServer {
     fn publish_diagnostics(&mut self, uri: &str) {
         let file_name = Self::uri_to_file_name(uri);
         if let Some(diagnostics) = self.project.get_diagnostics(&file_name) {
-            let lsp_diags: Vec<Value> = diagnostics
-                .iter()
-                .map(|d| Self::diagnostic_to_json(d))
-                .collect();
+            let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
 
             self.pending_notifications.push(JsonRpcNotification {
                 jsonrpc: "2.0".to_string(),
@@ -799,10 +796,7 @@ impl LspServer {
         let stale = self.project.get_stale_diagnostics();
         for (file_name, diagnostics) in stale {
             let uri = Self::file_name_to_uri(&file_name);
-            let lsp_diags: Vec<Value> = diagnostics
-                .iter()
-                .map(|d| Self::diagnostic_to_json(d))
-                .collect();
+            let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
             self.pending_notifications.push(JsonRpcNotification {
                 jsonrpc: "2.0".to_string(),
                 method: "textDocument/publishDiagnostics".to_string(),
@@ -838,10 +832,7 @@ impl LspServer {
 
         let diagnostics = self.project.get_diagnostics(&file_name).unwrap_or_default();
 
-        let lsp_diags: Vec<Value> = diagnostics
-            .iter()
-            .map(|d| Self::diagnostic_to_json(d))
-            .collect();
+        let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
 
         Ok(serde_json::json!({
             "kind": "full",
@@ -856,10 +847,7 @@ impl LspServer {
         for file_name in &file_names {
             let diagnostics = self.project.get_diagnostics(file_name).unwrap_or_default();
 
-            let lsp_diags: Vec<Value> = diagnostics
-                .iter()
-                .map(|d| Self::diagnostic_to_json(d))
-                .collect();
+            let lsp_diags: Vec<Value> = diagnostics.iter().map(Self::diagnostic_to_json).collect();
 
             items.push(serde_json::json!({
                 "kind": "full",
@@ -971,10 +959,10 @@ impl LspServer {
                         .collect();
                     ci["additionalTextEdits"] = Value::Array(lsp_edits);
                 }
-                if let Some(ref source) = item.source {
-                    if item.detail.is_none() {
-                        ci["detail"] = Value::from(format!("Auto import from '{source}'"));
-                    }
+                if let Some(ref source) = item.source
+                    && item.detail.is_none()
+                {
+                    ci["detail"] = Value::from(format!("Auto import from '{source}'"));
                 }
                 // Attach resolve data so completionItem/resolve can look up docs
                 ci["data"] = serde_json::json!({
@@ -1009,13 +997,12 @@ impl LspServer {
 
             if let Some((_detail, documentation)) =
                 self.project.resolve_completion(&file_name, &label)
+                && let Some(doc) = documentation
             {
-                if let Some(doc) = documentation {
-                    item["documentation"] = serde_json::json!({
-                        "kind": "markdown",
-                        "value": doc,
-                    });
-                }
+                item["documentation"] = serde_json::json!({
+                    "kind": "markdown",
+                    "value": doc,
+                });
             }
         }
 
@@ -1641,11 +1628,11 @@ impl LspServer {
             let tooltip = match kind {
                 1 => {
                     // Type hint
-                    format!("Inferred type{}", label)
+                    format!("Inferred type{label}")
                 }
                 2 => {
                     // Parameter hint
-                    format!("Parameter name{}", label)
+                    format!("Parameter name{label}")
                 }
                 _ => String::new(),
             };
@@ -2128,18 +2115,18 @@ impl LspServer {
             match change_type {
                 1 => {
                     // Created: read and add if it's a TS/JS file
-                    if Self::is_ts_file(&file_name) {
-                        if let Ok(content) = std::fs::read_to_string(&file_name) {
-                            self.project.set_file(file_name, content);
-                        }
+                    if Self::is_ts_file(&file_name)
+                        && let Ok(content) = std::fs::read_to_string(&file_name)
+                    {
+                        self.project.set_file(file_name, content);
                     }
                 }
                 2 => {
                     // Changed: update if we're tracking it
-                    if self.project.file(&file_name).is_some() {
-                        if let Ok(content) = std::fs::read_to_string(&file_name) {
-                            self.project.set_file(file_name, content);
-                        }
+                    if self.project.file(&file_name).is_some()
+                        && let Ok(content) = std::fs::read_to_string(&file_name)
+                    {
+                        self.project.set_file(file_name, content);
                     }
                 }
                 3 => {
@@ -2324,11 +2311,11 @@ impl LspServer {
                             file.source_text(),
                         );
                         let actions = provider.provide_code_actions(file.root(), range, context);
-                        if let Some(action) = actions.first() {
-                            if let Some(ref edit) = action.edit {
-                                // Apply the workspace edit
-                                return Ok(serde_json::to_value(edit).unwrap_or(Value::Null));
-                            }
+                        if let Some(action) = actions.first()
+                            && let Some(ref edit) = action.edit
+                        {
+                            // Apply the workspace edit
+                            return Ok(serde_json::to_value(edit).unwrap_or(Value::Null));
                         }
                     }
                 }

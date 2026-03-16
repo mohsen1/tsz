@@ -419,35 +419,34 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-        } else if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            if let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
-                for &element_idx in &pattern.elements.nodes {
-                    if let Some(element_node) = self.ctx.arena.get(element_idx) {
-                        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                            continue;
-                        }
-                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
-                        {
-                            let name_is_pattern = self
-                                .ctx
-                                .arena
-                                .get(binding_elem.name)
-                                .map(|n| {
-                                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                })
-                                .unwrap_or(false);
+        } else if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
+        {
+            for &element_idx in &pattern.elements.nodes {
+                if let Some(element_node) = self.ctx.arena.get(element_idx) {
+                    if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        continue;
+                    }
+                    if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
+                        let name_is_pattern = self
+                            .ctx
+                            .arena
+                            .get(binding_elem.name)
+                            .map(|n| {
+                                n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            })
+                            .unwrap_or(false);
 
-                            if name_is_pattern {
-                                self.emit_implicit_any_for_var_destructuring(binding_elem.name);
-                            } else if binding_elem.initializer.is_none() {
-                                let binding_name = self.parameter_name_for_error(binding_elem.name);
-                                self.error_at_node_msg(
-                                    binding_elem.name,
-                                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
-                                    &[&binding_name, "any"],
-                                );
-                            }
+                        if name_is_pattern {
+                            self.emit_implicit_any_for_var_destructuring(binding_elem.name);
+                        } else if binding_elem.initializer.is_none() {
+                            let binding_name = self.parameter_name_for_error(binding_elem.name);
+                            self.error_at_node_msg(
+                                binding_elem.name,
+                                diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
+                                &[&binding_name, "any"],
+                            );
                         }
                     }
                 }

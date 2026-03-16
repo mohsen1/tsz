@@ -833,9 +833,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
-                        .map_or(false, |s| {
-                            (s.flags & tsz_binder::symbol_flags::NAMESPACE) != 0
-                        })
+                        .is_some_and(|s| (s.flags & tsz_binder::symbol_flags::NAMESPACE) != 0)
                 } else {
                     false
                 };

@@ -667,16 +667,15 @@ impl<'a> CheckerState<'a> {
         let mut walk_id = current_scope.parent;
 
         while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
-            if let Some(sym_id) = scope.table.get(namespace_name) {
-                if let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-                    if (sym.flags & symbol_flags::NAMESPACE) != 0 {
-                        // Found a namespace - check if it has the member
-                        if let Some(exports) = sym.exports.as_ref() {
-                            if exports.has(member_name) {
-                                return true;
-                            }
-                        }
-                    }
+            if let Some(sym_id) = scope.table.get(namespace_name)
+                && let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                && (sym.flags & symbol_flags::NAMESPACE) != 0
+            {
+                // Found a namespace - check if it has the member
+                if let Some(exports) = sym.exports.as_ref()
+                    && exports.has(member_name)
+                {
+                    return true;
                 }
             }
             if walk_id == scope.parent {

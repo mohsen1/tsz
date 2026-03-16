@@ -7,4 +7,4 @@
 
 mod binding;
 mod import_export;
-pub mod resolution_debug;
+pub(crate) mod resolution_debug;

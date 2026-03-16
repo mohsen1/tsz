@@ -2,6 +2,7 @@ use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -363,18 +364,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Chain assignment: `exports = module.exports` or `module.exports = exports = {}`
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = arena.get_binary_expr(node) {
-                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
-                    return Self::is_exports_or_module_exports_or_chain_in_arena(
-                        arena,
-                        binary.left,
-                    ) || Self::is_exports_or_module_exports_or_chain_in_arena(
-                        arena,
-                        binary.right,
-                    );
-                }
-            }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return Self::is_exports_or_module_exports_or_chain_in_arena(arena, binary.left)
+                || Self::is_exports_or_module_exports_or_chain_in_arena(arena, binary.right);
         }
 
         false
@@ -458,14 +453,12 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = arena.get(decl_idx) else {
             return;
         };
-        if let Some(var_decl) = arena.get_variable_declaration(decl_node) {
-            if var_decl.initializer.is_some()
-                && Self::is_exports_or_module_exports_or_chain_in_arena(arena, var_decl.initializer)
-            {
-                if let Some(name_ident) = arena.get_identifier_at(var_decl.name) {
-                    aliases.insert(name_ident.escaped_text.clone());
-                }
-            }
+        if let Some(var_decl) = arena.get_variable_declaration(decl_node)
+            && var_decl.initializer.is_some()
+            && Self::is_exports_or_module_exports_or_chain_in_arena(arena, var_decl.initializer)
+            && let Some(name_ident) = arena.get_identifier_at(var_decl.name)
+        {
+            aliases.insert(name_ident.escaped_text.clone());
         }
     }
 
@@ -486,25 +479,20 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if the identifier is a variable alias for exports/module.exports
-                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0 {
-                            let decl_idx = symbol.value_declaration;
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                if let Some(var_decl) =
-                                    self.ctx.arena.get_variable_declaration(decl_node)
-                                {
-                                    if var_decl.initializer.is_some()
-                                        && Self::is_exports_or_module_exports_or_chain_in_arena(
-                                            self.ctx.arena,
-                                            var_decl.initializer,
-                                        )
-                                    {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
+                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
+                {
+                    let decl_idx = symbol.value_declaration;
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                        && var_decl.initializer.is_some()
+                        && Self::is_exports_or_module_exports_or_chain_in_arena(
+                            self.ctx.arena,
+                            var_decl.initializer,
+                        )
+                    {
+                        return true;
                     }
                 }
             }
@@ -1198,5 +1186,169 @@ impl<'a> CheckerState<'a> {
             Some(target_file_idx),
             props,
         );
+    }
+
+    pub(crate) fn commonjs_namespace_type_for_file(
+        &mut self,
+        target_file_idx: usize,
+    ) -> Option<TypeId> {
+        let mut props = Vec::new();
+        self.augment_namespace_props_with_commonjs_exports_for_file(target_file_idx, &mut props);
+        if props.is_empty() {
+            return None;
+        }
+        let namespace_type = self.ctx.types.factory().object(props);
+        if let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32)) {
+            self.ctx
+                .namespace_module_names
+                .insert(namespace_type, specifier.clone());
+        }
+        Some(namespace_type)
+    }
+
+    pub(crate) fn commonjs_define_property_namespace_type(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))?;
+        self.commonjs_namespace_type_for_file(target_file_idx)
+    }
+
+    pub(crate) fn commonjs_module_value_type(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
+
+        if let Some(json_type) = self.json_module_type_for_module(module_name, source_file_idx) {
+            return Some(json_type);
+        }
+
+        let target_file_idx = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name));
+
+        let exports_table = self
+            .resolve_effective_module_exports_from_file(module_name, source_file_idx)
+            .or_else(|| {
+                let target_file_idx = target_file_idx?;
+                let target_file_name = self
+                    .ctx
+                    .get_arena_for_file(target_file_idx as u32)
+                    .source_files
+                    .first()
+                    .map(|source_file| source_file.file_name.clone())?;
+                self.resolve_effective_module_exports(&target_file_name)
+            });
+
+        if let Some(exports_table) = exports_table {
+            let module_is_non_module_entity =
+                self.ctx.module_resolves_to_non_module_entity(module_name);
+            for (name, &sym_id) in exports_table.iter() {
+                self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
+            }
+
+            let export_equals_type = exports_table
+                .get("export=")
+                .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+            let mut props: Vec<PropertyInfo> = Vec::new();
+            for (name, &sym_id) in exports_table.iter() {
+                if name == "export="
+                    || self.is_type_only_export_symbol(sym_id)
+                    || self.is_export_from_type_only_wildcard(module_name, name)
+                    || self.export_symbol_has_no_value(sym_id)
+                    || self.is_export_type_only_from_file(module_name, name, source_file_idx)
+                {
+                    continue;
+                }
+
+                let mut prop_type = self.get_type_of_symbol(sym_id);
+                prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+                let name_atom = self.ctx.types.intern_string(name);
+                props.push(PropertyInfo {
+                    name: name_atom,
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: props.len() as u32,
+                });
+            }
+
+            if !module_is_non_module_entity
+                && let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name)
+            {
+                for aug in augmentations {
+                    let name_atom = self.ctx.types.intern_string(&aug.name);
+                    if props.iter().any(|p| p.name == name_atom) {
+                        continue;
+                    }
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id: TypeId::ANY,
+                        write_type: TypeId::ANY,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: props.len() as u32,
+                    });
+                }
+            }
+
+            let augment_target = source_file_idx
+                .and_then(|src_idx| {
+                    self.ctx
+                        .resolve_import_target_from_file(src_idx, module_name)
+                })
+                .or(target_file_idx);
+            if let Some(target_idx) = augment_target {
+                self.augment_namespace_props_with_commonjs_exports_for_file(target_idx, &mut props);
+            }
+
+            let namespace_type = factory.object(props);
+            let display_module_name =
+                self.resolve_namespace_display_module_name(&exports_table, module_name);
+            self.ctx
+                .namespace_module_names
+                .insert(namespace_type, display_module_name);
+
+            if let Some(export_equals_type) = export_equals_type {
+                if module_is_non_module_entity {
+                    return Some(export_equals_type);
+                }
+                return Some(factory.intersection2(export_equals_type, namespace_type));
+            }
+
+            return Some(namespace_type);
+        }
+
+        let direct_type =
+            self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx);
+        let namespace_type =
+            self.commonjs_define_property_namespace_type(module_name, source_file_idx);
+
+        match (direct_type, namespace_type) {
+            (Some(dt), Some(ns)) => Some(factory.intersection2(dt, ns)),
+            (Some(dt), None) => Some(dt),
+            (None, Some(ns)) => Some(ns),
+            (None, None) => None,
+        }
     }
 }

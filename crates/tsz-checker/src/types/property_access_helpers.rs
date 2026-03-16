@@ -295,10 +295,10 @@ impl<'a> CheckerState<'a> {
         // Check the class's members table for the property name.
         // Members table stores instance members by name, so a match here
         // means the property is a declared instance member.
-        if let Some(ref members) = symbol.members {
-            if members.get(property_name).is_some() {
-                return true;
-            }
+        if let Some(ref members) = symbol.members
+            && members.get(property_name).is_some()
+        {
+            return true;
         }
 
         // Also check the class AST for accessor declarations (get/set),

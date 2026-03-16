@@ -289,7 +289,7 @@ pub trait StatementCheckCallbacks {
     fn check_with_statement(&mut self, stmt_idx: NodeIndex);
 
     /// Check if a module element (import/export/namespace/ambient module) is in
-    /// a valid context (SourceFile or ModuleBlock). If not, emit the appropriate
+    /// a valid context (`SourceFile` or `ModuleBlock`). If not, emit the appropriate
     /// grammar error (TS1231-1235, TS1258). Returns true if the context is invalid
     /// (error was emitted), false if the context is valid.
     fn check_grammar_module_element_context(&mut self, stmt_idx: NodeIndex) -> bool {
