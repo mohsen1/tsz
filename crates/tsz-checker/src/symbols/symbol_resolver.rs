@@ -581,6 +581,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // When a symbol is merged from an import alias and a local value declaration
+            // (e.g., `import { FC } from "./types"; let FC: FC | null = null;`),
+            // the type meaning comes from the alias chain. If the alias resolves to a
+            // type (not value-only), accept the symbol in type position.
+            let alias_is_type = (flags & symbol_flags::ALIAS) != 0
+                && !self.alias_resolves_to_value_only(sym_id, None);
+            if alias_is_type && (flags & symbol_flags::VALUE) != 0 {
+                return true;
+            }
+
             let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
                 || self.symbol_is_value_only(sym_id, None))
                 && !self.symbol_is_type_only(sym_id, None);
