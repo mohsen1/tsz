@@ -744,9 +744,10 @@ impl<'a> CheckerState<'a> {
         self.is_export_type_only_in_file(source, module_specifier, export_name, &mut visited)
     }
 
-    /// Check if a module has `export = X` where X is a type-only import.
+    /// Check if a module has `export = X` where X is a type-only import or a pure type.
     /// This propagates type-only status through `export =` chains, e.g.:
     ///   `import type * as ns from './a'; export = ns;`
+    ///   `declare type T = number; export = T;`
     /// Any import from such a module inherits the type-only status.
     pub(crate) fn is_module_export_equals_type_only(&self, module_specifier: &str) -> bool {
         let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
@@ -766,6 +767,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        const VALUE: u32 = symbol_flags::VARIABLE
+            | symbol_flags::FUNCTION
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ENUM_MEMBER
+            | symbol_flags::VALUE_MODULE;
+
         let lib_binders = self.get_lib_binders();
 
         // Check the export= symbol in the main binder (merged arena)
@@ -775,6 +784,10 @@ impl<'a> CheckerState<'a> {
             .get_symbol_with_libs(export_eq_sym_id, &lib_binders)
         {
             if eq_sym.is_type_only {
+                return true;
+            }
+            // Check if the export= target is a pure type (type alias / interface)
+            if (eq_sym.flags & PURE_TYPE) != 0 && (eq_sym.flags & VALUE) == 0 {
                 return true;
             }
             // Follow the alias: if export= points to a type-only import, propagate
@@ -793,9 +806,13 @@ impl<'a> CheckerState<'a> {
                     // Check the final target
                     if let Some(target_sym) =
                         self.ctx.binder.get_symbol_with_libs(resolved, &lib_binders)
-                        && target_sym.is_type_only
                     {
-                        return true;
+                        if target_sym.is_type_only {
+                            return true;
+                        }
+                        if (target_sym.flags & PURE_TYPE) != 0 && (target_sym.flags & VALUE) == 0 {
+                            return true;
+                        }
                     }
                 }
             }
