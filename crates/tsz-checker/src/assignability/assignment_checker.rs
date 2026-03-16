@@ -1296,6 +1296,65 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// TS2365: Check for bigint/number type mixing in compound assignment operators.
+    /// When both operands are individually valid arithmetic types but the binary operation
+    /// would fail (e.g., bigint -= number), emit TS2365.
+    fn check_compound_assignment_type_compatibility(
+        &mut self,
+        expr_idx: NodeIndex,
+        operator: u16,
+        left_read_type: TypeId,
+        right_type: TypeId,
+        emitted_operator_error: &mut bool,
+    ) {
+        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+        let eval_left = self.evaluate_type_for_binary_ops(left_read_type);
+        let eval_right = self.evaluate_type_for_binary_ops(right_type);
+        if let Some(binary_op) = tsz_solver::map_compound_assignment_to_binary(operator) {
+            let result = evaluator.evaluate(eval_left, eval_right, binary_op);
+            if let crate::query_boundaries::type_computation::core::BinaryOpResult::TypeError {
+                ..
+            } = result
+            {
+                let compound_op_str = match operator {
+                    k if k == SyntaxKind::MinusEqualsToken as u16 => "-=",
+                    k if k == SyntaxKind::AsteriskEqualsToken as u16 => "*=",
+                    k if k == SyntaxKind::SlashEqualsToken as u16 => "/=",
+                    k if k == SyntaxKind::PercentEqualsToken as u16 => "%=",
+                    k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => "**=",
+                    k if k == SyntaxKind::LessThanLessThanEqualsToken as u16 => "<<=",
+                    k if k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => ">>=",
+                    k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => {
+                        ">>>="
+                    }
+                    k if k == SyntaxKind::AmpersandEqualsToken as u16 => "&=",
+                    k if k == SyntaxKind::BarEqualsToken as u16 => "|=",
+                    k if k == SyntaxKind::CaretEqualsToken as u16 => "^=",
+                    _ => "?=",
+                };
+                let left_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
+                    self.ctx.types,
+                    left_read_type,
+                ));
+                let right_diag = self.widen_enum_member_type(tsz_solver::widen_literal_type(
+                    self.ctx.types,
+                    right_type,
+                ));
+                let left_str = self.format_type(left_diag);
+                let right_str = self.format_type(right_diag);
+                let message = format!(
+                    "Operator '{compound_op_str}' cannot be applied to types '{left_str}' and '{right_str}'."
+                );
+                self.error_at_node(
+                    expr_idx,
+                    &message,
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                );
+                *emitted_operator_error = true;
+            }
+        }
+    }
+
     // =========================================================================
     // Compound Assignment Checking
     // =========================================================================
@@ -1533,8 +1592,20 @@ impl<'a> CheckerState<'a> {
         if is_arithmetic_compound && !is_function_assignment && !emitted_nullish_error {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
             if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                emitted_operator_error |=
+                let had_per_operand_error =
                     self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
+                emitted_operator_error |= had_per_operand_error;
+
+                // TS2365: Check for bigint/number mixing in arithmetic compound assignments
+                if !had_per_operand_error && !emitted_operator_error {
+                    self.check_compound_assignment_type_compatibility(
+                        expr_idx,
+                        operator,
+                        left_read_type,
+                        right_type,
+                        &mut emitted_operator_error,
+                    );
+                }
             }
         }
 
@@ -1585,8 +1656,20 @@ impl<'a> CheckerState<'a> {
                 self.emit_boolean_operator_error(left_idx, op_str, suggestion);
                 emitted_operator_error = true;
             } else if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                emitted_operator_error |=
+                let had_per_operand_error =
                     self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
+                emitted_operator_error |= had_per_operand_error;
+
+                // TS2365: Check for bigint/number mixing in bitwise compound assignments
+                if !had_per_operand_error && !emitted_operator_error {
+                    self.check_compound_assignment_type_compatibility(
+                        expr_idx,
+                        operator,
+                        left_read_type,
+                        right_type,
+                        &mut emitted_operator_error,
+                    );
+                }
             }
         } else if is_shift_compound
             && !is_function_assignment
@@ -1594,8 +1677,20 @@ impl<'a> CheckerState<'a> {
             && left_read_type != TypeId::ERROR
             && right_type != TypeId::ERROR
         {
-            emitted_operator_error |=
+            let had_per_operand_error =
                 self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
+            emitted_operator_error |= had_per_operand_error;
+
+            // TS2365: Check for bigint/number mixing in shift compound assignments
+            if !had_per_operand_error && !emitted_operator_error {
+                self.check_compound_assignment_type_compatibility(
+                    expr_idx,
+                    operator,
+                    left_read_type,
+                    right_type,
+                    &mut emitted_operator_error,
+                );
+            }
         }
 
         let result_type =
@@ -1651,7 +1746,7 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
             k if k == SyntaxKind::MinusEqualsToken as u16 => Some("-"),
             k if k == SyntaxKind::AsteriskEqualsToken as u16 => Some("*"),
-            k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => Some("*"),
+            k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => Some("**"),
             k if k == SyntaxKind::SlashEqualsToken as u16 => Some("/"),
             k if k == SyntaxKind::PercentEqualsToken as u16 => Some("%"),
             k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => Some("&&"),
@@ -1668,16 +1763,22 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        if matches!(
-            operator,
-            k if k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-        ) {
-            return TypeId::NUMBER;
+        let bitwise_op = match operator {
+            k if k == SyntaxKind::AmpersandEqualsToken as u16 => Some("&"),
+            k if k == SyntaxKind::BarEqualsToken as u16 => Some("|"),
+            k if k == SyntaxKind::CaretEqualsToken as u16 => Some("^"),
+            k if k == SyntaxKind::LessThanLessThanEqualsToken as u16 => Some("<<"),
+            k if k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => Some(">>"),
+            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => {
+                Some(">>>")
+            }
+            _ => None,
+        };
+        if let Some(op) = bitwise_op {
+            return match evaluator.evaluate(left_type, right_type, op) {
+                BinaryOpResult::Success(result) => result,
+                BinaryOpResult::TypeError { .. } => TypeId::NUMBER,
+            };
         }
 
         // Return ANY for unknown binary operand types to prevent cascading errors

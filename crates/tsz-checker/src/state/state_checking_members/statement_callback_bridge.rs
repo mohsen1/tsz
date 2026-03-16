@@ -707,8 +707,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     .should_skip_no_implicit_return_check(check_return_type, has_declared_return)
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
+                // TSC points TS7030 to: return type annotation > function name > node itself
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                let error_node = if func.name.is_some() {
+                let error_node = if func.type_annotation.is_some() {
+                    func.type_annotation
+                } else if func.name.is_some() {
                     func.name
                 } else {
                     func.body
