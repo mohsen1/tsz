@@ -771,15 +771,11 @@ impl<'a> TypeFormatter<'a> {
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
-            // tsc displays optional params WITHOUT `| undefined` in
-            // function type signatures — the `?` already communicates
-            // optionality. Strip `undefined` from union types so that
-            // `(a?: string | undefined)` displays as `(a?: string)`.
-            let type_str: String = if p.optional {
-                self.format_stripping_undefined(p.type_id)
-            } else {
-                self.format(p.type_id).into_owned()
-            };
+            // tsc 6.0 displays optional params WITH `| undefined` in
+            // function type signatures when strictNullChecks is on.
+            // Display the type as-is (the ParamInfo.type_id already
+            // includes `| undefined` when appropriate).
+            let type_str: String = self.format(p.type_id).into_owned();
             rendered.push(format!("{rest}{name}{optional}: {type_str}"));
         }
 

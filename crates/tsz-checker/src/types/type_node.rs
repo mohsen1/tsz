@@ -1633,7 +1633,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             &type_resolver,
             &def_id_resolver,
             &value_resolver,
-        );
+        )
+        .with_strict_null_checks(self.ctx.strict_null_checks());
         if !type_param_bindings.is_empty() {
             lowering = lowering.with_type_param_bindings(type_param_bindings);
         }

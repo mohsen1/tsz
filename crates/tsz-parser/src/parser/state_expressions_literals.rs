@@ -1683,6 +1683,13 @@ impl ParserState {
                 diagnostic_codes::AN_OBJECT_MEMBER_CANNOT_BE_DECLARED_OPTIONAL,
             );
             self.next_token(); // Skip the '?' for error recovery
+
+            // After skipping '?', if followed by '(' or '<', continue parsing as method
+            // for error recovery (e.g., `{ foo?() { } }` should still parse the method body)
+            if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken)
+            {
+                return self.parse_object_method_after_name(start_pos, name, false, false);
+            }
         }
 
         if self.parse_optional(SyntaxKind::ColonToken) {
@@ -2100,6 +2107,9 @@ impl ParserState {
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            // tsc emits TS1005 "'{' expected." when an object method body is missing
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
             NodeIndex::NONE
         };
         self.pop_label_scope();
