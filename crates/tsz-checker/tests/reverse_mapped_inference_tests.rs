@@ -124,9 +124,7 @@ function test() {
     assert!(!codes.contains(&2322), "Expected no TS2322, got: {codes:?}");
 }
 
-#[test]
-#[ignore = "times out (>60s) — reverse mapped union template causes solver loop"]
-fn reverse_mapped_union_template_definition_pattern() {
+#[test]fn reverse_mapped_union_template_definition_pattern() {
     // When the mapped type template is a union like `(() => T[K]) | Definition<T[K]>`,
     // reverse inference should try each union member. For `() => number` as source,
     // the function member `() => T[K]` should reverse to T[K] = number.
