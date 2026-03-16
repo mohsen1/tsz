@@ -681,7 +681,8 @@ if (typeof c === "string") {
     );
 }
 
-#[test]fn test_index_write_with_errored_key_still_checks_value_type() {
+#[test]
+fn test_index_write_with_errored_key_still_checks_value_type() {
     let source = r#"
 class Box {
     values: { [name: string]: string } = {};
@@ -857,7 +858,8 @@ function f4<T extends any[]>(t: T) {
     );
 }
 
-#[test]fn test_higher_order_generic_rest_call_accepts_generic_binary_function() {
+#[test]
+fn test_higher_order_generic_rest_call_accepts_generic_binary_function() {
     let source = r#"
 function call<T extends unknown[], U>(f: (...args: T) => U, ...args: T) {
     return f(...args);
@@ -2996,7 +2998,8 @@ fn test_lib_global_symbol_call_does_not_emit_ts2454() {
     );
 }
 
-#[test]fn test_typed_array_to_locale_string_uses_options_parameter_type() {
+#[test]
+fn test_typed_array_to_locale_string_uses_options_parameter_type() {
     // TODO: typed-array toLocaleString 2-arg overload not yet resolved;
     // currently emits TS2554 ("Expected 0 arguments, but got 2").
     // Flip this assertion once overload resolution for lib typed arrays is fixed.
@@ -3021,7 +3024,8 @@ const text = values.toLocaleString("en-US", { style: "currency", currency: "EUR"
     );
 }
 
-#[test]fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
+#[test]
+fn test_typed_array_to_locale_string_uses_options_parameter_type_with_merged_lib_contexts() {
     // TODO: typed-array toLocaleString 2-arg overload not yet resolved;
     // same issue as the non-merged variant above.
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
@@ -4141,7 +4145,8 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
     );
 }
 
-#[test]fn test_indexed_access_constrained_type_param_no_false_ts2304() {
+#[test]
+fn test_indexed_access_constrained_type_param_no_false_ts2304() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 type PropertyType<T extends object, K extends keyof T> = T[K];
@@ -6670,7 +6675,8 @@ three<number>();
 /// In static methods, `this` refers to `typeof C` (the constructor type), not an
 /// instance of C. Accessing instance properties on `this` in a static method should
 /// emit TS2339 because instance properties don't exist on the constructor type.
-#[test]fn test_ts2339_this_in_static_method() {
+#[test]
+fn test_ts2339_this_in_static_method() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 class C {
@@ -12736,7 +12742,8 @@ var arguments = 1;
     );
 }
 
-#[test]fn test_js_identifier_default_parameter_preserves_jsdoc_initializer_type() {
+#[test]
+fn test_js_identifier_default_parameter_preserves_jsdoc_initializer_type() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "a.js",
         r#"
@@ -13538,7 +13545,8 @@ async function* f(): AsyncGenerator<"NOT_FOUND_AUTHOR" | "NOT_FOUND_BOOK", BookW
     );
 }
 
-#[test]fn test_unannotated_async_generator_method_infers_yield_type_in_return() {
+#[test]
+fn test_unannotated_async_generator_method_infers_yield_type_in_return() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 declare const Symbol: { readonly asyncIterator: unique symbol };
@@ -13943,7 +13951,8 @@ if (Strs.A) {}
     );
 }
 
-#[test]fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
+#[test]
+fn test_union_partial_numeric_and_symbol_index_writes_report_ts7053() {
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 declare const sym: unique symbol;
@@ -14109,7 +14118,8 @@ const unexpectedlyFailingExample: Mapped = {
     );
 }
 
-#[test]fn test_contextual_computed_non_bindable_property_type_uses_callable_fallback() {
+#[test]
+fn test_contextual_computed_non_bindable_property_type_uses_callable_fallback() {
     let diagnostics =
         without_missing_global_type_errors(compile_and_get_diagnostics_with_lib_and_options(
             r#"
@@ -14288,7 +14298,8 @@ var c = bar(1, "one", g);
     );
 }
 
-#[test]fn test_generic_call_with_overloaded_callback_uses_last_source_signature() {
+#[test]
+fn test_generic_call_with_overloaded_callback_uses_last_source_signature() {
     let source = r#"
 interface Promise<T> {
     then<U>(cb: (x: T) => Promise<U>): Promise<U>;

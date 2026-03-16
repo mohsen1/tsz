@@ -1367,10 +1367,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For literal numeric indices, check against the minimum guaranteed
             // length (count of required non-rest elements).
             if let Some(n) = literal_number(self.interner(), index_type)
-                && (n.0 as usize) < min_guaranteed {
-                    // Position is guaranteed to exist — no undefined needed.
-                    return result;
-                }
+                && (n.0 as usize) < min_guaranteed
+            {
+                // Position is guaranteed to exist — no undefined needed.
+                return result;
+            }
 
             return self.add_undefined_if_unchecked(result);
         }

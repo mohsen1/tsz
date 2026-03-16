@@ -1351,10 +1351,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let mut root_idx = type_query.expr_name;
             while let Some(node) = self.ctx.arena.get(root_idx) {
                 if node.kind == syntax_kind_ext::QUALIFIED_NAME
-                    && let Some(qn) = self.ctx.arena.get_qualified_name(node) {
-                        root_idx = qn.left;
-                        continue;
-                    }
+                    && let Some(qn) = self.ctx.arena.get_qualified_name(node)
+                {
+                    root_idx = qn.left;
+                    continue;
+                }
                 break;
             }
             if let Some(root_node) = self.ctx.arena.get(root_idx)

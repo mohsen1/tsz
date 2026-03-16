@@ -90,9 +90,10 @@ impl<'a> CheckerState<'a> {
                 .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
                 .map(|p| p.type_id);
             if let Some(src_type) = source_prop_type
-                && tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type) {
-                    return true;
-                }
+                && tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type)
+            {
+                return true;
+            }
         }
         false
     }
@@ -354,23 +355,24 @@ impl<'a> CheckerState<'a> {
         // is due to assigning undefined to optional properties that don't include undefined.
         // This mirrors tsc's reportRelationError which selects TS2375 over TS2322.
         if self.has_exact_optional_property_mismatch(source, target)
-            && let Some(loc) = self.get_source_location(anchor_idx) {
-                let src_str =
-                    self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                let tgt_str = self.format_assignability_type_for_message(target, source);
-                let message = format_message(
+            && let Some(loc) = self.get_source_location(anchor_idx)
+        {
+            let src_str =
+                self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
                     &[&src_str, &tgt_str],
                 );
-                self.ctx.push_diagnostic(Diagnostic::error(
+            self.ctx.push_diagnostic(Diagnostic::error(
                     self.ctx.file_name.clone(),
                     loc.start,
                     loc.length(),
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
                 ));
-                return;
-            }
+            return;
+        }
 
         // Use one solver-boundary analysis path for TS2322 metadata.
         let analysis = self.analyze_assignability_failure(source, target);
