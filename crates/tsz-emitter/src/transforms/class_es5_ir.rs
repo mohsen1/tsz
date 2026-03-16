@@ -628,7 +628,7 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     /// Collect parameter decorators from a method's parameter list for ES5 emit.
-    /// Returns Vec of (runtime_param_index, decorator_node_indices).
+    /// Returns `Vec` of (runtime_param_index, decorator_node_indices).
     /// Skips the `this` parameter since it's erased in JS emit.
     fn collect_param_decorators_es5(&self, parameters: &NodeList) -> Vec<(usize, Vec<NodeIndex>)> {
         let mut result = Vec::new();
@@ -1849,10 +1849,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
             // Skip `this` parameter — it's TypeScript-only and erased in JS emit.
             // The parser may store it as an Identifier with text "this" or as a ThisKeyword token.
-            if let Some(name_node) = self.arena.get(param.name) {
-                if name_node.kind == SyntaxKind::ThisKeyword as u16 {
-                    continue;
-                }
+            if let Some(name_node) = self.arena.get(param.name)
+                && name_node.kind == SyntaxKind::ThisKeyword as u16
+            {
+                continue;
             }
 
             let mut name = get_identifier_text(self.arena, param.name).unwrap_or_default();
