@@ -937,14 +937,13 @@ impl<'a> CheckerState<'a> {
                         if let PropertyAccessResult::Success {
                             type_id: raw_type, ..
                         } = raw
+                            && tsz_solver::contains_this_type(self.ctx.types, raw_type)
                         {
-                            if tsz_solver::contains_this_type(self.ctx.types, raw_type) {
-                                prop_type = tsz_solver::substitute_this_type(
-                                    self.ctx.types,
-                                    raw_type,
-                                    original_object_type,
-                                );
-                            }
+                            prop_type = tsz_solver::substitute_this_type(
+                                self.ctx.types,
+                                raw_type,
+                                original_object_type,
+                            );
                         }
                     }
 
