@@ -902,6 +902,7 @@ impl<'a> Printer<'a> {
         // At ES2022+, use `static { }` blocks for decorator application.
         // At ES2015, use IIFE pattern with comma expressions.
         emitter.set_use_static_blocks(!self.ctx.needs_es2022_lowering);
+        emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
         }

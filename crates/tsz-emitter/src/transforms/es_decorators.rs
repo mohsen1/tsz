@@ -154,6 +154,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         self.function_name = Some(name);
     }
 
+    pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
+        self.use_define_for_class_fields = use_define;
+    }
+
     /// Returns the helper function name with optional tslib prefix.
     fn helper(&self, name: &str) -> String {
         if self.tslib_prefix {
@@ -369,20 +373,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 ));
             }
 
-            // ES2022: emit decorator assignments in a separate static block
-            // ONLY when there are no computed method/getter/setter members to serve
-            // as assignment sinks (field-only decorators need a static block).
-            let _has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
-                decorated_members.get(*mi).is_some_and(|m| {
-                    matches!(
-                        m.kind,
-                        MemberKind::Method | MemberKind::Getter | MemberKind::Setter
-                    )
-                })
-            });
-            // ES2022: emit static block with decorator application
-            // For field-only decorators without computed method sinks,
-            // assignments go at the top of this block
+            // ES2022: for fields-in-constructor mode (!useDefineForClassFields),
+            // emit assignment expressions in a separate static block as comma expression
+            // when there are computed key assignments that need propKey.
+            let has_computed_field_keys = !computed_key_vars.is_empty();
+            if !self.use_define_for_class_fields && has_computed_field_keys {
+                let mut assign_parts: Vec<String> = Vec::new();
+                for (i, member) in decorated_members.iter().enumerate() {
+                    let var_info = &member_vars[i];
+                    let dec_exprs = member.decorator_exprs.join(", ");
+                    assign_parts.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
+                }
+                for (mi, var_name) in &computed_key_vars {
+                    if let Some(member) = decorated_members.get(*mi) {
+                        if let MemberName::Computed(expr_idx) = &member.name {
+                            assign_parts.push(format!(
+                                "{var_name} = {}({})",
+                                self.helper("__propKey"),
+                                self.node_text(*expr_idx)
+                            ));
+                        }
+                    }
+                }
+                let assign_expr = assign_parts.join(", ");
+                out.push_str(&format!("{i2}static {{ {assign_expr}; }}\n"));
+            }
             out.push_str(&format!("{i2}static {{\n"));
             self.emit_decorator_application(
                 &decorated_members,
@@ -410,7 +425,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             (&i3, &i4)
         };
-        self.emit_class_body(
+        let (external_assignments, post_iife_assignments) = self.emit_class_body(
             class_node,
             class_data,
             &decorated_members,
@@ -459,11 +474,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
             );
             out.push_str(&format!("{i1}}})();\n"));
 
+            // Static field initializations after decorator application
+            for assign in &post_iife_assignments {
+                if let Some(expr) = assign.strip_prefix("__EXTRA_INIT_IIFE__:") {
+                    out.push_str(&format!("{i1}(() => {{\n{i2}{expr};\n{i1}}})();\n"));
+                } else {
+                    out.push_str(&format!("{i1}{assign};\n"));
+                }
+            }
+
             // Return C = _classThis
             out.push_str(&format!("{i1}return {class_name} = _classThis;\n"));
         } else {
             // ES2015 without class decorators: comma expression pattern
             out.push_str(&format!("{i2}}},\n"));
+
+            // Pre-IIFE assignment expressions
+            for assign in &external_assignments {
+                out.push_str(&format!("{i2}{assign},\n"));
+            }
 
             out.push_str(&format!("{i2}(() => {{\n"));
             self.emit_decorator_application(
@@ -480,6 +509,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &mut out,
             );
             out.push_str(&format!("{i2}}})(),\n"));
+
+            // Post-IIFE static field initializations
+            for assign in &post_iife_assignments {
+                if let Some(expr) = assign.strip_prefix("__EXTRA_INIT_IIFE__:") {
+                    out.push_str(&format!("{i2}(() => {{\n{i3}{expr};\n{i2}}})(),\n"));
+                } else {
+                    out.push_str(&format!("{i2}{assign},\n"));
+                }
+            }
 
             // Return class alias
             out.push_str(&format!("{i2}{class_alias};\n"));
@@ -508,7 +546,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         ctor_ref: &str,
         computed_key_vars: &[(usize, String)],
         has_extends: bool,
-        has_any_static: bool,
+        _has_any_static: bool,
         class_data: &tsz_parser::parser::node::ClassData,
         indent: &str,
         out: &mut String,
@@ -536,8 +574,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 )
             })
         });
+        let has_computed_field_keys_app = !computed_key_vars.is_empty();
         let emit_assignments_here = if self.use_static_blocks {
-            !has_computed_method_sink
+            // ES2022: emit here only when no computed keys and no computed method sinks
+            !has_computed_field_keys_app && !has_computed_method_sink && !decorated_members.is_empty()
         } else {
             // ES2015 + class decorators: always put assignments in IIFE
             !class_decorators.is_empty()
@@ -586,8 +626,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // Metadata assignment
         out.push_str(&format!("{indent}if (_metadata) Object.defineProperty({ctor_ref}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"));
 
-        // Static extra initializers
-        if has_any_static {
+        // Static extra initializers — only for static method/getter/setter decorators
+        let has_static_method_decorators = decorated_members.iter().any(|m| {
+            m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor)
+        });
+        if has_static_method_decorators {
             out.push_str(&format!(
                 "{indent}{run_initializers}({ctor_ref}, _staticExtraInitializers);\n"
             ));
@@ -601,11 +644,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
-    /// Emit class body members.
+    /// Emit class body members with field decorator rewriting.
     ///
-    /// The key trick: ALL decorator assignment expressions are collected and placed
-    /// inside the last computed member's name brackets as a comma expression.
-    /// If no computed member exists, a synthetic `[(...)]() { }` is added.
+    /// Returns (pre_iife_assignments, post_iife_assignments) for ES2015 comma expression placement.
     #[allow(clippy::too_many_arguments)]
     fn emit_class_body(
         &self,
@@ -620,30 +661,31 @@ impl<'a> TC39DecoratorEmitter<'a> {
         indent: &str,
         inner_indent: &str,
         out: &mut String,
-    ) {
+    ) -> (Vec<String>, Vec<String>) {
         let run_init = self.helper("__runInitializers");
+        let fields_in_class_body = self.use_static_blocks && self.use_define_for_class_fields;
 
-        // Build map: member_idx -> propKey variable for computed members
         let propkey_map: std::collections::HashMap<NodeIndex, &str> = computed_key_vars
             .iter()
             .filter_map(|(mi, var)| {
-                decorated_members
-                    .get(*mi)
-                    .map(|m| (m.member_idx, var.as_str()))
+                decorated_members.get(*mi).map(|m| (m.member_idx, var.as_str()))
             })
             .collect();
 
-        // Collect all class members
-        let all_members: Vec<_> = class_data
-            .members
-            .nodes
+        let decorated_field_idx_set: std::collections::HashSet<NodeIndex> = decorated_members
             .iter()
+            .filter(|m| m.kind == MemberKind::Field)
+            .map(|m| m.member_idx)
+            .collect();
+
+        let field_infos = self.collect_decorated_field_info(decorated_members, computed_key_vars);
+
+        let all_members: Vec<_> = class_data
+            .members.nodes.iter()
             .filter_map(|&idx| self.arena.get(idx).map(|n| (idx, n)))
             .collect();
 
-        // Build map of which assignment expressions go into which computed member.
-        // Walk decorated members in order; assignments accumulate until flushed
-        // into a computed-key member.
+        // Build assignment injection map
         let mut assignment_queue: Vec<String> = Vec::new();
         let mut injected_assignments: std::collections::HashMap<NodeIndex, Vec<String>> =
             std::collections::HashMap::new();
@@ -653,8 +695,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let dec_exprs = member.decorator_exprs.join(", ");
             assignment_queue.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
 
-            // If this member has a computed key with propKey, flush all accumulated
-            // assignments into this member's computed brackets
+            let is_field_being_removed = !fields_in_class_body && member.kind == MemberKind::Field;
             if propkey_map.contains_key(&member.member_idx) {
                 if let MemberName::Computed(expr_idx) = &member.name
                     && let Some((_, var_name)) = computed_key_vars.iter().find(|(mi, _)| *mi == i)
@@ -665,21 +706,23 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         self.node_text(*expr_idx)
                     ));
                 }
-                injected_assignments
-                    .insert(member.member_idx, std::mem::take(&mut assignment_queue));
+                if !is_field_being_removed {
+                    injected_assignments
+                        .insert(member.member_idx, std::mem::take(&mut assignment_queue));
+                }
             }
         }
-        // Any remaining assignments need a synthetic sink
         let remaining_assignments = assignment_queue;
 
-        // Determine emittable members (exclude constructors, index sigs, semicolons)
+        // Emittable members: exclude constructors, index sigs, semicolons, and removed fields
         let emittable: Vec<usize> = all_members
             .iter()
             .enumerate()
-            .filter(|(_, (_, node))| {
+            .filter(|(_, (idx, node))| {
                 node.kind != syntax_kind_ext::CONSTRUCTOR
                     && node.kind != syntax_kind_ext::INDEX_SIGNATURE
                     && node.kind != syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
+                    && (fields_in_class_body || !decorated_field_idx_set.contains(idx))
             })
             .map(|(i, _)| i)
             .collect();
@@ -694,24 +737,53 @@ impl<'a> TC39DecoratorEmitter<'a> {
             };
             let member_text = self.emit_member_bounded(member_node, next_boundary.min(class_close));
 
-            // Check if this member has injected assignments (computed-key member)
-            if let Some(assignments) = injected_assignments.get(&member_idx) {
-                // Inject assignments into the computed property name brackets
+            let is_decorated_field = fields_in_class_body && decorated_field_idx_set.contains(&member_idx);
+
+            if is_decorated_field {
+                if let Some(fi) = field_infos.iter().find(|f| decorated_members[f.member_var_index].member_idx == member_idx) {
+                    let is_static = decorated_members[fi.member_var_index].is_static;
+                    let static_prefix = if is_static { "static " } else { "" };
+                    let var_info = &member_vars[fi.member_var_index];
+                    let init_var = var_info.initializers_var.as_deref().unwrap_or("_initializers");
+
+                    // Group by static/instance for chaining
+                    let same_group: Vec<usize> = field_infos.iter().enumerate()
+                        .filter(|(_, f)| decorated_members[f.member_var_index].is_static == is_static)
+                        .map(|(idx, _)| idx).collect();
+                    let group_idx = same_group.iter()
+                        .position(|&idx| decorated_members[field_infos[idx].member_var_index].member_idx == member_idx)
+                        .unwrap_or(0);
+
+                    let init_arg = if fi.initializer_text.is_empty() { String::new() } else { format!(", {}", fi.initializer_text) };
+
+                    let run_init_expr = if group_idx == 0 {
+                        format!("{run_init}(this, {init_var}{init_arg})")
+                    } else {
+                        let prev_fi = &field_infos[same_group[group_idx - 1]];
+                        let prev_extra = member_vars[prev_fi.member_var_index].extra_initializers_var.as_deref().unwrap_or("_extra");
+                        format!("({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))")
+                    };
+
+                    if let Some(assignments) = injected_assignments.get(&member_idx) {
+                        let injected = assignments.join(", ");
+                        out.push_str(&format!("{indent}{static_prefix}[({injected})] = {run_init_expr};\n"));
+                    } else if fi.is_bracket_access {
+                        out.push_str(&format!("{indent}{static_prefix}[{}] = {run_init_expr};\n", fi.access_expr));
+                    } else {
+                        out.push_str(&format!("{indent}{static_prefix}{} = {run_init_expr};\n", fi.access_expr));
+                    }
+                } else {
+                    out.push_str(&format!("{indent}{member_text}\n"));
+                }
+            } else if let Some(assignments) = injected_assignments.get(&member_idx) {
                 let injected = assignments.join(", ");
-                // Replace the original computed expression with (assignments, original)
-                // The member text starts with something like `static get [expr](`
-                // We need to find the `[` and inject before the original expression
                 if let Some(bracket_start) = member_text.find('[') {
                     let before = &member_text[..bracket_start + 1];
                     let after = &member_text[bracket_start + 1..];
-                    // Find the matching `]` for the computed name
                     if let Some(bracket_end) = self.find_matching_bracket(after) {
-                        // The propKey assignment already captures the original expression,
-                        // so replace [expr] entirely with [(assignments)]
                         let rest = &after[bracket_end + 1..];
                         out.push_str(&format!("{indent}{before}({injected})]{rest}\n"));
                     } else {
-                        // Fallback: just emit with injected prefix
                         out.push_str(&format!("{indent}{before}({injected})]() {{ }}\n"));
                     }
                 } else {
@@ -722,23 +794,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         }
 
-        // Emit synthetic sink for any remaining assignments not injected into computed members.
-        // In ES2022 mode without computed method sinks, assignments went to the static block.
+        // Handle remaining assignments
+        let mut external_assignments: Vec<String> = Vec::new();
+        let mut post_iife_assignments: Vec<String> = Vec::new();
         let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
             decorated_members.get(*mi).is_some_and(|m| {
-                matches!(
-                    m.kind,
-                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter
-                )
+                matches!(m.kind, MemberKind::Method | MemberKind::Getter | MemberKind::Setter)
             })
         });
-        // Skip sink when assignments went to the decorator application block:
-        // - ES2022 without computed method sinks (assignments in static block)
-        // - ES2015 + class decorators (assignments in IIFE)
         let es2015_class_decorators = !self.use_static_blocks && _class_alias == "_classThis";
-        let skip_sink =
-            (self.use_static_blocks && !has_computed_method_sink && !decorated_members.is_empty())
-                || es2015_class_decorators;
+        let skip_sink = if self.use_static_blocks {
+            !has_computed_method_sink && !decorated_members.is_empty()
+        } else if es2015_class_decorators {
+            true
+        } else {
+            if !remaining_assignments.is_empty() {
+                external_assignments = remaining_assignments.clone();
+            }
+            true
+        };
         if !remaining_assignments.is_empty() && !skip_sink {
             let sink_expr = remaining_assignments.join(", ");
             let sink_is_static = decorated_members.iter().any(|m| m.is_static);
@@ -746,27 +820,120 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{indent}{static_prefix}[({sink_expr})]() {{ }}\n"));
         }
 
-        // Emit constructor only if source has one or we need instance initializers
-        let source_ctor = self.get_constructor_info(class_data);
-        let needs_ctor_init = has_any_instance;
-        if source_ctor.is_some() || needs_ctor_init {
-            // Build the list of __runInitializers calls for the constructor
-            let mut ctor_init_calls: Vec<String> = Vec::new();
-            let has_instance_method = decorated_members.iter().any(|m| {
-                !m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor)
-            });
-            if has_instance_method {
-                ctor_init_calls.push(format!(
-                    "{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"
-                ));
-            } else {
-                // For field-only decorators, call __runInitializers for each field's extra init
-                for var_info in member_vars {
-                    if let Some(ref extra_var) = var_info.extra_initializers_var {
-                        ctor_init_calls
-                            .push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+        // Static field initialization
+        let static_fields: Vec<&DecoratedFieldInfo> = field_infos.iter()
+            .filter(|fi| decorated_members[fi.member_var_index].is_static).collect();
+
+        if !static_fields.is_empty() {
+            if self.use_static_blocks && !self.use_define_for_class_fields {
+                // ES2022 + useDefine=false: each static field in its own static block
+                for (sf_idx, fi) in static_fields.iter().enumerate() {
+                    let var_info = &member_vars[fi.member_var_index];
+                    let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
+                    let init_arg = if fi.initializer_text.is_empty() { String::new() } else { format!(", {}", fi.initializer_text) };
+                    let rhs = if sf_idx == 0 {
+                        format!("{run_init}(this, {init_var}{init_arg})")
+                    } else {
+                        let prev_extra = member_vars[static_fields[sf_idx - 1].member_var_index].extra_initializers_var.as_deref().unwrap_or("_extra");
+                        format!("({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))")
+                    };
+                    let lhs = if fi.is_bracket_access { format!("this[{}]", fi.access_expr) } else { format!("this.{}", fi.access_expr) };
+                    out.push_str(&format!("{indent}static {{ {lhs} = {rhs}; }}\n"));
+                }
+                if let Some(last_fi) = static_fields.last() {
+                    if let Some(ref extra_var) = member_vars[last_fi.member_var_index].extra_initializers_var {
+                        out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
                     }
                 }
+            } else if self.use_static_blocks && self.use_define_for_class_fields {
+                // ES2022 + useDefine=true: last static field's extra-initializers in static block
+                if let Some(last_fi) = static_fields.last() {
+                    if let Some(ref extra_var) = member_vars[last_fi.member_var_index].extra_initializers_var {
+                        out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
+                    }
+                }
+            } else {
+                // ES2015: static field inits as comma expressions (post-IIFE)
+                let class_ref = _class_alias;
+                for (sf_idx, fi) in static_fields.iter().enumerate() {
+                    let var_info = &member_vars[fi.member_var_index];
+                    let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
+                    let init_arg = if fi.initializer_text.is_empty() { String::new() } else { format!(", {}", fi.initializer_text) };
+                    let rhs = if sf_idx == 0 {
+                        format!("{run_init}({class_ref}, {init_var}{init_arg})")
+                    } else {
+                        let prev_extra = member_vars[static_fields[sf_idx - 1].member_var_index].extra_initializers_var.as_deref().unwrap_or("_extra");
+                        format!("({run_init}({class_ref}, {prev_extra}), {run_init}({class_ref}, {init_var}{init_arg}))")
+                    };
+                    if self.use_define_for_class_fields {
+                        let key_expr = if fi.is_bracket_access { fi.access_expr.clone() } else { format!("\"{}\"", fi.access_expr) };
+                        post_iife_assignments.push(format!(
+                            "Object.defineProperty({class_ref}, {key_expr}, {{\n{indent}    enumerable: true,\n{indent}    configurable: true,\n{indent}    writable: true,\n{indent}    value: {rhs}\n{indent}}})"
+                        ));
+                    } else {
+                        let lhs = if fi.is_bracket_access { format!("{class_ref}[{}]", fi.access_expr) } else { format!("{class_ref}.{}", fi.access_expr) };
+                        post_iife_assignments.push(format!("{lhs} = {rhs}"));
+                    }
+                }
+                if let Some(last_fi) = static_fields.last() {
+                    if let Some(ref extra_var) = member_vars[last_fi.member_var_index].extra_initializers_var {
+                        post_iife_assignments.push(format!("__EXTRA_INIT_IIFE__:{run_init}({class_ref}, {extra_var})"));
+                    }
+                }
+            }
+        }
+
+        // Constructor
+        let source_ctor = self.get_constructor_info(class_data);
+        let has_instance_fields = field_infos.iter().any(|fi| !decorated_members[fi.member_var_index].is_static);
+        let has_instance_method = decorated_members.iter().any(|m| !m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
+        let needs_ctor = source_ctor.is_some() || has_any_instance;
+
+        if needs_ctor {
+            let mut ctor_init_calls: Vec<String> = Vec::new();
+
+            if !fields_in_class_body && has_instance_fields {
+                // Fields move to constructor
+                for (fi_idx, fi) in field_infos.iter().enumerate() {
+                    if decorated_members[fi.member_var_index].is_static { continue; }
+                    let var_info = &member_vars[fi.member_var_index];
+                    let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
+                    let init_arg = if fi.initializer_text.is_empty() { String::new() } else { format!(", {}", fi.initializer_text) };
+                    let instance_field_idx = field_infos[..fi_idx].iter().filter(|f| !decorated_members[f.member_var_index].is_static).count();
+
+                    let rhs = if instance_field_idx == 0 {
+                        format!("{run_init}(this, {init_var}{init_arg})")
+                    } else {
+                        let prev_fi = field_infos[..fi_idx].iter().rev().find(|f| !decorated_members[f.member_var_index].is_static).unwrap();
+                        let prev_extra = member_vars[prev_fi.member_var_index].extra_initializers_var.as_deref().unwrap_or("_extra");
+                        format!("({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))")
+                    };
+
+                    if self.use_define_for_class_fields && !self.use_static_blocks {
+                        let key_expr = if fi.is_bracket_access { fi.access_expr.clone() } else { format!("\"{}\"", fi.access_expr) };
+                        ctor_init_calls.push(format!(
+                            "{inner_indent}Object.defineProperty(this, {key_expr}, {{\n{inner_indent}    enumerable: true,\n{inner_indent}    configurable: true,\n{inner_indent}    writable: true,\n{inner_indent}    value: {rhs}\n{inner_indent}}});\n"
+                        ));
+                    } else {
+                        let lhs = if fi.is_bracket_access { format!("this[{}]", fi.access_expr) } else { format!("this.{}", fi.access_expr) };
+                        ctor_init_calls.push(format!("{inner_indent}{lhs} = {rhs};\n"));
+                    }
+                }
+                // Last instance field's extra-initializers
+                if let Some(last_fi) = field_infos.iter().rev().find(|f| !decorated_members[f.member_var_index].is_static) {
+                    if let Some(ref extra_var) = member_vars[last_fi.member_var_index].extra_initializers_var {
+                        ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+                    }
+                }
+            } else if fields_in_class_body && has_instance_fields {
+                // Fields in class body: only last instance field's extra-initializers in constructor
+                if let Some(last_fi) = field_infos.iter().rev().find(|f| !decorated_members[f.member_var_index].is_static) {
+                    if let Some(ref extra_var) = member_vars[last_fi.member_var_index].extra_initializers_var {
+                        ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+                    }
+                }
+            } else if has_instance_method {
+                ctor_init_calls.push(format!("{inner_indent}{run_init}(this, _instanceExtraInitializers);\n"));
             }
 
             out.push_str(&format!("{indent}constructor("));
@@ -776,18 +943,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 for line in &ctor.body_lines {
                     out.push_str(&format!("{inner_indent}{}\n", line.trim()));
                 }
-                for call in &ctor_init_calls {
-                    out.push_str(call);
-                }
+                for call in &ctor_init_calls { out.push_str(call); }
                 out.push_str(&format!("{indent}}}\n"));
             } else {
                 out.push_str(") {\n");
-                for call in &ctor_init_calls {
-                    out.push_str(call);
-                }
+                for call in &ctor_init_calls { out.push_str(call); }
                 out.push_str(&format!("{indent}}}\n"));
             }
         }
+
+        (external_assignments, post_iife_assignments)
     }
 
     /// Find the position of the class closing brace by scanning forward from the
@@ -1411,6 +1576,44 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 )
             }
         }
+    }
+
+    fn collect_decorated_field_info(
+        &self,
+        decorated_members: &[DecoratedMember],
+        computed_key_vars: &[(usize, String)],
+    ) -> Vec<DecoratedFieldInfo> {
+        let mut result = Vec::new();
+        for (i, member) in decorated_members.iter().enumerate() {
+            if member.kind != MemberKind::Field { continue; }
+            let (access_expr, is_bracket) = match &member.name {
+                MemberName::Identifier(name) => (name.clone(), false),
+                MemberName::Private(name) => (name.clone(), false),
+                MemberName::StringLiteral(name) => (format!("\"{name}\""), true),
+                MemberName::Computed(_) => {
+                    let var = computed_key_vars.iter()
+                        .find(|(mi, _)| *mi == i)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_else(|| "undefined".to_string());
+                    (var, true)
+                }
+            };
+            let initializer_text = self.get_field_initializer_text(member.member_idx);
+            result.push(DecoratedFieldInfo {
+                access_expr,
+                is_bracket_access: is_bracket,
+                initializer_text,
+                member_var_index: i,
+            });
+        }
+        result
+    }
+
+    fn get_field_initializer_text(&self, member_idx: NodeIndex) -> String {
+        let Some(member_node) = self.arena.get(member_idx) else { return String::new(); };
+        let Some(prop) = self.arena.get_property_decl(member_node) else { return String::new(); };
+        if prop.initializer == NodeIndex::NONE { return String::new(); }
+        self.node_text(prop.initializer)
     }
 
     fn get_constructor_info(
