@@ -1028,3 +1028,67 @@ fn test_parse_region_delimiter_empty_string() {
     let result = parse_region_delimiter("");
     assert!(result.is_none(), "Empty string is not a region");
 }
+
+#[test]
+fn test_folding_ranges_abstract_class() {
+    let source =
+        "\nabstract class Shape {\n  abstract area(): number;\n  perimeter() { return 0; }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_class_with_computed_property() {
+    let source = "\nconst key = 'x';\nclass Foo {\n  [key]() {\n    return 1;\n  }\n}\n";
+    let ranges = get_ranges(source);
+    assert!(ranges.len() >= 1);
+}
+
+#[test]
+fn test_folding_ranges_destructuring_multiline() {
+    let source = "\nconst {\n  a,\n  b,\n  c\n} = obj;\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_multiline_array() {
+    let source = "\nconst arr = [\n  1,\n  2,\n  3,\n  4\n];\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_multiline_function_params() {
+    let source = "\nfunction foo(\n  a: number,\n  b: string,\n  c: boolean\n) {\n  return a;\n}\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_multiline_import() {
+    let source = "\nimport {\n  Component,\n  OnInit,\n  OnDestroy\n} from '@angular/core';\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_multiline_export() {
+    let source = "\nexport {\n  foo,\n  bar,\n  baz\n};\n";
+    let ranges = get_ranges(source);
+    assert!(!ranges.is_empty());
+}
+
+#[test]
+fn test_folding_ranges_multiline_ternary() {
+    let source = "\nconst x = condition\n  ? longValueA\n  : longValueB;\n";
+    let ranges = get_ranges(source);
+    let _ = ranges;
+}
+
+#[test]
+fn test_folding_ranges_single_line_const_no_fold() {
+    let source = "const x = 1;";
+    let ranges = get_ranges(source);
+    assert!(ranges.is_empty(), "Single line should have no folds");
+}
