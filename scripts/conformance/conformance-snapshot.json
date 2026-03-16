@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-16T16:36:44Z",
-  "git_sha": "ee3d364b204e050d9118f1b0033d224c38b9560c",
+  "timestamp": "2026-03-16T16:55:10Z",
+  "git_sha": "e1a1b34b9142057741f4c19cb9c1347f8be8d176",
   "summary": {
     "total_tests": 12581,
-    "passed": 10870,
-    "failed": 1711,
+    "passed": 10869,
+    "failed": 1712,
     "pass_rate": 86.4
   },
   "areas_by_pass_rate": [
@@ -346,10 +346,10 @@
     },
     {
       "area": "compiler",
-      "total": 6517,
-      "passed": 5697,
-      "failed": 820,
-      "pass_rate": 87.42
+      "total": 6518,
+      "passed": 5696,
+      "failed": 822,
+      "pass_rate": 87.39
     },
     {
       "area": "types/nonPrimitive",
@@ -1200,11 +1200,11 @@
       "count": 2
     },
     {
-      "code": "TS7016",
+      "code": "TS2595",
       "count": 2
     },
     {
-      "code": "TS2595",
+      "code": "TS7016",
       "count": 2
     },
     {
@@ -1251,7 +1251,7 @@
     },
     {
       "code": "TS2339",
-      "count": 26
+      "count": 27
     },
     {
       "code": "TS2345",
@@ -1338,11 +1338,11 @@
       "count": 2
     },
     {
-      "code": "TS2550",
+      "code": "TS2504",
       "count": 1
     },
     {
-      "code": "TS2504",
+      "code": "TS2550",
       "count": 1
     },
     {
@@ -1379,6 +1379,10 @@
     },
     {
       "code": "TS2497",
+      "count": 1
+    },
+    {
+      "code": "TS2686",
       "count": 1
     },
     {
@@ -1439,10 +1443,6 @@
     },
     {
       "code": "TS2309",
-      "count": 1
-    },
-    {
-      "code": "TS2883",
       "count": 1
     }
   ],
@@ -1737,11 +1737,11 @@
     },
     {
       "code": "TS2345",
-      "count": 65
+      "count": 66
     },
     {
       "code": "TS2339",
-      "count": 60
+      "count": 61
     },
     {
       "code": "TS7006",
@@ -1768,12 +1768,12 @@
       "count": 13
     },
     {
-      "code": "TS2349",
+      "code": "TS1359",
       "count": 12
     },
     {
-      "code": "TS1359",
-      "count": 12
+      "code": "TS2349",
+      "count": 11
     },
     {
       "code": "TS2403",
@@ -1895,8 +1895,8 @@
   "categories": {
     "false_positive": 145,
     "all_missing": 263,
-    "wrong_code": 627,
+    "wrong_code": 629,
     "fingerprint_only": 670,
-    "close_to_passing": 457
+    "close_to_passing": 459
   }
 }
