@@ -165,6 +165,10 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// This lets the checker perform post-inference excess property checking on
     /// the concrete parameter types rather than the raw (pre-inference) types.
     pub last_instantiated_params: Option<Vec<ParamInfo>>,
+    /// Memoization cache for `is_contextually_sensitive` to avoid exponential
+    /// re-traversal on deeply nested type structures (e.g., long instantiation chains
+    /// where each Application type references the previous one multiple times).
+    pub(crate) contextual_sensitivity_cache: RefCell<FxHashMap<TypeId, bool>>,
 }
 
 #[derive(Clone, Copy)]
@@ -214,6 +218,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             constraint_fixed_union_members: RefCell::new(FxHashMap::default()),
             last_instantiated_predicate: None,
             last_instantiated_params: None,
+            contextual_sensitivity_cache: RefCell::new(FxHashMap::default()),
         }
     }
 

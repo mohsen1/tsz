@@ -969,6 +969,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// These types need deferred inference in Round 2 after non-contextual
     /// arguments have been processed and type variables have been fixed.
     pub(crate) fn is_contextually_sensitive(&self, type_id: TypeId) -> bool {
+        // Check memoization cache to avoid exponential re-traversal on deeply
+        // nested type structures (e.g., Application chains where each level
+        // references the previous type multiple times via keyof).
+        if let Some(&cached) = self.contextual_sensitivity_cache.borrow().get(&type_id) {
+            return cached;
+        }
+        let result = self.is_contextually_sensitive_inner(type_id);
+        self.contextual_sensitivity_cache
+            .borrow_mut()
+            .insert(type_id, result);
+        result
+    }
+
+    fn is_contextually_sensitive_inner(&self, type_id: TypeId) -> bool {
         let key = match self.interner.lookup(type_id) {
             Some(key) => key,
             None => return false,
