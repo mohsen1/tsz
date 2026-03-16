@@ -777,7 +777,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         .unwrap_or(0);
 
                     let init_arg = if fi.initializer_text.is_empty() {
-                        String::new()
+                        ", void 0".to_string()
                     } else {
                         format!(", {}", fi.initializer_text)
                     };
@@ -875,7 +875,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let var_info = &member_vars[fi.member_var_index];
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = if fi.initializer_text.is_empty() {
-                        String::new()
+                        ", void 0".to_string()
                     } else {
                         format!(", {}", fi.initializer_text)
                     };
@@ -918,7 +918,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let var_info = &member_vars[fi.member_var_index];
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = if fi.initializer_text.is_empty() {
-                        String::new()
+                        ", void 0".to_string()
                     } else {
                         format!(", {}", fi.initializer_text)
                     };
@@ -984,7 +984,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let var_info = &member_vars[fi.member_var_index];
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = if fi.initializer_text.is_empty() {
-                        String::new()
+                        ", void 0".to_string()
                     } else {
                         format!(", {}", fi.initializer_text)
                     };
