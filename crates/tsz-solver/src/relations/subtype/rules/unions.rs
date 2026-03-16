@@ -243,7 +243,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         allow_bivariant: bool,
     ) -> SubtypeResult {
-        if allow_bivariant {
+        // In identity mode (TS2403), never use method bivariance.
+        // tsc's isTypeIdenticalTo uses the identity relation which is strictly
+        // bidirectional structural equality without any bivariance.
+        if allow_bivariant && !self.identity_cycle_check {
             // Method bivariance: temporarily disable strict_function_types
             // so check_parameter_compatibility uses bivariant parameter checks.
             // This only affects parameter variance, NOT return type variance.
