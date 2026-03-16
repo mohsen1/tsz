@@ -134,7 +134,6 @@ fn ts2352_array_assertion_anchors_first_excess_property() {
 }
 
 #[test]
-#[ignore = "fresh literal object display model changed"]
 fn ts2345_never_parameter_uses_non_contextual_object_literal_display() {
     let diags = check_source_diagnostics(
         r#"
