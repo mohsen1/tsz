@@ -1536,10 +1536,10 @@ impl<'a> CheckerState<'a> {
     /// For member access like `a.b`, returns "a.b".
     /// Falls back to "decorator" if the name can't be determined.
     fn get_decorator_expression_name(&self, expr: NodeIndex) -> String {
-        if let Some(node) = self.ctx.arena.get(expr) {
-            if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                return ident.escaped_text.to_string();
-            }
+        if let Some(node) = self.ctx.arena.get(expr)
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+        {
+            return ident.escaped_text.to_string();
         }
         "decorator".to_string()
     }

@@ -285,16 +285,17 @@ impl Project {
         // Look up the symbol by name in the binder's file locals
         let sym_id = binder.file_locals.get(label);
 
-        if let Some(sid) = sym_id {
-            if let Some(symbol) = binder.get_symbol(sid) {
-                // Extract JSDoc documentation from the declaration
-                let documentation = symbol.declarations.first().map(|decl_idx| {
-                    crate::jsdoc::jsdoc_for_node(arena, root, *decl_idx, source_text)
-                });
-                let documentation = documentation.filter(|s| !s.is_empty());
+        if let Some(sid) = sym_id
+            && let Some(symbol) = binder.get_symbol(sid)
+        {
+            // Extract JSDoc documentation from the declaration
+            let documentation = symbol
+                .declarations
+                .first()
+                .map(|decl_idx| crate::jsdoc::jsdoc_for_node(arena, root, *decl_idx, source_text));
+            let documentation = documentation.filter(|s| !s.is_empty());
 
-                return Some((None, documentation));
-            }
+            return Some((None, documentation));
         }
 
         None

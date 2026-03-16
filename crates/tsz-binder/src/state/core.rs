@@ -4,7 +4,7 @@
 
 use super::{BinderState, BinderStateScopeInputs, LibContext};
 use crate::lib_loader;
-use crate::module_resolution_debug::ModuleResolutionDebugger;
+use crate::modules::resolution_debug::ModuleResolutionDebugger;
 use crate::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, Symbol, SymbolArena,
     SymbolId, SymbolTable, flow_flags, symbol_flags,
@@ -459,7 +459,7 @@ impl BinderState {
     /// Declare a symbol in the current persistent scope.
     /// This adds the symbol to the persistent scope table for later querying.
     /// Skipped during module augmentation to prevent augmented symbols from
-    /// leaking into the augmenting file's scope (and subsequently into file_locals/globals).
+    /// leaking into the augmenting file's scope (and subsequently into `file_locals/globals`).
     pub(crate) fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
         if self.in_module_augmentation {
             return;

@@ -747,12 +747,11 @@ impl<'a> Printer<'a> {
                 let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                     continue;
                 };
-                if let Some(name_node) = self.arena.get(decl.name) {
-                    if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                    {
-                        return true;
-                    }
+                if let Some(name_node) = self.arena.get(decl.name)
+                    && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                {
+                    return true;
                 }
             }
         }

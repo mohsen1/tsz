@@ -498,10 +498,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if type parameter name is a reserved type name (TS2368)
-        if let Some(name_node) = self.ctx.arena.get(param.name) {
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                self.check_type_name_is_reserved(param.name, &ident.escaped_text);
-            }
+        if let Some(name_node) = self.ctx.arena.get(param.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            self.check_type_name_is_reserved(param.name, &ident.escaped_text);
         }
 
         // Check constraint type (missing names + structural validation like TS2313)

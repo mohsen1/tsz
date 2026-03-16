@@ -631,7 +631,7 @@ impl ParserState {
             | SyntaxKind::ProtectedKeyword
             | SyntaxKind::StaticKeyword
             | SyntaxKind::ReadonlyKeyword => {
-                let modifier_text = self.scanner.get_token_text().to_string();
+                let modifier_text = self.scanner.get_token_text();
                 self.parse_error_at_current_token(
                     &format!(
                         "'{modifier_text}' modifier cannot appear on a module or namespace element."

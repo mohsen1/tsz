@@ -34,10 +34,10 @@ impl<'a> CheckerState<'a> {
         let kind = node.kind;
 
         // Skip parenthesized expressions (tsc's skipOuterExpressions)
-        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                return self.get_syntactic_nullishness(paren.expression);
-            }
+        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_syntactic_nullishness(paren.expression);
         }
 
         // Non-null assertions (!): always Never
@@ -68,48 +68,47 @@ impl<'a> CheckerState<'a> {
         }
 
         // Binary expressions
-        if kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
-                let op = binary.operator_token;
-                // ||, ||=, &&, &&= can produce null/undefined
-                if op == SyntaxKind::BarBarToken as u16
-                    || op == SyntaxKind::BarBarEqualsToken as u16
-                    || op == SyntaxKind::AmpersandAmpersandToken as u16
-                    || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                {
-                    return SyntacticNullishness::Sometimes;
-                }
-                // For ??, ??=, =, comma: result nullishness is determined by right operand
-                if op == SyntaxKind::CommaToken as u16
-                    || op == SyntaxKind::EqualsToken as u16
-                    || op == SyntaxKind::QuestionQuestionToken as u16
-                    || op == SyntaxKind::QuestionQuestionEqualsToken as u16
-                {
-                    return self.get_syntactic_nullishness(binary.right);
-                }
-                // All other binary operators (arithmetic, comparison, bitwise, etc.)
-                // never produce null/undefined
-                return SyntacticNullishness::Never;
+        if kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+        {
+            let op = binary.operator_token;
+            // ||, ||=, &&, &&= can produce null/undefined
+            if op == SyntaxKind::BarBarToken as u16
+                || op == SyntaxKind::BarBarEqualsToken as u16
+                || op == SyntaxKind::AmpersandAmpersandToken as u16
+                || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            {
+                return SyntacticNullishness::Sometimes;
             }
+            // For ??, ??=, =, comma: result nullishness is determined by right operand
+            if op == SyntaxKind::CommaToken as u16
+                || op == SyntaxKind::EqualsToken as u16
+                || op == SyntaxKind::QuestionQuestionToken as u16
+                || op == SyntaxKind::QuestionQuestionEqualsToken as u16
+            {
+                return self.get_syntactic_nullishness(binary.right);
+            }
+            // All other binary operators (arithmetic, comparison, bitwise, etc.)
+            // never produce null/undefined
+            return SyntacticNullishness::Never;
         }
 
         // Conditional expression: union of true and false branches
-        if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-            if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
-                let when_true = self.get_syntactic_nullishness(cond.when_true);
-                let when_false = self.get_syntactic_nullishness(cond.when_false);
-                if when_true == SyntacticNullishness::Never
-                    && when_false == SyntacticNullishness::Never
-                {
-                    return SyntacticNullishness::Never;
-                }
-                if when_true == SyntacticNullishness::Always
-                    && when_false == SyntacticNullishness::Always
-                {
-                    return SyntacticNullishness::Always;
-                }
-                return SyntacticNullishness::Sometimes;
+        if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+        {
+            let when_true = self.get_syntactic_nullishness(cond.when_true);
+            let when_false = self.get_syntactic_nullishness(cond.when_false);
+            if when_true == SyntacticNullishness::Never && when_false == SyntacticNullishness::Never
+            {
+                return SyntacticNullishness::Never;
             }
+            if when_true == SyntacticNullishness::Always
+                && when_false == SyntacticNullishness::Always
+            {
+                return SyntacticNullishness::Always;
+            }
+            return SyntacticNullishness::Sometimes;
         }
 
         // null keyword
@@ -119,10 +118,10 @@ impl<'a> CheckerState<'a> {
 
         // Identifier: check if it's `undefined`
         if kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                if ident.escaped_text == "undefined" {
-                    return SyntacticNullishness::Always;
-                }
+            if let Some(ident) = self.ctx.arena.get_identifier(node)
+                && ident.escaped_text == "undefined"
+            {
+                return SyntacticNullishness::Always;
             }
             return SyntacticNullishness::Sometimes;
         }

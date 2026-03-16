@@ -8,7 +8,7 @@ mod flow_helpers;
 mod lib_merge;
 mod resolution;
 
-use crate::module_resolution_debug::ModuleResolutionDebugger;
+use crate::modules::resolution_debug::ModuleResolutionDebugger;
 use crate::{FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;

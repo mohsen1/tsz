@@ -16,6 +16,7 @@ use tracing::debug;
 static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Enable or disable module resolution debugging globally.
+#[allow(dead_code)] // Debug API — used in tests and available for runtime tracing
 pub fn set_debug_enabled(enabled: bool) {
     DEBUG_ENABLED.store(enabled, Ordering::SeqCst);
 }
