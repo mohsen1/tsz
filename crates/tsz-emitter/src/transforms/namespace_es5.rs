@@ -35,6 +35,7 @@
 //! })(A || (A = {}));
 //! ```
 
+use crate::context::transform::TransformContext;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
 use tsz_parser::parser::NodeIndex;
@@ -57,6 +58,7 @@ pub struct NamespaceES5Emitter<'a> {
     should_declare_var: bool,
     target_es5: bool,
     remove_comments: bool,
+    transforms: Option<TransformContext>,
     transformer: NamespaceES5Transformer<'a>,
 }
 
@@ -69,6 +71,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             should_declare_var: true, // Default to true for backward compatibility
             target_es5: false,
             remove_comments: false,
+            transforms: None,
             transformer: NamespaceES5Transformer::new(arena),
         }
     }
@@ -82,6 +85,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             should_declare_var: true, // Default to true for backward compatibility
             target_es5: false,
             remove_comments: false,
+            transforms: None,
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
         }
     }
@@ -106,6 +110,12 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// When true, suppress `/** @class */` annotation in output.
     pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
+    }
+
+    /// Set transform directives so that nested transforms (e.g. ES5 template
+    /// literal downleveling) are applied when emitting `ASTRef` nodes.
+    pub fn set_transforms(&mut self, transforms: TransformContext) {
+        self.transforms = Some(transforms);
     }
 
     /// Set whether legacy decorators are enabled (experimentalDecorators)
@@ -144,6 +154,9 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
         printer.set_remove_comments(self.remove_comments);
+        if let Some(ref transforms) = self.transforms {
+            printer.set_transforms(transforms.clone());
+        }
         printer.emit(&ir).to_string()
     }
 
@@ -163,6 +176,9 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_target_es5(self.target_es5);
         printer.set_remove_comments(self.remove_comments);
+        if let Some(ref transforms) = self.transforms {
+            printer.set_transforms(transforms.clone());
+        }
         printer.emit(&ir).to_string()
     }
 
