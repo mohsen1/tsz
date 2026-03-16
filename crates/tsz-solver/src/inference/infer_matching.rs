@@ -935,17 +935,59 @@ impl<'a> InferenceContext<'a> {
         let source_info = self.interner.type_application(source_app);
         let target_info = self.interner.type_application(target_app);
 
-        // The base types must match for inference to work
-        if source_info.base != target_info.base {
+        // Check if bases match, either by identity or DefId equivalence
+        let bases_match = source_info.base == target_info.base
+            || self.check_application_bases_equivalent(source_info.base, target_info.base);
+
+        if bases_match && source_info.args.len() == target_info.args.len() {
+            // Recurse into the type arguments
+            for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
+                self.infer_from_types(*source_arg, *target_arg, priority)?;
+            }
             return Ok(());
         }
 
-        // Recurse into the type arguments
-        for (source_arg, target_arg) in source_info.args.iter().zip(target_info.args.iter()) {
-            self.infer_from_types(*source_arg, *target_arg, priority)?;
+        // When base types differ (e.g., Set<Employee> vs Iterable<T>), expand the
+        // source application to its structural form and try to infer from the expanded
+        // type against the target. This handles inference through the type hierarchy:
+        // Set<Employee> expands to include Iterable<Employee> members, which can then
+        // match against Iterable<T> to infer T = Employee.
+        let expanded_source = self.try_expand_application(source_app);
+        tracing::debug!(
+            source_base = ?self.interner.lookup(source_info.base),
+            target_base = ?self.interner.lookup(target_info.base),
+            expanded = expanded_source.is_some(),
+            expanded_kind = ?expanded_source.and_then(|e| self.interner.lookup(e)),
+            "infer_applications: bases differ"
+        );
+        if let Some(expanded_source) = expanded_source {
+            let target_app_info = self.interner.type_application(target_app);
+            let target_type = self
+                .interner
+                .application(target_app_info.base, target_app_info.args.clone());
+            return self.infer_from_types(expanded_source, target_type, priority);
         }
 
         Ok(())
+    }
+
+    /// Check if two application base types refer to the same definition.
+    fn check_application_bases_equivalent(&self, source_base: TypeId, target_base: TypeId) -> bool {
+        let resolver = match self.resolver {
+            Some(r) => r,
+            None => return false,
+        };
+
+        let source_def = match self.interner.lookup(source_base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => return false,
+        };
+        let target_def = match self.interner.lookup(target_base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => return false,
+        };
+
+        resolver.defs_are_equivalent(source_def, target_def)
     }
 
     // =========================================================================

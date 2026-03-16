@@ -2174,123 +2174,82 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
         source_is_fresh: bool,
     ) {
-        let mut source_idx = 0;
-        let mut target_idx = 0;
+        // Build a lookup map from property name to source property index for O(1) matching.
+        // Property lists may not be sorted by Atom order (e.g., evaluated interface Objects
+        // have properties in declaration order), so a hash-based lookup is required.
+        let source_by_name: FxHashMap<tsz_common::interner::Atom, usize> = source_props
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.name, i))
+            .collect();
 
-        while source_idx < source_props.len() && target_idx < target_props.len() {
-            let source = &source_props[source_idx];
-            let target = &target_props[target_idx];
-
-            match source.name.cmp(&target.name) {
-                std::cmp::Ordering::Equal => {
-                    let property_index = source_idx as u32;
-                    if let Some(&var) = var_map.get(&target.type_id) {
-                        ctx.add_property_candidate_with_index(
-                            var,
-                            source.type_id,
-                            priority,
-                            property_index,
-                            Some(source.name),
-                            source_is_fresh,
-                        );
-                    } else {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            source.type_id,
-                            target.type_id,
-                            priority,
-                        );
-                    }
-                    // Check write type compatibility for mutable targets
-                    // A readonly source cannot satisfy a mutable target
-                    if !target.readonly {
-                        // If source is readonly but target is mutable, this is a mismatch
-                        // We constrain with ERROR to signal the failure
-                        if source.readonly {
-                            if let Some(&var) = var_map.get(&target.write_type) {
-                                ctx.add_property_candidate_with_index(
-                                    var,
-                                    TypeId::ERROR,
-                                    priority,
-                                    property_index,
-                                    Some(source.name),
-                                    source_is_fresh,
-                                );
-                            } else {
-                                self.constrain_types(
-                                    ctx,
-                                    var_map,
-                                    TypeId::ERROR,
-                                    target.write_type,
-                                    priority,
-                                );
-                            }
-                        }
+        for target in target_props {
+            if let Some(&source_idx) = source_by_name.get(&target.name) {
+                let source = &source_props[source_idx];
+                let property_index = source_idx as u32;
+                if let Some(&var) = var_map.get(&target.type_id) {
+                    ctx.add_property_candidate_with_index(
+                        var,
+                        source.type_id,
+                        priority,
+                        property_index,
+                        Some(source.name),
+                        source_is_fresh,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, source.type_id, target.type_id, priority);
+                }
+                // Check write type compatibility for mutable targets
+                if !target.readonly {
+                    if source.readonly {
                         if let Some(&var) = var_map.get(&target.write_type) {
                             ctx.add_property_candidate_with_index(
                                 var,
-                                source.write_type,
+                                TypeId::ERROR,
                                 priority,
                                 property_index,
                                 Some(source.name),
                                 source_is_fresh,
                             );
                         } else {
-                            // Skip the reverse-direction write_type constraint when
-                            // write_type == type_id for both sides (the common case).
-                            // The type_id constraint above already handles it —
-                            // constrain_types(target.write_type, source.write_type)
-                            // goes in the contravariant direction and creates spurious
-                            // candidates that widen literals incorrectly.
-                            let write_type_differs = source.write_type != source.type_id
-                                || target.write_type != target.type_id;
-                            if write_type_differs {
-                                self.constrain_types(
-                                    ctx,
-                                    var_map,
-                                    target.write_type,
-                                    source.write_type,
-                                    priority,
-                                );
-                            }
+                            self.constrain_types(
+                                ctx,
+                                var_map,
+                                TypeId::ERROR,
+                                target.write_type,
+                                priority,
+                            );
                         }
                     }
-                    source_idx += 1;
-                    target_idx += 1;
-                }
-                std::cmp::Ordering::Less => {
-                    source_idx += 1;
-                }
-                std::cmp::Ordering::Greater => {
-                    // Target property is missing from source.
-                    // For optional properties, only constrain to `undefined` when the
-                    // target type is NOT a direct inference variable.  Constraining an
-                    // inference placeholder to `undefined` from a missing optional
-                    // property would incorrectly fix `T = undefined` during partial
-                    // Round 1 inference (where context-sensitive properties are
-                    // intentionally omitted from the source).
-                    if target.optional && !var_map.contains_key(&target.type_id) {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            TypeId::UNDEFINED,
-                            target.type_id,
+                    if let Some(&var) = var_map.get(&target.write_type) {
+                        ctx.add_property_candidate_with_index(
+                            var,
+                            source.write_type,
                             priority,
+                            property_index,
+                            Some(source.name),
+                            source_is_fresh,
                         );
+                    } else {
+                        let write_type_differs = source.write_type != source.type_id
+                            || target.write_type != target.type_id;
+                        if write_type_differs {
+                            self.constrain_types(
+                                ctx,
+                                var_map,
+                                target.write_type,
+                                source.write_type,
+                                priority,
+                            );
+                        }
                     }
-                    target_idx += 1;
+                }
+            } else {
+                // Target property is missing from source.
+                if target.optional && !var_map.contains_key(&target.type_id) {
+                    self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
                 }
             }
-        }
-
-        // Handle remaining target properties that are missing from source
-        while target_idx < target_props.len() {
-            let target = &target_props[target_idx];
-            if target.optional && !var_map.contains_key(&target.type_id) {
-                self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
-            }
-            target_idx += 1;
         }
     }
 
