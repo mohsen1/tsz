@@ -252,8 +252,8 @@ impl<'a> CheckerState<'a> {
             | FullIterableTypeKind::TypeParameter { .. }
             | FullIterableTypeKind::ComplexType
             | FullIterableTypeKind::Array(_)
-            | FullIterableTypeKind::Tuple(_) => true,
-            FullIterableTypeKind::StringLiteral(_) => true,
+            | FullIterableTypeKind::Tuple(_)
+            | FullIterableTypeKind::StringLiteral(_) => true,
             FullIterableTypeKind::FunctionOrCallable | FullIterableTypeKind::NotIterable => {
                 // Functions and NotIterable (Lazy/DefId types that couldn't be resolved,
                 // or truly non-iterable types) do NOT have next().

@@ -2432,10 +2432,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle array type: scan element type
-        if node.kind == syntax_kind_ext::ARRAY_TYPE {
-            if let Some(data) = self.ctx.arena.get_array_type(node) {
-                self.collect_type_query_nodes(data.element_type, out);
-            }
+        if node.kind == syntax_kind_ext::ARRAY_TYPE
+            && let Some(data) = self.ctx.arena.get_array_type(node)
+        {
+            self.collect_type_query_nodes(data.element_type, out);
         }
     }
 }
