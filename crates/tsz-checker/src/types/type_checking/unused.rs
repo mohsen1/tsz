@@ -1,5 +1,6 @@
-//! Unused declaration checking (TS6133, TS6192) and overload resolution helpers.
+//! Unused declaration checking (TS6133, TS6138, TS6192) and overload resolution helpers.
 //! - Constructor/method/function implementation finders
+//! - TS6138: "Property 'x' is declared but its value is never read" for parameter properties
 
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -459,16 +460,25 @@ impl<'a> CheckerState<'a> {
 
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
                         // TS6133 for variables, functions, imports, class properties ("value never read")
+                        // TS6138 for constructor parameter properties ("Property 'x' is declared
+                        //        but its value is never read") — detected by PROPERTY symbol
+                        //        whose declaration node is a PARAMETER.
                         // Note: tsc uses TS6198 only for "all destructured elements unused" (a
                         // different path), never for individual write-only variables.
-                        // Note: TS6138 ("Property 'x' is declared but its value is never read")
-                        // is only for constructor parameter properties, handled in the parameter section below.
                         let is_type_only = (flags & symbol_flags::CLASS) != 0
                             || (flags & symbol_flags::INTERFACE) != 0
                             || (flags & symbol_flags::TYPE_ALIAS) != 0
                             || (flags & symbol_flags::REGULAR_ENUM) != 0
                             || (flags & symbol_flags::CONST_ENUM) != 0;
-                        let report_node = if let Some(spec_name_node) =
+
+                        // Check if this is a parameter property (PROPERTY from a PARAMETER node)
+                        let is_parameter_property = (flags & symbol_flags::PROPERTY) != 0
+                            && decl_node.kind == syntax_kind_ext::PARAMETER;
+
+                        let report_node = if is_parameter_property {
+                            // For parameter properties, report at the parameter name
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
+                        } else if let Some(spec_name_node) =
                             self.find_named_import_specifier_name_node(decl_idx, &name)
                         {
                             spec_name_node
@@ -490,7 +500,9 @@ impl<'a> CheckerState<'a> {
                         } else {
                             (decl_node.pos, decl_node.end.saturating_sub(decl_node.pos))
                         };
-                        if is_type_only {
+                        if is_parameter_property {
+                            self.error_property_declared_but_never_read(&name, start, length);
+                        } else if is_type_only {
                             self.error_declared_but_never_used(&name, start, length);
                         } else {
                             self.error_declared_but_never_read(&name, start, length);
@@ -565,6 +577,15 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(pattern_idx, "All destructured elements are unused.", 6198);
                 }
             }
+
+            // Emit TS6138 for constructor parameter properties whose property is never read.
+            // Parameter properties (e.g., `constructor(private x: string)`) create both a
+            // parameter variable and a class property. The parameter may be referenced in the
+            // constructor body, but if the property (this.x) is never read, TS6138 fires.
+            // The binder creates PROPERTY symbols in the class scope for parameter properties.
+            // Only private ones are checked (lines 268-274 skip non-private members).
+            // Detection: if a PROPERTY symbol's declaration node is a PARAMETER, it's from
+            // a parameter property and gets TS6138 instead of TS6133.
         }
     }
 

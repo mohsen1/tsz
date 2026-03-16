@@ -182,6 +182,50 @@ impl BinderState {
         }
     }
 
+    /// Declare PROPERTY symbols in the current (class) scope for constructor
+    /// parameter properties. Called before entering the constructor's function scope
+    /// so that the property symbols live in the class scope and can be tracked for
+    /// TS6138 unused property checking.
+    ///
+    /// If an explicit property declaration with the same name already exists in the
+    /// class scope, skip the parameter property declaration to avoid duplicate symbols.
+    pub(crate) fn bind_parameter_properties(&mut self, arena: &NodeArena, parameters: &NodeList) {
+        for &param_idx in &parameters.nodes {
+            let Some(param_node) = arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Only parameters with property modifiers (public/private/protected/readonly)
+            if !Self::has_parameter_property_modifier(arena, param.modifiers.as_ref()) {
+                continue;
+            }
+
+            let Some(name) = Self::get_identifier_name(arena, param.name) else {
+                continue;
+            };
+
+            // Skip if there's already a symbol with this name in the class scope
+            // (e.g., an explicit property declaration like `y: number;`).
+            if self.current_scope.get(name).is_some() {
+                continue;
+            }
+
+            let mut flags = symbol_flags::PROPERTY;
+            if Self::has_private_modifier(arena, param.modifiers.as_ref()) {
+                flags |= symbol_flags::PRIVATE;
+            }
+            if Self::has_protected_modifier(arena, param.modifiers.as_ref()) {
+                flags |= symbol_flags::PROTECTED;
+            }
+            // Use the parameter node as the declaration so the checker can
+            // distinguish parameter-property PROPERTY symbols from regular ones.
+            self.declare_symbol(name, flags, param_idx, false);
+        }
+    }
+
     /// Recursively walk a binding pattern and call `bind_node` on each
     /// binding element's initializer.  This ensures that function expressions
     /// and arrow functions used as default values inside destructuring patterns
@@ -650,6 +694,11 @@ impl BinderState {
                     self.declare_symbol("constructor", symbol_flags::CONSTRUCTOR, idx, false);
                     if let Some(ctor) = arena.get_constructor(node) {
                         self.bind_modifiers(arena, ctor.modifiers.as_ref());
+                        // Declare PROPERTY symbols for parameter properties (public/private/
+                        // protected/readonly params) in the class scope BEFORE entering the
+                        // constructor's function scope. This enables reference tracking for
+                        // TS6138 ("Property 'x' is declared but its value is never read").
+                        self.bind_parameter_properties(arena, &ctor.parameters);
                         self.bind_callable_body(arena, &ctor.parameters, ctor.body, idx);
                     }
                 }
