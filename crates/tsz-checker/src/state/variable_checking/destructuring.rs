@@ -554,6 +554,7 @@ impl<'a> CheckerState<'a> {
                                 element_index: i as u32,
                                 group_id,
                                 is_const,
+                                is_rest: element_data.dot_dot_dot_token,
                             },
                         );
                     }

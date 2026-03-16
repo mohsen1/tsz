@@ -175,6 +175,8 @@ pub struct DestructuredBindingInfo {
     pub(crate) group_id: u32,
     /// Whether this is a const binding (only const bindings support correlated narrowing)
     pub(crate) is_const: bool,
+    /// Whether this binding is a rest element (`...rest` in array destructuring)
+    pub(crate) is_rest: bool,
 }
 
 /// Shared state for type checking.
