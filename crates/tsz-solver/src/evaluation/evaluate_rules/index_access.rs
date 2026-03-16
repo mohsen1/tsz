@@ -371,19 +371,35 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         if self.is_generic_index() {
             let members = self.evaluator.interner().type_list(TypeListId(list_id));
             let mut concrete_results = Vec::new();
+            let mut has_deferred = false;
             for &member in members.iter() {
                 let result = self.evaluator.recurse_index_access(member, self.index_type);
                 if result == TypeId::ERROR {
                     return Some(TypeId::ERROR);
                 }
-                if result != TypeId::UNDEFINED
-                    && !matches!(
-                        self.evaluator.interner().lookup(result),
-                        Some(TypeData::IndexAccess(_, _))
-                    )
-                {
-                    concrete_results.push(result);
+                if result == TypeId::UNDEFINED {
+                    continue;
                 }
+                if matches!(
+                    self.evaluator.interner().lookup(result),
+                    Some(TypeData::IndexAccess(_, _))
+                ) {
+                    // This member produced a deferred IndexAccess — no point
+                    // continuing since we must defer the whole intersection.
+                    has_deferred = true;
+                    break;
+                }
+                concrete_results.push(result);
+            }
+
+            // When some members resolved concretely (e.g., mapped type template
+            // substitution) but others deferred (e.g., object type with unknown
+            // generic key), returning only the concrete results would be too
+            // permissive — the deferred constraints must also be enforced.
+            // Defer the entire intersection indexed access so that assignability
+            // checks remain conservative, matching TSC's behavior.
+            if has_deferred {
+                return None;
             }
 
             if !concrete_results.is_empty() {
