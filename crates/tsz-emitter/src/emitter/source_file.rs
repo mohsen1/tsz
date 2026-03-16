@@ -416,7 +416,10 @@ impl<'a> Printer<'a> {
         //   - non-module scripts under any module kind
         //   - outFile bundles with pre-existing define()/System.register() wrappers
         // Whether we need "use strict" at the top of this output.
-        let needs_use_strict_cjs = is_top_level_cjs && is_file_module;
+        // For .cts/.cjs files where module was overridden from ESM to CJS,
+        // tsc does NOT add "use strict" — the file is emitted as plain CJS.
+        let needs_use_strict_cjs =
+            is_top_level_cjs && is_file_module && self.ctx.original_module_kind.is_none();
         let needs_use_strict_amd_umd = is_amd_or_umd && is_file_module && !has_module_wrapper_stmt;
         let needs_use_strict_always = self.ctx.options.always_strict
             && !has_module_wrapper_stmt
