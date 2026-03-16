@@ -1911,6 +1911,8 @@ impl<'a> CheckerState<'a> {
 
             let mut merged_string_index: Option<TypeId> = None;
             let mut merged_number_index: Option<TypeId> = None;
+            let mut merged_string_index_node: Option<NodeIndex> = None;
+            let mut merged_number_index_node: Option<NodeIndex> = None;
             // Track type, whether the member is a method signature, and the
             // name node index. When the same name appears as both property
             // and method across merged declarations, tsc emits TS2300
@@ -2161,6 +2163,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(local_number) = local_number_index
                     && let Some(existing_number) = merged_number_index
                 {
+                    // TS2374: Duplicate index signature for type 'number'.
+                    // Emit on both the first and current occurrence (tsc behavior).
+                    if let Some(first_node) = merged_number_index_node {
+                        self.error_at_node_msg(
+                            first_node,
+                            diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                            &["number"],
+                        );
+                        merged_number_index_node = None; // Only report first node once
+                    }
+                    self.error_at_node_msg(
+                        local_number_index_node,
+                        diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                        &["number"],
+                    );
+
                     let local_str = self.format_type(local_number);
                     let existing_str = self.format_type(existing_number);
                     if !self.is_assignable_to(local_number, existing_number)
@@ -2177,6 +2195,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(local_string) = local_string_index
                     && let Some(existing_string) = merged_string_index
                 {
+                    // TS2374: Duplicate index signature for type 'string'.
+                    // Emit on both the first and current occurrence (tsc behavior).
+                    if let Some(first_node) = merged_string_index_node {
+                        self.error_at_node_msg(
+                            first_node,
+                            diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                            &["string"],
+                        );
+                        merged_string_index_node = None; // Only report first node once
+                    }
+                    self.error_at_node_msg(
+                        local_string_index_node,
+                        diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                        &["string"],
+                    );
+
                     let local_str = self.format_type(local_string);
                     let existing_str = self.format_type(existing_string);
                     if !self.is_assignable_to(local_string, existing_string)
@@ -2194,12 +2228,14 @@ impl<'a> CheckerState<'a> {
                     && let Some(local_number) = local_number_index
                 {
                     merged_number_index = Some(local_number);
+                    merged_number_index_node = Some(local_number_index_node);
                 }
 
                 if merged_string_index.is_none()
                     && let Some(local_string) = local_string_index
                 {
                     merged_string_index = Some(local_string);
+                    merged_string_index_node = Some(local_string_index_node);
                 }
 
                 self.pop_type_parameters(updates);
