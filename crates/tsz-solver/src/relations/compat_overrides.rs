@@ -539,6 +539,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             b_changed = b != b_norm,
             "are_types_identical_for_redeclaration: normalized"
         );
+        // 5 pre-check: Callable signature type parameter identity.
+        //
+        // The bidirectional subtype check below uses coinductive cycle detection,
+        // which assumes recursive type pairs are related. This causes false positives
+        // for generic interfaces with different type parameter constraints:
+        //   IPromise<string, number> vs Promise<string, boolean>
+        // After constraint erasure + cycle detection, the subtype checker concludes
+        // these are mutual subtypes even though the constraints differ.
+        //
+        // tsc's isTypeIdenticalTo requires exact type parameter constraint matching
+        // for signature identity. Pre-check this before the bidirectional subtype
+        // to catch constraint mismatches that the subtype checker misses.
+        if !self.callable_signatures_have_identical_type_params(a_norm, b_norm) {
+            return false;
+        }
         let a = a_norm;
         let b = b_norm;
 
@@ -619,6 +634,122 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             "are_types_identical_for_redeclaration: result"
         );
         fwd && bwd
+    }
+
+    /// Check that callable signatures in corresponding properties of two object types
+    /// have identical type parameter structures (arity and constraints).
+    ///
+    /// tsc's `isTypeIdenticalTo` requires exact type parameter constraint matching
+    /// for callable/function identity. Our bidirectional subtype check can miss this
+    /// because the subtype checker's generic signature comparison uses constraint
+    /// erasure fallbacks and coinductive cycle detection, which together can make
+    /// `IPromise<string, number>` appear identical to `Promise<string, boolean>`
+    /// even though the `then` method's type parameter constraints differ.
+    ///
+    /// Returns `true` if all corresponding callable signatures have identical type
+    /// parameter structures, or if the types are not Object types (in which case
+    /// we defer to the bidirectional subtype check).
+    fn callable_signatures_have_identical_type_params(&mut self, a: TypeId, b: TypeId) -> bool {
+        // Only applies when both are Object types; non-objects defer to bidirectional subtype.
+        let (a_shape_id, b_shape_id) = match (self.interner.lookup(a), self.interner.lookup(b)) {
+            (
+                Some(TypeData::Object(a_id) | TypeData::ObjectWithIndex(a_id)),
+                Some(TypeData::Object(b_id) | TypeData::ObjectWithIndex(b_id)),
+            ) => (a_id, b_id),
+            _ => return true,
+        };
+
+        // Phase 1: Collect constraint pairs without borrowing self.subtype.
+        // We need the interner borrow to end before calling is_subtype_of.
+        let constraint_pairs =
+            Self::collect_constraint_pairs(self.interner, a_shape_id, b_shape_id);
+
+        // Phase 2: Check collected constraints via subtype relation.
+        for (a_constraint, b_constraint) in constraint_pairs {
+            if a_constraint != b_constraint {
+                let fwd = self.subtype.is_subtype_of(a_constraint, b_constraint);
+                let bwd = self.subtype.is_subtype_of(b_constraint, a_constraint);
+                if !(fwd && bwd) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Collect type parameter constraint pairs from matching callable signatures
+    /// on two object shapes' properties. Returns `Err(())` on arity mismatch,
+    /// or `Ok(pairs)` with constraint pairs to check.
+    ///
+    /// Separated from `callable_signatures_have_identical_type_params` to avoid
+    /// borrow conflicts: this borrows `interner` (immutable) while the caller
+    /// needs `self.subtype` (mutable) for constraint comparison.
+    fn collect_constraint_pairs(
+        interner: &dyn crate::TypeDatabase,
+        a_shape_id: crate::types::ObjectShapeId,
+        b_shape_id: crate::types::ObjectShapeId,
+    ) -> Vec<(TypeId, TypeId)> {
+        let a_shape = interner.object_shape(a_shape_id);
+        let b_shape = interner.object_shape(b_shape_id);
+        let mut pairs = Vec::new();
+
+        for a_prop in &a_shape.properties {
+            let b_prop = match b_shape.properties.iter().find(|p| p.name == a_prop.name) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            let (a_callable, b_callable) = match (
+                interner.lookup(a_prop.type_id),
+                interner.lookup(b_prop.type_id),
+            ) {
+                (Some(TypeData::Callable(a_cid)), Some(TypeData::Callable(b_cid))) => (
+                    interner.callable_shape(a_cid),
+                    interner.callable_shape(b_cid),
+                ),
+                _ => continue,
+            };
+
+            // Check both call and construct signatures, using chained iterators
+            // to avoid duplicating the loop body.
+            let all_sig_pairs = a_callable
+                .call_signatures
+                .iter()
+                .zip(b_callable.call_signatures.iter())
+                .chain(
+                    a_callable
+                        .construct_signatures
+                        .iter()
+                        .zip(b_callable.construct_signatures.iter()),
+                );
+
+            for (a_sig, b_sig) in all_sig_pairs {
+                if a_sig.type_params.len() != b_sig.type_params.len() {
+                    // Arity mismatch — signal via a sentinel pair that will always fail.
+                    // TypeId::NEVER is not a subtype of TypeId::STRING and vice versa.
+                    pairs.push((TypeId::NEVER, TypeId::STRING));
+                    continue;
+                }
+                // Unconstrained type params default to UNKNOWN so two unconstrained
+                // params compare as identical (UNKNOWN == UNKNOWN → skip).
+                for (a_tp, b_tp) in a_sig.type_params.iter().zip(b_sig.type_params.iter()) {
+                    pairs.push((
+                        a_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                        b_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    ));
+                }
+            }
+
+            // Different signature counts mean the callable shapes differ structurally.
+            if a_callable.call_signatures.len() != b_callable.call_signatures.len()
+                || a_callable.construct_signatures.len() != b_callable.construct_signatures.len()
+            {
+                pairs.push((TypeId::NEVER, TypeId::STRING));
+            }
+        }
+
+        pairs
     }
 
     /// Normalize an intersection-of-all-unions to its Disjunctive Normal Form (DNF).
