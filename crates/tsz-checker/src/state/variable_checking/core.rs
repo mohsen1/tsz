@@ -1006,10 +1006,16 @@ impl<'a> CheckerState<'a> {
         // emit TS7031 for each leaf binding element under noImplicitAny.
         // This must be done before the symbol check since destructuring declarations
         // don't get a symbol assigned to the declaration node itself.
+        //
+        // Skip for:
+        // - catch clause variables (type is implicitly `any` or `unknown`)
+        // - for-in/for-of loop variables (type comes from the iterable expression)
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
+            && !is_catch_variable
             && var_decl.type_annotation.is_none()
             && var_decl.initializer.is_none()
+            && !self.is_for_in_or_of_variable_declaration(decl_idx)
         {
             let is_destructuring_pattern =
                 self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
