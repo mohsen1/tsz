@@ -116,12 +116,11 @@ impl<'a> InferenceContext<'a> {
     ///
     /// Unlike `best_common_type` (which creates unions as fallback), this function
     /// matches tsc's behavior for covariant inference:
-    /// 1. Strip nullable members from each candidate (matching tsc's filterType)
+    /// 1. Strip nullable types (undefined/null) from candidates
     /// 2. If all candidates are literals with the same base type → union (e.g., `3 | 4`)
     /// 3. Otherwise → find single common supertype via tournament reduction
-    ///    If no single supertype exists, picks the first non-superseded candidate
     ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
-    /// 4. Add back combined nullable flags from original candidates
+    /// 4. Add stripped nullable types back to the result
     pub fn get_common_supertype_for_inference(&self, types: &[TypeId]) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
@@ -130,86 +129,6 @@ impl<'a> InferenceContext<'a> {
             return types[0];
         }
 
-        // Match tsc's getCommonSupertype: strip nullable members from each candidate
-        // type (using filterType), run the tournament on non-nullable types, then add
-        // back the combined nullable flags via getNullableType.
-        //
-        // For candidates [B, undefined | D] in strictNullChecks mode:
-        //   primaryTypes = [B, D]  (undefined stripped from second candidate)
-        //   tournament picks B (since D <: B)
-        //   add back undefined → B | undefined
-        let mut has_null = false;
-        let mut has_undefined = false;
-        let primary_types: Vec<TypeId> = types
-            .iter()
-            .map(|&ty| self.strip_nullable_from_type(ty, &mut has_null, &mut has_undefined))
-            .collect();
-
-        let result = self.get_common_supertype_inner(&primary_types, types);
-
-        // Add back nullable types that were stripped
-        if has_null || has_undefined {
-            let mut parts = vec![result];
-            if has_undefined {
-                parts.push(TypeId::UNDEFINED);
-            }
-            if has_null {
-                parts.push(TypeId::NULL);
-            }
-            self.interner.union(parts)
-        } else {
-            result
-        }
-    }
-
-    /// Strip nullable members (null, undefined) from a type. For union types,
-    /// this removes nullable members from the union. For non-union types, if the
-    /// type itself is nullable, it becomes never.
-    fn strip_nullable_from_type(
-        &self,
-        ty: TypeId,
-        has_null: &mut bool,
-        has_undefined: &mut bool,
-    ) -> TypeId {
-        if ty == TypeId::NULL {
-            *has_null = true;
-            return TypeId::NEVER;
-        }
-        if ty == TypeId::UNDEFINED {
-            *has_undefined = true;
-            return TypeId::NEVER;
-        }
-        if let Some(TypeData::Union(members_id)) = self.interner.lookup(ty) {
-            let members = self.interner.type_list(members_id);
-            let mut non_nullable: Vec<TypeId> = Vec::new();
-            let mut changed = false;
-            for &member in members.iter() {
-                if member == TypeId::NULL {
-                    *has_null = true;
-                    changed = true;
-                } else if member == TypeId::UNDEFINED {
-                    *has_undefined = true;
-                    changed = true;
-                } else {
-                    non_nullable.push(member);
-                }
-            }
-            if !changed {
-                return ty;
-            }
-            match non_nullable.len() {
-                0 => TypeId::NEVER,
-                1 => non_nullable[0],
-                _ => self.interner.union(non_nullable),
-            }
-        } else {
-            ty
-        }
-    }
-
-    /// Inner implementation of common supertype resolution, operating on
-    /// nullable-stripped types.
-    fn get_common_supertype_inner(&self, types: &[TypeId], original_types: &[TypeId]) -> TypeId {
         // Deduplicate and filter never
         let mut seen = FxHashSet::default();
         let mut unique: Vec<TypeId> = Vec::new();
@@ -231,35 +150,116 @@ impl<'a> InferenceContext<'a> {
             return unique[0];
         }
 
+        // tsc's getCommonSupertype strips nullable types (undefined/null) from each
+        // candidate before running the tournament, then adds them back to the result.
+        // This is critical: without stripping, `[B, D | undefined]` fails to find a
+        // common supertype (because `undefined` isn't assignable to `B`), but after
+        // stripping to `[B, D]`, D <: B succeeds and the result is `B | undefined`.
+        let mut has_undefined = false;
+        let mut has_null = false;
+        let mut primary_types: Vec<TypeId> = Vec::new();
+        let mut primary_seen = FxHashSet::default();
+        for &ty in &unique {
+            // For union candidates like `D | undefined`, filter nullable members out
+            if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
+                let member_list = self.interner.type_list(members);
+                let mut non_nullable_members: Vec<TypeId> = Vec::new();
+                for &member in member_list.iter() {
+                    if member == TypeId::UNDEFINED {
+                        has_undefined = true;
+                    } else if member == TypeId::NULL {
+                        has_null = true;
+                    } else {
+                        non_nullable_members.push(member);
+                    }
+                }
+                // Add the non-nullable part of the union
+                if non_nullable_members.is_empty() {
+                    // Union was entirely nullable (e.g., `undefined | null`)
+                    continue;
+                } else if non_nullable_members.len() == 1 {
+                    if primary_seen.insert(non_nullable_members[0]) {
+                        primary_types.push(non_nullable_members[0]);
+                    }
+                } else {
+                    // Rebuild the union without nullable types
+                    let non_null_union = self.interner.union(non_nullable_members);
+                    if primary_seen.insert(non_null_union) {
+                        primary_types.push(non_null_union);
+                    }
+                }
+            } else if ty == TypeId::UNDEFINED {
+                has_undefined = true;
+            } else if ty == TypeId::NULL {
+                has_null = true;
+            } else {
+                if primary_seen.insert(ty) {
+                    primary_types.push(ty);
+                }
+            }
+        }
+
+        let stripped_nullable = has_undefined || has_null;
+
+        // If any primary type is `any`, return `any` immediately.
+        // `any` absorbs all other types including nullable.
+        if primary_types.iter().any(|&ty| ty == TypeId::ANY) {
+            return TypeId::ANY;
+        }
+
+        // If all candidates were nullable, return the nullable union
+        if primary_types.is_empty() {
+            let mut nullable = Vec::new();
+            if has_undefined {
+                nullable.push(TypeId::UNDEFINED);
+            }
+            if has_null {
+                nullable.push(TypeId::NULL);
+            }
+            return if nullable.len() == 1 {
+                nullable[0]
+            } else {
+                self.interner.union(nullable)
+            };
+        }
+
+        // If only one non-nullable candidate remains after stripping, use it directly
+        if primary_types.len() == 1 {
+            let result = primary_types[0];
+            return self.add_nullable_to_result(result, has_undefined, has_null);
+        }
+
         // Step 1: Check if all candidates are literals with the same base type.
-        // If so, create a union (e.g., [3, 4] → 3 | 4, ["a", "b"] → "a" | "b").
-        // This matches tsc's `literalTypesWithSameBaseType` check.
-        if self.all_literals_same_base(&unique) {
-            return self.interner.union(unique);
+        if self.all_literals_same_base(&primary_types) {
+            let result = self.interner.union(primary_types);
+            return self.add_nullable_to_result(result, has_undefined, has_null);
         }
 
         // Step 2: Try common base type (literal widening)
-        let common_base = crate::utils::find_common_base_type(&unique, |ty| self.get_base_type(ty));
+        let common_base =
+            crate::utils::find_common_base_type(&primary_types, |ty| self.get_base_type(ty));
         if let Some(base) = common_base
-            && unique.len() > 1
+            && primary_types.len() > 1
         {
-            return base;
+            return self.add_nullable_to_result(base, has_undefined, has_null);
         }
 
         // Step 3: Tournament reduction with strict subtype
-        let mut best = unique[0];
-        for &candidate in &unique[1..] {
+        // This matches tsc's getSingleCommonSupertype which first tries strict subtype,
+        // then falls back to regular subtype.
+        let mut best = primary_types[0];
+        for &candidate in &primary_types[1..] {
             if self.is_subtype(best, candidate) {
                 best = candidate;
             }
         }
-        if self.is_suitable_common_type(best, &unique) {
-            return best;
+        if self.is_suitable_common_type(best, &primary_types) {
+            return self.add_nullable_to_result(best, has_undefined, has_null);
         }
 
         // Step 4: Common base class
-        if let Some(common_class) = self.find_common_base_class(&unique) {
-            return common_class;
+        if let Some(common_class) = self.find_common_base_class(&primary_types) {
+            return self.add_nullable_to_result(common_class, has_undefined, has_null);
         }
 
         // Step 5: tsc's fallback — pick the single common supertype.
@@ -269,19 +269,15 @@ impl<'a> InferenceContext<'a> {
         // tiebreaker: prefer the candidate that appears most often in the ORIGINAL
         // (pre-deduplicated) set, as tsc's source-order heuristic effectively picks
         // the type that more arguments agree on.
-        // For [number, string, number] (or [string, number, number]):
-        //   number appears 2x, string 1x → pick number.
         let count_in_original =
-            |ty: TypeId| -> usize { original_types.iter().filter(|&&t| t == ty).count() };
-        let mut best = unique[0];
+            |ty: TypeId| -> usize { types.iter().filter(|&&t| t == ty).count() };
+        let mut best = primary_types[0];
         let mut best_count = count_in_original(best);
-        for &candidate in &unique[1..] {
+        for &candidate in &primary_types[1..] {
             if self.is_subtype(best, candidate) {
                 best = candidate;
                 best_count = count_in_original(candidate);
             } else {
-                // Tiebreaker: when neither is a subtype, prefer the one that
-                // appears more frequently in the original candidate list.
                 let candidate_count = count_in_original(candidate);
                 if candidate_count > best_count {
                     best = candidate;
@@ -289,7 +285,31 @@ impl<'a> InferenceContext<'a> {
                 }
             }
         }
-        best
+
+        // If nullable types were stripped and stripping made a difference in the
+        // tournament result, add them back. This matches tsc's getNullableType call
+        // after getSingleCommonSupertype.
+        if stripped_nullable {
+            self.add_nullable_to_result(best, has_undefined, has_null)
+        } else {
+            best
+        }
+    }
+
+    /// Add nullable types (undefined/null) back to a type result.
+    /// Matches tsc's `getNullableType(superTypeOrUnion, combinedFlags & TypeFlags.Nullable)`.
+    fn add_nullable_to_result(&self, base: TypeId, add_undefined: bool, add_null: bool) -> TypeId {
+        if !add_undefined && !add_null {
+            return base;
+        }
+        let mut members = vec![base];
+        if add_undefined {
+            members.push(TypeId::UNDEFINED);
+        }
+        if add_null {
+            members.push(TypeId::NULL);
+        }
+        self.interner.union(members)
     }
 
     /// Check if all types are literal types with the same primitive base.
