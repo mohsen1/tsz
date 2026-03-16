@@ -844,15 +844,26 @@ impl ParserState {
         let raw_text = self.scanner.get_token_text_ref().to_string();
 
         // Check for unterminated string literal.
-        // tsc emits TS1002 "Unterminated string literal" for both newline-terminated and
-        // EOF-terminated unterminated strings.
+        // tsc emits TS1002 "Unterminated string literal" for newline-terminated strings
+        // and TS1126 "Unexpected end of text" for EOF-terminated strings.
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
-            self.parse_error_at(
-                end_pos,
-                0,
-                diagnostic_messages::UNTERMINATED_STRING_LITERAL,
-                diagnostic_codes::UNTERMINATED_STRING_LITERAL,
-            );
+            let is_eof_unterminated =
+                (self.scanner.get_token_flags() & TokenFlags::UnterminatedAtEof as u32) != 0;
+            if is_eof_unterminated {
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    diagnostic_messages::UNEXPECTED_END_OF_TEXT,
+                    diagnostic_codes::UNEXPECTED_END_OF_TEXT,
+                );
+            } else {
+                self.parse_error_at(
+                    end_pos,
+                    0,
+                    diagnostic_messages::UNTERMINATED_STRING_LITERAL,
+                    diagnostic_codes::UNTERMINATED_STRING_LITERAL,
+                );
+            }
         }
 
         self.report_invalid_string_or_template_escape_errors();

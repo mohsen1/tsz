@@ -263,6 +263,7 @@ impl ParserState {
                 diagnostic_codes::UNTERMINATED_STRING_LITERAL
                     | diagnostic_codes::UNTERMINATED_TEMPLATE_LITERAL
                     | diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL
+                    | diagnostic_codes::UNEXPECTED_END_OF_TEXT
             )
         })
     }
