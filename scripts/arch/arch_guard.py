@@ -139,6 +139,35 @@ CHECKS = [
         },
     ),
     (
+        "Code quality: no bare .unwrap() in solver production code (use .expect())",
+        ROOT / "crates" / "tsz-solver" / "src",
+        re.compile(r"\.unwrap\(\)"),
+        {
+            "exclude_dirs": {"tests"},
+            "ignore_comment_lines": True,
+            "exclude_test_files": True,
+            # Inline #[cfg(test)] modules at the bottom of these files
+            "exclude_files": {
+                "crates/tsz-solver/src/type_queries/data.rs",
+                "crates/tsz-solver/src/type_queries/flow.rs",
+            },
+        },
+    ),
+    (
+        "Code quality: no bare .unwrap() in binder production code (use .expect())",
+        ROOT / "crates" / "tsz-binder" / "src",
+        re.compile(r"\.unwrap\(\)"),
+        {
+            "exclude_dirs": {"tests"},
+            "ignore_comment_lines": True,
+            "exclude_test_files": True,
+            # state/tests.rs is a #[path = "tests.rs"] test module
+            "exclude_files": {
+                "crates/tsz-binder/src/state/tests.rs",
+            },
+        },
+    ),
+    (
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),
