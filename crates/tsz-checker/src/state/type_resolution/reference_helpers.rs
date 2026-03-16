@@ -73,7 +73,13 @@ impl<'a> CheckerState<'a> {
                             self.ctx.insert_def_type_params(def_id, type_params.clone());
                         }
                     }
-                    let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
+                    // Use AST-level check first to avoid self-referential default
+                    // resolution issues (e.g., `interface SelfRef<T = SelfRef> {}`).
+                    let required_count = self
+                        .count_required_type_params_from_ast(sym_id)
+                        .unwrap_or_else(|| {
+                            type_params.iter().filter(|p| p.default.is_none()).count()
+                        });
                     if required_count > 0 {
                         // tsc uses the original declaration name, not the local alias.
                         // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
