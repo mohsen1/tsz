@@ -181,15 +181,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check the shared cache for a previously computed result.
         // This avoids re-doing expensive structural checks for type pairs
         // already resolved by a prior SubtypeChecker instance.
-        if let Some(db) = self.query_db {
-            let key = self.make_cache_key(source, target);
-            if let Some(cached) = db.lookup_subtype_cache(key) {
-                leave_global!();
-                return if cached {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                };
+        //
+        // Skip when identity_cycle_check is active: the cache key doesn't encode
+        // the identity-mode flag, so a cached `true` from a normal subtype check
+        // would incorrectly short-circuit the identity check (which needs stricter
+        // Application type-argument comparison at cycle points for TS2403).
+        if !self.identity_cycle_check {
+            if let Some(db) = self.query_db {
+                let key = self.make_cache_key(source, target);
+                if let Some(cached) = db.lookup_subtype_cache(key) {
+                    leave_global!();
+                    return if cached {
+                        SubtypeResult::True
+                    } else {
+                        SubtypeResult::False
+                    };
+                }
             }
         }
 
@@ -205,14 +212,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check reversed pair for bivariant cross-recursion detection.
         if self.guard.is_visiting(&(target, source)) {
             leave_global!();
-            return self.cycle_result();
+            return self.result_on_cycle(source, target);
         }
 
         use crate::recursion::RecursionResult;
         match self.guard.enter(pair) {
             RecursionResult::Cycle => {
                 leave_global!();
-                return self.cycle_result();
+                return self.result_on_cycle(source, target);
             }
             RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
                 leave_global!();
@@ -332,7 +339,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if found_cycle {
                     self.guard.leave(pair);
                     leave_global!();
-                    return self.cycle_result();
+                    return self.result_on_cycle(source, target);
                 }
             }
         }
@@ -342,13 +349,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if self.def_guard.is_visiting(&(t_def, s_def)) {
                 self.guard.leave(pair);
                 leave_global!();
-                return self.cycle_result();
+                return self.result_on_cycle(source, target);
             }
             match self.def_guard.enter((s_def, t_def)) {
                 RecursionResult::Cycle => {
                     self.guard.leave(pair);
                     leave_global!();
-                    return self.cycle_result();
+                    return self.result_on_cycle(source, target);
                 }
                 RecursionResult::Entered => Some((s_def, t_def)),
                 _ => None,
@@ -511,5 +518,53 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         result
+    }
+
+    /// Returns the appropriate cycle result based on the current mode.
+    ///
+    /// In identity mode (TS2403), delegates to `identity_cycle_result` which
+    /// compares Application type arguments before assuming related.
+    /// In normal mode, delegates to `cycle_result` (coinductive assumption).
+    fn result_on_cycle(&self, source: TypeId, target: TypeId) -> SubtypeResult {
+        if self.identity_cycle_check {
+            self.identity_cycle_result(source, target)
+        } else {
+            self.cycle_result()
+        }
+    }
+
+    /// Identity-mode cycle result: check Application type arguments at cycle points.
+    ///
+    /// When a cycle is detected during identity checking (TS2403), we compare
+    /// Application type arguments before assuming the types are related.
+    ///
+    /// Recursive generic interfaces like `IPromise2<T, V>` and `Promise2<T, V>`
+    /// share the same structural pattern but may differ in their type arguments
+    /// at the cycle point. For example:
+    ///   - `IPromise2<W, U>` vs `Promise2<any, W>` → args differ → NOT identical
+    ///   - `IPromise<U>` vs `Promise<U>` → args [U] == [U] → assume identical
+    ///
+    /// For non-Application types (evaluated objects, callables), falls back to
+    /// the standard coinductive assumption (CycleDetected = True).
+    pub(crate) fn identity_cycle_result(&self, source: TypeId, target: TypeId) -> SubtypeResult {
+        let s_app = application_id(self.interner, source);
+        let t_app = application_id(self.interner, target);
+        if let (Some(s_app_id), Some(t_app_id)) = (s_app, t_app) {
+            let s_app_data = self.interner.type_application(s_app_id);
+            let t_app_data = self.interner.type_application(t_app_id);
+            if s_app_data.args.len() != t_app_data.args.len() {
+                return SubtypeResult::False;
+            }
+            for (s_arg, t_arg) in s_app_data.args.iter().zip(t_app_data.args.iter()) {
+                if s_arg != t_arg {
+                    return SubtypeResult::False;
+                }
+            }
+            // All type arguments match — assume related at the cycle point
+            self.cycle_result()
+        } else {
+            // Not both Application types — fall back to coinductive assumption
+            self.cycle_result()
+        }
     }
 }
