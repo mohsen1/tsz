@@ -849,11 +849,9 @@ impl<'a> CheckerState<'a> {
         // When exactOptionalPropertyTypes is enabled and the failure is due to
         // exact optional property mismatch, don't elaborate per-property errors.
         // The caller will emit a top-level TS2375 instead.
-        if self.ctx.compiler_options.exact_optional_property_types {
-            let source_type = self.get_type_of_node(arg_idx);
-            if self.has_exact_optional_property_mismatch(source_type, param_type) {
-                return false;
-            }
+        let source_type = self.get_type_of_node(arg_idx);
+        if self.has_exact_optional_property_mismatch(source_type, param_type) {
+            return false;
         }
 
         // Normalize optional/nullish wrappers (e.g., `{...} | undefined`).
