@@ -13,6 +13,7 @@ mod assignability;
 mod assignability_helpers;
 mod call_errors;
 mod core;
+mod core_formatting;
 mod emitters;
 mod generics;
 mod name_resolution;

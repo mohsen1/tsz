@@ -10,3 +10,4 @@ mod member_declaration_checks;
 mod overload_compatibility;
 mod statement_callback_bridge;
 mod statement_checks;
+mod statement_helpers;
