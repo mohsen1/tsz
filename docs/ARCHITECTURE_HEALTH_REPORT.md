@@ -102,18 +102,16 @@ in PRs. Splitting by logical category would improve all three.
 
 ## 4. Dead Code & Unused Imports
 
-### Status: MINIMAL (good hygiene)
+### Status: EXCELLENT (zero warnings workspace-wide)
 
-- **3** `#[allow(dead_code)]` annotations:
-  - `tsz-core/src/module_resolver_helpers.rs:498` — JSON deserialization fields
-  - `tsz-emitter/src/emitter/es5/mod.rs:11` — `loop_capture` module (used by statements.rs,
-    `dead_code` suppresses warnings on internal items not yet wired up)
-  - `tsz-emitter/src/emitter/core.rs:32` — Reserved `is_static` field
-
-- **3** `#[allow(unused_imports)]` remaining in production code (down from 14):
+- **Zero compiler warnings** across the entire workspace (all crates)
+- All `#[allow(dead_code)]` annotations have justification comments
+- Solver inference module has targeted dead_code allows for scaffolded
+  infrastructure (variance analysis, conditional type inference, constraint resolution)
+- **6** `#[allow(unused_imports)]` remaining in production code:
+  - 4 in `tsz-solver/src/diagnostics/core.rs` — intentional API stability aliases
   - 1 in `tsz-solver/src/intern/mod.rs` — intentional for test access
-  - 1 in `tsz-checker/src/query_boundaries/type_construction.rs`
-  - 1 in `tsz-solver/src/diagnostics/core.rs`
+  - 1 in `tsz-checker/src/query_boundaries/type_construction.rs` — test scaffolding
 
 ---
 
@@ -194,8 +192,10 @@ in PRs. Splitting by logical category would improve all three.
 - **Well-documented architecture** — NORTH_STAR.md, BOUNDARIES.md, HOW_TO_CODE.md
 - **Tiered solver API** — clean 4-tier export structure prevents accidental coupling
 - **Architecture contract tests** — automated enforcement of boundary rules
-- **Architecture guard script** — `scripts/arch/arch_guard.py` with 20+ boundary checks
-  and tightened exclusion lists (11 stale exclusions removed, ObjectFlags guard added)
+- **Architecture guard script** — `scripts/arch/arch_guard.py` with 25+ boundary checks
+  including bare unwrap() guards for checker, solver, and binder production code
 - **Builder pattern for ObjectShape** — `mark_fresh_literal()`, `mark_has_late_bound_members()`
   eliminate need for checker to import solver-internal flags
 - **Zero bare unwrap() in production** — all production code uses `expect("reason")`
+- **Zero compiler warnings** — entire workspace builds warning-free
+- **Minimal public API surface** — solver-internal items properly scoped with `pub(crate)`
