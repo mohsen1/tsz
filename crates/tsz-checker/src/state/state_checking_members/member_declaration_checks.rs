@@ -108,15 +108,21 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| self.jsdoc_access_level(member_idx))
                         };
                         // Don't return immediately - a getter/setter pair may have
-                        // different visibility. Use the most permissive level (tsc
+                        // different visibility. Track the accessor access level and
+                        // use the most permissive level when both are found (tsc
                         // allows reads when getter is public even if setter is private).
                         match access_level {
-                            Some(MemberAccessLevel::Private) | None => return MemberLookup::Public,
+                            None => {
+                                // No explicit modifier = public; any public accessor
+                                // makes the pair publicly accessible.
+                                return MemberLookup::Public;
+                            }
                             Some(level) => {
                                 accessor_access = Some(match accessor_access {
-                                    // First accessor found
-                                    None | Some(MemberAccessLevel::Private) => level,
-                                    // If either accessor is non-private, use the most permissive level
+                                    // First accessor found - use its level
+                                    None => level,
+                                    // Both accessors found - use the most permissive
+                                    Some(MemberAccessLevel::Private) => level,
                                     Some(prev) => prev,
                                 });
                             }
@@ -973,7 +979,12 @@ impl<'a> CheckerState<'a> {
                         // Optional methods (g?(): T) also don't need implementations —
                         // they are standalone declarations, not overload signatures.
                         let is_abstract = self.has_abstract_modifier(&method.modifiers);
-                        if method.body.is_none() && !is_abstract && !method.question_token {
+                        let is_declare = self.has_declare_modifier(&method.modifiers);
+                        if method.body.is_none()
+                            && !is_abstract
+                            && !is_declare
+                            && !method.question_token
+                        {
                             // Method overload signature - check for implementation.
                             // TSC only reports TS2391 on the LAST overload in a consecutive
                             // group with the same name, so skip ahead to find it.

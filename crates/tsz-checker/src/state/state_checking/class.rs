@@ -17,6 +17,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
         use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_messages;
 
         // Optimization: Skip if already fully checked
         if self.ctx.checked_classes.contains(&stmt_idx) {
@@ -282,7 +283,6 @@ impl<'a> CheckerState<'a> {
 
                 if is_private_identifier {
                     use crate::context::ScriptTarget;
-                    use crate::diagnostics::diagnostic_messages;
 
                     // TS18028: Check for private identifiers when targeting ES5 or lower
                     let is_es5_or_lower = matches!(
@@ -297,9 +297,92 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    // Note: In tsc 6.0, private identifiers (#name) ARE allowed
-                    // in ambient (declare) classes. TS18019 is only for member-level
-                    // 'declare' modifier on private-named members, not class-level.
+                    // Get member modifiers for TS18010/TS18019 checks
+                    let member_modifiers: Option<&Option<tsz_parser::parser::NodeList>> =
+                        match member_node.kind {
+                            syntax_kind_ext::PROPERTY_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_property_decl(member_node)
+                                .map(|p| &p.modifiers),
+                            syntax_kind_ext::METHOD_DECLARATION => self
+                                .ctx
+                                .arena
+                                .get_method_decl(member_node)
+                                .map(|m| &m.modifiers),
+                            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                                .ctx
+                                .arena
+                                .get_accessor(member_node)
+                                .map(|a| &a.modifiers),
+                            _ => None,
+                        };
+
+                    if let Some(modifiers) = member_modifiers {
+                        // TS18010: An accessibility modifier cannot be used with a private identifier.
+                        if self.has_private_modifier(modifiers)
+                            || self.has_protected_modifier(modifiers)
+                            || self.has_modifier_kind(
+                                modifiers,
+                                tsz_scanner::SyntaxKind::PublicKeyword,
+                            )
+                        {
+                            self.error_at_node(
+                                member_idx,
+                                diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                            );
+                        }
+
+                        // TS18019: 'declare'/'abstract' modifier cannot be used with a private identifier.
+                        // Only applies to property declarations. For methods and accessors,
+                        // tsc emits TS1031 ("'declare' modifier cannot appear on class elements
+                        // of this kind") instead, which is handled by the parser/modifier checker.
+                        if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                            if self.has_declare_modifier(modifiers) {
+                                self.error_at_node_msg(
+                                    member_idx,
+                                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                    &["declare"],
+                                );
+                            }
+                            if self.has_abstract_modifier(modifiers) {
+                                self.error_at_node_msg(
+                                    member_idx,
+                                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                    &["abstract"],
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // TS1024: 'readonly' modifier can only appear on a property declaration or index signature.
+                {
+                    let has_readonly_on_non_property = match member_node.kind {
+                        syntax_kind_ext::METHOD_DECLARATION => {
+                            if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+                                self.has_readonly_modifier(&method.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                                self.has_readonly_modifier(&accessor.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+                    if has_readonly_on_non_property {
+                        self.error_at_node(
+                            member_idx,
+                            diagnostic_messages::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+                            diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+                        );
+                    }
                 }
 
                 // Check for abstract members in non-abstract class
