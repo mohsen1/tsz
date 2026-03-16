@@ -958,7 +958,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Returns `Some(source)` with the source type T if homomorphic, `None` otherwise.
     /// Homomorphic mapped types preserve modifiers from the source type.
     ///
-    /// Check if a mapped type's template contains an IndexAccess into `any`.
+    /// Check if a mapped type's template contains an `IndexAccess` into `any`.
     /// This handles the post-instantiation case where `{ [P in keyof T]: F<T[P]> }` with T=any
     /// has the constraint resolved to `string | number | symbol` and template to `F<any[P]>`.
     /// tsc resolves such mapped types to `any`.
@@ -972,12 +972,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match self.interner().lookup(type_id) {
             Some(TypeData::IndexAccess(obj, idx)) => {
                 // Check if this is `any[P]` where P is the mapped type parameter
-                if obj == TypeId::ANY {
-                    if let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx) {
-                        if param.name == param_name {
-                            return true;
-                        }
-                    }
+                if obj == TypeId::ANY
+                    && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
+                    && param.name == param_name
+                {
+                    return true;
                 }
                 // Recurse into both sides
                 self.find_index_access_into_any(obj, param_name)

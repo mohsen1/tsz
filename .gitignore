@@ -132,3 +132,4 @@ crates/tsz-website/data/
 .worktrees
 .local-target
 .ctx-target/
+.work-expand

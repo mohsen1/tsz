@@ -2,9 +2,15 @@
 
 ## Current State (as of 2026-03-15, latest main)
 
-**Conformance**: ~96.4% on 1k sample (2026-03-16, post solver-campaign merge). Snapshot: 10843/12583 (86.2%).
+**Conformance**: 1866/2000 (93.3%) on 2k sample, 38 fingerprint-only (2026-03-16). Post solver-campaign merge.
 
-**Campaign plateau**: After 13 net fixes (fix #13 reverted, fix #14 added), the contextual-typing campaign is exhausted. Solver campaign merge brought +14 tests on 1k sample via discriminated union inference, nullable candidates, and CommonJS module support.
+**Expanded campaign analysis** (2026-03-16): All remaining failures require deep work:
+- **TS2420 extras**: lib.dom.d.ts interface merging adds members to user interfaces (e.g., `FileSystem`), causing false "incorrectly implements" errors
+- **TS7053 missing**: element access TS7053 works for simple cases but fails for narrowed types in `for...in` loops
+- **TS2416 missing**: class implements checker emits TS2420 but not the accompanying TS2416 property mismatch for generic methods
+- **TS2451 extras**: namespace type-alias-only merging not implemented (binder-level)
+- **TS2537/TS2538 missing**: computed property destructuring index checks not implemented
+- No more quick wins available. All 5 campaign areas (big3, narrowing, contextual-typing, property-resolution, parser-recovery) have exhausted their low-hanging fruit.
 
 **What was fixed** (13 commits, all merged):
 1. Intra-expression inference for object literals with all-sensitive properties
