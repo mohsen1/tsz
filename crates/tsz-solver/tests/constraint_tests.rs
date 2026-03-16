@@ -1109,7 +1109,8 @@ fn test_constraint_no_bounds_defaults_unknown() {
 // fix_current_variables: unknown candidate filtering with upper bounds
 // =============================================================================
 
-#[test]fn test_fix_current_variables_filters_unknown_with_informative_upper_bound() {
+#[test]
+fn test_fix_current_variables_filters_unknown_with_informative_upper_bound() {
     // Simulates: f<T>(value: T[], func: (t: T) => void) called as f([], acceptStr)
     // The empty array contributes `unknown` as a covariant candidate (from contextual typing),
     // while `acceptStr` contributes `string` as a contra-candidate (from function param).
