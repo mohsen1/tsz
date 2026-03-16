@@ -70,6 +70,7 @@ interface TestCase {
   moduleDetection?: string;
   preserveConstEnums: boolean;
   verbatimModuleSyntax: boolean;
+  rewriteRelativeImportExtensions: boolean;
   isolatedModules: boolean;
   importsNotUsedAsValues?: string;
   preserveValueImports: boolean;
@@ -154,6 +155,7 @@ function getCacheKey(
   moduleDetection: string = '',
   preserveConstEnums: boolean = false,
   verbatimModuleSyntax: boolean = false,
+  rewriteRelativeImportExtensions: boolean = false,
   isolatedModules: boolean = false,
   importsNotUsedAsValues: string = '',
   preserveValueImports: boolean = false,
@@ -179,7 +181,7 @@ function getCacheKey(
   } catch {
     runnerSalt = 'runner-unknown';
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${rewriteRelativeImportExtensions}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -568,6 +570,9 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const verbatimModuleSyntax = variant.verbatimmodulesyntax !== undefined
       ? variant.verbatimmodulesyntax === 'true'
       : directives.verbatimmodulesyntax === true;
+    const rewriteRelativeImportExtensions = variant.rewriterelativeimportextensions !== undefined
+      ? variant.rewriterelativeimportextensions === 'true'
+      : directives.rewriterelativeimportextensions === true;
     const isolatedModules = variant.isolatedmodules !== undefined
       ? variant.isolatedmodules === 'true'
       : directives.isolatedmodules === true;
@@ -625,6 +630,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       moduleDetection,
       preserveConstEnums,
       verbatimModuleSyntax,
+      rewriteRelativeImportExtensions,
       isolatedModules,
       importsNotUsedAsValues,
       preserveValueImports,
@@ -731,6 +737,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.moduleDetection ?? '',
       testCase.preserveConstEnums,
       testCase.verbatimModuleSyntax,
+      testCase.rewriteRelativeImportExtensions,
       testCase.isolatedModules,
       testCase.importsNotUsedAsValues ?? '',
       testCase.preserveValueImports,
@@ -771,6 +778,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         moduleDetection: testCase.moduleDetection,
         preserveConstEnums: testCase.preserveConstEnums,
         verbatimModuleSyntax: testCase.verbatimModuleSyntax,
+        rewriteRelativeImportExtensions: testCase.rewriteRelativeImportExtensions,
         isolatedModules: testCase.isolatedModules,
         importsNotUsedAsValues: testCase.importsNotUsedAsValues,
         preserveValueImports: testCase.preserveValueImports,

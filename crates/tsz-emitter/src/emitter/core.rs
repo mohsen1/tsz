@@ -141,7 +141,8 @@ pub struct PrinterOptions {
     /// When true, do not elide any imports or exports not explicitly marked as type-only.
     /// Corresponds to `--verbatimModuleSyntax`.
     pub verbatim_module_syntax: bool,
-    /// When true, rewrite relative import extensions: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
+    /// When true, rewrite `.ts`/`.tsx`/`.mts`/`.cts` extensions to `.js`/`.jsx`/`.mjs`/`.cjs`
+    /// in relative import/export specifiers during emit.
     pub rewrite_relative_import_extensions: bool,
 }
 
