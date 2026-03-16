@@ -626,28 +626,46 @@ impl<'a> Printer<'a> {
     /// Check if an object literal expression can be safely inlined into a
     /// parent object without needing spread wrapping.
     fn can_inline_jsx_spread_object(&self, expr: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(expr) else { return false; };
-        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION { return false; }
-        let Some(lit) = self.arena.get_literal_expr(node) else { return false; };
-        if lit.elements.nodes.is_empty() { return false; }
+        let Some(node) = self.arena.get(expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if lit.elements.nodes.is_empty() {
+            return false;
+        }
         for &prop in &lit.elements.nodes {
-            let Some(prop_node) = self.arena.get(prop) else { return false; };
+            let Some(prop_node) = self.arena.get(prop) else {
+                return false;
+            };
             match prop_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     if let Some(pa) = self.arena.get_property_assignment(prop_node) {
-                        if self.is_literal_proto_name(pa.name) { return false; }
+                        if self.is_literal_proto_name(pa.name) {
+                            return false;
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     if let Some(sp) = self.arena.get_shorthand_property(prop_node) {
-                        if self.is_literal_proto_name(sp.name) { return false; }
+                        if self.is_literal_proto_name(sp.name) {
+                            return false;
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION
                     || k == syntax_kind_ext::GET_ACCESSOR
                     || k == syntax_kind_ext::SET_ACCESSOR => {}
-                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => { return false; }
-                _ => { return false; }
+                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    return false;
+                }
+                _ => {
+                    return false;
+                }
             }
         }
         true
@@ -655,8 +673,12 @@ impl<'a> Printer<'a> {
 
     /// Check if a property name is the literal (non-computed) `__proto__`.
     fn is_literal_proto_name(&self, name_idx: NodeIndex) -> bool {
-        let Some(name_node) = self.arena.get(name_idx) else { return false; };
-        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME { return false; }
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
         if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
                 return ident.escaped_text == "__proto__";
@@ -672,20 +694,29 @@ impl<'a> Printer<'a> {
 
     /// Merge Spread groups with inlinable object literals into InlinedObjectLiteral.
     fn merge_inlinable_spread_groups(&self, groups: Vec<AttrGroup>) -> Vec<AttrGroup> {
-        groups.into_iter().map(|g| match g {
-            AttrGroup::Spread(expr) if self.can_inline_jsx_spread_object(expr) => {
-                AttrGroup::InlinedObjectLiteral(expr)
-            }
-            other => other,
-        }).collect()
+        groups
+            .into_iter()
+            .map(|g| match g {
+                AttrGroup::Spread(expr) if self.can_inline_jsx_spread_object(expr) => {
+                    AttrGroup::InlinedObjectLiteral(expr)
+                }
+                other => other,
+            })
+            .collect()
     }
 
     /// Emit object literal properties inline into a parent object literal.
     fn emit_jsx_inline_object_literal_props(&mut self, expr: NodeIndex, first: &mut bool) {
-        let Some(node) = self.arena.get(expr) else { return; };
-        let Some(lit) = self.arena.get_literal_expr(node) else { return; };
+        let Some(node) = self.arena.get(expr) else {
+            return;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return;
+        };
         for &prop in &lit.elements.nodes {
-            if !*first { self.write(", "); }
+            if !*first {
+                self.write(", ");
+            }
             *first = false;
             self.emit(prop);
         }
