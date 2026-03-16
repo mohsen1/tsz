@@ -6,9 +6,14 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsx_import_source(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
 
+        // Determine runtime suffix from mode or pragma.
+        // When `@jsxImportSource` pragma is present, it overrides jsx mode
+        // and forces react-jsx behavior even in preserve mode.
+        let pragma_source = self.extract_jsx_import_source_pragma();
         let runtime_suffix = match self.ctx.compiler_options.jsx_mode {
             JsxMode::ReactJsx => "jsx-runtime",
             JsxMode::ReactJsxDev => "jsx-dev-runtime",
+            _ if pragma_source.is_some() => "jsx-runtime",
             _ => return,
         };
 
@@ -21,7 +26,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let source: String = if self.ctx.compiler_options.jsx_import_source.is_empty() {
+        let source: String = if let Some(ref pragma) = pragma_source {
+            pragma.clone()
+        } else if self.ctx.compiler_options.jsx_import_source.is_empty() {
             "react".to_string()
         } else {
             self.ctx.compiler_options.jsx_import_source.clone()
@@ -35,12 +42,66 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        use crate::diagnostics::diagnostic_codes;
-        self.error_at_node_msg(
-            node_idx,
-            diagnostic_codes::THIS_JSX_TAG_REQUIRES_THE_MODULE_PATH_TO_EXIST_BUT_NONE_COULD_BE_FOUND_MAKE_SURE,
-            &[&runtime_path],
-        );
+        // Defer the TS2875 diagnostic instead of emitting it here.
+        // This function runs inside JSX element type resolution, which can be
+        // inside a speculative call-checker context that truncates diagnostics.
+        // The deferred diagnostic is emitted at the end of check_source_file.
+        self.ctx.deferred_jsx_import_source_error = Some((node_idx, runtime_path));
+    }
+
+    /// Extract `@jsxImportSource <package>` pragma from the current file's
+    /// leading comments. Returns the package name or None.
+    fn extract_jsx_import_source_pragma(&self) -> Option<String> {
+        let sf = self.ctx.arena.source_files.first()?;
+        let text = &sf.text;
+        let scan_limit = text.len().min(4096);
+        let scan_text = &text[..scan_limit];
+        let bytes = scan_text.as_bytes();
+        let mut pos = 0;
+        while pos < bytes.len() {
+            if bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+                continue;
+            }
+            if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'*' {
+                let comment_start = pos + 2;
+                if let Some(end_offset) = scan_text[comment_start..].find("*/") {
+                    let comment_body = &scan_text[comment_start..comment_start + end_offset];
+                    if let Some(idx) = comment_body.find("@jsxImportSource") {
+                        let after = &comment_body[idx + "@jsxImportSource".len()..];
+                        let pkg: String = after
+                            .trim_start()
+                            .chars()
+                            .take_while(|c| {
+                                c.is_alphanumeric()
+                                    || *c == '_'
+                                    || *c == '-'
+                                    || *c == '/'
+                                    || *c == '@'
+                                    || *c == '.'
+                            })
+                            .collect();
+                        if !pkg.is_empty() {
+                            return Some(pkg);
+                        }
+                    }
+                    pos = comment_start + end_offset + 2;
+                } else {
+                    break;
+                }
+                continue;
+            }
+            if pos + 1 < bytes.len() && bytes[pos] == b'/' && bytes[pos + 1] == b'/' {
+                if let Some(nl) = scan_text[pos..].find('\n') {
+                    pos += nl + 1;
+                } else {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        None
     }
 
     /// Check if the JSX runtime file exists on disk by walking up from the
