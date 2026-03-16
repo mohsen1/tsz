@@ -335,6 +335,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 // Collect fixed target members (those without placeholders) once per
                 // target union for this inference pass.
+                // Also resolve Lazy types so their underlying members can be matched.
+                // This mirrors tsc's inferFromMatchingTypes with isTypeOrBaseIdenticalTo:
+                // type aliases like `Primitive` (= number | string | boolean | Date)
+                // should be resolved so source members like `number` match them.
                 let fixed_targets = if let Some(cached) = self
                     .constraint_fixed_union_members
                     .borrow()
@@ -349,6 +353,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         member_visited.clear();
                         if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
                             computed.insert(member);
+                            // Resolve Lazy(DefId) types and add their expanded members.
+                            // When a target union contains `Primitive` (a type alias that
+                            // resolves to `number | string | boolean | Date`), the alias
+                            // stays as Lazy(DefId) in the union. Source members like `number`
+                            // won't match Lazy(DefId) by identity. By resolving and expanding,
+                            // we correctly filter source members that belong to the alias.
+                            let resolved = self.checker.evaluate_type(member);
+                            if resolved != member {
+                                computed.insert(resolved);
+                                if let Some(TypeData::Union(inner_members)) =
+                                    self.interner.lookup(resolved)
+                                {
+                                    let inner_list = self.interner.type_list(inner_members);
+                                    for &inner in inner_list.iter() {
+                                        computed.insert(inner);
+                                    }
+                                }
+                            }
                         }
                     }
                     self.constraint_fixed_union_members
@@ -358,10 +380,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
 
                 for &member in s_members.iter() {
-                    // Skip source members that directly match a fixed target member
-                    if !fixed_targets.contains(&member) {
-                        self.constrain_types(ctx, var_map, member, target, priority);
+                    // Skip source members that directly match a fixed target member.
+                    // Also check if literal types match via widening (e.g., literal `13`
+                    // widens to `number` which may be in the fixed set).
+                    if fixed_targets.contains(&member)
+                        || Self::source_literal_matches_fixed(self.interner, member, &fixed_targets)
+                    {
+                        continue;
                     }
+                    self.constrain_types(ctx, var_map, member, target, priority);
                 }
             }
             (Some(TypeData::Union(s_members)), _) => {
@@ -1494,6 +1521,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         true
+    }
+
+    /// Check if a source literal type matches any fixed target via widening.
+    ///
+    /// Literal types like `13` widen to `number`, `"hello"` to `string`, `true` to
+    /// `boolean`. If the widened primitive is in the fixed target set, the literal
+    /// should be considered matched (not inferred against type parameters).
+    fn source_literal_matches_fixed(
+        interner: &dyn crate::TypeDatabase,
+        source: TypeId,
+        fixed_targets: &FxHashSet<TypeId>,
+    ) -> bool {
+        match interner.lookup(source) {
+            Some(TypeData::Literal(ref value)) => {
+                let widened = value.primitive_type_id();
+                fixed_targets.contains(&widened)
+            }
+            _ => false,
+        }
     }
 
     /// Check if `candidate` matches `target_placeholder`, accounting for
