@@ -561,8 +561,8 @@ impl<'a> CheckerState<'a> {
                 let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
                 // `unknown` and `any` are top types that include null/undefined.
                 // Don't report TS2869 for them — the right operand IS reachable.
-                let left_is_top_type = evaluated_left == TypeId::UNKNOWN
-                    || evaluated_left == TypeId::ANY;
+                let left_is_top_type =
+                    evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
                 if cause.is_none() && !left_is_top_type {
                     // TS2869: Left operand is never nullish, right is unreachable.
                     // This replaces the generic TS2872 ("always truthy") for ?? context.
