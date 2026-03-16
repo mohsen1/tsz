@@ -140,12 +140,23 @@ pub fn look_ahead_is_import_equals(
             scanner.restore_state(snapshot);
             return false;
         }
-        // `import type/defer from ...` → type/defer is the import name, `from` is keyword
-        // tsc: `token() !== FromKeyword` check fails, so type/defer stays as import name.
-        // Then `tokenAfterImportedIdentifierDefinitelyProducesImportDeclaration()` sees `from` → true
-        // → import-declaration (not import-equals).
+        // `import type/defer from ...` — ambiguous: `from` could be the keyword or
+        // the binding name. In tsc, when `type` is followed by an identifier-like
+        // token (including `from`), tsc sets isTypeOnly=true, parses `from` as the
+        // binding name, then checks if the NEXT token produces an import-declaration
+        // (`,` or `from` keyword) or falls through to import-equals.
+        // So `import type from "mod"` → import-declaration (type is modifier, `from`
+        // is name, then `from` keyword + string).
+        // But `import type from = require(...)` → import-equals (type is modifier,
+        // `from` is name, `=` is not `,`/`from`).
         if next2 == SyntaxKind::FromKeyword {
+            let next3 = scanner.scan();
             scanner.restore_state(snapshot);
+            if next3 == SyntaxKind::EqualsToken {
+                // `import type from =` → type-only import-equals with `from` as name
+                return true;
+            }
+            // `import type from "mod"` or `import type from , ...` → import-declaration
             return false;
         }
         // `import type/defer <identifier> ...` where identifier is not `from`
