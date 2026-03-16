@@ -620,12 +620,35 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // NOT use any-propagation rules. Without this, types like `Promise<any, any>`
         // appear "identical" to `IPromise<U, W>` because nested `any` matches
         // everything in bidirectional subtype mode, producing false negatives for TS2403.
+        //
+        // Also enable identity_cycle_check: when DefId-level cycle detection fires
+        // for recursive generic interfaces, compare Application type arguments before
+        // assuming related. Without this, `IPromise2<W, U>` vs `Promise2<any, W>` at
+        // a cycle point would be assumed related (because same DefId pair), even though
+        // the type arguments [W, U] vs [any, W] are NOT identical.
         let saved_any_mode = self.subtype.any_propagation;
+        let saved_identity_cycle = self.subtype.identity_cycle_check;
+        let saved_method_bivariance = self.subtype.disable_method_bivariance;
+        let saved_strict_fn = self.subtype.strict_function_types;
         self.subtype.any_propagation =
             crate::relations::subtype::core::AnyPropagationMode::TopLevelOnly;
+        self.subtype.identity_cycle_check = true;
+        // TS2403 identity checking mirrors tsc's `isTypeIdenticalTo` which uses
+        // the `identity` relation — strictly bidirectional structural equality.
+        // Unlike the subtype relation, identity does NOT have bivariance at all:
+        // - No method bivariance (methods must be strictly compatible)
+        // - No function bivariance (strictFunctionTypes behavior regardless of flag)
+        // Without this, recursive method types can appear identical through a
+        // bivariant path that hits a cycle (CycleDetected = True) even when the
+        // forward structural check correctly rejects the types.
+        self.subtype.disable_method_bivariance = true;
+        self.subtype.strict_function_types = true;
         let fwd = self.subtype.is_subtype_of(a, b);
         let bwd = self.subtype.is_subtype_of(b, a);
         self.subtype.any_propagation = saved_any_mode;
+        self.subtype.identity_cycle_check = saved_identity_cycle;
+        self.subtype.disable_method_bivariance = saved_method_bivariance;
+        self.subtype.strict_function_types = saved_strict_fn;
         tracing::trace!(
             a = a.0,
             b = b.0,
