@@ -40,6 +40,24 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Resolve TypeQuery (typeof) types to their concrete types before
+        // contextual typing. Without this, `var x: typeof F = (a) => ...`
+        // leaves the contextual type as an unresolved TypeQuery, which the
+        // solver's ContextualTypeContext cannot extract parameter types from,
+        // causing false TS7006 ("Parameter implicitly has 'any' type").
+        {
+            use tsz_solver::type_queries::{TypeQueryKind, classify_type_query};
+            if matches!(
+                classify_type_query(self.ctx.types, type_id),
+                TypeQueryKind::TypeQuery(_) | TypeQueryKind::ApplicationWithTypeQuery { .. }
+            ) {
+                let resolved = self.resolve_type_query_type(type_id);
+                if resolved != type_id && resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                    return self.contextual_type_for_expression(resolved);
+                }
+            }
+        }
+
         // Preserve direct callable shapes as contextual types. Re-evaluating them
         // can simplify contravariant parameter unions inside callback types, e.g.
         // `(value: A | B | C) => U` collapsing to `(value: A) => any` during
