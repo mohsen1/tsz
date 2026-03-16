@@ -875,6 +875,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut emitted_instance_accessors: FxHashSet<String> = FxHashSet::default();
         let mut emitted_static_accessors: FxHashSet<String> = FxHashSet::default();
 
+        // Collect deferred static property initializers.
+        // tsc emits methods/accessors (both instance and static) in source order,
+        // but defers static property initializer assignments to after all methods/accessors.
+        let mut deferred_static_prop_inits: Vec<IRNode> = Vec::new();
+
         // Single pass: emit all members in source order
         for (member_i, &member_idx) in class_data.members.nodes.iter().enumerate() {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -1197,7 +1202,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     if prop_data.initializer.is_none() {
                         continue;
                     }
-                    maybe_emit_alias(body, &mut class_alias_emitted, &class_alias);
+                    // Defer static property initializers to after all methods/accessors.
+                    // tsc emits methods/accessors in source order first, then static
+                    // property initializer assignments.
 
                     if let Some(prop_name) = self.get_property_name_ir(prop_data.name) {
                         let target = match &prop_name {
@@ -1225,7 +1232,8 @@ impl<'a> ES5ClassTransformer<'a> {
                         } else {
                             self.convert_expression_static(prop_data.initializer)
                         };
-                        body.push(IRNode::expr_stmt(IRNode::assign(target, value)));
+                        deferred_static_prop_inits
+                            .push(IRNode::expr_stmt(IRNode::assign(target, value)));
                     }
                 } else {
                     // --- Instance auto-accessor property ---
@@ -1259,7 +1267,6 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // --- Static block (from emit_static_members_ir) ---
-                maybe_emit_alias(body, &mut class_alias_emitted, &class_alias);
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     let statements: Vec<IRNode> = block_data
                         .statements
@@ -1276,7 +1283,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     let iife = IRNode::StaticBlockIIFE { statements };
                     if has_static_props {
-                        body.push(iife);
+                        // Defer static blocks to after methods/accessors,
+                        // interleaved with static property inits in source order
+                        deferred_static_prop_inits.push(iife);
                     } else {
                         deferred_static_blocks.push(iife);
                     }
@@ -1284,6 +1293,25 @@ impl<'a> ES5ClassTransformer<'a> {
             } else if member_node.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT {
                 body.push(IRNode::EmptyStatement);
             }
+        }
+
+        // Emit deferred static property initializers and static blocks after
+        // all methods/accessors, matching tsc's ES5 class member ordering.
+        if !deferred_static_prop_inits.is_empty() {
+            // Emit class alias preamble before the first static property init
+            if !class_alias_emitted {
+                if let Some(ref alias) = class_alias {
+                    body.push(IRNode::VarDecl {
+                        name: alias.clone().into(),
+                        initializer: None,
+                    });
+                    body.push(IRNode::expr_stmt(IRNode::assign(
+                        IRNode::id(alias.clone()),
+                        IRNode::id(self.class_name.clone()),
+                    )));
+                }
+            }
+            body.append(&mut deferred_static_prop_inits);
         }
 
         deferred_static_blocks
