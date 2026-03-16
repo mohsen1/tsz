@@ -1956,13 +1956,20 @@ impl<'a> Printer<'a> {
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
                     {
-                        static_field_inits.push((
-                            name_emit,
-                            prop.initializer,
-                            member_node.pos,
-                            Vec::new(), // leading_comments filled during class body emission
-                            Vec::new(), // trailing_comments filled during class body emission
-                        ));
+                        // At ES2022+, static fields are emitted as `static { this.f = v; }`
+                        // blocks inside the class body, not as external assignments.
+                        if !needs_static_block_lowering {
+                            // Don't collect for external emission; these will be
+                            // emitted inline as static initialization blocks.
+                        } else {
+                            static_field_inits.push((
+                                name_emit,
+                                prop.initializer,
+                                member_node.pos,
+                                Vec::new(), // leading_comments filled during class body emission
+                                Vec::new(), // trailing_comments filled during class body emission
+                            ));
+                        }
                     } else {
                         // Non-static field inits use String names for `this.name = val`,
                         // `this["name"] = val`, or `this[0] = val`. Bracket names use
@@ -2225,6 +2232,10 @@ impl<'a> Printer<'a> {
                 && !(self.arena.get(prop.name).is_some_and(|n| {
                     n.kind == SyntaxKind::PrivateIdentifier as u16
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
+                // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
+                // blocks, not deferred to external assignments.
+                && !(self.arena.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                    && !needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
