@@ -831,6 +831,7 @@ pub(super) fn collect_diagnostics(
             // errors like TS1105/TS1108, so we must match exactly which codes count.
             // Excluded:
             //   TS1009 - Trailing comma (checker grammar error in TSC)
+            //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
             //   TS1185 - Merge conflict marker (not a real parse failure)
             //   TS1214 - 'yield' reserved word in strict mode (grammar check, not parse failure)
             //   TS1262 - 'await' reserved word at top level (grammar check, not parse failure)
@@ -838,11 +839,11 @@ pub(super) fn collect_diagnostics(
             checker.ctx.has_syntax_parse_errors = file
                 .parse_diagnostics
                 .iter()
-                .any(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359));
+                .any(|d| !matches!(d.code, 1009 | 1014 | 1185 | 1214 | 1262 | 1359));
             checker.ctx.syntax_parse_error_positions = file
                 .parse_diagnostics
                 .iter()
-                .filter(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359))
+                .filter(|d| !matches!(d.code, 1009 | 1014 | 1185 | 1214 | 1262 | 1359))
                 .map(|d| d.start)
                 .collect();
             // Track whether the file has "real" syntax errors (actual parse
@@ -1187,17 +1188,19 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
     checker.ctx.resolved_modules = Some(resolved_modules);
     checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
-    // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
-    // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
+    // Exclude grammar checks that don't affect AST structure from
     // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+    //   TS1009 - Trailing comma (checker grammar error in TSC)
+    //   TS1014 - Rest parameter must be last (grammar check, AST is valid)
+    //   TS1185 - Merge conflict marker (not a real parse failure)
     checker.ctx.has_syntax_parse_errors = file
         .parse_diagnostics
         .iter()
-        .any(|d| d.code != 1185 && d.code != 1009);
+        .any(|d| !matches!(d.code, 1009 | 1014 | 1185));
     checker.ctx.syntax_parse_error_positions = file
         .parse_diagnostics
         .iter()
-        .filter(|d| d.code != 1185 && d.code != 1009)
+        .filter(|d| !matches!(d.code, 1009 | 1014 | 1185))
         .map(|d| d.start)
         .collect();
     checker.ctx.has_real_syntax_errors = file
