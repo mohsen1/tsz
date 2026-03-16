@@ -577,7 +577,18 @@ impl<'a> Printer<'a> {
         emit_commonjs_pre_assignment: bool,
         class_members: &[NodeIndex],
     ) {
-        if class_name.is_empty() || decorators.is_empty() {
+        if class_name.is_empty() {
+            return;
+        }
+
+        // Check for constructor parameter decorators up front
+        let ctor_param_decorators_early = self.collect_constructor_param_decorators(class_members);
+
+        // Early return only if there's truly nothing to emit at the class level.
+        // Class-level __decorate is needed when:
+        // 1. There are class-level decorators, OR
+        // 2. There are constructor parameter decorators
+        if decorators.is_empty() && ctor_param_decorators_early.is_empty() {
             return;
         }
 
@@ -1007,6 +1018,15 @@ impl<'a> Printer<'a> {
                     false
                 };
 
+            // Check if the class needs a class-level __decorate call due to constructor
+            // parameter decorators (even without class-level decorators).
+            let has_ctor_param_decorators = !self
+                .collect_constructor_param_decorators(&class.members.nodes)
+                .is_empty();
+            // A class-level __decorate is needed for class decorators OR ctor param decorators
+            let needs_class_decorate =
+                !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
+
             // Detect if the class body has self-references that need aliasing.
             // When a decorated class references itself (e.g. `static x() { return C.y; }`),
             // tsc emits: `var C_1; let C = C_1 = class C { static x() { return C_1.y; } };`
@@ -1030,9 +1050,10 @@ impl<'a> Printer<'a> {
                 None
             };
 
-            // When there are class-level decorators, emit as `let Name = class { ... };`
+            // When there are class-level decorators or ctor param decorators,
+            // emit as `let Name = class { ... };`
             // When only member decorators, emit as normal `class Name { ... }`
-            if !legacy_class_decorators.is_empty() {
+            if needs_class_decorate {
                 if let Some(ref alias) = alias_name {
                     // Emit: `let Name = Name_1 = class Name { ... };`
                     // First capture the class body, then replace self-refs
