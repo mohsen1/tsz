@@ -344,7 +344,29 @@ impl<'a> CheckerState<'a> {
         if !visited.insert((source, target)) {
             return;
         }
+        // Depth guard: evaluate_type_with_env can produce fresh TypeIds, defeating
+        // the visited set and causing unbounded recursion.
+        if !self.ctx.enter_recursion() {
+            return;
+        }
+        self.collect_return_context_substitution_impl(
+            source,
+            target,
+            tracked_type_params,
+            substitution,
+            visited,
+        );
+        self.ctx.leave_recursion();
+    }
 
+    fn collect_return_context_substitution_impl(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<Atom>,
+        substitution: &mut crate::query_boundaries::common::TypeSubstitution,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) {
         if let Some(tp) = tsz_solver::type_param_info(self.ctx.types, source)
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
