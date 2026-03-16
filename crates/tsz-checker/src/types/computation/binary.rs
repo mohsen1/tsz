@@ -39,6 +39,48 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if an AST node is a nullish coalescing expression (`??`) or a
+    /// literal value (string, number, boolean, bigint, template), unwrapping
+    /// parentheses. TSC only emits TS2869 for these syntactic forms; general
+    /// non-nullable expressions (identifiers, property access, `&&` chains)
+    /// do not trigger TS2869 even when their type is never nullish.
+    fn is_nullish_coalescing_or_literal(
+        arena: &tsz_parser::parser::NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        // Unwrap parentheses: (expr) -> expr
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = arena.get_parenthesized(node) {
+                return Self::is_nullish_coalescing_or_literal(arena, paren.expression);
+            }
+            return false;
+        }
+
+        // Binary expression: check if it's a `??`
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(binary) = arena.get_binary_expr(node) {
+                return binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
+            }
+            return false;
+        }
+
+        // Literal values: string, number, bigint, template, true, false
+        let kind = node.kind;
+        kind == SyntaxKind::StringLiteral as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::BigIntLiteral as u16
+            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || kind == SyntaxKind::TrueKeyword as u16
+            || kind == SyntaxKind::FalseKeyword as u16
+            || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+    }
+
     /// Get the type of a binary expression.
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
@@ -563,7 +605,14 @@ impl<'a> CheckerState<'a> {
                 // Don't report TS2869 for them — the right operand IS reachable.
                 let left_is_top_type =
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
-                if cause.is_none() && !left_is_top_type {
+                // TSC only emits TS2869 when the left operand is syntactically
+                // guaranteed never-nullish: either a literal value or the result
+                // of another `??` (which always strips null/undefined). For general
+                // non-nullable expressions (identifiers, property access, `&&`
+                // chains, function calls), TSC does NOT emit TS2869.
+                let left_is_nullish_chain_or_literal =
+                    Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
+                if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
                     // TS2869: Left operand is never nullish, right is unreachable.
                     // This replaces the generic TS2872 ("always truthy") for ?? context.
                     use crate::diagnostics::diagnostic_codes;
