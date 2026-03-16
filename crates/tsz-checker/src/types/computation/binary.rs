@@ -180,6 +180,48 @@ impl<'a> CheckerState<'a> {
         self.is_valid_in_operator_rhs(constraint)
     }
 
+    /// Check if an AST node is a nullish coalescing expression (`??`) or a
+    /// literal value (string, number, boolean, bigint, template), unwrapping
+    /// parentheses. TSC only emits TS2869 for these syntactic forms; general
+    /// non-nullable expressions (identifiers, property access, `&&` chains)
+    /// do not trigger TS2869 even when their type is never nullish.
+    fn is_nullish_coalescing_or_literal(
+        arena: &tsz_parser::parser::NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        // Unwrap parentheses: (expr) -> expr
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = arena.get_parenthesized(node) {
+                return Self::is_nullish_coalescing_or_literal(arena, paren.expression);
+            }
+            return false;
+        }
+
+        // Binary expression: check if it's a `??`
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(binary) = arena.get_binary_expr(node) {
+                return binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
+            }
+            return false;
+        }
+
+        // Literal values: string, number, bigint, template, true, false
+        let kind = node.kind;
+        kind == SyntaxKind::StringLiteral as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::BigIntLiteral as u16
+            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || kind == SyntaxKind::TrueKeyword as u16
+            || kind == SyntaxKind::FalseKeyword as u16
+            || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+    }
+
     /// Check if a type "may represent a primitive value" for TS2638.
     /// In tsc, this check fires for type parameters (InstantiableNonPrimitive) whose
     /// constraint is missing or could also represent a primitive. Empty object types
@@ -750,14 +792,12 @@ impl<'a> CheckerState<'a> {
                 // stored as an Application needs to be expanded so that the nullish split
                 // can see through the alias to extract the non-nullable component.
                 let evaluated_left = self.evaluate_type_with_env(left_type);
-                let (non_nullish, _cause) = self.split_nullish_type(evaluated_left);
-
-                // TS2869: tsc uses a purely syntactic check (getSyntacticNullishnessSemantics)
-                // to decide whether the left operand is never nullish. It does NOT consult
-                // the type system -- e.g. a variable `foo: string` won't trigger TS2869
-                // even though `string` is never nullish under strict null checks.
-                let nullishness = self.get_syntactic_nullishness(left_idx);
-                if nullishness == SyntacticNullishness::Never {
+                let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
+                let left_is_top_type =
+                    evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
+                let left_is_nullish_chain_or_literal =
+                    Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
+                if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
                         right_idx,
