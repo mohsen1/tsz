@@ -196,7 +196,7 @@ impl<'a> Printer<'a> {
 
         if import.import_clause.is_none() {
             self.write("import ");
-            self.emit(import.module_specifier);
+            self.emit_module_specifier(import.module_specifier);
             self.emit_import_attributes(import.attributes);
             self.write_semicolon();
             return;
@@ -270,7 +270,7 @@ impl<'a> Printer<'a> {
         }
 
         self.write(" from ");
-        self.emit(import.module_specifier);
+        self.emit_module_specifier(import.module_specifier);
         self.emit_import_attributes(import.attributes);
         self.write_semicolon();
     }
@@ -331,6 +331,7 @@ impl<'a> Printer<'a> {
         } else {
             return;
         };
+        let module_spec = self.rewrite_module_spec(&module_spec);
 
         // Wrapped module formats bind imports via wrapper parameters/setters.
         // Suppress per-statement CommonJS `require(...)` emission in the body.
@@ -636,7 +637,7 @@ impl<'a> Printer<'a> {
         // in that case and preserves only trailing recovered expressions.
         if !self.is_valid_import_equals_reference(import.module_specifier) {
             if self.is_recovered_import_equals_expression(module_node) {
-                self.emit(import.module_specifier);
+                self.emit_module_specifier(import.module_specifier);
             } else if self
                 .recovered_import_equals_rhs_text(node)
                 .is_some_and(|rhs| rhs == "null")
@@ -672,8 +673,9 @@ impl<'a> Printer<'a> {
 
         if module_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(module_node) {
+                let spec = self.rewrite_module_spec(&lit.text);
                 self.write("require(\"");
-                self.write(&lit.text);
+                self.write(&spec);
                 self.write("\")");
             }
             return;
