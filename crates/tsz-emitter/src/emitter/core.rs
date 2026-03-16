@@ -138,6 +138,9 @@ pub struct PrinterOptions {
     /// When true, null and undefined are meaningful types in unions for metadata serialization.
     /// Matches tsc's strictNullChecks behavior in decorator metadata emission.
     pub strict_null_checks: bool,
+    /// When true, do not elide any imports or exports not explicitly marked as type-only.
+    /// Corresponds to `--verbatimModuleSyntax`.
+    pub verbatim_module_syntax: bool,
 }
 
 impl Default for PrinterOptions {
@@ -171,6 +174,7 @@ impl Default for PrinterOptions {
             jsx_import_source: None,
             suppress_use_strict: false,
             strict_null_checks: false,
+            verbatim_module_syntax: false,
         }
     }
 }
@@ -498,6 +502,10 @@ pub struct Printer<'a> {
     /// Source file name for jsx=react-jsxdev mode (e.g., "file.tsx").
     /// Used to emit `const _jsxFileName = "file.tsx";` and source location args.
     pub(crate) jsx_dev_file_name: Option<String>,
+
+    /// When true, the current source file is a JavaScript file (.js/.jsx/.cjs/.mjs).
+    /// JS files do not undergo import elision since all imports are value imports.
+    pub(crate) source_is_js_file: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -641,6 +649,7 @@ impl<'a> Printer<'a> {
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
+            source_is_js_file: false,
         }
     }
 

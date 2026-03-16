@@ -311,7 +311,13 @@ impl<'a> Printer<'a> {
         if clause.is_type_only {
             return;
         }
-        if !self.import_has_value_usage_after_node(node, clause) {
+        // With --verbatimModuleSyntax or in JS files, non-type-only imports are
+        // always preserved (no heuristic elision). tsc's checker treats all
+        // imports in JS files as value imports.
+        if !self.ctx.options.verbatim_module_syntax
+            && !self.source_is_js_file
+            && !self.import_has_value_usage_after_node(node, clause)
+        {
             return;
         }
 
