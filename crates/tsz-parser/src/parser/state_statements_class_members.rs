@@ -1100,7 +1100,9 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
 
             if has_static_modifier {
-                self.parse_error_at_current_token(
+                self.emit_modifier_error_on_constructor(
+                    &modifiers,
+                    SyntaxKind::StaticKeyword,
                     "'static' modifier cannot appear on a constructor declaration.",
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
                 );
