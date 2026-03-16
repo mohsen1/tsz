@@ -421,6 +421,9 @@ impl<'a> InferenceContext<'a> {
         let all_from_index_signatures = filtered_no_never
             .iter()
             .all(|candidate| candidate.from_index_signature);
+        let has_index_signature_candidates = filtered_no_never
+            .iter()
+            .any(|candidate| candidate.from_index_signature);
         // When candidates include nullish types (undefined/null) and no candidates
         // are from object properties, use union semantics. This matches tsc's
         // getCommonSupertype behavior for nullable inference patterns like
