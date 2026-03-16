@@ -662,10 +662,12 @@ impl<'a> Printer<'a> {
         // Emit JSX auto-import for jsx=react-jsx / react-jsxdev (ESM only here;
         // CJS require() is emitted after __esModule below)
         let jsx_import_text = self.jsx_auto_import_text();
+        let mut emitted_jsx_esm_import = false;
         if !self.ctx.is_commonjs()
             && let Some(ref jsx_import) = jsx_import_text
         {
             self.write(jsx_import);
+            emitted_jsx_esm_import = true;
             // Emit comments that were deferred to appear after the JSX import
             for (comment, has_trailing_new_line) in &jsx_deferred_comments {
                 self.write_comment(comment);
@@ -710,6 +712,7 @@ impl<'a> Printer<'a> {
         }
 
         // For ESM with importHelpers, emit `import { __helper, ... } from "tslib";`
+        let mut emitted_tslib_esm_import = false;
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
             let names = helpers.needed_names();
             if !names.is_empty() {
@@ -717,6 +720,7 @@ impl<'a> Printer<'a> {
                 self.write(&names.join(", "));
                 self.write(" } from \"tslib\";");
                 self.write_line();
+                emitted_tslib_esm_import = true;
             }
         }
 
@@ -975,8 +979,9 @@ impl<'a> Printer<'a> {
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
-        let mut has_runtime_module_syntax = false;
-        let mut has_non_empty_runtime_export = false;
+        let has_synthesized_esm_import = emitted_tslib_esm_import || emitted_jsx_esm_import;
+        let mut has_runtime_module_syntax = has_synthesized_esm_import;
+        let mut has_non_empty_runtime_export = has_synthesized_esm_import;
         let mut has_deferred_empty_export = false;
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
