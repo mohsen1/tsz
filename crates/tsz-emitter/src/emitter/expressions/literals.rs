@@ -758,11 +758,8 @@ impl<'a> Printer<'a> {
         // would produce invalid shorthand syntax (e.g., `{ foo_1.foo }` or `{ exports.test }`).
         // Check both import substitutions and exported variable names.
         // Note: don't check is_commonjs() — module kind is temporarily None inside export bodies.
-        if let Some(ident) = self.arena.get_identifier(
-            self.arena
-                .get(shorthand.name)
-                .expect("shorthand name NodeIndex must be valid in arena"),
-        ) {
+        let name_node = self.arena.get(shorthand.name);
+        if let Some(ident) = name_node.and_then(|n| self.arena.get_identifier(n)) {
             let has_import_subst = !self.suppress_commonjs_named_import_substitution
                 && self
                     .commonjs_named_import_substitutions
@@ -783,6 +780,18 @@ impl<'a> Printer<'a> {
                 return;
             }
         }
+
+        // tsc emits `keyword: ` (non-shorthand, empty value) when the name is a reserved
+        // keyword, since shorthand property syntax like `{ return }` is invalid JS.
+        // Also emit non-shorthand when the name is not an Identifier (e.g. string/number literal).
+        let is_keyword_name =
+            name_node.is_some_and(|n| n.kind != tsz_scanner::SyntaxKind::Identifier as u16);
+        if is_keyword_name {
+            self.emit(shorthand.name);
+            self.write(": ");
+            return;
+        }
+
         self.emit(shorthand.name);
         if shorthand.equals_token {
             self.write(" = ");
