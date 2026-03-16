@@ -1415,7 +1415,11 @@ impl ParserState {
                 // `declare export = expr` (export assignment — TS1120 handles it).
                 // Also skip when already in an ambient context (e.g. inside `declare module`),
                 // because the checker will emit TS1038 instead and tsc does not emit both.
-                if !self.is_token(SyntaxKind::AsKeyword)
+                // Also skip in block context: tsc emits TS1029 via grammarErrorOnNode
+                // in the checker, which is suppressed by hasParseDiagnostics when
+                // TS1184 (Modifiers cannot appear here) is already emitted.
+                if !self.in_block_context()
+                    && !self.is_token(SyntaxKind::AsKeyword)
                     && !self.is_token(SyntaxKind::EqualsToken)
                     && (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
                 {

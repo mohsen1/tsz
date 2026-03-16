@@ -38,12 +38,15 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
-/// Maximum number of interned types before aborting.
-/// WASM linear memory cannot grow indefinitely, so we cap at 500k types.
+/// Maximum number of interned types before the interner returns ERROR.
+/// Prevents OOM on pathological inputs (e.g., DOM types + module augmentation
+/// that create millions of intermediate types via heritage merging and
+/// function shape instantiation). With ~200-300 bytes per interned entry
+/// (DashMap overhead, Arc, shapes), 2M types ≈ 400-600MB.
 #[cfg(target_arch = "wasm32")]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const MAX_INTERNED_TYPES: usize = 5_000_000;
+pub(crate) const MAX_INTERNED_TYPES: usize = 2_000_000;
 
 pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;

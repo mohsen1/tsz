@@ -82,6 +82,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2314: Check type annotation for generic types used without required type arguments.
+        // Class/interface bodies are lowered by TypeLowering which doesn't validate TS2314,
+        // so we explicitly walk the type annotation AST to catch missing type arguments.
+        if prop.type_annotation.is_some() {
+            self.check_nested_type_refs_for_ts2314(prop.type_annotation);
+        }
+
         // Track static property initializer context for TS17011
         let is_static = self.has_static_modifier(&prop.modifiers);
         let prev_static_prop_init = self
@@ -453,12 +460,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1245: Method '{0}' cannot have an implementation because it is marked abstract.
+        // TSC anchors this error at the method name, not the whole member node.
         if method.body.is_some() && self.has_abstract_modifier(&method.modifiers) {
             let name_text = self
                 .get_property_name(method.name)
                 .unwrap_or_else(|| "unknown".to_string());
             self.error_at_node(
-                member_idx,
+                method.name,
                 &format!("Method '{name_text}' cannot have an implementation because it is marked abstract."),
                 diagnostic_codes::METHOD_CANNOT_HAVE_AN_IMPLEMENTATION_BECAUSE_IT_IS_MARKED_ABSTRACT,
             );

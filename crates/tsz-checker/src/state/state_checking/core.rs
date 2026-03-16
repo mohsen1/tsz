@@ -287,6 +287,8 @@ impl<'a> CheckerState<'a> {
             // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
             self.ctx.application_symbols_resolved.clear();
             self.ctx.application_symbols_resolution_set.clear();
+            // Reset global resolution fuel for the new file.
+            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
 
             // Register Function DefIds in the interner BEFORE building the environment.
             // This ensures `T extends Function` constraint checks during type alias
@@ -421,6 +423,19 @@ impl<'a> CheckerState<'a> {
 
                 // TS2304: Check for @typedef base types that can't be resolved
                 self.check_jsdoc_typedef_base_types();
+            }
+
+            // Emit deferred TS2875 (JSX import source not found) if set.
+            // This is deferred because the check runs inside JSX element type
+            // resolution which may be inside a speculative call-checker context.
+            if let Some((node_idx, runtime_path)) = self.ctx.deferred_jsx_import_source_error.take()
+            {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    node_idx,
+                    diagnostic_codes::THIS_JSX_TAG_REQUIRES_THE_MODULE_PATH_TO_EXIST_BUT_NONE_COULD_BE_FOUND_MAKE_SURE,
+                    &[&runtime_path],
+                );
             }
         }
     }

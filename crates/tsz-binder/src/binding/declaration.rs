@@ -524,6 +524,20 @@ impl BinderState {
                 }
                 let sym_id = self.declare_symbol(name, flags, idx, false);
                 self.node_symbols.insert(class.name.0, sym_id);
+            } else {
+                // Anonymous class expression: create a CLASS symbol so that
+                // the checker can use it as parent_id on instance properties,
+                // enabling "(Anonymous class)" display in diagnostics.
+                let mut flags = symbol_flags::CLASS;
+                if Self::has_abstract_modifier(arena, class.modifiers.as_ref()) {
+                    flags |= symbol_flags::ABSTRACT;
+                }
+                let sym_id = self.symbols.alloc(flags, "(Anonymous class)".to_string());
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.declarations.push(idx);
+                    sym.value_declaration = idx;
+                }
+                self.node_symbols.insert(idx.0, sym_id);
             }
 
             self.bind_type_parameters(arena, class.type_parameters.as_ref());

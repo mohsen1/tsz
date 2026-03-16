@@ -437,9 +437,135 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
     ) {
+        self.check_type_parameters_for_missing_names_inner(type_parameters, None);
+    }
+
+    /// Like `check_type_parameters_for_missing_names` but with the enclosing
+    /// declaration name for TS2716 circular default detection.
+    pub(crate) fn check_type_parameters_for_missing_names_with_enclosing(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        enclosing_name: &str,
+    ) {
+        self.check_type_parameters_for_missing_names_inner(type_parameters, Some(enclosing_name));
+    }
+
+    fn check_type_parameters_for_missing_names_inner(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        enclosing_name: Option<&str>,
+    ) {
         let Some(list) = type_parameters else {
             return;
         };
+
+        // TS2706: Required type parameters may not follow optional type parameters.
+        // Track whether we've seen an optional type parameter (one with a default).
+        let mut seen_optional = false;
+        for &param_idx in &list.nodes {
+            let has_default = self
+                .ctx
+                .arena
+                .get(param_idx)
+                .and_then(|n| self.ctx.arena.get_type_parameter(n))
+                .is_some_and(|p| p.default.is_some());
+
+            if has_default {
+                seen_optional = true;
+            } else if seen_optional {
+                // Required param after optional — emit TS2706
+                self.error_at_node_msg(
+                    param_idx,
+                    crate::diagnostics::diagnostic_codes::REQUIRED_TYPE_PARAMETERS_MAY_NOT_FOLLOW_OPTIONAL_TYPE_PARAMETERS,
+                    &[],
+                );
+            }
+        }
+
+        // TS2744: Type parameter defaults can only reference previously declared type parameters.
+        // Collect all type parameter names, then check each default for forward references.
+        let param_names: Vec<(NodeIndex, String)> = list
+            .nodes
+            .iter()
+            .filter_map(|&idx| {
+                let node = self.ctx.arena.get(idx)?;
+                let param = self.ctx.arena.get_type_parameter(node)?;
+                let name_node = self.ctx.arena.get(param.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                Some((idx, ident.escaped_text.to_string()))
+            })
+            .collect();
+
+        for (i, &param_idx) in list.nodes.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            if param.default.is_none() {
+                continue;
+            }
+
+            // Collect names declared before this parameter
+            let declared_before: FxHashSet<&str> = param_names[..i]
+                .iter()
+                .map(|(_, name)| name.as_str())
+                .collect();
+
+            // Collect all param names (for cycle detection)
+            let all_names: FxHashSet<&str> =
+                param_names.iter().map(|(_, name)| name.as_str()).collect();
+
+            // Check if the default references any type parameter not yet declared
+            let mut refs_in_default = Vec::new();
+            self.collect_type_references_in_type(param.default, &all_names, &mut refs_in_default);
+
+            for (_ref_node, ref_name) in &refs_in_default {
+                if !declared_before.contains(ref_name.as_str()) {
+                    // This is a forward reference — emit TS2744
+                    self.error_at_node_msg(
+                        param.default,
+                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_DEFAULTS_CAN_ONLY_REFERENCE_PREVIOUSLY_DECLARED_TYPE_PARAMETERS,
+                        &[],
+                    );
+                    break;
+                }
+            }
+        }
+
+        // TS2716: Type parameter has a circular default.
+        // Detects when a default references the enclosing type itself,
+        // e.g., `interface SelfRef<T = SelfRef>`.
+        if let Some(enc_name) = enclosing_name {
+            let enc_set: FxHashSet<&str> = std::iter::once(enc_name).collect();
+            for (i, &param_idx) in list.nodes.iter().enumerate() {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                if param.default.is_none() {
+                    continue;
+                }
+                let mut refs_in_default = Vec::new();
+                self.collect_type_references_in_type(param.default, &enc_set, &mut refs_in_default);
+                if !refs_in_default.is_empty() {
+                    // Get the type parameter name for the error message
+                    let param_name = param_names
+                        .get(i)
+                        .map(|(_, name)| name.as_str())
+                        .unwrap_or("T");
+                    self.error_at_node_msg(
+                        param.default,
+                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_DEFAULT,
+                        &[param_name],
+                    );
+                }
+            }
+        }
+
         for &param_idx in &list.nodes {
             self.check_type_parameter_node_for_missing_names(param_idx);
         }
@@ -540,6 +666,67 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_NAME_CANNOT_BE,
                 &[name],
             );
+        }
+    }
+
+    /// Walk a type AST node and collect type reference names that match a given set.
+    /// Used for TS2744/TS2716 checks to find forward/self references in type parameter defaults.
+    fn collect_type_references_in_type(
+        &self,
+        type_idx: NodeIndex,
+        names_to_find: &FxHashSet<&str>,
+        found: &mut Vec<(NodeIndex, String)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::TYPE_REFERENCE => {
+                // Check if the type name is a simple identifier matching one of the names
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            if names_to_find.contains(ident.escaped_text.as_str()) {
+                                found.push((type_ref.type_name, ident.escaped_text.to_string()));
+                            }
+                        }
+                    }
+                    // Also check type arguments
+                    if let Some(ref type_args) = type_ref.type_arguments {
+                        for &arg in &type_args.nodes {
+                            self.collect_type_references_in_type(arg, names_to_find, found);
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::UNION_TYPE | syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &member in &composite.types.nodes {
+                        self.collect_type_references_in_type(member, names_to_find, found);
+                    }
+                }
+            }
+            syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(arr) = self.ctx.arena.get_array_type(node) {
+                    self.collect_type_references_in_type(arr.element_type, names_to_find, found);
+                }
+            }
+            syntax_kind_ext::TUPLE_TYPE => {
+                if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+                    for &elem in &tuple.elements.nodes {
+                        self.collect_type_references_in_type(elem, names_to_find, found);
+                    }
+                }
+            }
+            syntax_kind_ext::PARENTHESIZED_TYPE => {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.collect_type_references_in_type(wrapped.type_node, names_to_find, found);
+                }
+            }
+            _ => {
+                // For other type nodes, don't recurse deeper for now
+            }
         }
     }
 
@@ -1434,11 +1621,25 @@ impl<'a> CheckerState<'a> {
                 }
             } else if self.find_enclosing_static_block(stmt_idx).is_some() {
                 // TS18038: 'for await' loops cannot be used inside a class static block
-                self.error_at_node(
-                    stmt_idx,
-                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                );
+                // TSC anchors this error at the `await` keyword, not the `for` keyword.
+                // The `await` keyword follows `for ` (4 chars) in `for await (...)`.
+                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                    let await_pos = stmt_node.pos + 4; // skip "for "
+                    let await_len = 5u32; // "await"
+                    self.error(
+                        await_pos,
+                        await_len,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK
+                            .to_string(),
+                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    );
+                }
             } else {
                 // TS1103: 'for await' loops are only allowed within async functions
                 self.error_at_node(
@@ -1631,6 +1832,23 @@ impl<'a> CheckerState<'a> {
         let Some(alias) = self.ctx.arena.get_type_alias(node) else {
             return;
         };
+
+        // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
+        // and circular defaults (TS2716)
+        let alias_name_str = self
+            .ctx
+            .arena
+            .get(alias.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|id| id.escaped_text.to_string());
+        if let Some(ref name) = alias_name_str {
+            self.check_type_parameters_for_missing_names_with_enclosing(
+                &alias.type_parameters,
+                name,
+            );
+        } else {
+            self.check_type_parameters_for_missing_names(&alias.type_parameters);
+        }
 
         let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
         if let Some(type_params) = &alias.type_parameters {

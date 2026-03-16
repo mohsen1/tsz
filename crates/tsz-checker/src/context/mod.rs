@@ -409,6 +409,11 @@ pub struct CheckerContext<'a> {
     /// Set to true after the first JSX element is checked, to emit at most once per file.
     pub jsx_import_source_checked: bool,
 
+    /// Deferred TS2875 diagnostic. Stored here because the check runs inside JSX
+    /// element type resolution, which may be inside a speculative call-checker
+    /// context that truncates diagnostics. Emitted at end of `check_source_file`.
+    pub deferred_jsx_import_source_error: Option<(NodeIndex, String)>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
@@ -596,6 +601,11 @@ pub struct CheckerContext<'a> {
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.
     pub recursion_depth: RefCell<tsz_solver::recursion::DepthCounter>,
+
+    /// Dedicated depth counter for interface heritage merge recursion.
+    /// Heritage merging is expensive per level (resolves full interface types),
+    /// so it needs a tighter limit than the general recursion counter.
+    pub heritage_merge_depth: Cell<u32>,
 
     /// Current depth of call expression resolution.
     pub call_depth: RefCell<tsz_solver::recursion::DepthCounter>,
