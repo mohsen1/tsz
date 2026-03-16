@@ -181,22 +181,27 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// This applies to types like `{}` that structurally accept primitives,
-    /// and type parameters whose constraint is `{}` or missing.
+    /// This applies only to type parameters whose constraint allows primitives
+    /// (unconstrained or `extends {}`). TSC does NOT emit TS2638 for concrete
+    /// types like `{}`, object literals, or unions of object types — only for
+    /// type parameters that could be instantiated with a primitive.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // `{}` (empty object type) may represent primitives
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        // Type parameters: check if constraint is missing or is `{}`
+        // Only type parameters can "represent" a primitive value.
+        // A concrete `{}` type is always an object at the type-level even though
+        // it structurally accepts primitives.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
-                None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
+                None => true,                            // Unconstrained type param may be primitive
+                Some(c) if c == TypeId::OBJECT => false, // `extends object` is safe
+                Some(c) => {
+                    // If the constraint is `{}` (empty object) or another type param,
+                    // the type parameter could still represent a primitive.
+                    tsz_solver::is_empty_object_type(self.ctx.types, c)
+                        || self.type_may_represent_primitive(c)
+                }
             };
         }
 
