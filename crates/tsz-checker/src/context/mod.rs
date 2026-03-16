@@ -161,7 +161,6 @@ pub struct EnvEvalCacheEntry {
 }
 
 /// Info about a symbol that came from destructuring a union type.
-/// Info about a symbol that came from destructuring a union type.
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
 /// narrowing `isSuccess` should also narrow `data`.
 #[derive(Clone, Debug)]
@@ -378,7 +377,7 @@ pub struct CheckerContext<'a> {
     ///
     /// The cache also preserves whether evaluation exceeded the solver recursion
     /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
-    pub env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
@@ -427,9 +426,9 @@ pub struct CheckerContext<'a> {
     // --- Destructured Binding Tracking ---
     /// Maps destructured const binding symbols to their source union type info.
     /// Used for correlated discriminant narrowing (TS 4.6+ feature).
-    pub destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
+    pub(crate) destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
     /// Counter for generating unique binding group IDs.
-    pub next_binding_group_id: u32,
+    pub(crate) next_binding_group_id: u32,
     /// Maps destructured binding element symbols to (`source_expression`, `property_name`).
     /// Used for flow narrowing: when `const { bar } = aFoo` and `aFoo.bar` has been
     /// narrowed by a condition, `bar`'s type should use the narrowed property type.
@@ -825,7 +824,7 @@ pub struct CheckerContext<'a> {
     /// Stack of labels in scope.
     /// Each entry contains (`label_name`, `is_iteration`, `function_depth_when_defined`).
     /// Used for labeled break/continue validation.
-    pub label_stack: Vec<LabelInfo>,
+    pub(crate) label_stack: Vec<LabelInfo>,
 
     /// Whether there was a loop/switch in an outer function scope.
     /// Used to determine TS1107 vs TS1105 for unlabeled break statements.

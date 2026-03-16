@@ -192,9 +192,10 @@ pub fn compute_template_expression_type(
                 result.push_str(&db.resolve_atom(lit_atom));
             } else if let Some(num) = crate::type_queries::get_number_literal_value(db, part) {
                 if num.fract() == 0.0 && num.abs() < 1e15 {
-                    result.push_str(&format!("{}", num as i64));
+                    let n = num as i64;
+                    result.push_str(&format!("{n}"));
                 } else {
-                    result.push_str(&num.to_string());
+                    result.push_str(&format!("{num}"));
                 }
             } else if part == TypeId::BOOLEAN_TRUE {
                 result.push_str("true");
