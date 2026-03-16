@@ -1137,7 +1137,19 @@ impl<'a> CheckerState<'a> {
                         index,
                         actual,
                     ) {
-                        let _ = self.check_argument_assignable_or_report(actual, expected, arg_idx);
+                        // Try to elaborate object/array literal arguments into
+                        // per-property/element TS2322 errors before falling back
+                        // to a blanket TS2345 on the whole argument. This mirrors
+                        // the elaboration logic in the regular call result handler.
+                        let elaborated = if self.argument_supports_literal_elaboration(arg_idx) {
+                            self.try_elaborate_object_literal_arg_error(arg_idx, expected)
+                        } else {
+                            false
+                        };
+                        if !elaborated {
+                            let _ =
+                                self.check_argument_assignable_or_report(actual, expected, arg_idx);
+                        }
                     }
                 }
                 if fallback_return != TypeId::ERROR {
