@@ -1224,6 +1224,11 @@ impl Project {
         self.files.len()
     }
 
+    /// Iterate over all file names in the project.
+    pub fn file_names(&self) -> impl Iterator<Item = &str> {
+        self.files.keys().map(|s| s.as_str())
+    }
+
     /// Get the set of files that directly import the given file.
     pub fn get_file_dependents(&self, file: &str) -> Vec<String> {
         self.dependency_graph

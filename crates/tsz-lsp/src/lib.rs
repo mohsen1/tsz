@@ -67,7 +67,7 @@ pub use code_actions::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, CodeFixRegistry,
     ImportCandidate, ImportCandidateKind,
 };
-pub use completions::{CompletionItem, CompletionItemKind, Completions};
+pub use completions::{CompletionItem, CompletionItemData, CompletionItemKind, Completions};
 pub use diagnostics::{DiagnosticSeverity, LspDiagnostic};
 pub use editor_ranges::folding::{FoldingRange, FoldingRangeProvider};
 pub use formatting::{
@@ -131,3 +131,6 @@ pub use rename::linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
 
 // File Rename
 pub use rename::file_rename::{FileRenameProvider, ImportLocation};
+
+// Document Colors
+pub use editor_decorations::document_color::{Color, ColorInformation, DocumentColorProvider};
