@@ -1101,6 +1101,83 @@ impl<'a> CheckerState<'a> {
             self.check_overload_modifier_consistency(member_idx);
             self.check_overload_compatibility(member_idx);
         }
+
+        // TS1092: @template on constructors is illegal in JS files
+        // TS1093: @return/@returns type annotation on constructors is illegal in JS files
+        self.check_jsdoc_constructor_tags(member_idx);
+    }
+
+    /// Check JSDoc `@template` and `@return`/`@returns` tags on constructor
+    /// declarations in JS files (TS1092, TS1093).
+    ///
+    /// tsc reports:
+    /// - TS1092 "Type parameters cannot appear on a constructor declaration."
+    ///   at the position of the first type parameter name in `@template T`
+    /// - TS1093 "Type annotation cannot appear on a constructor declaration."
+    ///   at the position of the `{` in `@return {Type}`
+    fn check_jsdoc_constructor_tags(&mut self, member_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        // Find the JSDoc comment for this constructor.
+        // We need the raw comment text from the source (not the processed JSDoc content)
+        // so we can compute accurate source positions.
+        let Some((_jsdoc_content, comment_pos)) =
+            self.try_leading_jsdoc_with_pos(comments, node.pos, source_text)
+        else {
+            return;
+        };
+
+        // Get the raw comment text from the source to compute positions accurately.
+        let comment_end = node.pos as usize;
+        let raw_comment = &source_text[comment_pos as usize..comment_end.min(source_text.len())];
+
+        // TS1092: Check for @template tag on constructor
+        if let Some(template_offset) = raw_comment.find("@template") {
+            let rest = &raw_comment[template_offset + "@template".len()..];
+            let trimmed = rest.trim_start();
+            // tsc points at the first type parameter name after @template
+            let ws_len = rest.len() - trimmed.len();
+            let error_offset = template_offset + "@template".len() + ws_len;
+            let abs_pos = comment_pos + error_offset as u32;
+            self.ctx.error(
+                abs_pos,
+                0,
+                diagnostic_messages::TYPE_PARAMETERS_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION
+                    .to_string(),
+                diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+            );
+        }
+
+        // TS1093: Check for @return/@returns tag with type annotation on constructor
+        for tag in ["@returns", "@return"] {
+            if let Some(tag_offset) = raw_comment.find(tag) {
+                let rest = &raw_comment[tag_offset + tag.len()..];
+                let trimmed = rest.trim_start();
+                if trimmed.starts_with('{') {
+                    // tsc points one past the `{` of the type annotation
+                    let ws_len = rest.len() - trimmed.len();
+                    let error_offset = tag_offset + tag.len() + ws_len + 1;
+                    let abs_pos = comment_pos + error_offset as u32;
+                    self.ctx.error(
+                        abs_pos,
+                        0,
+                        diagnostic_messages::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION
+                            .to_string(),
+                        diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                    );
+                    break; // Only report once
+                }
+            }
+        }
     }
 
     fn is_accessor_circular_reference(

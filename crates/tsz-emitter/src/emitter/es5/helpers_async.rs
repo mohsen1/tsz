@@ -61,6 +61,61 @@ impl<'a> Printer<'a> {
         None
     }
 
+    /// Emit an async generator function lowered to `__asyncGenerator` wrapper.
+    /// `async function* f() { ... }` becomes:
+    /// `function f() { return __asyncGenerator(this, arguments, function* f_1() { ... }); }`
+    pub(in crate::emitter) fn emit_async_generator_lowered(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_name: &str,
+    ) {
+        // function name(params) {
+        if func_name.is_empty() {
+            self.write("function (");
+        } else {
+            self.write("function ");
+            self.write(func_name);
+            self.write("(");
+        }
+        self.emit_function_parameters_js(&func.parameters.nodes);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        // return __asyncGenerator(this, arguments, function* name_1() {
+        self.write("return ");
+        self.write_helper("__asyncGenerator");
+        self.write("(this, arguments, function* ");
+        if !func_name.is_empty() {
+            self.write(func_name);
+            self.write("_1");
+        }
+        self.write("() {");
+        self.write_line();
+        self.increase_indent();
+
+        // Set flag so `await expr` emits as `yield __await(expr)`
+        let saved = self.ctx.emit_await_as_yield_await;
+        self.ctx.emit_await_as_yield_await = true;
+
+        if let Some(body_node) = self.arena.get(func.body)
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            for &stmt in &block.statements.nodes {
+                self.emit(stmt);
+                self.write_line();
+            }
+        }
+
+        self.ctx.emit_await_as_yield_await = saved;
+
+        self.decrease_indent();
+        self.write("});");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+    }
+
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(in crate::emitter) fn emit_async_function_es5(
         &mut self,

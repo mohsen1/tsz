@@ -771,7 +771,10 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        // Only skip parenthesized expressions, NOT type assertions.
+        // For `<foo>({})`, we want the type assertion node (type `foo`),
+        // not the inner `{}` expression.
+        let expr_idx = self.ctx.arena.skip_parenthesized(anchor_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(binary) = self.ctx.arena.get_binary_expr(node)
@@ -1185,7 +1188,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn object_literal_source_type_display(&mut self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        // Only skip parentheses, not type assertions.  When the source is
+        // `<foo>({})`, the diagnostic should display the asserted type name
+        // `foo`, not the inner object literal `{}`.  Returning `None` here
+        // lets the caller fall through to `get_type_of_node` which yields
+        // the asserted type.
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             return None;

@@ -101,6 +101,14 @@ impl<'a> CheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+            // Pre-seed evaluator cache with previously computed results to avoid
+            // re-evaluating intermediate types (e.g., nested generic application
+            // chains like `Omit<Omit<...> & {...}, ...>`). Without this, each
+            // evaluator instance re-expands the entire chain from scratch.
+            if use_cache {
+                let cache = self.ctx.env_eval_cache.borrow();
+                evaluator.seed_cache(cache.iter().map(|(&k, v)| (k, v.result)));
+            }
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
@@ -125,6 +133,10 @@ impl<'a> CheckerState<'a> {
 
         let final_result = if query::index_access_types(self.ctx.types, result).is_some() {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
+            if use_cache {
+                let cache = self.ctx.env_eval_cache.borrow();
+                evaluator.seed_cache(cache.iter().map(|(&k, v)| (k, v.result)));
+            }
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
@@ -779,6 +791,15 @@ impl<'a> CheckerState<'a> {
             }
 
             if !seen_types.insert(current) {
+                continue;
+            }
+
+            // Skip types already resolved in a previous call — their transitive
+            // dependencies are guaranteed to be resolved too.  Without this,
+            // deeply-nested Application chains (e.g., 50-deep `merge(merge(…))`)
+            // cause O(N²) re-traversal of already-resolved intermediate types.
+            if self.ctx.application_symbols_resolved.contains(&current) {
+                resolved_types.insert(current);
                 continue;
             }
 

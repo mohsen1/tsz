@@ -777,6 +777,38 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
             let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
 
+            // Collect member names from later merged enum declarations.
+            // tsc treats references to members in later declarations of the same
+            // enum as forward references (TS2651).
+            let mut later_decl_member_names: Vec<String> = Vec::new();
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(enum_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let current_pos = self.ctx.arena.get(enum_idx).map(|n| n.pos).unwrap_or(0);
+                for &decl_idx in &symbol.declarations {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    // Only consider later enum declarations (higher position)
+                    if decl_node.kind != syntax_kind_ext::ENUM_DECLARATION
+                        || decl_node.pos <= current_pos
+                    {
+                        continue;
+                    }
+                    let Some(other_enum) = self.ctx.arena.get_enum(decl_node) else {
+                        continue;
+                    };
+                    for &m_idx in &other_enum.members.nodes {
+                        if let Some(m_node) = self.ctx.arena.get(m_idx)
+                            && let Some(m_data) = self.ctx.arena.get_enum_member(m_node)
+                            && let Some(name) = self.ctx.arena.get_identifier_text(m_data.name)
+                        {
+                            later_decl_member_names.push(name.to_string());
+                        }
+                    }
+                }
+            }
+
             for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
@@ -792,7 +824,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // Use .get() to avoid panic when member_names is shorter than
                 // members.nodes (e.g. string-literal enum member names that fail
                 // get_identifier_text are excluded from member_names).
-                let later_members: Vec<&str> = member_names.get(i + 1..).unwrap_or(&[]).to_vec();
+                let mut later_members: Vec<&str> =
+                    member_names.get(i + 1..).unwrap_or(&[]).to_vec();
+                // Include members from later merged enum declarations
+                for name in &later_decl_member_names {
+                    later_members.push(name.as_str());
+                }
                 let has_forward_ref = self.enum_has_forward_reference(
                     member_data.initializer,
                     &later_members,
