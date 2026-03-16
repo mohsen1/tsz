@@ -2221,6 +2221,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.verbatim_module_syntax {
         options.printer.preserve_const_enums = true;
         options.printer.no_const_enum_inlining = true;
+        options.printer.verbatim_module_syntax = true;
         options.checker.verbatim_module_syntax = true;
     }
     if let Some(jsx) = args.jsx {

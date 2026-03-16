@@ -46,6 +46,16 @@ impl<'a> Printer<'a> {
             };
         }
 
+        // Track whether this is a JavaScript source file. JS files do not
+        // undergo import elision since the checker treats all imports as values.
+        {
+            let file_name = source.file_name.to_ascii_lowercase();
+            self.source_is_js_file = file_name.ends_with(".js")
+                || file_name.ends_with(".jsx")
+                || file_name.ends_with(".cjs")
+                || file_name.ends_with(".mjs");
+        }
+
         // Detect export assignment (export =) to suppress other exports
         if self.has_export_assignment(&source.statements) {
             self.ctx.module_state.has_export_assignment = true;

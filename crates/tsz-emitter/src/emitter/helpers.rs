@@ -958,6 +958,16 @@ impl<'a> Printer<'a> {
                             }
                         }
                     }
+                    // With --verbatimModuleSyntax, non-type-only imports are
+                    // always preserved (no heuristic elision).
+                    if self.ctx.options.verbatim_module_syntax {
+                        return false;
+                    }
+                    // JS files (.js/.jsx/.cjs/.mjs) do not undergo import elision;
+                    // tsc's checker treats all imports in JS files as value imports.
+                    if self.source_is_js_file {
+                        return false;
+                    }
                     // In both CJS and ESM modes, erase imports whose bindings
                     // have no value-level usage in the rest of the file.
                     // In --noCheck mode this uses a text-based heuristic.
@@ -987,6 +997,11 @@ impl<'a> Printer<'a> {
                         return true;
                     }
                     if self.ctx.is_commonjs() && is_external {
+                        // With --verbatimModuleSyntax or in JS files, non-type-only
+                        // import-equals declarations are always preserved.
+                        if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+                            return false;
+                        }
                         // When JSX mode requires a factory (React by default),
                         // don't erase imports matching the factory name — JSX
                         // elements implicitly reference it but the text-based
