@@ -334,7 +334,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_members_list = self.interner.type_list(t_members);
 
                 // Collect fixed target members (those without placeholders) once per
-                // target union for this inference pass.
+                // target union for this inference pass. Fixed members are resolved and
+                // flattened: if a fixed member is a Lazy type alias that evaluates to a
+                // union (e.g., `Primitive` = `number | string | boolean | Date`), its
+                // constituent types are added individually. This ensures source members
+                // like `number` can be matched against the expanded alias contents,
+                // preventing them from being incorrectly inferred as type parameter `T`
+                // in patterns like `T | Primitive`.
                 let fixed_targets = if let Some(cached) = self
                     .constraint_fixed_union_members
                     .borrow()
@@ -349,6 +355,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         member_visited.clear();
                         if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
                             computed.insert(member);
+                            // Resolve Lazy type aliases and flatten unions so that
+                            // individual constituent types can be matched by identity.
+                            let evaluated = self.checker.evaluate_type(member);
+                            if evaluated != member {
+                                if let Some(TypeData::Union(inner_members)) =
+                                    self.interner.lookup(evaluated)
+                                {
+                                    let inner = self.interner.type_list(inner_members);
+                                    for &inner_member in inner.iter() {
+                                        computed.insert(inner_member);
+                                    }
+                                } else {
+                                    computed.insert(evaluated);
+                                }
+                            }
                         }
                     }
                     self.constraint_fixed_union_members
