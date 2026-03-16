@@ -175,10 +175,10 @@ where
     fn empty(&self) -> Arc<[T]> {
         // Reuse the pre-allocated empty Arc from the inner cache (id 0)
         // instead of creating Arc::from(Vec::new()) on every call.
-        if let Some(inner) = self.inner.get()
-            && let Some(e) = inner.items.get(&0)
-        {
-            return Arc::clone(e.value());
+        if let Some(inner) = self.inner.get() {
+            if let Some(e) = inner.items.get(&0) {
+                return Arc::clone(e.value());
+            }
         }
         // Fallback: initialize inner (which creates the empty entry at id 0)
         let inner = self.get_inner();
@@ -717,7 +717,7 @@ impl TypeInterner {
     }
 
     /// Intern a type list from a slice, avoiding Vec conversion when the caller
-    /// already has a `SmallVec` or slice reference.
+    /// already has a SmallVec or slice reference.
     pub(super) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
         TypeListId(self.type_lists.intern(members))
     }
