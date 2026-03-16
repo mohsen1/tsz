@@ -1775,7 +1775,6 @@ impl<'a> CheckerState<'a> {
         if pushed_this_type_from_shape {
             self.ctx.this_type_stack.pop();
         }
-
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 
