@@ -18,6 +18,25 @@ fn is_builtin_wrapper_name(name: &str) -> bool {
     matches!(name, "Boolean" | "Number" | "String" | "Object")
 }
 
+/// Returns true if the formatted type name represents a TypeScript primitive type.
+/// This catches cases where a complex type (e.g., homomorphic mapped type over a
+/// primitive) evaluates/displays as a primitive, even if the solver's TypeId doesn't
+/// directly represent the primitive.
+fn is_primitive_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "string"
+            | "number"
+            | "boolean"
+            | "bigint"
+            | "symbol"
+            | "void"
+            | "undefined"
+            | "null"
+            | "never"
+    )
+}
+
 /// Returns true if the property name is a standard Object.prototype method.
 /// These are implicitly available on all interfaces/objects through the Object
 /// prototype chain. When such a property appears as "missing" in a subtype check,
@@ -753,14 +772,24 @@ impl<'a> CheckerState<'a> {
                 // Note: `object` (TypeId::OBJECT) is explicitly non-primitive — it represents
                 // all non-primitive values and behaves like `{}` structurally, so missing
                 // properties are meaningful and should produce TS2741.
-                if *source_type != tsz_solver::TypeId::OBJECT
-                    && tsz_solver::is_primitive_type(self.ctx.types, *source_type)
-                {
-                    let src_str = self.format_type_diagnostic(*source_type);
+                //
+                // Check both the raw TypeId and the resolved display name. The display
+                // name check catches cases where a homomorphic mapped type over a
+                // primitive (e.g., `Meta<string, boolean>`) displays as the primitive
+                // itself (TSC preserves primitive identity for such types).
+                let display_src_str = if depth == 0 && *source_type != tsz_solver::TypeId::OBJECT {
+                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                } else {
+                    self.format_type_diagnostic(*source_type)
+                };
+                let is_source_primitive = (*source_type != tsz_solver::TypeId::OBJECT
+                    && tsz_solver::is_primitive_type(self.ctx.types, *source_type))
+                    || is_primitive_type_name(&display_src_str);
+                if is_source_primitive {
                     let tgt_str = self.format_type_diagnostic(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
+                        &[&display_src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
