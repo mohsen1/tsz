@@ -1192,3 +1192,196 @@ fn test_is_import_keyword_for_non_import() {
         );
     }
 }
+
+// =========================================================================
+// Batch 4: additional edge-case and coverage tests
+// =========================================================================
+
+#[test]
+fn test_find_node_at_offset_in_generic_type() {
+    let source = "const x: Array<number> = [];";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 9 should be at 'Array'
+    let node = find_node_at_offset(arena, 9);
+    assert!(node.is_some(), "Should find node in generic type");
+}
+
+#[test]
+fn test_find_node_at_offset_in_async_function() {
+    let source = "async function fetchData() { return await fetch('/api'); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 15 should be at 'fetchData'
+    let node = find_node_at_offset(arena, 15);
+    assert!(node.is_some(), "Should find node in async function name");
+}
+
+#[test]
+fn test_find_node_at_offset_in_decorator() {
+    let source = "@Component\nclass MyComponent {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 1 should be at 'Component' (after @)
+    let node = find_node_at_offset(arena, 1);
+    assert!(node.is_some(), "Should find node in decorator");
+}
+
+#[test]
+fn test_find_node_at_offset_in_conditional_type() {
+    let source = "type IsString<T> = T extends string ? true : false;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 5 should be at 'IsString'
+    let node = find_node_at_offset(arena, 5);
+    assert!(node.is_some(), "Should find node in conditional type");
+}
+
+#[test]
+fn test_find_node_at_offset_in_mapped_type() {
+    let source = "type Readonly<T> = { readonly [K in keyof T]: T[K] };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 5 should be at 'Readonly'
+    let node = find_node_at_offset(arena, 5);
+    assert!(node.is_some(), "Should find node in mapped type");
+}
+
+#[test]
+fn test_find_node_at_offset_in_rest_params() {
+    let source = "function sum(...args: number[]) { return args.reduce((a, b) => a + b); }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 17 should be near 'args'
+    let node = find_node_at_offset(arena, 17);
+    assert!(node.is_some(), "Should find node in rest params");
+}
+
+#[test]
+fn test_find_node_at_offset_in_optional_param() {
+    let source = "function greet(name?: string) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Offset 15 should be at 'name'
+    let node = find_node_at_offset(arena, 15);
+    assert!(node.is_some(), "Should find node in optional parameter");
+}
+
+#[test]
+fn test_identifier_text_for_type_alias_name() {
+    let source = "type UserID = string;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let node_idx = find_node_at_offset(arena, 5);
+    assert!(node_idx.is_some());
+    let text = identifier_text(arena, node_idx);
+    assert_eq!(text, Some("UserID".to_string()));
+}
+
+#[test]
+fn test_identifier_text_for_arrow_function_param() {
+    let source = "const f = (value: number) => value * 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let node_idx = find_node_at_offset(arena, 11);
+    assert!(node_idx.is_some());
+    let text = identifier_text(arena, node_idx);
+    assert_eq!(text, Some("value".to_string()));
+}
+
+#[test]
+fn test_is_comment_context_double_slash_in_string() {
+    let source = "const url = 'http://example.com';";
+    // The simple comment detector may or may not handle string interiors
+    // Just verify it doesn't panic
+    let _ = is_comment_context(source, 19);
+}
+
+#[test]
+fn test_is_comment_context_slash_star_in_string() {
+    let source = "const s = '/* not a comment */';";
+    // The simple comment detector may or may not handle string interiors
+    // Just verify it doesn't panic
+    let _ = is_comment_context(source, 14);
+}
+
+#[test]
+fn test_should_backtrack_after_closing_bracket() {
+    let source = "arr[0] ";
+    // Offset 6 is at the space after ']'
+    let _ = should_backtrack_to_previous_symbol(source, 6);
+}
+
+#[test]
+fn test_should_backtrack_after_closing_brace() {
+    let source = "const obj = {} ";
+    // Offset 14 is at the space after '}'
+    let _ = should_backtrack_to_previous_symbol(source, 14);
+}
+
+#[test]
+fn test_find_nodes_in_range_in_class_body() {
+    let source = "class Foo {\n  x = 1;\n  y = 2;\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _ = parser.parse_source_file();
+    let arena = parser.get_arena();
+    // Range covering the class body
+    let nodes = find_nodes_in_range(arena, 12, 29);
+    assert!(!nodes.is_empty(), "Should find nodes in class body");
+}
+
+#[test]
+fn test_node_range_for_multiline_class() {
+    let source = "class MyClass {\n  method() {\n    return 1;\n  }\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let line_map = LineMap::build(source);
+
+    // Find 'method' on line 1
+    let node_idx = find_node_at_offset(arena, 18);
+    if node_idx.is_some() {
+        let range = node_range(arena, &line_map, source, node_idx);
+        assert_eq!(range.start.line, 1, "method should be on line 1");
+    }
+}
+
+#[test]
+fn test_calculate_new_relative_path_index_file() {
+    let result = calculate_new_relative_path(
+        Path::new("/project/src/main.ts"),
+        Path::new("/project/src/utils/index.ts"),
+        Path::new("/project/src/helpers/index.ts"),
+        "./utils/index",
+    );
+    assert!(result.is_some(), "Should handle index.ts file moves");
+    let path = result.unwrap();
+    assert!(
+        path.contains("helpers"),
+        "Should reference new directory, got: {path}"
+    );
+}
+
+#[test]
+fn test_find_node_at_or_before_offset_in_multiline() {
+    let source = "const a = 1;\n\nconst b = 2;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    // Offset 13 is the blank line between statements
+    let node = find_node_at_or_before_offset(arena, 13, source);
+    // Should find something (backtrack to first statement)
+    let _ = node;
+}

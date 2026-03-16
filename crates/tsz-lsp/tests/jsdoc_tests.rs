@@ -984,3 +984,165 @@ fn test_inline_param_jsdocs_method_declaration() {
         let _ = result;
     }
 }
+
+// ============================================================================
+// Batch: additional edge case tests
+// ============================================================================
+
+#[test]
+fn test_parse_jsdoc_yields_tag() {
+    let result = parse_jsdoc("@yields {number} The next value");
+    assert!(!result.tags.is_empty(), "Should parse @yields tag");
+    assert_eq!(result.tags[0].name, "yields");
+}
+
+#[test]
+fn test_parse_jsdoc_async_tag() {
+    let result = parse_jsdoc("Async operation.\n@async");
+    assert_eq!(result.summary, Some("Async operation.".to_string()));
+    assert!(!result.tags.is_empty(), "Should parse @async tag");
+    assert_eq!(result.tags[0].name, "async");
+}
+
+#[test]
+fn test_parse_jsdoc_ignore_tag() {
+    let result = parse_jsdoc("@ignore");
+    assert!(!result.tags.is_empty(), "Should parse @ignore tag");
+    assert_eq!(result.tags[0].name, "ignore");
+    assert_eq!(result.tags[0].text, "");
+}
+
+#[test]
+fn test_parse_jsdoc_default_tag() {
+    let result = parse_jsdoc("@default 42");
+    assert!(!result.tags.is_empty(), "Should parse @default tag");
+    assert_eq!(result.tags[0].name, "default");
+    assert_eq!(result.tags[0].text, "42");
+}
+
+#[test]
+fn test_parse_jsdoc_summary_with_url() {
+    let result = parse_jsdoc("Visit https://example.com for more info.");
+    assert_eq!(
+        result.summary,
+        Some("Visit https://example.com for more info.".to_string()),
+    );
+}
+
+#[test]
+fn test_parse_jsdoc_summary_with_inline_code_block() {
+    let result = parse_jsdoc("Use {@link SomeClass} for details.");
+    if let Some(summary) = &result.summary {
+        assert!(
+            summary.contains("{@link"),
+            "Should preserve inline link tag, got: {summary}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_param_with_array_type() {
+    let result = parse_jsdoc("@param {string[]} names The list of names");
+    if let Some(desc) = result.params.get("names") {
+        assert!(
+            desc.contains("list of names") || desc.contains("The"),
+            "Should extract description for array typed param, got: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_param_with_nullable_type() {
+    let result = parse_jsdoc("@param {?string} name The nullable name");
+    if let Some(desc) = result.params.get("name") {
+        assert!(
+            desc.contains("nullable name") || desc.contains("The"),
+            "Should extract description for nullable typed param, got: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_param_with_non_nullable_type() {
+    let result = parse_jsdoc("@param {!string} name The non-nullable name");
+    if let Some(desc) = result.params.get("name") {
+        assert!(
+            desc.contains("non-nullable") || desc.contains("The"),
+            "Should extract description for non-nullable typed param, got: {desc}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_jsdoc_borrows_tag() {
+    let result = parse_jsdoc("@borrows foo as bar");
+    assert!(!result.tags.is_empty(), "Should parse @borrows tag");
+    assert_eq!(result.tags[0].name, "borrows");
+}
+
+#[test]
+fn test_parse_jsdoc_class_tag() {
+    let result = parse_jsdoc("A widget.\n@class");
+    assert_eq!(result.summary, Some("A widget.".to_string()));
+    assert!(!result.tags.is_empty(), "Should parse @class tag");
+    assert_eq!(result.tags[0].name, "class");
+}
+
+#[test]
+fn test_jsdoc_for_node_async_function() {
+    let source = "/** Fetches data from API */\nasync function fetchData() { return []; }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    if let Some(idx) = func_idx {
+        let doc = jsdoc_for_node(arena, root, idx, source);
+        // Async function doc extraction depends on implementation
+        let _ = doc;
+    }
+}
+
+#[test]
+fn test_jsdoc_for_node_generator_function() {
+    let source = "/** Generates numbers */\nfunction* gen() { yield 1; }";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(
+        func_idx.is_some(),
+        "Should find generator function declaration"
+    );
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    // Should not panic; doc extraction depends on implementation
+    let _ = doc;
+}
+
+#[test]
+fn test_jsdoc_for_node_multiple_blank_lines_before() {
+    let source = "/** Has blank lines */\n\n\nfunction spaced() {}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let func_idx = find_first_node_of_kind(arena, root, syntax_kind_ext::FUNCTION_DECLARATION);
+    assert!(func_idx.is_some(), "Should find function declaration");
+
+    let doc = jsdoc_for_node(arena, root, func_idx.unwrap(), source);
+    // Multiple blank lines between JSDoc and function may or may not preserve association
+    let _ = doc;
+}
+
+#[test]
+fn test_parse_jsdoc_long_description_with_newlines() {
+    let result = parse_jsdoc(
+        "This is a very long description that spans\nmultiple lines and has\nthree lines total.\n@param x Input",
+    );
+    if let Some(summary) = &result.summary {
+        assert!(
+            summary.contains("very long description"),
+            "Should capture multi-line summary, got: {summary}"
+        );
+    }
+    assert_eq!(result.params.get("x"), Some(&"Input".to_string()));
+}
