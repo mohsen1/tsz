@@ -1515,6 +1515,9 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // Check for reserved type names (TS2368)
+            self.check_type_name_is_reserved(data.name, &name);
+
             let atom = self.ctx.types.intern_string(&name);
 
             // Create unconstrained type parameter initially
