@@ -1365,12 +1365,21 @@ impl<'a> CheckerState<'a> {
         }
         let prev_callable_type = self.ctx.current_callable_type;
         self.ctx.current_callable_type = Some(union_contextual);
+        // Preserve literal types during overload argument collection so that
+        // string/number literal arguments keep their literal types (e.g., "canvas"
+        // stays as literal "canvas" instead of widening to string).  This is
+        // critical for overload resolution: without it, the union contextual type
+        // (which collapses literal | string → string) causes all literal overloads
+        // to fail matching.
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
         let arg_types = self.collect_call_argument_types_with_context(
             args,
             |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
             false,
             None, // No skipping needed for overload resolution
         );
+        self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.current_callable_type = prev_callable_type;
         let temp_node_types = std::mem::take(&mut self.ctx.node_types);
 
@@ -1561,12 +1570,15 @@ impl<'a> CheckerState<'a> {
 
             let prev_callable_type = self.ctx.current_callable_type;
             self.ctx.current_callable_type = Some(func_type);
+            let prev_preserve_literals2 = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
             let mut sig_arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                 false,
                 None,
             );
+            self.ctx.preserve_literal_types = prev_preserve_literals2;
             self.ctx.current_callable_type = prev_callable_type;
 
             self.ensure_relation_input_ready(func_type);
