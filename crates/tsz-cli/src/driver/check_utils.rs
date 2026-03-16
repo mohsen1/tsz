@@ -1463,7 +1463,11 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         // It does not corrupt the AST enough to suppress semantic errors like
         // TS2304. Files with only TS1009 parse errors (e.g., `extends A,`)
         // still have valid identifiers that need name resolution.
-        | 1014 // A rest parameter must be last in a parameter list
+        //
+        // Note: TS1014 (A rest parameter must be last) is intentionally excluded.
+        // It is a grammar check, not a structural parse failure. The AST for
+        // `function f(...x, y)` is valid — both parameters are parsed correctly.
+        // tsc still emits TS7019/TS7006 alongside TS1014.
         | 1036 // Statements are not allowed in ambient contexts
         | 1109 // Expression expected
         | 1110 // Type expected
