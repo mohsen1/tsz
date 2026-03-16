@@ -180,29 +180,6 @@ impl<'a> CheckerState<'a> {
         self.is_valid_in_operator_rhs(constraint)
     }
 
-    /// Check if a type "may represent a primitive value" for TS2638.
-    /// This applies to types like `{}` that structurally accept primitives,
-    /// and type parameters whose constraint is `{}` or missing.
-    fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // `{}` (empty object type) may represent primitives
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        // Type parameters: check if constraint is missing or is `{}`
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return match crate::query_boundaries::state::checking::type_parameter_constraint(
-                self.ctx.types,
-                ty,
-            ) {
-                None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
-            };
-        }
-
-        false
-    }
-
     /// Get the type of a binary expression.
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
@@ -571,16 +548,12 @@ impl<'a> CheckerState<'a> {
                         right_idx,
                         right_idx,
                     );
-                } else if self.type_may_represent_primitive(right_type) {
-                    // TS2638: Type '{}' may represent a primitive value, which is not
-                    // permitted as the right operand of the 'in' operator.
-                    let type_str = self.format_type(right_type);
-                    self.error_at_node_msg(
-                        right_idx,
-                        tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
-                        &[&type_str],
-                    );
                 }
+                // NOTE: TS2638 ("may represent a primitive value") is NOT checked here.
+                // tsc's check for TS2638 uses `isTypeAssignableTo(type, nonPrimitiveType)`
+                // which behaves differently from our `is_valid_in_operator_rhs` for types
+                // like `{}`. Until our solver's assignability for `object` vs `{}` matches
+                // tsc precisely, emitting TS2638 causes more false positives than it fixes.
 
                 type_stack.push(TypeId::BOOLEAN);
                 continue;
