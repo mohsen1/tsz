@@ -297,9 +297,80 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    // Note: In tsc 6.0, private identifiers (#name) ARE allowed
-                    // in ambient (declare) classes. TS18019 is only for member-level
-                    // 'declare' modifier on private-named members, not class-level.
+                    // TS18010: An accessibility modifier cannot be used with a private identifier.
+                    // Check for public/private/protected modifiers on #name members.
+                    let member_modifiers = match member_node.kind {
+                        syntax_kind_ext::PROPERTY_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_property_decl(member_node)
+                            .map(|p| p.modifiers.clone()),
+                        syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(member_node)
+                            .map(|m| m.modifiers.clone()),
+                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                            .ctx
+                            .arena
+                            .get_accessor(member_node)
+                            .map(|a| a.modifiers.clone()),
+                        _ => None,
+                    };
+                    if let Some(ref mods) = member_modifiers {
+                        // Find the accessibility modifier node to report the error on its position
+                        let accessibility_mod_idx = self
+                            .ctx
+                            .arena
+                            .find_modifier(mods, tsz_scanner::SyntaxKind::PublicKeyword)
+                            .or_else(|| {
+                                self.ctx
+                                    .arena
+                                    .find_modifier(mods, tsz_scanner::SyntaxKind::PrivateKeyword)
+                            })
+                            .or_else(|| {
+                                self.ctx
+                                    .arena
+                                    .find_modifier(mods, tsz_scanner::SyntaxKind::ProtectedKeyword)
+                            });
+                        if let Some(mod_idx) = accessibility_mod_idx {
+                            self.error_at_node(
+                                mod_idx,
+                                diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                            );
+                        }
+                    }
+
+                    // TS18019: 'declare'/'abstract' modifier cannot be used with a private identifier.
+                    // Only applies to property declarations. For methods/accessors, tsc emits
+                    // TS1031 instead (wrong element kind), not TS18019.
+                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                        if let Some(ref mods) = member_modifiers {
+                            if let Some(mod_idx) = self
+                                .ctx
+                                .arena
+                                .find_modifier(mods, tsz_scanner::SyntaxKind::DeclareKeyword)
+                            {
+                                self.error_at_node_msg(
+                                    mod_idx,
+                                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                    &["declare"],
+                                );
+                            }
+                            if let Some(mod_idx) = self
+                                .ctx
+                                .arena
+                                .find_modifier(mods, tsz_scanner::SyntaxKind::AbstractKeyword)
+                            {
+                                self.error_at_node_msg(
+                                    mod_idx,
+                                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
+                                    &["abstract"],
+                                );
+                            }
+                        }
+                    }
                 }
 
                 // Check for abstract members in non-abstract class
