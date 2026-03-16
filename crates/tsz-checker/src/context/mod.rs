@@ -161,7 +161,6 @@ pub(crate) struct EnvEvalCacheEntry {
 }
 
 /// Info about a symbol that came from destructuring a union type.
-/// Info about a symbol that came from destructuring a union type.
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
 /// narrowing `isSuccess` should also narrow `data`.
 #[derive(Clone, Debug)]
