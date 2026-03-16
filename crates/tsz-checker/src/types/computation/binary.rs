@@ -181,14 +181,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// This applies to types like `{}` that structurally accept primitives,
-    /// and type parameters whose constraint is `{}` or missing.
+    /// This matches tsc's `typeCouldHaveTopLevelSingletonTypes` — it only returns
+    /// true for type parameters whose constraint is missing or `{}`. Concrete
+    /// types (even empty object types like `{}`) are NOT considered because at
+    /// runtime they are definitely objects.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // `{}` (empty object type) may represent primitives
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
         // Type parameters: check if constraint is missing or is `{}`
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
@@ -196,8 +193,27 @@ impl<'a> CheckerState<'a> {
                 ty,
             ) {
                 None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
+                Some(c) => {
+                    tsz_solver::is_empty_object_type(self.ctx.types, c)
+                        || self.type_may_represent_primitive(c)
+                }
             };
+        }
+
+        // Union: any member may represent primitive
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&m| self.type_may_represent_primitive(m));
+        }
+
+        // Intersection: all members may represent primitive
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
+        {
+            return members
+                .iter()
+                .all(|&m| self.type_may_represent_primitive(m));
         }
 
         false
