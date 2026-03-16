@@ -184,20 +184,32 @@ impl<'a> CheckerState<'a> {
     /// This applies to types like `{}` that structurally accept primitives,
     /// and type parameters whose constraint is `{}` or missing.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // `{}` (empty object type) may represent primitives
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        // Type parameters: check if constraint is missing or is `{}`
+        // TS2638 only applies to type parameters whose constraint may include
+        // primitives. Concrete types like `{}` are handled by is_valid_in_operator_rhs
+        // and should NOT trigger TS2638 (tsc behavior).
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
                 None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
+                Some(c) => {
+                    // Constraint is `{}` or empty object → may represent primitive
+                    if tsz_solver::is_empty_object_type(self.ctx.types, c) {
+                        return true;
+                    }
+                    // Constraint is itself a type parameter → recurse
+                    self.type_may_represent_primitive(c)
+                }
             };
+        }
+
+        // Union types: check if any member may represent a primitive
+        if let Some(members) = crate::query_boundaries::dispatch::union_members(self.ctx.types, ty)
+        {
+            return members
+                .iter()
+                .any(|&member| self.type_may_represent_primitive(member));
         }
 
         false
