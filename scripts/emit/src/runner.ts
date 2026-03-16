@@ -73,6 +73,7 @@ interface TestCase {
   isolatedModules: boolean;
   importsNotUsedAsValues?: string;
   preserveValueImports: boolean;
+  rewriteRelativeImportExtensions: boolean;
   removeComments: boolean;
   stripInternal: boolean;
   outFile?: string;
