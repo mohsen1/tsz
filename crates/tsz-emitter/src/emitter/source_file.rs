@@ -426,6 +426,16 @@ impl<'a> Printer<'a> {
         let needs_use_strict_cjs =
             is_top_level_cjs && is_file_module && !is_suppressed_cts_override;
         let needs_use_strict_amd_umd = is_amd_or_umd && is_file_module && !has_module_wrapper_stmt;
+        // When emitting the body of an AMD/UMD wrapper, emit_module_wrapper_body()
+        // temporarily sets module=CommonJS and original_module_kind=Some(AMD/UMD).
+        // tsc emits "use strict" as the first line inside the wrapper callback,
+        // so we need to detect this case and emit it here.
+        let needs_use_strict_inside_wrapper = is_top_level_cjs
+            && is_file_module
+            && matches!(
+                self.ctx.original_module_kind,
+                Some(ModuleKind::AMD) | Some(ModuleKind::UMD)
+            );
         let needs_use_strict_always = self.ctx.options.always_strict
             && !has_module_wrapper_stmt
             && self.ctx.original_module_kind.is_none()
@@ -434,13 +444,17 @@ impl<'a> Printer<'a> {
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
-            && (needs_use_strict_cjs || needs_use_strict_amd_umd || needs_use_strict_always);
+            && (needs_use_strict_cjs
+                || needs_use_strict_amd_umd
+                || needs_use_strict_inside_wrapper
+                || needs_use_strict_always);
 
         // When the source has its own "use strict" prologue AND this is a CJS
         // module file, we must emit "use strict" at the correct position (before
         // __esModule marker / exports preamble) and skip the source's own
         // directive during statement iteration to avoid duplication.
-        let skip_source_use_strict = source_has_use_strict && needs_use_strict_cjs;
+        let skip_source_use_strict =
+            source_has_use_strict && (needs_use_strict_cjs || needs_use_strict_inside_wrapper);
 
         if should_emit_use_strict || skip_source_use_strict {
             self.write("\"use strict\";");
