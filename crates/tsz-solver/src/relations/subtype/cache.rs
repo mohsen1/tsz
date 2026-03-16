@@ -186,17 +186,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // the identity-mode flag, so a cached `true` from a normal subtype check
         // would incorrectly short-circuit the identity check (which needs stricter
         // Application type-argument comparison at cycle points for TS2403).
-        if !self.identity_cycle_check {
-            if let Some(db) = self.query_db {
-                let key = self.make_cache_key(source, target);
-                if let Some(cached) = db.lookup_subtype_cache(key) {
-                    leave_global!();
-                    return if cached {
-                        SubtypeResult::True
-                    } else {
-                        SubtypeResult::False
-                    };
-                }
+        if !self.identity_cycle_check
+            && let Some(db) = self.query_db
+        {
+            let key = self.make_cache_key(source, target);
+            if let Some(cached) = db.lookup_subtype_cache(key) {
+                leave_global!();
+                return if cached {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                };
             }
         }
 
@@ -545,7 +545,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   - `IPromise<U>` vs `Promise<U>` → args [U] == [U] → assume identical
     ///
     /// For non-Application types (evaluated objects, callables), falls back to
-    /// the standard coinductive assumption (CycleDetected = True).
+    /// the standard coinductive assumption (`CycleDetected` = True).
     pub(crate) fn identity_cycle_result(&self, source: TypeId, target: TypeId) -> SubtypeResult {
         let s_app = application_id(self.interner, source);
         let t_app = application_id(self.interner, target);
