@@ -1112,6 +1112,14 @@ pub fn get_type_parameter_info(
     }
 }
 
+/// Check if a type is a type parameter (TypeParameter or Infer).
+pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+    )
+}
+
 /// Get the constraint of a type parameter.
 ///
 /// Returns None if not a type parameter or has no constraint.
