@@ -1215,6 +1215,13 @@ fn compile_inner(
         .any(|diag| diag.category == DiagnosticCategory::Error);
     let should_emit = !(resolved.no_emit || (resolved.no_emit_on_error && has_error));
 
+    // When --declaration is set, run declaration emit for diagnostics even
+    // with --noEmit, because TS2883 (non-portable inferred types) fires
+    // during declaration generation. In tsc, this check happens during the
+    // checker's "declaration emit pre-check" phase.
+    let should_run_declaration_emit_check =
+        !should_emit && resolved.emit_declarations && resolved.no_emit;
+
     let mut dirty_paths = dirty_paths;
     if let Some(forced) = forced_dirty_paths {
         match &mut dirty_paths {
@@ -1228,10 +1235,10 @@ fn compile_inner(
     }
 
     let emit_outputs_start = Instant::now();
-    let emitted_files = if !should_emit {
+    let emitted_files = if !should_emit && !should_run_declaration_emit_check {
         Vec::new()
     } else {
-        let outputs = emit_outputs(EmitOutputsContext {
+        let (outputs, emit_diags) = emit_outputs(EmitOutputsContext {
             program: &program,
             options: &resolved,
             base_dir: &base_dir,
@@ -1241,9 +1248,28 @@ fn compile_inner(
             dirty_paths: dirty_paths.as_ref(),
             type_caches: type_caches_ref,
         })?;
-        write_outputs(&outputs)?
+        diagnostics.extend(emit_diags);
+        if should_emit {
+            write_outputs(&outputs)?
+        } else {
+            // Declaration emit ran for diagnostics only (--noEmit with --declaration)
+            Vec::new()
+        }
     };
     perf_log_phase("emit_outputs", emit_outputs_start);
+
+    // Recompute has_error after emit diagnostics (e.g., TS2883) are added.
+    // The initial has_error was computed before emit for should_emit gating.
+    // Re-sort since emit diagnostics were appended after the initial sort.
+    diagnostics.sort_by(|left, right| {
+        left.file
+            .cmp(&right.file)
+            .then(left.start.cmp(&right.start))
+            .then(left.code.cmp(&right.code))
+    });
+    let has_error = diagnostics
+        .iter()
+        .any(|diag| diag.category == DiagnosticCategory::Error);
 
     // Find the most recent .d.ts file for BuildInfo tracking
     let latest_changed_dts_file = if !emitted_files.is_empty() {
