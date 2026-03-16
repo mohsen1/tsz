@@ -93,7 +93,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_of_symbol(sym_id)
                     };
-
                     // Cross-file fallback: if the structural type could not be
                     // computed locally, the declarations may be in a different
                     // arena/binder. Delegate to a child checker with the symbol's
@@ -240,7 +239,8 @@ impl<'a> CheckerState<'a> {
             && flags & symbol_flags::ALIAS != 0
         {
             let mut visited = Vec::new();
-            if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+            let alias_result = self.resolve_alias_symbol(sym_id, &mut visited);
+            if let Some(target_sym_id) = alias_result
                 && target_sym_id != sym_id
             {
                 let target_flags = self
@@ -264,6 +264,35 @@ impl<'a> CheckerState<'a> {
                 {
                     self.ctx.leave_recursion();
                     return type_id;
+                }
+            }
+
+            // Fallback: resolve_alias_symbol may fail for cross-file default imports
+            // when the relative module specifier doesn't match the binder's module_exports
+            // keys. Use the cross-file resolution infrastructure to find the target
+            // default export and check for type meaning (e.g., `export default C.B`
+            // where B is both a static property and an interface).
+            if alias_result.is_none() || alias_result == Some(sym_id) {
+                let cross_file_result = self.resolve_import_alias_cross_file(sym_id);
+                if let Some(target_sym_id) = cross_file_result {
+                    let target_flags = self
+                        .get_cross_file_symbol(target_sym_id)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if target_flags & symbol_flags::CLASS != 0
+                        || target_flags & symbol_flags::INTERFACE != 0
+                    {
+                        self.ctx.leave_recursion();
+                        return self.type_reference_symbol_type(target_sym_id);
+                    }
+                    if target_flags & symbol_flags::EXPORT_VALUE != 0 {
+                        let prop_result =
+                            self.resolve_default_export_property_type_meaning(target_sym_id);
+                        if let Some(type_id) = prop_result {
+                            self.ctx.leave_recursion();
+                            return type_id;
+                        }
+                    }
                 }
             }
         }
@@ -363,7 +392,71 @@ impl<'a> CheckerState<'a> {
                 .insert(member_sym_id, file_idx);
         }
 
+        // For cross-file symbols, use delegation to compute the type in the
+        // correct arena context.  Calling type_reference_symbol_type directly
+        // would use the current file's arena, causing NodeIndex collisions.
+        if file_idx.is_some() {
+            if let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id) {
+                return Some(delegate_type);
+            }
+        }
+
         Some(self.type_reference_symbol_type(member_sym_id))
+    }
+
+    /// Resolve an import alias to its target symbol using the cross-file resolution
+    /// infrastructure.
+    ///
+    /// This is used as a fallback when `resolve_alias_symbol` (which relies on the
+    /// binder's module_exports) fails for cross-file imports. Uses the checker's
+    /// `resolve_import_alias_and_register` which resolves relative module specifiers
+    /// from the declaring file's perspective.
+    fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return None;
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(&symbol.escaped_name);
+
+        // Use current_file_idx as the source for resolving relative specifiers,
+        // since locally-declared import symbols may not have decl_file_idx set.
+        let source_file_idx = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&sym_id)
+            .copied()
+            .unwrap_or(self.ctx.current_file_idx);
+
+        let target_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let file_name = &target_arena.source_files.first()?.file_name;
+
+        // Try module_exports first (keyed by filename), then file_locals.
+        let target_sym_id = target_binder
+            .module_exports
+            .get(file_name)
+            .and_then(|exports| exports.get(import_name))
+            .or_else(|| target_binder.file_locals.get(import_name))?;
+
+        self.ctx
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .insert(target_sym_id, target_idx);
+        Some(target_sym_id)
     }
 
     /// Compute the interface structural type from declarations, bypassing `get_type_of_symbol`.
