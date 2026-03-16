@@ -29,7 +29,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [█████████████████░░░] 86.3% (10,857/12,581 tests)
+Progress: [█████████████████░░░] 85.9% (10,808/12,581 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -43,8 +43,8 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [█████████████████░░░] 84.6% (11,446 / 13,526 tests)
-Declaration: [██████████████░░░░░░] 70.6% (1,171 / 1,659 tests)
+JavaScript:  [█████████████████░░░] 87.6% (11,851 / 13,526 tests)
+Declaration: [██████████████░░░░░░] 70.4% (1,168 / 1,659 tests)
 ```
 <!-- EMIT_END -->
 
@@ -55,11 +55,11 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████░░░░░░░░░░░░] 37.9% (2,394 / 6,320 tests)
+Progress: [████████░░░░░░░░░░░░] 41.7% (2,638 / 6,320 tests)
 ```
 <!-- FOURSLASH_END -->
 
-Of the enabled tests, 99%+ pass. ~3,926 tests are skipped pending deeper infrastructure
+Of the enabled tests, 99%+ pass. ~3,682 tests are skipped pending deeper infrastructure
 (code fixes, refactoring, type-aware completions, formatting).
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
