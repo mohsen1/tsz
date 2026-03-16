@@ -17,9 +17,6 @@ pub mod scopes;
 pub mod state;
 pub mod symbols;
 
-// Re-export for external consumers.
-pub use modules::resolution_debug as module_resolution_debug;
-
 // Re-export core data types at crate root for convenience.
 pub use flow::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
 pub use scopes::{ContainerKind, Scope, ScopeContext, ScopeId};
