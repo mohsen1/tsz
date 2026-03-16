@@ -5765,8 +5765,9 @@ fn test_infer_generic_index_signature_from_optional_property() {
     )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
-    assert_eq!(result, expected);
+    // In tsc, optional properties do not contribute `undefined` to index signature inference.
+    // So `{ a?: number }` against `{ [s: string]: T }` infers T = number, not number | undefined.
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]
@@ -5816,8 +5817,8 @@ fn test_infer_generic_number_index_from_optional_property() {
     )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
-    assert_eq!(result, expected);
+    // In tsc, optional properties do not contribute `undefined` to index signature inference.
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]
