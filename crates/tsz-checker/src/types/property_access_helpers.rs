@@ -120,7 +120,11 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            // Only allow expando assignments on function declarations, not classes.
+            // tsc allows `function foo() {} foo.bar = 42;` (expando on function)
+            // but does NOT allow `class C {} C.bar = 42;` — that's TS2339.
+            return (symbol.flags & symbol_flags::FUNCTION) != 0
+                && (symbol.flags & symbol_flags::CLASS) == 0;
         }
 
         // Namespace member fallback: allow expando assignment for function-typed
