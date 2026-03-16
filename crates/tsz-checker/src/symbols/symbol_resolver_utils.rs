@@ -578,6 +578,83 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a qualified name's left part resolves to a pure interface that
+    /// shadows an outer namespace which has the right member.
+    /// Used to suppress false TS2694 when import-equals resolution finds a local
+    /// interface instead of the outer namespace.
+    pub(crate) fn check_import_qualified_shadows_namespace(&self, idx: NodeIndex) -> bool {
+        let node = match self.ctx.arena.get(idx) {
+            Some(node) => node,
+            None => return false,
+        };
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return false;
+        }
+        let qn = match self.ctx.arena.get_qualified_name(node) {
+            Some(qn) => qn,
+            None => return false,
+        };
+        let left_sym = match self.resolve_qualified_symbol(qn.left) {
+            Some(sym) => sym,
+            None => return false,
+        };
+        let lib_binders = self.get_lib_binders();
+        let left_symbol = match self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+        // Only suppress when the left is a pure interface (no namespace meaning)
+        let is_pure_interface = (left_symbol.flags & symbol_flags::INTERFACE) != 0
+            && (left_symbol.flags & symbol_flags::MODULE) == 0
+            && (left_symbol.flags & CLASS) == 0
+            && (left_symbol.flags & symbol_flags::REGULAR_ENUM) == 0
+            && (left_symbol.flags & symbol_flags::CONST_ENUM) == 0;
+        if !is_pure_interface {
+            return false;
+        }
+        let right_name = match self
+            .ctx
+            .arena
+            .get(qn.right)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|ident| ident.escaped_text.as_str())
+        {
+            Some(name) => name,
+            None => return false,
+        };
+        let left_name = left_symbol.escaped_name.clone();
+        // Check if an outer namespace has the member
+        let Some(scope_id) = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, qn.left)
+        else {
+            return false;
+        };
+        let Some(current_scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+            return false;
+        };
+        let mut walk_id = current_scope.parent;
+        while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
+            if let Some(sym_id) = scope.table.get(&left_name) {
+                if let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    if (sym.flags & symbol_flags::NAMESPACE) != 0 {
+                        if let Some(exports) = sym.exports.as_ref() {
+                            if exports.has(right_name) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            if walk_id == scope.parent {
+                break;
+            }
+            walk_id = scope.parent;
+        }
+        false
+    }
+
     /// Report a type query missing member error.
     ///
     /// For `typeof A.B` where `B` is not found in `A`'s exports, emits TS2694.
