@@ -871,10 +871,10 @@ impl<'a> CheckerState<'a> {
 
     /// Extract the body statements of an IIFE (Immediately Invoked Function Expression).
     /// Recognizes patterns like `(function() { ... })()` and `(function() { ... }.call(this))`.
-    fn get_iife_body_statements<'b>(
-        arena: &'b tsz_parser::parser::NodeArena,
+    fn get_iife_body_statements(
+        arena: &tsz_parser::parser::NodeArena,
         call_idx: NodeIndex,
-    ) -> Option<&'b [NodeIndex]> {
+    ) -> Option<&[NodeIndex]> {
         let call_node = arena.get(call_idx)?;
         if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
@@ -915,12 +915,10 @@ impl<'a> CheckerState<'a> {
             if let Some(stmt_node) = target_arena.get(stmt_idx)
                 && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
                 && let Some(stmt) = target_arena.get_expression_statement(stmt_node)
-            {
-                if let Some(iife_stmts) =
+                && let Some(iife_stmts) =
                     Self::get_iife_body_statements(target_arena, stmt.expression)
-                {
-                    all_stmts.extend_from_slice(iife_stmts);
-                }
+            {
+                all_stmts.extend_from_slice(iife_stmts);
             }
         }
 

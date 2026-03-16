@@ -119,10 +119,8 @@ impl<'a> CheckerState<'a> {
                             }
                             Some(level) => {
                                 accessor_access = Some(match accessor_access {
-                                    // First accessor found - use its level
-                                    None => level,
-                                    // Both accessors found - use the most permissive
-                                    Some(MemberAccessLevel::Private) => level,
+                                    // First accessor found, or both found — use the most permissive
+                                    None | Some(MemberAccessLevel::Private) => level,
                                     Some(prev) => prev,
                                 });
                             }

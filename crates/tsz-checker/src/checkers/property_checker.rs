@@ -1034,13 +1034,11 @@ mod tests {
 
         assert!(
             !has_code(&diagnostics, 2445),
-            "Should not emit TS2445 for access through correct instance, got: {:?}",
-            diagnostics
+            "Should not emit TS2445 for access through correct instance, got: {diagnostics:?}"
         );
         assert!(
             !has_code(&diagnostics, 2446),
-            "Should not emit TS2446 for access through correct instance, got: {:?}",
-            diagnostics
+            "Should not emit TS2446 for access through correct instance, got: {diagnostics:?}"
         );
     }
 
@@ -1068,13 +1066,11 @@ mod tests {
 
         assert!(
             has_code(&diagnostics, 2446),
-            "Expected TS2446 for access through Base instance inside nested class, got: {:?}",
-            diagnostics
+            "Expected TS2446 for access through Base instance inside nested class, got: {diagnostics:?}"
         );
         assert!(
             !has_code(&diagnostics, 2445),
-            "Should emit TS2446 not TS2445 for wrong-instance access, got: {:?}",
-            diagnostics
+            "Should emit TS2446 not TS2445 for wrong-instance access, got: {diagnostics:?}"
         );
     }
 
@@ -1103,8 +1099,7 @@ mod tests {
 
         assert!(
             has_code(&diagnostics, 2446),
-            "Expected TS2446 for access through sibling instance, got: {:?}",
-            diagnostics
+            "Expected TS2446 for access through sibling instance, got: {diagnostics:?}"
         );
     }
 
@@ -1133,13 +1128,11 @@ mod tests {
 
         assert!(
             !has_code(&diagnostics, 2445),
-            "Should allow access through subclass instance, got: {:?}",
-            diagnostics
+            "Should allow access through subclass instance, got: {diagnostics:?}"
         );
         assert!(
             !has_code(&diagnostics, 2446),
-            "Should allow access through subclass instance, got: {:?}",
-            diagnostics
+            "Should allow access through subclass instance, got: {diagnostics:?}"
         );
     }
 
@@ -1158,8 +1151,7 @@ mod tests {
 
         assert!(
             has_code(&diagnostics, 2445),
-            "Expected TS2445 for access outside class hierarchy, got: {:?}",
-            diagnostics
+            "Expected TS2445 for access outside class hierarchy, got: {diagnostics:?}"
         );
     }
 
@@ -1185,13 +1177,11 @@ mod tests {
 
         assert!(
             !has_code(&diagnostics, 2445),
-            "Should allow access from nested class inside declaring class, got: {:?}",
-            diagnostics
+            "Should allow access from nested class inside declaring class, got: {diagnostics:?}"
         );
         assert!(
             !has_code(&diagnostics, 2446),
-            "Should allow access from nested class inside declaring class, got: {:?}",
-            diagnostics
+            "Should allow access from nested class inside declaring class, got: {diagnostics:?}"
         );
     }
 
@@ -1234,8 +1224,7 @@ class Derived1 extends Base {
         let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&2446),
-            "Expected TS2446 for b.x inside nested class in Derived1, got: {:?}",
-            codes
+            "Expected TS2446 for b.x inside nested class in Derived1, got: {codes:?}"
         );
         // Should not have TS2445 for the b.x in Derived1's nested class (it should be TS2446)
         // The only TS2445 errors should be from outside the class hierarchy if any

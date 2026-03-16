@@ -777,7 +777,7 @@ fn test_workspace_symbols_many_results() {
     let mut index = SymbolIndex::new();
     for i in 0..20 {
         index.add_definition_with_kind(
-            &format!("item{}", i),
+            &format!("item{i}"),
             make_location("items.ts", i, 0, 5),
             SymbolKind::Variable,
         );
@@ -895,8 +895,7 @@ fn test_infer_symbol_kind_camel_case() {
     let kind = WorkspaceSymbolsProvider::infer_symbol_kind("getUserName");
     assert!(
         kind == SymbolKind::Function || kind == SymbolKind::Variable,
-        "camelCase should be Function or Variable, got: {:?}",
-        kind
+        "camelCase should be Function or Variable, got: {kind:?}"
     );
 }
 
@@ -964,8 +963,7 @@ fn test_infer_symbol_kind_i_prefix_lowercase_second() {
     let kind = WorkspaceSymbolsProvider::infer_symbol_kind("iValue");
     assert!(
         kind == SymbolKind::Variable || kind == SymbolKind::Function,
-        "lowercase 'i' prefix should not be Interface, got: {:?}",
-        kind
+        "lowercase 'i' prefix should not be Interface, got: {kind:?}"
     );
 }
 
@@ -976,8 +974,7 @@ fn test_infer_symbol_kind_all_uppercase_no_underscore() {
     // Either Constant (screaming case) or Class (PascalCase) is acceptable
     assert!(
         kind == SymbolKind::Constant || kind == SymbolKind::Class,
-        "All uppercase without underscore should be Constant or Class, got: {:?}",
-        kind
+        "All uppercase without underscore should be Constant or Class, got: {kind:?}"
     );
 }
 
@@ -987,7 +984,7 @@ fn test_find_symbols_many_files_same_name() {
     for i in 0..10 {
         index.add_definition_with_kind(
             "init",
-            make_location(&format!("module{}.ts", i), 0, 0, 4),
+            make_location(&format!("module{i}.ts"), 0, 0, 4),
             SymbolKind::Function,
         );
     }
@@ -1066,8 +1063,7 @@ fn test_infer_symbol_kind_underscore_only() {
     let kind = WorkspaceSymbolsProvider::infer_symbol_kind("_");
     assert!(
         kind == SymbolKind::Variable || kind == SymbolKind::Function,
-        "Single underscore should be Variable or Function, got: {:?}",
-        kind
+        "Single underscore should be Variable or Function, got: {kind:?}"
     );
 }
 
@@ -1206,8 +1202,7 @@ fn test_infer_symbol_kind_two_char_uppercase() {
     let kind = WorkspaceSymbolsProvider::infer_symbol_kind("IO");
     assert!(
         kind == SymbolKind::Constant || kind == SymbolKind::Class,
-        "Two uppercase chars should be Constant or Class, got: {:?}",
-        kind
+        "Two uppercase chars should be Constant or Class, got: {kind:?}"
     );
 }
 
@@ -1216,8 +1211,7 @@ fn test_infer_symbol_kind_mixed_with_numbers() {
     let kind = WorkspaceSymbolsProvider::infer_symbol_kind("item2Count");
     assert!(
         kind == SymbolKind::Variable || kind == SymbolKind::Function,
-        "camelCase with numbers should be Variable or Function, got: {:?}",
-        kind
+        "camelCase with numbers should be Variable or Function, got: {kind:?}"
     );
 }
 
@@ -1434,8 +1428,8 @@ fn test_find_symbols_many_files() {
     let mut index = SymbolIndex::new();
     for i in 0..20 {
         index.add_definition(
-            &format!("sym{}", i),
-            make_location(&format!("file{}.ts", i), 0, 0, 4),
+            &format!("sym{i}"),
+            make_location(&format!("file{i}.ts"), 0, 0, 4),
         );
     }
     let provider = WorkspaceSymbolsProvider::new(&index);

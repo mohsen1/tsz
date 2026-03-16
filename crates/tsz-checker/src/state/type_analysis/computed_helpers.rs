@@ -1851,11 +1851,10 @@ impl<'a> CheckerState<'a> {
             // The object type was a Lazy instance ref that got promoted to constructor.
             // Check if the expression actually refers to the class (e.g., `A.#field`),
             // which is the only case where this promotion is valid.
-            let expression_is_class_ref = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
+
+            self.resolve_identifier_symbol_without_tracking(access.expression)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::CLASS != 0);
-            expression_is_class_ref
+                .is_some_and(|sym| sym.flags & tsz_binder::symbol_flags::CLASS != 0)
         } else if member_is_static {
             self.static_private_member_access_compatible(
                 object_type_for_check,

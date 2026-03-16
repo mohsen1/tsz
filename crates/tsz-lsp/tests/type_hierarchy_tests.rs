@@ -523,13 +523,11 @@ fn test_subtypes_with_extends() {
     let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
     assert!(
         names.contains(&"Child"),
-        "Base subtypes should include Child, got: {:?}",
-        names
+        "Base subtypes should include Child, got: {names:?}"
     );
     assert!(
         names.contains(&"Other"),
-        "Base subtypes should include Other, got: {:?}",
-        names
+        "Base subtypes should include Other, got: {names:?}"
     );
 }
 
@@ -1773,7 +1771,7 @@ fn test_subtypes_three_level_class_chain() {
     let subtypes = provider.subtypes(root, pos);
 
     // Should find Parent as direct subtype
-    assert!(subtypes.len() >= 1);
+    assert!(!subtypes.is_empty());
     let names: Vec<&str> = subtypes.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"Parent"));
 }
@@ -1797,7 +1795,7 @@ fn test_supertypes_three_level_class_chain_leaf() {
     let supertypes = provider.supertypes(root, pos);
 
     // Should find Parent as direct supertype
-    assert!(supertypes.len() >= 1);
+    assert!(!supertypes.is_empty());
     assert_eq!(supertypes[0].name, "Parent");
 }
 

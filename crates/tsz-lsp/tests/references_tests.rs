@@ -1965,7 +1965,7 @@ fn test_find_references_typeof_expression() {
     let find_refs = FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let refs = find_refs.find_references(root, Position::new(0, 6));
     if let Some(r) = refs {
-        assert!(r.len() >= 1);
+        assert!(!r.is_empty());
     }
 }
 
@@ -2071,14 +2071,14 @@ fn test_detailed_refs_let_reassignment_is_write() {
     let source = "let x = 1;\nx = 2;";
     let refs = get_detailed_refs(source, "test.ts", 0, 4);
     let writes: Vec<_> = refs.iter().filter(|r| r.is_write_access).collect();
-    assert!(writes.len() >= 1, "Reassignment should be a write");
+    assert!(!writes.is_empty(), "Reassignment should be a write");
 }
 
 #[test]
 fn test_detailed_refs_delete_expression() {
     let source = "const obj: any = { x: 1 };\ndelete obj.x;";
     let refs = get_detailed_refs(source, "test.ts", 0, 6);
-    assert!(refs.len() >= 1);
+    assert!(!refs.is_empty());
 }
 
 // =========================================================================
@@ -2437,7 +2437,7 @@ fn test_detailed_refs_for_loop_counter_is_write() {
     let refs = get_detailed_refs(source, "test.ts", 0, 9);
     let writes: Vec<_> = refs.iter().filter(|r| r.is_write_access).collect();
     assert!(
-        writes.len() >= 1,
+        !writes.is_empty(),
         "for-loop init and increment should be writes"
     );
 }

@@ -166,21 +166,52 @@ impl<'a> Printer<'a> {
         }
 
         // CJS dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
+        // For non-string-literal specifiers, tsc evaluates the expression eagerly:
+        //   `import(expr)` → `Promise.resolve(\`${expr}\`).then(s => __importStar(require(s)))`
         // In CommonJS module mode, dynamic import() expressions need to be transformed
         // to use require() wrapped in __importStar for proper ESM/CJS interop.
         if self.ctx.is_commonjs()
             && let Some(expr_node) = self.arena.get(call.expression)
             && expr_node.kind == SyntaxKind::ImportKeyword as u16
         {
-            self.write("Promise.resolve().then(() => ");
-            self.write_helper("__importStar");
-            self.write("(require(");
-            if let Some(ref args) = call.arguments {
-                let valid_args: Vec<_> =
-                    args.nodes.iter().copied().filter(|n| n.is_some()).collect();
-                self.emit_comma_separated(&valid_args);
+            // Get the first valid argument (the module specifier)
+            let first_arg = call
+                .arguments
+                .as_ref()
+                .and_then(|args| args.nodes.iter().copied().find(|n| n.is_some()));
+            let first_arg_node = first_arg.and_then(|idx| self.arena.get(idx));
+            let is_string_literal_or_none = first_arg_node
+                .map(|n| {
+                    n.kind == SyntaxKind::StringLiteral as u16
+                        || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        // Missing/error-recovered nodes have zero length
+                        || n.end <= n.pos
+                })
+                .unwrap_or(true); // no args => treat as simple path
+
+            if is_string_literal_or_none {
+                // Simple string or no args:
+                //   Promise.resolve().then(() => __importStar(require("mod")))
+                //   Promise.resolve().then(() => __importStar(require()))
+                self.write("Promise.resolve().then(() => ");
+                self.write_helper("__importStar");
+                self.write("(require(");
+                // Only emit the first argument (module specifier); drop any extra args
+                if let Some(first) = first_arg {
+                    self.emit(first);
+                }
+                self.write(")))");
+            } else {
+                // Expression specifier:
+                //   Promise.resolve(`${expr}`).then(s => __importStar(require(s)))
+                self.write("Promise.resolve(`${");
+                if let Some(first) = first_arg {
+                    self.emit(first);
+                }
+                self.write("}`).then(s => ");
+                self.write_helper("__importStar");
+                self.write("(require(s)))");
             }
-            self.write(")))");
             return;
         }
 

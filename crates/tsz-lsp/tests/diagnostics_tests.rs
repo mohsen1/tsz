@@ -1334,7 +1334,7 @@ fn test_diagnostic_multiple_related_info() {
             file: "test.ts".to_string(),
             start: i,
             length: 1,
-            message_text: format!("Related {}", i),
+            message_text: format!("Related {i}"),
             category: DiagnosticCategory::Message,
             code: 0,
         });

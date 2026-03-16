@@ -702,8 +702,7 @@ fn test_sorted_names_deduplication() {
     assert_eq!(
         matches.len(),
         1,
-        "Sorted names should be deduplicated, got: {:?}",
-        matches
+        "Sorted names should be deduplicated, got: {matches:?}"
     );
 }
 

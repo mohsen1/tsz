@@ -568,7 +568,7 @@ fn test_node_range_multiline() {
 
     // Find 'y' on the second line (offset ~19)
     let node_idx = find_node_at_offset(arena, 19);
-    if let Some(_) = arena.get(node_idx) {
+    if arena.get(node_idx).is_some() {
         let range = node_range(arena, &line_map, source, node_idx);
         assert_eq!(range.start.line, 1, "Second line node should be on line 1");
     }

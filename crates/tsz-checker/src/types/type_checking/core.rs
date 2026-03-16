@@ -685,12 +685,11 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::TYPE_REFERENCE => {
                 // Check if the type name is a simple identifier matching one of the names
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
-                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            if names_to_find.contains(ident.escaped_text.as_str()) {
-                                found.push((type_ref.type_name, ident.escaped_text.to_string()));
-                            }
-                        }
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        && names_to_find.contains(ident.escaped_text.as_str())
+                    {
+                        found.push((type_ref.type_name, ident.escaped_text.to_string()));
                     }
                     // Also check type arguments
                     if let Some(ref type_args) = type_ref.type_arguments {

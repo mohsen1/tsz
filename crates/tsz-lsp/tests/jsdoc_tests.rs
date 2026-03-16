@@ -220,10 +220,10 @@ fn find_first_node_of_kind(
 ) -> Option<tsz_parser::NodeIndex> {
     let mut stack = vec![root];
     while let Some(idx) = stack.pop() {
-        if let Some(node) = arena.get(idx) {
-            if node.kind == kind {
-                return Some(idx);
-            }
+        if let Some(node) = arena.get(idx)
+            && node.kind == kind
+        {
+            return Some(idx);
         }
         // Push children in reverse so we visit them in order
         let children = arena.get_children(idx);

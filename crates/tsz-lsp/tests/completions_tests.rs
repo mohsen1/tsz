@@ -1992,9 +1992,7 @@ fn test_completions_sort_order_locals_before_keywords() {
         let kw_sort = kw_item.unwrap().effective_sort_text();
         assert!(
             var_sort <= kw_sort,
-            "Local variable sort text ({}) should be <= keyword sort text ({})",
-            var_sort,
-            kw_sort
+            "Local variable sort text ({var_sort}) should be <= keyword sort text ({kw_sort})"
         );
     }
 }
@@ -2017,8 +2015,7 @@ fn test_completions_template_literal_expression() {
         if !names.is_empty() {
             assert!(
                 names.contains(&"name") || names.contains(&"greeting"),
-                "Should suggest variables in scope, got: {:?}",
-                names
+                "Should suggest variables in scope, got: {names:?}"
             );
         }
     }
@@ -2075,13 +2072,11 @@ fn test_completions_after_new_keyword() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"MyClass"),
-            "Should suggest 'MyClass' after 'new', got: {:?}",
-            names
+            "Should suggest 'MyClass' after 'new', got: {names:?}"
         );
         assert!(
             names.contains(&"Other"),
-            "Should suggest 'Other' after 'new', got: {:?}",
-            names
+            "Should suggest 'Other' after 'new', got: {names:?}"
         );
     }
 }
@@ -2102,13 +2097,11 @@ fn test_completions_object_literal_shorthand_property() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"foo"),
-            "Should suggest 'foo' for shorthand property, got: {:?}",
-            names
+            "Should suggest 'foo' for shorthand property, got: {names:?}"
         );
         assert!(
             names.contains(&"bar"),
-            "Should suggest 'bar' for shorthand property, got: {:?}",
-            names
+            "Should suggest 'bar' for shorthand property, got: {names:?}"
         );
     }
 }
@@ -2129,13 +2122,11 @@ fn test_completions_in_ternary_expression() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"a"),
-            "Should suggest 'a' in ternary, got: {:?}",
-            names
+            "Should suggest 'a' in ternary, got: {names:?}"
         );
         assert!(
             names.contains(&"b"),
-            "Should suggest 'b' in ternary, got: {:?}",
-            names
+            "Should suggest 'b' in ternary, got: {names:?}"
         );
     }
 }
@@ -2153,13 +2144,11 @@ fn test_completions_after_typeof_operator() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"myVar"),
-            "Should suggest 'myVar' after typeof, got: {:?}",
-            names
+            "Should suggest 'myVar' after typeof, got: {names:?}"
         );
         assert!(
             names.contains(&"myStr"),
-            "Should suggest 'myStr' after typeof, got: {:?}",
-            names
+            "Should suggest 'myStr' after typeof, got: {names:?}"
         );
     }
 }
@@ -2198,8 +2187,7 @@ fn test_completions_in_type_annotation_position() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"MyInterface") || names.contains(&"MyType"),
-            "Should suggest type names in type position, got: {:?}",
-            names
+            "Should suggest type names in type position, got: {names:?}"
         );
     }
 }
@@ -2220,8 +2208,7 @@ fn test_completions_in_switch_case_expression() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"val") || names.contains(&"opt"),
-            "Should suggest variables in case expression, got: {:?}",
-            names
+            "Should suggest variables in case expression, got: {names:?}"
         );
     }
 }
@@ -2242,8 +2229,7 @@ fn test_completions_in_return_statement() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"result"),
-            "Should suggest 'result' in return statement, got: {:?}",
-            names
+            "Should suggest 'result' in return statement, got: {names:?}"
         );
     }
 }
@@ -2261,8 +2247,7 @@ fn test_completions_with_multiple_function_overloads() {
         let greet_count = names.iter().filter(|&&n| n == "greet").count();
         assert!(
             greet_count <= 1,
-            "Overloaded function 'greet' should appear at most once, found {} times",
-            greet_count
+            "Overloaded function 'greet' should appear at most once, found {greet_count} times"
         );
     }
 }
@@ -2283,14 +2268,12 @@ fn test_completions_in_catch_clause() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"outer"),
-            "Should suggest 'outer' in catch block, got: {:?}",
-            names
+            "Should suggest 'outer' in catch block, got: {names:?}"
         );
         // The catch parameter 'err' should also be visible
         assert!(
             names.contains(&"err"),
-            "Should suggest catch parameter 'err', got: {:?}",
-            names
+            "Should suggest catch parameter 'err', got: {names:?}"
         );
     }
 }
@@ -2311,8 +2294,7 @@ fn test_completions_in_module_declaration() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"b"),
-            "Should suggest inner variable 'b', got: {:?}",
-            names
+            "Should suggest inner variable 'b', got: {names:?}"
         );
     }
 }
@@ -2344,13 +2326,11 @@ fn test_completions_computed_property_name() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"key"),
-            "Should suggest 'key' in computed property, got: {:?}",
-            names
+            "Should suggest 'key' in computed property, got: {names:?}"
         );
         assert!(
             names.contains(&"sym"),
-            "Should suggest 'sym' in computed property, got: {:?}",
-            names
+            "Should suggest 'sym' in computed property, got: {names:?}"
         );
     }
 }
@@ -2371,13 +2351,11 @@ fn test_completions_inside_array_literal() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"alpha"),
-            "Should suggest 'alpha' in array literal, got: {:?}",
-            names
+            "Should suggest 'alpha' in array literal, got: {names:?}"
         );
         assert!(
             names.contains(&"beta"),
-            "Should suggest 'beta' in array literal, got: {:?}",
-            names
+            "Should suggest 'beta' in array literal, got: {names:?}"
         );
     }
 }
@@ -2398,13 +2376,11 @@ fn test_completions_binary_expression_rhs() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"y"),
-            "Should suggest 'y' after '+', got: {:?}",
-            names
+            "Should suggest 'y' after '+', got: {names:?}"
         );
         assert!(
             names.contains(&"x"),
-            "Should suggest 'x' after '+', got: {:?}",
-            names
+            "Should suggest 'x' after '+', got: {names:?}"
         );
     }
 }
@@ -2425,8 +2401,7 @@ fn test_completions_binary_expression_lhs() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"p"),
-            "Should suggest 'p' at LHS of binary expr, got: {:?}",
-            names
+            "Should suggest 'p' at LHS of binary expr, got: {names:?}"
         );
     }
 }
@@ -2475,13 +2450,11 @@ fn test_completions_for_loop_variable_scope() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"i"),
-            "Should suggest loop variable 'i', got: {:?}",
-            names
+            "Should suggest loop variable 'i', got: {names:?}"
         );
         assert!(
             names.contains(&"outer"),
-            "Should suggest outer variable 'outer', got: {:?}",
-            names
+            "Should suggest outer variable 'outer', got: {names:?}"
         );
     }
 }
@@ -2499,8 +2472,7 @@ fn test_completions_no_duplicate_from_var_hoisting() {
         let x_count = names.iter().filter(|&&n| n == "x").count();
         assert_eq!(
             x_count, 1,
-            "Hoisted 'var x' should appear exactly once, found {} times",
-            x_count
+            "Hoisted 'var x' should appear exactly once, found {x_count} times"
         );
     }
 }
@@ -2521,8 +2493,7 @@ fn test_completions_after_spread_operator() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"items"),
-            "Should suggest 'items' after spread, got: {:?}",
-            names
+            "Should suggest 'items' after spread, got: {names:?}"
         );
     }
 }
@@ -2563,13 +2534,11 @@ fn test_completions_after_assignment_operator() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"source"),
-            "Should suggest 'source' after '=', got: {:?}",
-            names
+            "Should suggest 'source' after '=', got: {names:?}"
         );
         assert!(
             names.contains(&"target"),
-            "Should suggest 'target' after '=', got: {:?}",
-            names
+            "Should suggest 'target' after '=', got: {names:?}"
         );
     }
 }
@@ -2590,8 +2559,7 @@ fn test_completions_after_logical_operator() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"b"),
-            "Should suggest 'b' after '&&', got: {:?}",
-            names
+            "Should suggest 'b' after '&&', got: {names:?}"
         );
     }
 }
@@ -2710,18 +2678,15 @@ fn test_completions_return_statement_inside_nested_function() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"local"),
-            "Should suggest 'local' in return, got: {:?}",
-            names
+            "Should suggest 'local' in return, got: {names:?}"
         );
         assert!(
             names.contains(&"mid"),
-            "Should suggest 'mid' from outer scope, got: {:?}",
-            names
+            "Should suggest 'mid' from outer scope, got: {names:?}"
         );
         assert!(
             names.contains(&"global"),
-            "Should suggest 'global' from top scope, got: {:?}",
-            names
+            "Should suggest 'global' from top scope, got: {names:?}"
         );
     }
 }
@@ -2742,8 +2707,7 @@ fn test_completions_let_in_different_block_scopes() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"blockB"),
-            "Should suggest 'blockB' from current block, got: {:?}",
-            names
+            "Should suggest 'blockB' from current block, got: {names:?}"
         );
         // blockA is in a different (closed) block scope - may or may not be visible
         // depending on binder scope resolution
@@ -2766,13 +2730,11 @@ fn test_completions_try_catch_finally_scoping() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"outer"),
-            "Should suggest 'outer' in finally, got: {:?}",
-            names
+            "Should suggest 'outer' in finally, got: {names:?}"
         );
         assert!(
             names.contains(&"finalVar"),
-            "Should suggest 'finalVar' in finally, got: {:?}",
-            names
+            "Should suggest 'finalVar' in finally, got: {names:?}"
         );
     }
 }
@@ -2793,8 +2755,7 @@ fn test_completions_function_parameter_default_value() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"defaultVal"),
-            "Should suggest 'defaultVal' in param default, got: {:?}",
-            names
+            "Should suggest 'defaultVal' in param default, got: {names:?}"
         );
     }
 }
@@ -2811,13 +2772,11 @@ fn test_completions_in_while_loop_body() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"counter"),
-            "Should suggest 'counter', got: {:?}",
-            names
+            "Should suggest 'counter', got: {names:?}"
         );
         assert!(
             names.contains(&"loopVar"),
-            "Should suggest 'loopVar', got: {:?}",
-            names
+            "Should suggest 'loopVar', got: {names:?}"
         );
     }
 }
@@ -2982,13 +2941,11 @@ fn test_completions_class_static_members_via_class_name() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"helper"),
-            "Should suggest static method 'helper', got: {:?}",
-            names
+            "Should suggest static method 'helper', got: {names:?}"
         );
         assert!(
             names.contains(&"count"),
-            "Should suggest static property 'count', got: {:?}",
-            names
+            "Should suggest static property 'count', got: {names:?}"
         );
     }
 }
@@ -3083,8 +3040,7 @@ fn test_completions_class_body_member_position() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"constructor"),
-            "Should suggest 'constructor' in class body, got: {:?}",
-            names
+            "Should suggest 'constructor' in class body, got: {names:?}"
         );
     }
 }
@@ -3117,13 +3073,11 @@ fn test_completions_in_do_while_body() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"x"),
-            "Should suggest outer 'x', got: {:?}",
-            names
+            "Should suggest outer 'x', got: {names:?}"
         );
         assert!(
             names.contains(&"y"),
-            "Should suggest block 'y', got: {:?}",
-            names
+            "Should suggest block 'y', got: {names:?}"
         );
     }
 }
@@ -3139,8 +3093,7 @@ fn test_completions_new_target_in_function() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"target"),
-            "Should suggest 'target' after 'new.' inside function, got: {:?}",
-            names
+            "Should suggest 'target' after 'new.' inside function, got: {names:?}"
         );
     }
 }
@@ -3276,8 +3229,7 @@ fn test_completions_let_with_type_annotation_detail() {
         let detail = count_item.unwrap().detail.as_deref().unwrap_or("");
         assert!(
             detail == "number" || detail == "number;",
-            "let with type annotation should show type as detail, got: {:?}",
-            detail
+            "let with type annotation should show type as detail, got: {detail:?}"
         );
     }
 }
@@ -3312,18 +3264,15 @@ fn test_completions_multiple_parameters_visible() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"a"),
-            "Should suggest parameter 'a', got: {:?}",
-            names
+            "Should suggest parameter 'a', got: {names:?}"
         );
         assert!(
             names.contains(&"b"),
-            "Should suggest parameter 'b', got: {:?}",
-            names
+            "Should suggest parameter 'b', got: {names:?}"
         );
         assert!(
             names.contains(&"c"),
-            "Should suggest parameter 'c', got: {:?}",
-            names
+            "Should suggest parameter 'c', got: {names:?}"
         );
         // All should have Parameter kind
         for param_name in &["a", "b", "c"] {
@@ -3331,8 +3280,7 @@ fn test_completions_multiple_parameters_visible() {
             assert_eq!(
                 param_item.kind,
                 CompletionItemKind::Parameter,
-                "Parameter '{}' should have Parameter kind",
-                param_name
+                "Parameter '{param_name}' should have Parameter kind"
             );
         }
     }
@@ -3363,18 +3311,15 @@ fn test_completions_enum_member_dot_access() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"Active"),
-            "Should suggest enum member 'Active', got: {:?}",
-            names
+            "Should suggest enum member 'Active', got: {names:?}"
         );
         assert!(
             names.contains(&"Inactive"),
-            "Should suggest enum member 'Inactive', got: {:?}",
-            names
+            "Should suggest enum member 'Inactive', got: {names:?}"
         );
         assert!(
             names.contains(&"Pending"),
-            "Should suggest enum member 'Pending', got: {:?}",
-            names
+            "Should suggest enum member 'Pending', got: {names:?}"
         );
     }
 }
@@ -3413,13 +3358,11 @@ fn test_completions_inside_labeled_statement() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"x"),
-            "Should suggest 'x' in labeled loop, got: {:?}",
-            names
+            "Should suggest 'x' in labeled loop, got: {names:?}"
         );
         assert!(
             names.contains(&"i"),
-            "Should suggest loop var 'i', got: {:?}",
-            names
+            "Should suggest loop var 'i', got: {names:?}"
         );
     }
 }
@@ -3439,13 +3382,11 @@ fn test_completions_import_binding_visible_after_import() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"foo"),
-            "Should suggest imported 'foo', got: {:?}",
-            names
+            "Should suggest imported 'foo', got: {names:?}"
         );
         assert!(
             names.contains(&"x"),
-            "Should suggest local 'x', got: {:?}",
-            names
+            "Should suggest local 'x', got: {names:?}"
         );
     }
 }
@@ -3496,18 +3437,15 @@ fn test_completions_multiline_object_literal_member() {
         let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             names.contains(&"name"),
-            "Should suggest 'name', got: {:?}",
-            names
+            "Should suggest 'name', got: {names:?}"
         );
         assert!(
             names.contains(&"count"),
-            "Should suggest 'count', got: {:?}",
-            names
+            "Should suggest 'count', got: {names:?}"
         );
         assert!(
             names.contains(&"active"),
-            "Should suggest 'active', got: {:?}",
-            names
+            "Should suggest 'active', got: {names:?}"
         );
     }
 }

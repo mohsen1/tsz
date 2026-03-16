@@ -1545,6 +1545,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn report_isolated_decl_computed_property_names(
         &mut self,
         decl_idx: NodeIndex,

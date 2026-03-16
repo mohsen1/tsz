@@ -593,7 +593,7 @@ fn test_folding_ranges_try_catch_finally() {
     let source =
         "try {\n  doSomething();\n} catch (e) {\n  handleError(e);\n} finally {\n  cleanup();\n}\n";
     let ranges = get_ranges(source);
-    assert!(ranges.len() >= 1, "Should fold try/catch/finally blocks");
+    assert!(!ranges.is_empty(), "Should fold try/catch/finally blocks");
 }
 
 #[test]
@@ -607,7 +607,7 @@ fn test_folding_ranges_template_literal_multiline() {
 fn test_folding_ranges_class_with_decorators() {
     let source = "@Component({\n  selector: 'app'\n})\nclass AppComponent {\n  method() {\n    return true;\n  }\n}\n";
     let ranges = get_ranges(source);
-    assert!(ranges.len() >= 1, "Should fold class with decorators");
+    assert!(!ranges.is_empty(), "Should fold class with decorators");
 }
 
 #[test]
@@ -985,7 +985,7 @@ fn test_folding_ranges_export_default_function() {
 fn test_folding_ranges_class_with_many_methods() {
     let source = "\nclass Service {\n  a() {}\n  b() {}\n  c() {}\n  d() {}\n  e() {}\n}\n";
     let ranges = get_ranges(source);
-    assert!(ranges.len() >= 1);
+    assert!(!ranges.is_empty());
 }
 
 #[test]
@@ -1041,7 +1041,7 @@ fn test_folding_ranges_abstract_class() {
 fn test_folding_ranges_class_with_computed_property() {
     let source = "\nconst key = 'x';\nclass Foo {\n  [key]() {\n    return 1;\n  }\n}\n";
     let ranges = get_ranges(source);
-    assert!(ranges.len() >= 1);
+    assert!(!ranges.is_empty());
 }
 
 #[test]

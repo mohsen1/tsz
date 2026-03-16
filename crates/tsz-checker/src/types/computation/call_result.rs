@@ -72,7 +72,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn preferred_literal_expected_for_mismatch(
+    const fn preferred_literal_expected_for_mismatch(
         &self,
         _arg_types: &[TypeId],
         _mismatch_index: usize,

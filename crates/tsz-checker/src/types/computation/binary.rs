@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// In tsc, this check fires for type parameters (InstantiableNonPrimitive) whose
+    /// In tsc, this check fires for type parameters (`InstantiableNonPrimitive`) whose
     /// constraint is missing or could also represent a primitive. Empty object types
     /// like `{}` are NOT flagged — they structurally accept primitives, but an empty
     /// object value at runtime is always an object, not a primitive.

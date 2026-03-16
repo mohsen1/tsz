@@ -1010,7 +1010,7 @@ fn test_export_var_declaration() {
 #[test]
 fn test_large_number_of_exports_deterministic() {
     let source = (0..20)
-        .map(|i| format!("export function fn{}() {{}}", i))
+        .map(|i| format!("export function fn{i}() {{}}"))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -1021,7 +1021,7 @@ fn test_large_number_of_exports_deterministic() {
     let mut binder1 = BinderState::new();
     binder1.bind_source_file(parser1.get_arena(), root1);
 
-    let mut parser2 = tsz_parser::ParserState::new(file_name.to_string(), source.clone());
+    let mut parser2 = tsz_parser::ParserState::new(file_name.to_string(), source);
     let root2 = parser2.parse_source_file();
     let mut binder2 = BinderState::new();
     binder2.bind_source_file(parser2.get_arena(), root2);

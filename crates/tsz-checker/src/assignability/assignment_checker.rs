@@ -710,29 +710,29 @@ impl<'a> CheckerState<'a> {
 
         // Check for `exports` identifier (unbound)
         if target_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(target_node) {
-                if ident.escaped_text == "exports" {
-                    return true;
-                }
+            if let Some(ident) = self.ctx.arena.get_identifier(target_node)
+                && ident.escaped_text == "exports"
+            {
+                return true;
             }
             return false;
         }
 
         // Check for `module.exports` property access
-        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.ctx.arena.get_access_expr(target_node) {
-                let is_module = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.expression)
-                    .is_some_and(|ident| ident.escaped_text == "module");
-                let is_exports = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(access.name_or_argument)
-                    .is_some_and(|ident| ident.escaped_text == "exports");
-                return is_module && is_exports;
-            }
+        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(target_node)
+        {
+            let is_module = self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "module");
+            let is_exports = self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+            return is_module && is_exports;
         }
 
         false
