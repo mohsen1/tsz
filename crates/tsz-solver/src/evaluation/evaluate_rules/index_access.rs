@@ -371,22 +371,26 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         if self.is_generic_index() {
             let members = self.evaluator.interner().type_list(TypeListId(list_id));
             let mut concrete_results = Vec::new();
+            let mut deferred_results = Vec::new();
             for &member in members.iter() {
                 let result = self.evaluator.recurse_index_access(member, self.index_type);
                 if result == TypeId::ERROR {
                     return Some(TypeId::ERROR);
                 }
-                if result != TypeId::UNDEFINED
-                    && !matches!(
-                        self.evaluator.interner().lookup(result),
-                        Some(TypeData::IndexAccess(_, _))
-                    )
-                {
+                if result == TypeId::UNDEFINED {
+                    continue;
+                }
+                if crate::type_queries::is_index_access_type(self.evaluator.interner(), result) {
+                    deferred_results.push(result);
+                } else {
                     concrete_results.push(result);
                 }
             }
 
             if !concrete_results.is_empty() {
+                // Include deferred IndexAccess results so unresolvable
+                // intersection members still constrain the result type.
+                concrete_results.extend(deferred_results);
                 return Some(crate::utils::intersection_or_single(
                     self.evaluator.interner(),
                     concrete_results,
