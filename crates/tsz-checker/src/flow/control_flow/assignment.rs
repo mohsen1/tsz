@@ -808,7 +808,9 @@ impl<'a> FlowAnalyzer<'a> {
                     if elem.is_none() || !self.assignment_targets_reference_internal(elem, target) {
                         continue;
                     }
-                    let source = self.destructuring_object_element_source(elem, source, target)?;
+                    // Don't extract property here — each element kind (BindingElement,
+                    // PropertyAssignment, ShorthandPropertyAssignment) handles its own
+                    // property extraction in match_destructuring_assigned_type.
                     return self.match_destructuring_assigned_type(elem, source, target);
                 }
                 None
@@ -965,55 +967,6 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         self.destructuring_source_type_from_node(declaration.initializer)
-    }
-
-    fn destructuring_object_element_source(
-        &self,
-        elem: NodeIndex,
-        source: DestructuringSource,
-        target: NodeIndex,
-    ) -> Option<DestructuringSource> {
-        let elem_node = self.arena.get(elem)?;
-        match elem_node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                let prop = self.arena.get_property_assignment(elem_node)?;
-                if !self.assignment_targets_reference_internal(prop.initializer, target) {
-                    return None;
-                }
-                self.destructuring_property_source(source, prop.name)
-            }
-            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                let prop = self.arena.get_shorthand_property(elem_node)?;
-                if !self.assignment_targets_reference_internal(prop.name, target) {
-                    return None;
-                }
-                let mut source = self.destructuring_property_source(source, prop.name)?;
-                if prop.object_assignment_initializer.is_some() {
-                    source = self.destructuring_source_with_default(
-                        source,
-                        prop.object_assignment_initializer,
-                    );
-                }
-                Some(source)
-            }
-            k if k == syntax_kind_ext::BINDING_ELEMENT => {
-                let binding = self.arena.get_binding_element(elem_node)?;
-                if !self.assignment_targets_reference_internal(binding.name, target) {
-                    return None;
-                }
-                let name_idx = if binding.property_name.is_some() {
-                    binding.property_name
-                } else {
-                    binding.name
-                };
-                let mut source = self.destructuring_property_source(source, name_idx)?;
-                if binding.initializer.is_some() {
-                    source = self.destructuring_source_with_default(source, binding.initializer);
-                }
-                Some(source)
-            }
-            _ => None,
-        }
     }
 
     fn destructuring_property_source(

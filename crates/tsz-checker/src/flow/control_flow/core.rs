@@ -997,10 +997,9 @@ impl<'a> FlowAnalyzer<'a> {
                         // `len(x)`'s result to determine x's loop type). ERROR is "subtype of
                         // everything" so narrow_assignment would keep all union members,
                         // incorrectly returning the full declared type.
-                        if let Some(assigned_type) = self
-                            .get_assigned_type(flow.node, reference, is_destructuring)
-                            .filter(|&t| t != TypeId::ERROR)
-                        {
+                        let raw_assigned =
+                            self.get_assigned_type(flow.node, reference, is_destructuring);
+                        if let Some(assigned_type) = raw_assigned.filter(|&t| t != TypeId::ERROR) {
                             let assigned_type = if is_control_flow_typed_any {
                                 query::widen_literal_to_primitive(self.interner, assigned_type)
                             } else {
