@@ -275,9 +275,79 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Handle Object shapes: when a Promise<T> type annotation gets evaluated to
+        // an Object shape, the Application wrapper is lost. We can still extract T
+        // by looking at the `then` method's `onfulfilled` callback parameter type.
+        // This mirrors tsc's getAwaitedType which structurally inspects thenables.
+        if let query::PromiseTypeKind::Object(_) =
+            query::classify_promise_type(self.ctx.types, return_type)
+        {
+            if let Some(awaited) = self.extract_awaited_type_from_thenable(return_type) {
+                return Some(awaited);
+            }
+        }
+
         // If we can't extract the type argument from a Promise-like type,
         // return None instead of ANY/UNKNOWN (consistent with Task 4-6 changes)
         // This allows the caller (await expressions) to use UNKNOWN as fallback
+        None
+    }
+
+    /// Extract the awaited type from a thenable (object with a `then` method).
+    ///
+    /// When a `Promise<T>` type annotation is evaluated to an Object shape,
+    /// the type argument T is embedded in the `then` method's callback parameter.
+    /// This method extracts T by:
+    /// 1. Finding the `then` property on the object
+    /// 2. Getting its call signature
+    /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
+    fn extract_awaited_type_from_thenable(&self, type_id: TypeId) -> Option<TypeId> {
+        use tsz_solver::operations::property::PropertyAccessEvaluator;
+        use tsz_solver::type_queries::data::{get_call_signatures, get_function_shape};
+
+        let evaluator = PropertyAccessEvaluator::new(self.ctx.types);
+        let then_type = evaluator
+            .resolve_property_access(type_id, "then")
+            .success_type()?;
+
+        // Get call signatures of `then`
+        let sigs = get_call_signatures(self.ctx.types, then_type)?;
+        let first_sig = sigs.first()?;
+
+        // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
+        let onfulfilled_type = first_sig.params.first().map(|p| p.type_id)?;
+
+        // Extract the first parameter of the onfulfilled callback.
+        self.extract_first_param_from_callback(onfulfilled_type)
+    }
+
+    /// Extract the first parameter type from a callable/function type,
+    /// handling unions of `(fn | null | undefined)`.
+    fn extract_first_param_from_callback(&self, type_id: TypeId) -> Option<TypeId> {
+        use tsz_solver::type_queries::data::{get_call_signatures, get_function_shape};
+
+        // Direct Callable
+        if let Some(sigs) = get_call_signatures(self.ctx.types, type_id) {
+            return sigs.first()?.params.first().map(|p| p.type_id);
+        }
+        // Direct Function
+        if let Some(shape) = get_function_shape(self.ctx.types, type_id) {
+            return shape.params.first().map(|p| p.type_id);
+        }
+        // Union: find first callable/function member
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            for member in &members {
+                if let Some(sigs) = get_call_signatures(self.ctx.types, *member)
+                    && let Some(first) = sigs.first()
+                {
+                    return first.params.first().map(|p| p.type_id);
+                }
+                if let Some(shape) = get_function_shape(self.ctx.types, *member) {
+                    return shape.params.first().map(|p| p.type_id);
+                }
+            }
+        }
         None
     }
 
