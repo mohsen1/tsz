@@ -1439,15 +1439,20 @@ impl<'a> Printer<'a> {
     fn collect_const_enum_values(&mut self, statements: &NodeList) {
         self.const_enum_values.clear();
         let mut evaluator = EnumEvaluator::new(self.arena);
-        self.collect_const_enums_recursive(&mut evaluator, statements);
+        // File-level scope covers the entire range
+        self.collect_const_enums_recursive(&mut evaluator, statements, 0, u32::MAX);
     }
 
     /// Recursively scan a statement list for const enum declarations,
     /// descending into function bodies, blocks, namespaces, etc.
+    /// `scope_start`/`scope_end` track the enclosing function's position range
+    /// (or `0..u32::MAX` for file-level) so that const enums are scoped correctly.
     fn collect_const_enums_recursive(
         &mut self,
         evaluator: &mut EnumEvaluator,
         statements: &NodeList,
+        scope_start: u32,
+        scope_end: u32,
     ) {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1456,7 +1461,7 @@ impl<'a> Printer<'a> {
 
             // Direct const enum declarations
             if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                self.try_register_const_enum(evaluator, stmt_idx);
+                self.try_register_const_enum(evaluator, stmt_idx, scope_start, scope_end);
                 continue;
             }
 
@@ -1469,18 +1474,31 @@ impl<'a> Printer<'a> {
                 let clause_idx = export_data.export_clause;
                 if let Some(clause_node) = self.arena.get(clause_idx) {
                     if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                        self.try_register_const_enum(evaluator, clause_idx);
+                        self.try_register_const_enum(evaluator, clause_idx, scope_start, scope_end);
                     }
                     // Recurse into exported namespace/module bodies
                     if let Some(module_data) = self.arena.get_module(clause_node) {
-                        self.recurse_into_module_body(evaluator, module_data.body);
+                        self.recurse_into_module_body(
+                            evaluator,
+                            module_data.body,
+                            scope_start,
+                            scope_end,
+                        );
                     }
                     // Recurse into exported function bodies
                     if let Some(func) = self.arena.get_function(clause_node) {
                         if let Some(body_node) = self.arena.get(func.body)
                             && let Some(block) = self.arena.get_block(body_node)
                         {
-                            self.collect_const_enums_recursive(evaluator, &block.statements);
+                            // Entering a new function scope — use the function's range
+                            let fn_start = clause_node.pos as u32;
+                            let fn_end = clause_node.end as u32;
+                            self.collect_const_enums_recursive(
+                                evaluator,
+                                &block.statements,
+                                fn_start,
+                                fn_end,
+                            );
                         }
                     }
                 }
@@ -1492,20 +1510,33 @@ impl<'a> Printer<'a> {
                 if let Some(body_node) = self.arena.get(func.body)
                     && let Some(block) = self.arena.get_block(body_node)
                 {
-                    self.collect_const_enums_recursive(evaluator, &block.statements);
+                    // Entering a new function scope — use the function's range
+                    let fn_start = stmt_node.pos as u32;
+                    let fn_end = stmt_node.end as u32;
+                    self.collect_const_enums_recursive(
+                        evaluator,
+                        &block.statements,
+                        fn_start,
+                        fn_end,
+                    );
                 }
                 continue;
             }
 
             // Recurse into blocks (if/else/try/catch/while/for bodies)
             if let Some(block) = self.arena.get_block(stmt_node) {
-                self.collect_const_enums_recursive(evaluator, &block.statements);
+                self.collect_const_enums_recursive(
+                    evaluator,
+                    &block.statements,
+                    scope_start,
+                    scope_end,
+                );
                 continue;
             }
 
             // Recurse into namespace/module bodies
             if let Some(module_data) = self.arena.get_module(stmt_node) {
-                self.recurse_into_module_body(evaluator, module_data.body);
+                self.recurse_into_module_body(evaluator, module_data.body, scope_start, scope_end);
                 continue;
             }
 
@@ -1514,19 +1545,35 @@ impl<'a> Printer<'a> {
                 if let Some(then_node) = self.arena.get(if_data.then_statement)
                     && let Some(block) = self.arena.get_block(then_node)
                 {
-                    self.collect_const_enums_recursive(evaluator, &block.statements);
+                    self.collect_const_enums_recursive(
+                        evaluator,
+                        &block.statements,
+                        scope_start,
+                        scope_end,
+                    );
                 }
                 if let Some(else_node) = self.arena.get(if_data.else_statement)
                     && let Some(block) = self.arena.get_block(else_node)
                 {
-                    self.collect_const_enums_recursive(evaluator, &block.statements);
+                    self.collect_const_enums_recursive(
+                        evaluator,
+                        &block.statements,
+                        scope_start,
+                        scope_end,
+                    );
                 }
             }
         }
     }
 
     /// Register a single enum declaration if it is a const enum.
-    fn try_register_const_enum(&mut self, evaluator: &mut EnumEvaluator, enum_idx: NodeIndex) {
+    fn try_register_const_enum(
+        &mut self,
+        evaluator: &mut EnumEvaluator,
+        enum_idx: NodeIndex,
+        scope_start: u32,
+        scope_end: u32,
+    ) {
         let Some(enum_node) = self.arena.get(enum_idx) else {
             return;
         };
@@ -1559,25 +1606,45 @@ impl<'a> Printer<'a> {
         // Evaluate all member values
         let values = evaluator.evaluate_enum(enum_idx);
         if !values.is_empty() {
-            self.const_enum_values.insert(name, values);
+            use crate::emitter::core::ScopedConstEnum;
+            let entry = ScopedConstEnum {
+                scope_start,
+                scope_end,
+                values,
+            };
+            self.const_enum_values
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(entry);
         }
     }
 
     /// Helper: recurse into a module/namespace body for const enum collection.
     /// Handles both `Block` and `ModuleBlock` body nodes.
-    fn recurse_into_module_body(&mut self, evaluator: &mut EnumEvaluator, body_idx: NodeIndex) {
+    fn recurse_into_module_body(
+        &mut self,
+        evaluator: &mut EnumEvaluator,
+        body_idx: NodeIndex,
+        scope_start: u32,
+        scope_end: u32,
+    ) {
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
         };
         // Try regular Block first
         if let Some(block) = self.arena.get_block(body_node) {
-            self.collect_const_enums_recursive(evaluator, &block.statements);
+            self.collect_const_enums_recursive(
+                evaluator,
+                &block.statements,
+                scope_start,
+                scope_end,
+            );
             return;
         }
         // Try ModuleBlock (namespace bodies use this)
         if let Some(module_block) = self.arena.get_module_block(body_node) {
             if let Some(statements) = &module_block.statements {
-                self.collect_const_enums_recursive(evaluator, statements);
+                self.collect_const_enums_recursive(evaluator, statements, scope_start, scope_end);
             }
         }
     }

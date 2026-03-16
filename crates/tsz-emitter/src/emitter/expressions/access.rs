@@ -450,6 +450,34 @@ impl<'a> Printer<'a> {
         self.suppress_ns_qualification = prev_ns;
     }
 
+    /// Look up const enum member values for the given name, scoped to the position
+    /// of the access expression. When multiple scoped entries exist for the same name,
+    /// the tightest (most specific) scope containing `access_pos` is preferred.
+    fn lookup_scoped_const_enum_values(
+        &self,
+        enum_name: &str,
+        access_pos: u32,
+    ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
+        let entries = self.const_enum_values.get(enum_name)?;
+        // Find the best (tightest) scope that contains the access position
+        let mut best: Option<&crate::emitter::core::ScopedConstEnum> = None;
+        for entry in entries {
+            if access_pos >= entry.scope_start && access_pos < entry.scope_end {
+                if let Some(prev) = best {
+                    // Prefer tighter scope (smaller range)
+                    let prev_range = prev.scope_end - prev.scope_start;
+                    let cur_range = entry.scope_end - entry.scope_start;
+                    if cur_range < prev_range {
+                        best = Some(entry);
+                    }
+                } else {
+                    best = Some(entry);
+                }
+            }
+        }
+        best.map(|e| &e.values)
+    }
+
     /// Try to inline a property access to a const enum member.
     /// Returns `Some("value /* EnumName.Member */")` if the access targets a const enum.
     fn try_inline_const_enum_property_access(&self, access: &AccessExprData) -> Option<String> {
@@ -460,8 +488,9 @@ impl<'a> Printer<'a> {
         }
         let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
 
-        // Look up in const enum values
-        let members = self.const_enum_values.get(enum_name.as_str())?;
+        // Look up in const enum values, scoped to the access position
+        let members =
+            self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
 
         // The name must be a simple identifier (the member name)
         let name_node = self.arena.get(access.name_or_argument)?;
@@ -493,8 +522,9 @@ impl<'a> Printer<'a> {
         }
         let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
 
-        // Look up in const enum values
-        let members = self.const_enum_values.get(enum_name.as_str())?;
+        // Look up in const enum values, scoped to the access position
+        let members =
+            self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
 
         // The argument must be a string literal or no-substitution template literal
         let arg_node = self.arena.get(access.name_or_argument)?;
@@ -575,7 +605,10 @@ impl<'a> Printer<'a> {
                 && name.kind == SyntaxKind::Identifier as u16
                 && let Some(enum_ident) = self.arena.get_identifier(expr)
                 && let Some(member_ident) = self.arena.get_identifier(name)
-                && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+                && let Some(members) = self.lookup_scoped_const_enum_values(
+                    enum_ident.escaped_text.as_str(),
+                    expr.pos as u32,
+                )
                 && let Some(value) = members.get(member_ident.escaped_text.as_str())
             {
                 return value.is_negative();
@@ -593,7 +626,10 @@ impl<'a> Printer<'a> {
                     || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
                 && let Some(enum_ident) = self.arena.get_identifier(expr)
                 && let Some(lit) = self.arena.get_literal(arg)
-                && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+                && let Some(members) = self.lookup_scoped_const_enum_values(
+                    enum_ident.escaped_text.as_str(),
+                    expr.pos as u32,
+                )
                 && let Some(value) = members.get(lit.text.as_str())
             {
                 return value.is_negative();
@@ -617,7 +653,8 @@ impl<'a> Printer<'a> {
             && name.kind == SyntaxKind::Identifier as u16
             && let Some(enum_ident) = self.arena.get_identifier(expr)
             && let Some(member_ident) = self.arena.get_identifier(name)
-            && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+            && let Some(members) = self
+                .lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos as u32)
             && let Some(value) = members.get(member_ident.escaped_text.as_str())
         {
             return value.needs_double_dot();
@@ -632,7 +669,8 @@ impl<'a> Printer<'a> {
                 || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
             && let Some(enum_ident) = self.arena.get_identifier(expr)
             && let Some(lit) = self.arena.get_literal(arg)
-            && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+            && let Some(members) = self
+                .lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos as u32)
             && let Some(value) = members.get(lit.text.as_str())
         {
             return value.needs_double_dot();
