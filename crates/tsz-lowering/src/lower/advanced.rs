@@ -774,6 +774,20 @@ impl<'a> TypeLowering<'a> {
                 }
                 return base;
             }
+            // Handle global intrinsics that don't have binder symbols
+            // (e.g., `typeof undefined`, `typeof NaN`, `typeof Infinity`, `typeof globalThis`).
+            // The checker has a matching path in get_type_from_type_query; this ensures the
+            // lowering pass doesn't cache ERROR for these well-known identifiers.
+            if let Some(expr_node) = self.arena.get(data.expr_name)
+                && let Some(ident) = self.arena.get_identifier(expr_node)
+            {
+                match ident.escaped_text.as_str() {
+                    "undefined" => return TypeId::UNDEFINED,
+                    "NaN" | "Infinity" => return TypeId::NUMBER,
+                    "globalThis" => return TypeId::UNKNOWN,
+                    _ => {}
+                }
+            }
             TypeId::ERROR
         } else {
             TypeId::ERROR
