@@ -836,11 +836,41 @@ impl<'a> Printer<'a> {
                     }
                     _ => None,
                 };
-                mods.is_some_and(|m| {
+                let has_member_dec = mods.is_some_and(|m| {
                     m.nodes.iter().any(|&mod_idx| {
                         self.arena
                             .get(mod_idx)
                             .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                });
+                if has_member_dec {
+                    return true;
+                }
+                // Also check for parameter decorators on methods and constructors
+                let params = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(m_node).map(|m| &m.parameters)
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => {
+                        self.arena.get_constructor(m_node).map(|c| &c.parameters)
+                    }
+                    _ => None,
+                };
+                params.is_some_and(|p| {
+                    p.nodes.iter().any(|&param_idx| {
+                        let Some(param_node) = self.arena.get(param_idx) else {
+                            return false;
+                        };
+                        let Some(param) = self.arena.get_parameter(param_node) else {
+                            return false;
+                        };
+                        param.modifiers.as_ref().is_some_and(|m| {
+                            m.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
                     })
                 })
             });
