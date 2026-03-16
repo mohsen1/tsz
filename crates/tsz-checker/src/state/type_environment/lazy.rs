@@ -943,7 +943,20 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                let resolved = self.type_reference_symbol_type(sym_id);
+                // TypeQuery (typeof X) needs the VALUE type (constructor for classes).
+                // type_reference_symbol_type returns the INSTANCE type for classes,
+                // which would overwrite the constructor type in the type environment.
+                // Use get_type_of_symbol which returns the constructor type for classes.
+                let is_class = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.flags & tsz_binder::symbol_flags::CLASS != 0);
+                let resolved = if is_class {
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.type_reference_symbol_type(sym_id)
+                };
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR {
