@@ -639,10 +639,20 @@ impl<'a> NarrowingContext<'a> {
                     if self.is_assignable_to(member, target_type) {
                         return Some(member);
                     }
-                    // CRITICAL FIX: Check if target_type is a subtype of member
-                    // This handles cases like narrowing string | number by "hello"
-                    // where "hello" is a subtype of string, so we should narrow to "hello"
-                    if crate::relations::subtype::is_subtype_of_with_db(self.db, target_type, member) {
+                    // Reverse subtype check: target <: member.
+                    // Handles narrowing \`string | number\` by \`"hello"\` where
+                    // \`"hello" <: string\` so the member should be kept.
+                    // Guard: only use the bare is_subtype_of_with_db (which lacks a
+                    // TypeResolver) for primitive/literal types. For interface/class
+                    // Lazy(DefId) types, the global subtype cache can contain stale
+                    // results that cause false positives.
+                    if (self.is_js_primitive(target_type) || self.is_js_primitive(member))
+                        && crate::relations::subtype::is_subtype_of_with_db(
+                            self.db,
+                            target_type,
+                            member,
+                        )
+                    {
                         return Some(target_type);
                     }
                     // CRITICAL FIX: instanceof Array matching
