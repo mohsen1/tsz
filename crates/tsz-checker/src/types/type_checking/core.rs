@@ -1654,6 +1654,9 @@ impl<'a> CheckerState<'a> {
                     if false_is_mapped {
                         self.check_type_node(cond.false_type);
                     }
+                    if self.ctx.compiler_options.no_unused_parameters {
+                        self.check_unused_infer_type_params_in_conditional(cond);
+                    }
                 }
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
