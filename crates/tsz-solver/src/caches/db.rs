@@ -782,6 +782,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Default implementation is a no-op.
     fn insert_assignability_cache(&self, _key: RelationCacheKey, _result: bool) {}
 
+    #[allow(dead_code, private_interfaces)] // Reserved for full inference pipeline integration
     fn new_inference_context(&self) -> crate::inference::infer::InferenceContext<'_> {
         crate::inference::infer::InferenceContext::new(self.as_type_database())
     }

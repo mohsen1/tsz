@@ -18,6 +18,7 @@ use crate::types::{InferencePriority, ObjectFlags, TemplateSpan, TypeData, TypeI
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
+#[allow(dead_code)] // Reserved for variance analysis in inference resolution
 struct VarianceState<'a> {
     target_param: Atom,
     covariant: &'a mut u32,
@@ -662,6 +663,7 @@ impl<'a> InferenceContext<'a> {
     /// Infer type parameters from a conditional type.
     /// When a type parameter appears in a conditional type, we can sometimes
     /// infer its value from the check and extends clauses.
+    #[allow(dead_code)] // Reserved for conditional type inference
     pub fn infer_from_conditional(
         &mut self,
         var: InferenceVar,
@@ -905,6 +907,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Compute the variance of a type parameter within a type.
     /// Returns (`covariant_count`, `contravariant_count`, `invariant_count`, `bivariant_count`)
+    #[allow(dead_code)] // Reserved for variance analysis in inference
     pub fn compute_variance(&self, ty: TypeId, target_param: Atom) -> (u32, u32, u32, u32) {
         let mut covariant = 0u32;
         let mut contravariant = 0u32;
@@ -1007,6 +1010,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Get the variance of a type parameter as a string.
+    #[allow(dead_code)] // Reserved for variance analysis in inference
     pub fn get_variance(&self, ty: TypeId, target_param: Atom) -> &'static str {
         let (covariant, contravariant, invariant, bivariant) =
             self.compute_variance(ty, target_param);
@@ -1033,6 +1037,7 @@ impl<'a> InferenceContext<'a> {
     /// Try to infer a type parameter from its usage context.
     /// This implements bidirectional type inference where the context
     /// (e.g., return type, variable declaration) provides constraints.
+    #[allow(dead_code)] // Reserved for bidirectional type inference
     pub fn infer_from_context(
         &mut self,
         var: InferenceVar,
