@@ -91,6 +91,9 @@ impl BinderState {
                                 // Track module for cross-file resolution
                                 if let Some(ref specifier) = module_specifier {
                                     sym.import_module = Some(specifier.clone());
+                                    // Namespace import: mark as `*` so type display
+                                    // renders `typeof import("mod")` instead of `typeof ns`.
+                                    sym.import_name = Some("*".to_string());
                                 }
                             }
                             self.node_symbols.insert(named.name.0, sym_id);
