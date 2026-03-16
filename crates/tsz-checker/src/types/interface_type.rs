@@ -1138,9 +1138,13 @@ impl<'a> CheckerState<'a> {
         };
 
         let trimmed = module_spec.trim().trim_matches('"').trim_matches('\'');
+        let mut resolved_source_idx = None;
         for specifier in [module_spec, trimmed] {
             if let Some(target_idx) = self.ctx.resolve_import_target(specifier) {
                 push_candidate(format!("file_idx:{target_idx}"));
+                if resolved_source_idx.is_none() {
+                    resolved_source_idx = Some(target_idx);
+                }
             }
         }
 
@@ -1194,6 +1198,55 @@ impl<'a> CheckerState<'a> {
                         result.extend(
                             augmentations
                                 .iter()
+                                .filter(|aug| aug.name == interface_name)
+                                .cloned(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // If still no augmentations found, check augmentations on modules that
+        // re-export from our source module. For example, if `./index` re-exports
+        // from `./eventList` via `export * from './eventList'`, augmentations
+        // targeting `./index` should also apply to interfaces from `./eventList`.
+        if result.is_empty()
+            && let Some(source_idx) = resolved_source_idx
+            && let Some(all_binders) = self.ctx.all_binders.as_ref()
+        {
+            for (binder_idx, binder) in all_binders.iter().enumerate() {
+                for (aug_key, augs) in &binder.module_augmentations {
+                    if candidates.iter().any(|c| c == aug_key) {
+                        continue;
+                    }
+                    if !augs.iter().any(|aug| aug.name == interface_name) {
+                        continue;
+                    }
+                    // Resolve the augmentation target module from the augmenting file
+                    let Some(aug_target_idx) = self
+                        .ctx
+                        .resolve_import_target_from_file(binder_idx, aug_key)
+                    else {
+                        continue;
+                    };
+                    let Some(aug_target_binder) = all_binders.get(aug_target_idx) else {
+                        continue;
+                    };
+                    // Check if the augmentation target re-exports from source
+                    let reexports_from_source =
+                        aug_target_binder
+                            .wildcard_reexports
+                            .values()
+                            .any(|sources| {
+                                sources.iter().any(|src| {
+                                    self.ctx
+                                        .resolve_import_target_from_file(aug_target_idx, src)
+                                        == Some(source_idx)
+                                })
+                            });
+                    if reexports_from_source {
+                        result.extend(
+                            augs.iter()
                                 .filter(|aug| aug.name == interface_name)
                                 .cloned(),
                         );
