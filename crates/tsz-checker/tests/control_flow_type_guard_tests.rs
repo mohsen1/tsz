@@ -789,3 +789,66 @@ function f(obj: { x: string | number }) {
         "Expected TS2322 when aliased property is reassigned, got: {diagnostics:?}"
     );
 }
+
+/// Regression test: type predicate narrowing with discriminated union members.
+///
+/// When interfaces have string literal discriminant properties (e.g., `kind: "a"`),
+/// the reverse subtype check in `narrow_to_type` could produce false positives from
+/// the global subtype cache, causing non-matching union members to be kept instead
+/// of filtered out.
+#[test]
+fn test_type_predicate_narrowing_discriminated_union() {
+    let source = r#"
+interface A { kind: "a"; x: number }
+interface B { kind: "b"; y: string }
+
+function isA(v: A | B): v is A { return v.kind === "a"; }
+
+declare const v: A | B;
+if (isA(v)) {
+    let check: A = v;  // Should work - v narrowed to A
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    // Should NOT have TS2322 — v is narrowed to A
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Type predicate narrowing failed for discriminated union: {ts2322:?}"
+    );
+}
