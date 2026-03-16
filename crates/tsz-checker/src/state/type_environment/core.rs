@@ -284,6 +284,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Also store in env_eval_cache so that the solver's TypeEvaluator
+        // (pre-seeded from env_eval_cache) can reuse this result when
+        // evaluating the same Application type during arg expansion.
+        // Without this, long chains like `merge(merge(merge(...)))` cause
+        // exponential re-evaluation because each step's Application is only
+        // in resolve_cache (checker-only) and not visible to the solver.
+        if result != type_id && !type_id.is_intrinsic() {
+            self.ctx
+                .env_eval_cache
+                .borrow_mut()
+                .entry(type_id)
+                .or_insert(crate::context::EnvEvalCacheEntry {
+                    result,
+                    depth_exceeded: false,
+                });
+        }
+
         result
     }
 
@@ -473,7 +490,9 @@ impl<'a> CheckerState<'a> {
         let result = self.evaluate_mapped_type_with_resolution(result);
 
         // Evaluate meta-types (conditional, index access, keyof) with symbol resolution
-        self.evaluate_type_with_env(result)
+        let result = self.evaluate_type_with_env(result);
+
+        result
     }
 
     /// Instantiate callable type parameters for instantiation expressions.
