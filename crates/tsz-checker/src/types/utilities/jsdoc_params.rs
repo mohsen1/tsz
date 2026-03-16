@@ -1579,6 +1579,30 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if a JSDoc type expression is syntactically a callable/function type.
+    /// Returns true for arrow types (`(x: T) => R`), function types (`function(x): R`),
+    /// and generic signatures (`<T>(x: T) => R`).
+    pub(crate) fn is_syntactically_callable_type(type_expr: &str) -> bool {
+        let trimmed = type_expr.trim();
+        // Arrow function type: contains `=>`
+        if trimmed.contains("=>") {
+            return true;
+        }
+        // function(...): ... type
+        if trimmed.starts_with("function") {
+            return true;
+        }
+        // Generic signature: <T>(...) => ...
+        if trimmed.starts_with('<') {
+            return true;
+        }
+        // Parenthesized callable: (x: number) => void
+        if trimmed.starts_with('(') {
+            return true;
+        }
+        false
+    }
+
     /// Extract a type predicate from a `@type {CallbackType}` JSDoc annotation.
     /// Resolves the referenced type and checks both Function and Callable shapes.
     pub(crate) fn extract_type_predicate_from_jsdoc_type_tag(
