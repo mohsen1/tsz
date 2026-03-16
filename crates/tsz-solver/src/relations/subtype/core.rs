@@ -1659,7 +1659,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                if t_shape.properties.is_empty() && t_shape.string_index.is_none() {
+                if t_shape.properties.is_empty() {
+                    // Arrays/tuples are named types (interfaces) and do not have
+                    // implicit string index signatures. They cannot be assigned to
+                    // types with a string index signature requirement, e.g.
+                    // `number[] <: { [x: string]: unknown }` is false.
+                    if t_shape.string_index.is_some() {
+                        if let Some(tracer) = &mut self.tracer
+                            && !tracer.on_mismatch_dyn(
+                                SubtypeFailureReason::MissingIndexSignature {
+                                    index_kind: "string",
+                                },
+                            )
+                        {
+                            return SubtypeResult::False;
+                        }
+                        return SubtypeResult::False;
+                    }
                     if let Some(ref num_idx) = t_shape.number_index {
                         let elem_type =
                             array_element_type(self.interner, source).unwrap_or(TypeId::ANY);
