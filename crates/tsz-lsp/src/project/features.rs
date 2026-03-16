@@ -10,7 +10,7 @@ use web_time::Instant;
 
 use super::{Project, ProjectRequestKind};
 use crate::code_actions::{CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider};
-use crate::completions::CompletionItem;
+use crate::completions::{CompletionItem, CompletionItemData};
 use crate::diagnostics::LspDiagnostic;
 use crate::editor_decorations::code_lens::CodeLens;
 use crate::hover::HoverInfo;
@@ -253,6 +253,17 @@ impl Project {
         let result = if completions.is_empty() {
             None
         } else {
+            // Attach resolve data to each item so completionItem/resolve
+            // can look up documentation using the original file and position.
+            let resolve_data = CompletionItemData {
+                file_name: file_name.to_string(),
+                position,
+            };
+            for item in &mut completions {
+                if item.data.is_none() {
+                    item.data = Some(resolve_data.clone());
+                }
+            }
             Some(completions)
         };
 
@@ -271,6 +282,8 @@ impl Project {
     /// completion response returns items without heavy fields (documentation, detail).
     /// When the user focuses on an item, the editor sends a resolve request and
     /// this method computes hover info to fill in the missing data.
+    ///
+    /// Returns `(detail, documentation)` — both optional.
     pub fn resolve_completion(
         &self,
         file_name: &str,
@@ -299,6 +312,37 @@ impl Project {
         }
 
         None
+    }
+
+    /// Position-aware resolve using `CompletionItemData`.
+    ///
+    /// Falls back to label-based lookup but can use the original position
+    /// to provide richer type information via hover.
+    pub fn resolve_completion_with_data(
+        &mut self,
+        data: &CompletionItemData,
+        label: &str,
+    ) -> Option<(Option<String>, Option<String>)> {
+        // First try label-based lookup for documentation
+        let label_result = self.resolve_completion(&data.file_name, label);
+
+        // Also try hover at the original position for type detail
+        let hover_detail = self
+            .get_hover(&data.file_name, data.position)
+            .and_then(|info| {
+                if info.display_string.is_empty() {
+                    None
+                } else {
+                    Some(info.display_string)
+                }
+            });
+
+        match (label_result, hover_detail) {
+            (Some((_, doc)), Some(detail)) => Some((Some(detail), doc)),
+            (Some(result), None) => Some(result),
+            (None, Some(detail)) => Some((Some(detail), None)),
+            (None, None) => None,
+        }
     }
 
     /// Diagnostics within a single file.
