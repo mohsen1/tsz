@@ -954,17 +954,20 @@ impl<'a> CheckerState<'a> {
         let mut other_members = Vec::new();
 
         for &member in &members {
-            let resolved_member = self.resolve_type_for_interface_merge(member);
-            let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
-            if mergeable_member.is_none() && kind.is_structurally_mergeable() {
-                // Use the resolved form for structural merging
-                mergeable_member = Some(resolved_member);
-            } else {
-                // Keep original (unresolved) member for re-wrapping into the
-                // intersection — these are non-mergeable types like `string[]`
-                // that pass through as-is.
-                other_members.push(member);
+            // Once we have a mergeable member, skip resolution/classification
+            // for remaining members — they just pass through as-is.
+            if mergeable_member.is_none() {
+                let resolved_member = self.resolve_type_for_interface_merge(member);
+                let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
+                if kind.is_structurally_mergeable() {
+                    mergeable_member = Some(resolved_member);
+                    continue;
+                }
             }
+            // Keep original (unresolved) member for re-wrapping into the
+            // intersection — these are non-mergeable types like `string[]`
+            // that pass through as-is.
+            other_members.push(member);
         }
 
         // If we found a mergeable member, structurally merge it with the other side
