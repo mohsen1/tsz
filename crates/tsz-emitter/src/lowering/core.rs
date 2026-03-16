@@ -681,6 +681,12 @@ impl<'a> LoweringPass<'a> {
                 }
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
+        } else if self.ctx.needs_async_lowering && func.is_async {
+            // ES2015/ES2016: async functions need __awaiter (generators are native)
+            self.mark_async_helpers();
+            if func.asterisk_token {
+                self.mark_async_generator_helpers();
+            }
         }
 
         directives.push(TransformDirective::CommonJSExportDefaultExpr);
@@ -1562,9 +1568,14 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5FunctionParameters { function_node: idx },
                 );
             }
-        } else if self.ctx.needs_async_lowering && func.is_async && func.asterisk_token {
-            // ES2015+: async generators need __asyncGenerator + __await helpers
-            self.mark_async_generator_helpers();
+        } else if self.ctx.needs_async_lowering && func.is_async {
+            if func.asterisk_token {
+                // ES2015+: async generators need __asyncGenerator + __await helpers
+                self.mark_async_generator_helpers();
+            } else {
+                // ES2015/ES2016: non-generator async functions need __awaiter
+                self.mark_async_helpers();
+            }
         }
 
         for &param_idx in &func.parameters.nodes {
