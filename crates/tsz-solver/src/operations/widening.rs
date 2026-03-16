@@ -52,7 +52,7 @@ pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> 
 /// (e.g., `(x: 1 | 2) => void` → `(x: number) => void`) creates a resolved T
 /// that is structurally incompatible with the original arg type under strict
 /// function type checking, causing false TS2322.
-pub fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, false)
@@ -366,7 +366,10 @@ fn widen_type_cached(
 ///
 /// This differs from `widen_type` which recursively widens everything including
 /// union members and direct literals. This function only enters objects/arrays/tuples.
-pub fn widen_object_literal_properties(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub(crate) fn widen_object_literal_properties(
+    db: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     match db.lookup(type_id) {
         // Objects: recursively widen mutable property types
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -482,7 +485,11 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
 /// tsc's TS2367 diagnostic uses widened types for number/boolean operands
 /// (e.g., `true` → `boolean`, `0` → `number`) but preserves string/bigint
 /// literal types in the message text.
-pub fn widen_non_string_bigint_literal(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+#[allow(dead_code)] // Reserved for TS2367 diagnostic message formatting
+pub(crate) fn widen_non_string_bigint_literal(
+    db: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     match db.lookup(type_id) {
         Some(TypeData::Literal(ref value)) => match value {
             crate::LiteralValue::Number(_) => TypeId::NUMBER,
