@@ -630,6 +630,28 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Inner implementation of overlap checking (after depth guard).
+
+    /// Check if a type is a "weak type" (all properties optional) for overlap purposes.
+    /// tsc never emits TS2367 when comparing against weak types.
+    fn is_weak_type_for_overlap(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::dispatch as query;
+        // Check direct object types
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+        {
+            if !shape.properties.is_empty() && shape.properties.iter().all(|p| p.optional) {
+                return true;
+            }
+        }
+        // Check union: if ALL members are weak types
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
+            if !members.is_empty() && members.iter().all(|&m| self.is_weak_type_for_overlap(m)) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn types_have_no_overlap_inner(&mut self, left: TypeId, right: TypeId) -> bool {
         tracing::trace!(left = ?left, right = ?right, "types_have_no_overlap called");
 
@@ -655,6 +677,12 @@ impl<'a> CheckerState<'a> {
             || right == TypeId::NULL
             || right == TypeId::UNDEFINED
         {
+            return false;
+        }
+
+        // Weak types (all-optional properties) overlap with anything.
+        // tsc never emits TS2367 when comparing against weak types.
+        if self.is_weak_type_for_overlap(left) || self.is_weak_type_for_overlap(right) {
             return false;
         }
 
