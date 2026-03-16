@@ -1010,29 +1010,25 @@ impl<'a> CheckerState<'a> {
         // Skip for-of/for-in variable declarations: these get their type from the
         // iterable, not from an initializer. Also skip catch clause variables: these
         // get `any` (or `unknown` with useUnknownInCatchVariables) from the catch clause.
-        let is_for_of_or_catch_var = self
-            .ctx
-            .arena
-            .get_extended(decl_idx)
-            .is_some_and(|ext| {
-                let parent_idx = ext.parent;
-                let parent_kind = self.ctx.arena.get(parent_idx).map(|n| n.kind);
-                // Catch clause: VariableDeclaration is directly inside CatchClause
-                if parent_kind == Some(syntax_kind_ext::CATCH_CLAUSE) {
-                    return true;
-                }
-                // For-of/for-in: VariableDeclaration → VariableDeclarationList → ForOfStatement
-                if let Some(grandparent) = self
-                    .ctx
-                    .arena
-                    .get_extended(parent_idx)
-                    .and_then(|p_ext| self.ctx.arena.get(p_ext.parent))
-                {
-                    return grandparent.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                        || grandparent.kind == syntax_kind_ext::FOR_IN_STATEMENT;
-                }
-                false
-            });
+        let is_for_of_or_catch_var = self.ctx.arena.get_extended(decl_idx).is_some_and(|ext| {
+            let parent_idx = ext.parent;
+            let parent_kind = self.ctx.arena.get(parent_idx).map(|n| n.kind);
+            // Catch clause: VariableDeclaration is directly inside CatchClause
+            if parent_kind == Some(syntax_kind_ext::CATCH_CLAUSE) {
+                return true;
+            }
+            // For-of/for-in: VariableDeclaration → VariableDeclarationList → ForOfStatement
+            if let Some(grandparent) = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .and_then(|p_ext| self.ctx.arena.get(p_ext.parent))
+            {
+                return grandparent.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    || grandparent.kind == syntax_kind_ext::FOR_IN_STATEMENT;
+            }
+            false
+        });
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
             && var_decl.type_annotation.is_none()
