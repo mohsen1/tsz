@@ -345,3 +345,28 @@ let o = { x: 10, foo() { this.x = 20 } };
         ts2540.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2322_typeof_in_type_alias_respects_control_flow_narrowing() {
+    // When `typeof c` appears inside a type alias within a narrowed scope,
+    // the flow-narrowed type should be used (string, not string | number).
+    // This ensures `{ bar: 1 }` is rejected when assigned to type C which
+    // has `[key: string]: typeof c` where c has been narrowed to string.
+    let diags = check_source_diagnostics(
+        r#"
+declare let c: string | number;
+if (typeof c === 'string') {
+    type C = { [key: string]: typeof c };
+    const boo1: C = { bar: 'works' };
+    const boo2: C = { bar: 1 };
+}
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322 for number not assignable to string, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
