@@ -619,14 +619,26 @@ impl<'a> CheckerState<'a> {
                             elem = self.add_undefined_if_missing_for_destructuring(elem);
                         }
                         elem_types.push(elem);
-                    } else if query::tuple_elements(self.ctx.types, member).is_some() {
+                    } else if let Some(telems) = query::tuple_elements(self.ctx.types, member) {
                         let elem = self.get_element_access_type(
                             member,
                             TypeId::NUMBER,
                             Some(element_index),
                         );
                         if elem != TypeId::ERROR {
-                            elem_types.push(elem);
+                            let has_rest = telems.iter().any(|e| e.rest);
+                            if self.ctx.no_unchecked_indexed_access() && has_rest {
+                                let non_rest_count = telems.iter().filter(|e| !e.rest).count();
+                                if element_index >= non_rest_count {
+                                    elem_types.push(
+                                        self.add_undefined_if_missing_for_destructuring(elem),
+                                    );
+                                } else {
+                                    elem_types.push(elem);
+                                }
+                            } else {
+                                elem_types.push(elem);
+                            }
                         }
                     }
                 }
@@ -663,7 +675,6 @@ impl<'a> CheckerState<'a> {
 
             // Unwrap readonly wrappers for destructuring element access
             let array_like = query::unwrap_readonly_deep(self.ctx.types, parent_type);
-
             // Rest element: ...rest
             if element_data.dot_dot_dot_token {
                 let elem_type =
@@ -689,10 +700,54 @@ impl<'a> CheckerState<'a> {
                     elem
                 }
             } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                let elem =
-                    self.get_element_access_type(array_like, TypeId::NUMBER, Some(element_index));
-                if elem != TypeId::ERROR {
-                    elem
+                // Compute element types directly from the tuple structure rather
+                // than using get_element_access_type, which applies
+                // noUncheckedIndexedAccess globally to ALL elements.
+                // Destructuring knows exact positions, so only rest-region
+                // elements need `| undefined`.
+
+                // Single pass: find rest element position/type and count non-rest.
+                let mut rest_pos = None;
+                let mut rest_type_id = None;
+                let mut non_rest_count = 0usize;
+                for (i, e) in elems.iter().enumerate() {
+                    if e.rest {
+                        rest_pos = Some(i);
+                        rest_type_id = Some(e.type_id);
+                    } else {
+                        non_rest_count += 1;
+                    }
+                }
+                let has_rest = rest_pos.is_some();
+                let leading_fixed = rest_pos.unwrap_or(elems.len());
+
+                // Determine the element type based on position in the tuple.
+                let raw_elem = if !has_rest {
+                    // Fixed-length tuple: direct element access or out-of-bounds.
+                    elems.get(element_index).map(|e| e.type_id)
+                } else if element_index < leading_fixed {
+                    // In the leading fixed region — guaranteed to exist.
+                    Some(elems[element_index].type_id)
+                } else {
+                    // In the rest region or trailing fixed region. At
+                    // destructuring time, we can't distinguish them, so use
+                    // the rest element type (unwrapped from Array<T>).
+                    rest_type_id
+                        .map(|ty| query::array_element_type(self.ctx.types, ty).unwrap_or(ty))
+                };
+
+                if let Some(elem_type) = raw_elem {
+                    // With noUncheckedIndexedAccess, elements at indices >=
+                    // the minimum guaranteed tuple length (non_rest_count =
+                    // leading_fixed + trailing_fixed) may not exist at runtime.
+                    if self.ctx.no_unchecked_indexed_access()
+                        && has_rest
+                        && element_index >= non_rest_count
+                    {
+                        self.add_undefined_if_missing_for_destructuring(elem_type)
+                    } else {
+                        elem_type
+                    }
                 } else {
                     let has_rest_tail = elems.last().is_some_and(|element| element.rest);
                     // When a binding element has a default value (e.g., `[a, b = a] = [1]`),

@@ -1075,8 +1075,15 @@ impl<'a> FlowAnalyzer<'a> {
             for (position, element) in elements.iter().enumerate() {
                 if element.rest {
                     if index >= position {
-                        return get_array_element_type(db, element.type_id)
-                            .unwrap_or(element.type_id);
+                        let elem_ty =
+                            get_array_element_type(db, element.type_id).unwrap_or(element.type_id);
+                        // With noUncheckedIndexedAccess, rest-region elements
+                        // are potentially undefined (the tuple length is unknown).
+                        return if self.interner.no_unchecked_indexed_access() {
+                            self.interner.union2(elem_ty, TypeId::UNDEFINED)
+                        } else {
+                            elem_ty
+                        };
                     }
                     break;
                 }
