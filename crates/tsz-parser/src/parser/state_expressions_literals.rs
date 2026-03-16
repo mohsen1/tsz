@@ -664,13 +664,23 @@ impl ParserState {
 
         // Check for unterminated regex literal (TS1161)
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at(
-                start_pos,
-                1,
-                "Unterminated regular expression literal.",
-                diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL,
-            );
+            // Suppress TS1161 when the unterminated "regex" body contains a semicolon.
+            // This indicates the `/` was not intended as a regex start but is instead
+            // an artifact of error recovery (e.g., JSX closing tag `</a:b>` parsed
+            // outside JSX context where `/` is misinterpreted as regex).
+            // A real regex literal never contains an unescaped semicolon at statement
+            // level because the scanner stops at newlines.
+            let regex_body = self.scanner.get_token_text_ref();
+            let has_semicolon = regex_body.contains(';');
+            if !has_semicolon {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    1,
+                    "Unterminated regular expression literal.",
+                    diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL,
+                );
+            }
         }
 
         // Get the regex text (including slashes and flags)
