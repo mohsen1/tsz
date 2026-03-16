@@ -10,6 +10,7 @@ pub mod generic_checker;
 pub mod iterable_checker;
 pub mod jsx_checker;
 pub mod jsx_checker_attrs;
+mod jsx_checker_helpers;
 mod jsx_checker_runtime;
 pub mod parameter_checker;
 pub mod promise_checker;
