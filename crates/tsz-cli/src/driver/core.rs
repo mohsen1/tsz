@@ -835,7 +835,6 @@ fn compile_inner(
     }
     if resolved.rewrite_relative_import_extensions {
         resolved.checker.rewrite_relative_import_extensions = true;
-        resolved.printer.rewrite_relative_import_extensions = true;
     }
     if config.is_none()
         && args.module.is_none()
@@ -1993,7 +1992,6 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.rewrite_relative_import_extensions {
         options.rewrite_relative_import_extensions = true;
-        options.printer.rewrite_relative_import_extensions = true;
     }
     if let Some(custom_conditions) = args.custom_conditions.as_ref() {
         options.custom_conditions = custom_conditions.clone();

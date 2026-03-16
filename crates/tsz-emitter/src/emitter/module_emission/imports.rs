@@ -196,7 +196,7 @@ impl<'a> Printer<'a> {
 
         if import.import_clause.is_none() {
             self.write("import ");
-            self.emit_module_specifier(import.module_specifier);
+            self.emit(import.module_specifier);
             self.emit_import_attributes(import.attributes);
             self.write_semicolon();
             return;
@@ -270,7 +270,7 @@ impl<'a> Printer<'a> {
         }
 
         self.write(" from ");
-        self.emit_module_specifier(import.module_specifier);
+        self.emit(import.module_specifier);
         self.emit_import_attributes(import.attributes);
         self.write_semicolon();
     }
@@ -290,7 +290,7 @@ impl<'a> Printer<'a> {
             // Side-effect import: import "module"; -> emit require
             let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
                 if let Some(lit) = self.arena.get_literal(spec_node) {
-                    self.maybe_rewrite_module_specifier(&lit.text).into_owned()
+                    lit.text.clone()
                 } else {
                     return;
                 }
@@ -324,7 +324,7 @@ impl<'a> Printer<'a> {
         // Module specifier is needed for both binding and side-effect-only CommonJS emit.
         let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
             if let Some(lit) = self.arena.get_literal(spec_node) {
-                self.maybe_rewrite_module_specifier(&lit.text).into_owned()
+                lit.text.clone()
             } else {
                 return;
             }
@@ -672,9 +672,8 @@ impl<'a> Printer<'a> {
 
         if module_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(module_node) {
-                let rewritten = self.maybe_rewrite_module_specifier(&lit.text);
                 self.write("require(\"");
-                self.write(&rewritten);
+                self.write(&lit.text);
                 self.write("\")");
             }
             return;
@@ -909,66 +908,5 @@ impl<'a> Printer<'a> {
             }
         }
         self.write(" }");
-    }
-
-    /// Rewrite a relative module specifier's TypeScript extension to the JavaScript
-    /// equivalent when `rewriteRelativeImportExtensions` is enabled.
-    pub(in crate::emitter) fn maybe_rewrite_module_specifier<'s>(
-        &self,
-        specifier: &'s str,
-    ) -> std::borrow::Cow<'s, str> {
-        if !self.ctx.options.rewrite_relative_import_extensions {
-            return std::borrow::Cow::Borrowed(specifier);
-        }
-        if !specifier.starts_with("./") && !specifier.starts_with("../") {
-            return std::borrow::Cow::Borrowed(specifier);
-        }
-        if specifier.contains(".d.ts")
-            || specifier.contains(".d.mts")
-            || specifier.contains(".d.cts")
-        {
-            return std::borrow::Cow::Borrowed(specifier);
-        }
-        if let Some(base) = specifier.strip_suffix(".ts") {
-            std::borrow::Cow::Owned(format!("{base}.js"))
-        } else if let Some(base) = specifier.strip_suffix(".tsx") {
-            let ext = if self.ctx.options.jsx == super::super::JsxEmit::Preserve {
-                ".jsx"
-            } else {
-                ".js"
-            };
-            std::borrow::Cow::Owned(format!("{base}{ext}"))
-        } else if let Some(base) = specifier.strip_suffix(".mts") {
-            std::borrow::Cow::Owned(format!("{base}.mjs"))
-        } else if let Some(base) = specifier.strip_suffix(".cts") {
-            std::borrow::Cow::Owned(format!("{base}.cjs"))
-        } else {
-            std::borrow::Cow::Borrowed(specifier)
-        }
-    }
-
-    /// Emit a module specifier node, rewriting the extension if needed.
-    pub(in crate::emitter) fn emit_module_specifier(&mut self, idx: NodeIndex) {
-        if !self.ctx.options.rewrite_relative_import_extensions {
-            self.emit(idx);
-            return;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-        if node.kind != SyntaxKind::StringLiteral as u16 {
-            self.emit(idx);
-            return;
-        }
-        let Some(lit) = self.arena.get_literal(node) else {
-            self.emit(idx);
-            return;
-        };
-        let rewritten = self.maybe_rewrite_module_specifier(&lit.text);
-        if rewritten.as_ref() == lit.text.as_str() {
-            self.emit(idx);
-        } else {
-            self.emit_string_literal_text(&rewritten);
-        }
     }
 }

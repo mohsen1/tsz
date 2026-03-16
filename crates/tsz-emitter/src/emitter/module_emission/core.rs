@@ -391,7 +391,7 @@ impl<'a> Printer<'a> {
             self.write("export *");
             if export.module_specifier.is_some() {
                 self.write(" from ");
-                self.emit_module_specifier(export.module_specifier);
+                self.emit(export.module_specifier);
             }
             self.emit_import_attributes(export.attributes);
             self.write_semicolon();
@@ -443,7 +443,7 @@ impl<'a> Printer<'a> {
             }
             if export.module_specifier.is_some() {
                 self.write(" from ");
-                self.emit_module_specifier(export.module_specifier);
+                self.emit(export.module_specifier);
             }
             self.emit_import_attributes(export.attributes);
             self.write_semicolon();
@@ -458,7 +458,7 @@ impl<'a> Printer<'a> {
             self.write("export * as ");
             self.emit(export.export_clause);
             self.write(" from ");
-            self.emit_module_specifier(export.module_specifier);
+            self.emit(export.module_specifier);
             self.emit_import_attributes(export.attributes);
             self.write_semicolon();
             return;
@@ -530,7 +530,7 @@ impl<'a> Printer<'a> {
 
         if export.module_specifier.is_some() {
             self.write(" from ");
-            self.emit_module_specifier(export.module_specifier);
+            self.emit(export.module_specifier);
         }
 
         // Don't add semicolon for declarations - they handle their own

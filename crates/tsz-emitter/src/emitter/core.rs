@@ -141,9 +141,6 @@ pub struct PrinterOptions {
     /// When true, do not elide any imports or exports not explicitly marked as type-only.
     /// Corresponds to `--verbatimModuleSyntax`.
     pub verbatim_module_syntax: bool,
-    /// When true, rewrite `.ts`/`.tsx`/`.mts`/`.cts` extensions to their JS equivalents
-    /// in relative import/export/require specifiers during emit.
-    pub rewrite_relative_import_extensions: bool,
 }
 
 impl Default for PrinterOptions {
@@ -178,7 +175,6 @@ impl Default for PrinterOptions {
             suppress_use_strict: false,
             strict_null_checks: false,
             verbatim_module_syntax: false,
-            rewrite_relative_import_extensions: false,
         }
     }
 }
