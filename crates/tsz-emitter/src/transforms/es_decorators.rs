@@ -97,6 +97,21 @@ pub struct TC39DecoratorEmitter<'a> {
     expression_mode: bool,
     /// Function name for class expression named evaluation (__setFunctionName).
     function_name: Option<String>,
+    /// When true, decorated fields stay as class field declarations (ES2022+).
+    /// When false, decorated fields move to constructor assignments.
+    use_define_for_class_fields: bool,
+}
+
+/// Information about a decorated field for constructor rewrite
+struct DecoratedFieldInfo {
+    /// The field access expression for assignment (e.g., "field1", "\"field2\"", "_a")
+    access_expr: String,
+    /// Whether the access uses bracket notation (computed or string literal)
+    is_bracket_access: bool,
+    /// The original initializer text (e.g., "1", "2"), or empty for no initializer
+    initializer_text: String,
+    /// Index into decorated_members for this field
+    member_var_index: usize,
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
@@ -109,6 +124,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             tslib_prefix: false,
             expression_mode: false,
             function_name: None,
+            use_define_for_class_fields: false,
         }
     }
 
