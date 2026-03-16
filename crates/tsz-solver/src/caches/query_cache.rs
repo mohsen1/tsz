@@ -643,6 +643,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.get_display_properties(type_id)
     }
 
+    fn take_union_too_complex(&self) -> bool {
+        self.interner.take_union_too_complex()
+    }
+
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
         // Delegate to the interner
         self.interner.get_class_base_type(symbol_id)
