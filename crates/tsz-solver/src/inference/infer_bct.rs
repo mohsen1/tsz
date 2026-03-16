@@ -203,7 +203,7 @@ impl<'a> InferenceContext<'a> {
 
         // If any primary type is `any`, return `any` immediately.
         // `any` absorbs all other types including nullable.
-        if primary_types.iter().any(|&ty| ty == TypeId::ANY) {
+        if primary_types.contains(&TypeId::ANY) {
             return TypeId::ANY;
         }
 
