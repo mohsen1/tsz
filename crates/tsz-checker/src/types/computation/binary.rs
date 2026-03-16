@@ -19,8 +19,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // For type parameters, check if their constraint is assignable to object.
+        // Unconstrained type params are NOT valid (could be primitive).
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+            return match crate::query_boundaries::state::checking::get_type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
@@ -67,11 +68,11 @@ impl<'a> CheckerState<'a> {
 
         // Type parameters: check if constraint is missing or is `{}`
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
-            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+            return match crate::query_boundaries::state::checking::get_type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
-                None => true,
+                None => true, // Unconstrained type param may be primitive
                 Some(c) => self.type_may_represent_primitive(c),
             };
         }
