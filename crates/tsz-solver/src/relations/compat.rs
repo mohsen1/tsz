@@ -1388,17 +1388,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
             None => {
-                // No extractable object shape. Primitive and literal types (string,
-                // number, boolean, bigint, their literal variants, null, undefined,
-                // void, symbol, unique symbol) have no properties that could overlap
-                // with the weak type's optional properties, so they violate.
-                // Empty objects ({}) do NOT violate – they are assignable to weak types.
-                // Non-primitive intrinsic types (object, never, unknown, any, Function)
-                // are also exempt — they don't represent concrete values with wrong properties.
-                return crate::visitors::visitor_predicates::is_primitive_type(
-                    self.interner,
-                    source,
-                );
+                // No extractable object shape. tsc exempts primitives from weak
+                // type violation: `bigint` is assignable to `{t?: string}`.
+                // The weak type check is about objects with wrong properties,
+                // not about primitives that have no properties at all.
+                return false;
             }
         };
 
