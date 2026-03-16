@@ -97,9 +97,7 @@ const x = Foo;
     );
 }
 
-#[test]
-#[ignore = "merged symbol typeof behavior changed after merge"]
-fn test_merged_type_const_no_false_type_only() {
+#[test]fn test_merged_type_const_no_false_type_only() {
     // Type alias and const with same name: in expression context the const
     // should be used, so typeof should see the const's type, not error.
     let codes = get_error_codes(
