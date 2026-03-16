@@ -35,7 +35,7 @@ pub enum BinaryOpResult {
 
 /// Primitive type classes for overlap detection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PrimitiveClass {
+pub(crate) enum PrimitiveClass {
     String,
     Number,
     Boolean,

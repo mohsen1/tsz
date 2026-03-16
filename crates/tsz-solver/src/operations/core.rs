@@ -25,7 +25,7 @@ pub const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
 /// Maximum number of constrain-types steps per call evaluator pass.
 /// This caps pathological recursive inference explosions while preserving
 /// normal inference behavior on real-world calls.
-pub const MAX_CONSTRAINT_STEPS: usize = 20_000;
+pub(crate) const MAX_CONSTRAINT_STEPS: usize = 20_000;
 
 pub trait AssignabilityChecker {
     fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool;

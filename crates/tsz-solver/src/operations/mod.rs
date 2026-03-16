@@ -54,18 +54,18 @@ pub mod widening;
 // Re-exports from core implementation
 pub use self::core::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult,
-    MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
-    compute_contextual_types_with_compat_checker,
+    MAX_CONSTRAINT_RECURSION_DEPTH, compute_contextual_types_with_compat_checker,
     get_contextual_signature_for_arity_with_compat_checker,
     get_contextual_signature_with_compat_checker, infer_call_signature, infer_generic_function,
     resolve_call_with_checker, resolve_new_with_checker,
 };
 
 // Re-exports from submodules
-pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
+pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult};
 pub use compound_assignment::*;
 pub use expression_ops::*;
-pub use generics::{GenericInstantiationResult, solve_generic_instantiation};
+#[cfg(test)]
+pub(crate) use generics::{GenericInstantiationResult, solve_generic_instantiation};
 pub use iterators::{
     IteratorInfo, extract_iterator_result_value_types, get_async_iterable_element_type,
     get_iterator_info,
