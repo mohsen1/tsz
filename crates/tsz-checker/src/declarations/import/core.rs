@@ -1454,13 +1454,24 @@ impl<'a> CheckerState<'a> {
             // (interface-only or interface + one value group is OK)
             let is_conflict = value_count > 1 || (!has_interface && !all_same_function);
             if is_conflict {
-                // When function + class both export as default, tsc emits
-                // TS2323 + TS2813 + TS2814 (merge conflict diagnostics) instead of TS2528.
                 if has_function && has_class {
+                    // When function + class both export as default, tsc emits
+                    // TS2323 + TS2813 + TS2814 (merge conflict diagnostics).
                     self.emit_function_class_default_merge_errors(&export_default_indices);
+                } else if has_class && value_count > 1 {
+                    // When a class + value export as default, tsc emits TS2323
+                    // ("Cannot redeclare exported variable 'default'") on each
+                    // declaration. This is a class/value merge conflict.
+                    for &export_idx in &export_default_indices {
+                        let anchor = self.get_default_export_anchor(export_idx);
+                        self.error_at_node(
+                            anchor,
+                            "Cannot redeclare exported variable 'default'.",
+                            diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                        );
+                    }
                 } else {
-                    // tsc emits TS2528 "A module cannot have multiple default exports"
-                    // for duplicate default export cases.
+                    // Fallback: TS2528 "A module cannot have multiple default exports"
                     for &export_idx in &export_default_indices {
                         let anchor = self.get_default_export_anchor(export_idx);
                         self.error_at_node(
