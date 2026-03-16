@@ -2078,13 +2078,15 @@ impl BinderState {
             return;
         };
 
-        // Track for functions/classes and namespace-like roots.
+        // Track for functions and namespace-like roots.
+        // Classes are excluded: tsc does not allow expando assignments on class
+        // constructor types (`class C {} C.x = 1;` → TS2339).
         if (symbol.flags
             & (symbol_flags::FUNCTION
-                | symbol_flags::CLASS
                 | symbol_flags::VALUE_MODULE
                 | symbol_flags::NAMESPACE_MODULE))
             != 0
+            && (symbol.flags & symbol_flags::CLASS) == 0
         {
             self.expando_properties
                 .entry(obj_key.clone())
