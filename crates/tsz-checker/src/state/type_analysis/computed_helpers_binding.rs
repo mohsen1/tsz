@@ -613,7 +613,93 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // For PropertyAccessExpression value declarations (e.g., `export default C.B`),
+        // resolve the VALUE member specifically.  When a class+namespace merge has both
+        // a static property and a namespace-exported interface with the same name,
+        // `get_type_of_node` may return the interface type (type meaning) instead of
+        // the static property type (value meaning).  We resolve the base symbol's VALUE
+        // member directly to avoid this ambiguity.
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(val_type) = self.resolve_property_access_value_type(value_decl) {
+                return Some(val_type);
+            }
+        }
+
         Some(self.type_of_value_declaration_for_symbol(sym_id, value_decl))
+    }
+
+    /// Resolve the VALUE meaning of a PropertyAccessExpression.
+    ///
+    /// For `C.B` where `C` is a class merged with a namespace and `B` is both a
+    /// static property and a namespace-exported interface, the expression evaluator
+    /// may return the interface type (type meaning). This helper resolves the base
+    /// symbol's exports to find a VALUE-flagged member and return its type.
+    fn resolve_property_access_value_type(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_solver::TypeId> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let name_ident = self.ctx.arena.get_identifier(name_node)?;
+        let member_name = &name_ident.escaped_text;
+
+        let base_node = self.ctx.arena.get(access.expression)?;
+        let base_ident = self.ctx.arena.get_identifier(base_node)?;
+        let base_name = &base_ident.escaped_text;
+
+        let base_sym_id = self.ctx.binder.file_locals.get(base_name)?;
+        let lib_binders = self.get_lib_binders();
+        let base_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(base_sym_id, &lib_binders)?;
+
+        // Only apply this fix for merged class+namespace symbols where the
+        // member has both a value and a type meaning.
+        let is_merged = base_symbol.flags & symbol_flags::CLASS != 0
+            && base_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                != 0;
+        if !is_merged {
+            return None;
+        }
+
+        let exports = base_symbol.exports.as_ref()?;
+        // Look for VALUE-flagged members only — skip INTERFACE/TYPE_ALIAS.
+        // When both a static property and a namespace-exported type share the
+        // same name, the binder stores them as separate symbols in the
+        // export table; we want the PROPERTY/VARIABLE one.
+        let member_sym_id = exports.get(member_name)?;
+        let member_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(member_sym_id, &lib_binders)?;
+        if member_symbol.flags & symbol_flags::TYPE != 0
+            && member_symbol.flags & symbol_flags::VALUE == 0
+        {
+            // The export is type-only; look for a sibling value member.
+            // Check the class's own members for a static property with the same name.
+            // In merged class+namespace, the class stores static properties as
+            // class members, while namespace stores the interface in exports.
+            let class_members = base_symbol.members.as_ref()?;
+            let static_sym_id = class_members.get(member_name)?;
+            let static_sym = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(static_sym_id, &lib_binders)?;
+            if static_sym.flags & symbol_flags::PROPERTY != 0 {
+                return Some(self.get_type_of_symbol(static_sym_id));
+            }
+            return None;
+        }
+
+        // If the export itself is a value (e.g., the binder merged static prop
+        // into exports), return its type.
+        if member_symbol.flags & symbol_flags::VALUE != 0 {
+            return Some(self.get_type_of_symbol(member_sym_id));
+        }
+
+        None
     }
 
     /// Resolve `TypeQuery` references in a type alias body using flow narrowing.
