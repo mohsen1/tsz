@@ -1008,8 +1008,14 @@ impl<'a> Printer<'a> {
             }
             k if k == SyntaxKind::PrivateIdentifier as u16 => {
                 // Private identifiers (#name) are emitted as-is for ES2022+ targets.
-                // For ES5/ES2015 targets, they should be lowered by the class transform.
-                if let Some(ident) = self.arena.get_identifier(node) {
+                // For < ES2022 targets, private identifiers in class members are
+                // lowered by the class transform (WeakMap/WeakSet pattern).
+                // Any remaining PrivateIdentifier nodes (e.g. in object literals or
+                // enums, which are parse errors) are replaced with empty text,
+                // matching tsc's classFields transformer behavior.
+                if self.ctx.needs_es2022_lowering {
+                    // Emit nothing — tsc replaces these with factory.createIdentifier("")
+                } else if let Some(ident) = self.arena.get_identifier(node) {
                     self.write(&ident.escaped_text);
                 }
             }
