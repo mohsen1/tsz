@@ -100,48 +100,55 @@ impl<'a> CheckerState<'a> {
         // The parse error itself should already be emitted (e.g., TS1005, TS2390).
         // Check both the parameter name AND the enclosing function/arrow for errors,
         // since parse errors like `(a): => {}` set flags on the parent, not on `a`.
+        //
+        // EXCEPTION: Rest parameters (dot_dot_dot_token) are NOT suppressed by parse errors.
+        // tsc always emits TS7019 for rest parameters even when related parse errors exist
+        // (e.g., TS1047 "rest can't be optional" for `...arg?`, TS1014 "rest not last"
+        // for `...x, y`). The empty-name check below still catches truly malformed rest params.
         use tsz_parser::parser::node_flags;
-        if let Some(name_node) = self.ctx.arena.get(param.name) {
-            let flags = name_node.flags as u32;
-            if ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
+        if !param.dot_dot_dot_token {
+            if let Some(name_node) = self.ctx.arena.get(param.name) {
+                let flags = name_node.flags as u32;
+                if ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
+                    && !preserve_on_strict_mode_parse_error
+                {
+                    return;
+                }
+            }
+            // Also check parent chain (parameter → function/arrow) for parse errors
+            if let Some(ext) = self.ctx.arena.get_extended(param.name) {
+                // param.name's parent is ParameterDeclaration; its parent is the function/arrow
+                let param_decl = ext.parent;
+                if let Some(param_node) = self.ctx.arena.get(param_decl) {
+                    let flags = param_node.flags as u32;
+                    if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                        && !preserve_on_strict_mode_parse_error
+                    {
+                        return;
+                    }
+                }
+                if let Some(param_ext) = self.ctx.arena.get_extended(param_decl)
+                    && let Some(func_node) = self.ctx.arena.get(param_ext.parent)
+                {
+                    let flags = func_node.flags as u32;
+                    if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                        && !preserve_on_strict_mode_parse_error
+                    {
+                        return;
+                    }
+                }
+            }
+
+            // Suppress TS7006 when a scanner-level parse error (e.g. TS1127 invalid character)
+            // exists near the parameter. This handles cases like `function f(a,¬) {}`
+            // where the sibling token is invalid but the param node itself has no error flag.
+            if self.has_syntax_parse_errors()
+                && self.node_has_nearby_parse_error(param.name)
                 && !preserve_on_strict_mode_parse_error
             {
                 return;
             }
-        }
-        // Also check parent chain (parameter → function/arrow) for parse errors
-        if let Some(ext) = self.ctx.arena.get_extended(param.name) {
-            // param.name's parent is ParameterDeclaration; its parent is the function/arrow
-            let param_decl = ext.parent;
-            if let Some(param_node) = self.ctx.arena.get(param_decl) {
-                let flags = param_node.flags as u32;
-                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                    && !preserve_on_strict_mode_parse_error
-                {
-                    return;
-                }
-            }
-            if let Some(param_ext) = self.ctx.arena.get_extended(param_decl)
-                && let Some(func_node) = self.ctx.arena.get(param_ext.parent)
-            {
-                let flags = func_node.flags as u32;
-                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                    && !preserve_on_strict_mode_parse_error
-                {
-                    return;
-                }
-            }
-        }
-
-        // Suppress TS7006 when a scanner-level parse error (e.g. TS1127 invalid character)
-        // exists near the parameter. This handles cases like `function f(a,¬) {}`
-        // where the sibling token is invalid but the param node itself has no error flag.
-        if self.has_syntax_parse_errors()
-            && self.node_has_nearby_parse_error(param.name)
-            && !preserve_on_strict_mode_parse_error
-        {
-            return;
         }
 
         let param_name = self.parameter_name_for_error(param.name);
@@ -459,5 +466,70 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ts7019_emitted_with_rest_not_last_parse_error() {
+        // tsc emits TS7019 for rest params even when TS1014 (rest not last) is present.
+        // TS1014 is a parser error (not in checker diagnostics), but TS7019 must appear.
+        let codes = crate::test_utils::check_source_codes("function f(...x, y) { }");
+        assert!(
+            codes.contains(&7019),
+            "Should have TS7019 for rest param even with parse errors, got {:?}",
+            codes
+        );
+        // TS7006 should also be emitted for the regular parameter `y`
+        assert!(
+            codes.contains(&7006),
+            "Should have TS7006 for regular param y, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn ts7019_emitted_with_syntax_parse_errors_flag() {
+        // When has_syntax_parse_errors is set (as in the CLI driver path),
+        // rest params should still get TS7019.
+        let source = "function f(...x, y) { }";
+        let options = crate::context::CheckerOptions::default();
+        let mut parser =
+            tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let sf = parser.parse_source_file();
+        let mut binder = tsz_binder::BinderState::new();
+        binder.bind_source_file(parser.get_arena(), sf);
+        let types = crate::query_boundaries::type_construction::TypeInterner::new();
+        let mut checker = crate::state::CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        // Simulate the CLI driver setting has_syntax_parse_errors
+        checker.ctx.has_syntax_parse_errors = true;
+        checker.check_source_file(sf);
+        let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+        eprintln!("Codes with has_syntax_parse_errors=true: {:?}", codes);
+        assert!(
+            codes.contains(&7019),
+            "Should have TS7019 for rest param with has_syntax_parse_errors, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn ts7019_emitted_with_optional_rest_parse_error() {
+        // tsc emits TS7019 for rest params even when TS1047 (rest can't be optional) is present.
+        // TS1047 is a parser error (not in checker diagnostics), but TS7019 must appear.
+        let codes = crate::test_utils::check_source_codes("(...arg?) => 102;");
+        assert!(
+            codes.contains(&7019),
+            "Should have TS7019 for rest param even with parse errors, got {:?}",
+            codes
+        );
     }
 }
