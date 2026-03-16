@@ -130,11 +130,15 @@ impl BinderState {
                                 .insert(module.body.0, self.current_scope_id);
                             let was_in_augmentation = self.in_module_augmentation;
                             let prev_module = self.current_augmented_module.take();
+                            // Save current_scope so augmentation symbols don't leak into
+                            // the parent file's scope (and subsequently into file_locals/globals).
+                            let saved_scope = self.current_scope.clone();
                             self.in_module_augmentation = true;
                             self.current_augmented_module = Some(module_specifier);
                             self.bind_node(arena, module.body);
                             self.in_module_augmentation = was_in_augmentation;
                             self.current_augmented_module = prev_module;
+                            self.current_scope = saved_scope;
                         }
                         return;
                     }

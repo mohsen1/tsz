@@ -257,6 +257,25 @@ impl<'a> CheckerState<'a> {
             || self.resolve_import_via_all_binders(module_name, normalized, import_name)
             || self.cross_file_export_is_actual_export(module_name, import_name)
             || self.cross_file_export_is_actual_export(normalized, import_name)
+            || self.import_found_via_module_augmentation(module_name, normalized, import_name)
+    }
+
+    /// Check if a symbol is declared in a module augmentation targeting the given module.
+    /// `declare module "x" { type C = ... }` makes `C` importable from module `"x"`.
+    fn import_found_via_module_augmentation(
+        &self,
+        module_name: &str,
+        normalized: &str,
+        import_name: &str,
+    ) -> bool {
+        for key in [module_name, normalized] {
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(key) {
+                if augmentations.iter().any(|aug| aug.name == import_name) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Like `resolve_cross_file_export_from_file`, but filters out symbols that
