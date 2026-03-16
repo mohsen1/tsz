@@ -93,19 +93,31 @@ fn widen_type_cached(
         // A union like `"fr" | "en" | "es"` from a type alias does NOT.
         //
         // We approximate tsc's RequiresWidening heuristic: a union requires widening
-        // when it has ≤ 3 members, all of which are bare literal types (from fresh
-        // expressions). Larger unions are more likely from type aliases.
-        // This handles the common cases: `1 | 2`, `true | false`, `"a" | 1`.
+        // when it has ≤ 3 members, at least one of which is a literal type, and
+        // all members are either literals or non-widenable intrinsics (undefined,
+        // null, void). Larger unions are more likely from type aliases.
+        // This handles: `1 | 2`, `true | false`, `"a" | 1`, `true | undefined`.
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
-            let small_fresh_union = members.len() <= 3
-                && members.iter().all(|&m| {
-                    matches!(
-                        db.lookup(m),
-                        Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
-                    ) || m == TypeId::BOOLEAN_TRUE
-                        || m == TypeId::BOOLEAN_FALSE
-                });
+            let is_fresh_member = |m: TypeId| -> bool {
+                matches!(
+                    db.lookup(m),
+                    Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
+                ) || m == TypeId::BOOLEAN_TRUE
+                    || m == TypeId::BOOLEAN_FALSE
+            };
+            // Allow undefined/null/void as union members — they don't need
+            // widening themselves but shouldn't prevent literal siblings from
+            // being widened. E.g., `true | undefined` → `boolean | undefined`.
+            let is_passthrough_intrinsic = |m: TypeId| -> bool {
+                m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID
+            };
+            let has_literal = members.iter().any(|&m| is_fresh_member(m));
+            let small_fresh_union = has_literal
+                && members.len() <= 3
+                && members
+                    .iter()
+                    .all(|&m| is_fresh_member(m) || is_passthrough_intrinsic(m));
             if small_fresh_union {
                 let widened_members: Vec<TypeId> = members
                     .iter()
