@@ -640,6 +640,10 @@ impl<'a> Printer<'a> {
             self.emit_function_body_hoisted_temps();
         }
 
+        // Capture position for inserting hoisted temps created during statement emit
+        // (e.g., `_a` from `??` lowering inside the constructor body).
+        let hoisted_var_insert_pos = (self.writer.len(), self.writer.current_line());
+
         // Find the super() call index so we can emit prologue after it.
         // In derived class constructors, super() must be called before
         // accessing `this`, so param property and field init assignments
@@ -708,6 +712,22 @@ impl<'a> Printer<'a> {
         // If we never emitted the prologue (empty body or no super), emit it now
         if !prologue_emitted {
             self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
+        }
+
+        // Insert any hoisted temps created during statement emit (e.g., `_a` from `??` lowering).
+        if !self.hoisted_assignment_temps.is_empty() {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let var_decl = format!(
+                "{}var {};",
+                indent,
+                self.hoisted_assignment_temps.join(", ")
+            );
+            self.writer.insert_line_at(
+                hoisted_var_insert_pos.0,
+                hoisted_var_insert_pos.1,
+                &var_decl,
+            );
+            self.hoisted_assignment_temps.clear();
         }
 
         self.decrease_indent();

@@ -731,15 +731,15 @@ impl<'a> Printer<'a> {
             return false;
         };
 
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.arena.get_parenthesized(node)
-        {
-            return self.is_simple_nullish_expression(paren.expression);
-        }
-
+        // Match tsc's isSimpleCopiableExpression: identifiers, keywords, and literals
+        // are all safe to repeat without side effects.
+        // Note: tsc does NOT unwrap parenthesized expressions here.
         node.kind == SyntaxKind::Identifier as u16
-            || node.kind == SyntaxKind::ThisKeyword as u16
-            || node.kind == SyntaxKind::SuperKeyword as u16
+            || (node.kind >= SyntaxKind::BreakKeyword as u16
+                && node.kind <= SyntaxKind::DeferKeyword as u16)
+            || node.kind == SyntaxKind::NumericLiteral as u16
+            || node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
     }
 
     /// Check if a token is a compound assignment operator (+=, -=, etc.)
