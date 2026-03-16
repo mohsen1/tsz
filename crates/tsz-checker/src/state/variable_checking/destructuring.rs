@@ -200,6 +200,13 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) {
+        // Skip nested pattern processing for ERROR types to prevent cascading
+        // diagnostics. When a parent element resolves to ERROR (e.g., from
+        // destructuring `unknown`), nested patterns should not emit further errors.
+        if parent_type == TypeId::ERROR {
+            return;
+        }
+
         self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
 
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
@@ -732,6 +739,26 @@ impl<'a> CheckerState<'a> {
                 defer_property_not_found,
                 suppress_missing_property_for_literal_default,
             ) {
+                // Check accessibility (TS2341/TS2445) for computed literal key destructuring.
+                // e.g. `const { ["p"]: p1 } = new C();` where `p` is private.
+                if let Some((string_keys, _)) = self.get_literal_key_union_from_type(key_type) {
+                    let error_node = if element_data.property_name != NodeIndex::NONE {
+                        element_data.property_name
+                    } else if element_data.name != NodeIndex::NONE {
+                        element_data.name
+                    } else {
+                        NodeIndex::NONE
+                    };
+                    for key in &string_keys {
+                        let key_str = self.ctx.types.resolve_atom(*key);
+                        self.check_property_accessibility(
+                            NodeIndex::NONE,
+                            &key_str,
+                            error_node,
+                            parent_type,
+                        );
+                    }
+                }
                 return property_type;
             }
         }
@@ -893,7 +920,11 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
                 );
             }
-            return TypeId::UNKNOWN;
+            // Return ERROR to suppress cascading diagnostics in nested patterns.
+            // TSC only reports errors at the outermost destructuring level for
+            // unknown types (e.g., `{ a: { x } }` from catch clause only reports
+            // TS2339 for `a`, not for nested `x`).
+            return TypeId::ERROR;
         }
 
         if let Some(ref prop_name_str) = property_name {
