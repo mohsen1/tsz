@@ -487,6 +487,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Async generator: async function* f() → function f() { return __asyncGenerator(...) }
+        if func.is_async && self.ctx.needs_async_lowering && func.asterisk_token {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_generator_lowered(func, &func_name);
+            if self_paren {
+                self.write(")");
+            }
+            return;
+        }
+
         if func.is_async {
             self.write("async ");
         }
