@@ -1426,6 +1426,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
                 && !display.starts_with("keyof ")
+                && !display.starts_with("typeof ")
                 && !display.contains("[P in ")
                 && !display.contains("[K in ")
                 // Don't use annotation text for union types — the TypeFormatter
