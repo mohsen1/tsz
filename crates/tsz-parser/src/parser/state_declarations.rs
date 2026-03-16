@@ -749,7 +749,7 @@ impl ParserState {
         // Parse colon and parameter type.
         // If the next token is `]` or `,`, skip — the signature is malformed
         // (e.g., `[...a]`, `[a?]`, or `[a, b]`) and other errors will be reported.
-        let (param_type_token, param_type) = if self.is_token(SyntaxKind::CloseBracketToken)
+        let (_param_type_token, param_type) = if self.is_token(SyntaxKind::CloseBracketToken)
             || self.is_token(SyntaxKind::CommaToken)
         {
             (self.token(), NodeIndex::NONE)
@@ -864,45 +864,16 @@ impl ParserState {
             false
         };
 
-        // Detect non-valid index signature parameter types.
-        // Valid types are: string, number, symbol, or template literal types.
-        // TS1268 is emitted by the checker for anything else; the parser suppresses
-        // TS1021 (missing type annotation) when the param type will trigger TS1268.
-        let is_valid_param_type = matches!(
-            param_type_token,
-            SyntaxKind::StringKeyword | SyntaxKind::NumberKeyword | SyntaxKind::SymbolKeyword
-        ) || matches!(
-            param_type_token,
-            SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead
-        );
-        let has_invalid_param_type = param_type.is_some() && !is_valid_param_type;
-
-        // Index signatures must have a type annotation (TS1021).
-        // Suppress when the parameter type is already invalid (TS1268),
-        // or when other index signature errors were already emitted — matches tsc behavior.
-        let has_param_errors = dot_dot_dot_token
-            || question_token
-            || has_multiple_params
-            || has_trailing_comma
-            || !param_modifiers.is_empty();
+        // Parse the type annotation after `]`.
+        // TS1021 (missing type annotation) is checked by the checker, not the parser,
+        // matching TSC's checkGrammarIndexSignatureParameters which uses early returns
+        // to suppress TS1021 when other grammar errors are present.
         let type_annotation = if saw_question_after_bracket {
             // When `?` was after `]`, don't parse the type annotation.
             // The remaining `: any;` will be handled by the member loop which emits TS1131.
             NodeIndex::NONE
         } else if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
-        } else if !has_invalid_param_type && !has_param_errors {
-            // TSC emits grammarErrorOnNode(node, ...) spanning the whole index signature.
-            // Use start_pos (the index signature start, which is `[` for unmodified sigs)
-            // to match TSC's node.getStart() position.
-            let sig_end = self.token_pos(); // position after `]`
-            self.parse_error_at(
-                start_pos,
-                sig_end - start_pos,
-                "An index signature must have a type annotation.",
-                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
-            );
-            NodeIndex::NONE
         } else {
             NodeIndex::NONE
         };
