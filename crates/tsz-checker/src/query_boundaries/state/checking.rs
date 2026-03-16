@@ -64,7 +64,10 @@ pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) 
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
 }
 
-pub(crate) fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+pub(crate) fn get_type_parameter_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
     type_parameter_constraint(db, type_id)
 }
 
