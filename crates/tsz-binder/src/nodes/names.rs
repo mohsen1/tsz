@@ -520,4 +520,21 @@ impl BinderState {
     pub(crate) fn has_const_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         arena.has_modifier_ref(modifiers, SyntaxKind::ConstKeyword)
     }
+
+    /// Check if modifiers list contains the 'protected' keyword.
+    pub(crate) fn has_protected_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
+        arena.has_modifier_ref(modifiers, SyntaxKind::ProtectedKeyword)
+    }
+
+    /// Check if modifiers include a parameter property keyword
+    /// (public, private, protected, or readonly).
+    pub(crate) fn has_parameter_property_modifier(
+        arena: &NodeArena,
+        modifiers: Option<&NodeList>,
+    ) -> bool {
+        arena.has_modifier_ref(modifiers, SyntaxKind::PublicKeyword)
+            || arena.has_modifier_ref(modifiers, SyntaxKind::PrivateKeyword)
+            || arena.has_modifier_ref(modifiers, SyntaxKind::ProtectedKeyword)
+            || arena.has_modifier_ref(modifiers, SyntaxKind::ReadonlyKeyword)
+    }
 }
