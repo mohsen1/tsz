@@ -1013,11 +1013,44 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
 
-                    // CRITICAL: Check global resolution set to prevent infinite recursion
-                    // If the base class is currently being resolved, skip it immediately
+                    // CRITICAL: Check global resolution set to prevent infinite recursion.
+                    // If the base class is currently being resolved, use its cached
+                    // partial type (if available) instead of recursing. This handles
+                    // nested class expressions that extend their enclosing class:
+                    //   class F { Inner = class extends F { p2 = this.p1 }; p1 = 0 }
+                    // F is in the resolution set, but its partial type (from prescan
+                    // or phase-2 caching) may be in class_instance_type_cache.
+                    // If no partial type is cached, build one from the base class's
+                    // declared members (annotated properties and constructor params).
                     if base_in_resolution_set {
-                        // Base class is already being resolved up the call stack
-                        // Skip to prevent infinite recursion
+                        if let Some(base_class_idx) = base_class_decl {
+                            if let Some(&cached_partial) =
+                                self.ctx.class_instance_type_cache.get(&base_class_idx)
+                            {
+                                self.merge_base_instance_properties(
+                                    cached_partial,
+                                    &mut properties,
+                                    &mut string_index,
+                                    &mut number_index,
+                                );
+                            } else if let Some(base_node) = self.ctx.arena.get(base_class_idx)
+                                && let Some(base_class) = self.ctx.arena.get_class(base_node)
+                            {
+                                // No cached partial type yet — build a quick prescan
+                                // from the base class's declared property types and
+                                // constructor parameter properties.
+                                let partial =
+                                    self.quick_prescan_class_members(base_class_idx, base_class);
+                                if partial != TypeId::ERROR {
+                                    self.merge_base_instance_properties(
+                                        partial,
+                                        &mut properties,
+                                        &mut string_index,
+                                        &mut number_index,
+                                    );
+                                }
+                            }
+                        }
                         break;
                     }
                 }
@@ -1811,6 +1844,136 @@ impl<'a> CheckerState<'a> {
                 access.name_or_argument,
             ))
         }
+    }
+
+    /// Build a quick partial type from a class's declared members without
+    /// recursing into the full class instance type resolution.
+    ///
+    /// This is used when a nested class expression extends its enclosing class
+    /// which is currently being resolved. We extract only syntactically-visible
+    /// property types (annotated properties, constructor parameter properties,
+    /// and properties with simple initializers) to avoid triggering recursive
+    /// resolution while still providing enough type information for property
+    /// access within the nested class.
+    pub(crate) fn quick_prescan_class_members(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+        let class_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let mut props: Vec<PropertyInfo> = Vec::new();
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name_resolved(prop.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let is_readonly = self.has_readonly_modifier(&prop.modifiers)
+                        || self.jsdoc_has_readonly_tag(member_idx);
+                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
+
+                    // Try annotation first, then fall back to initializer inference
+                    let type_id = if let Some(declared) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    {
+                        declared
+                    } else if prop.initializer.is_some() {
+                        let prev = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
+                        let init_type = self.get_type_of_node(prop.initializer);
+                        self.ctx.preserve_literal_types = prev;
+                        if is_readonly {
+                            init_type
+                        } else {
+                            self.widen_literal_type(init_type)
+                        }
+                    } else {
+                        TypeId::ANY
+                    };
+
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id,
+                        write_type: type_id,
+                        optional: prop.question_token,
+                        readonly: is_readonly,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility,
+                        parent_id: class_sym,
+                        declaration_order: 0,
+                    });
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        if !self.has_parameter_property_modifier(&param.modifiers) {
+                            continue;
+                        }
+                        let Some(name) = self.get_property_name(param.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        let is_readonly = self.has_readonly_modifier(&param.modifiers);
+                        let type_id = if param.type_annotation.is_some() {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else if param.initializer.is_some() {
+                            let init_type = self.get_type_of_node(param.initializer);
+                            if is_readonly {
+                                init_type
+                            } else {
+                                self.widen_literal_type(init_type)
+                            }
+                        } else {
+                            TypeId::ANY
+                        };
+                        let visibility = self.get_visibility_from_modifiers(&param.modifiers);
+                        props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type: type_id,
+                            optional: param.question_token,
+                            readonly: is_readonly,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility,
+                            parent_id: class_sym,
+                            declaration_order: 0,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if props.is_empty() {
+            return TypeId::ERROR;
+        }
+
+        let result = factory.object(props);
+        // Cache the partial type so subsequent nested class expressions can use it
+        self.ctx.class_instance_type_cache.insert(class_idx, result);
+        result
     }
 }
 
