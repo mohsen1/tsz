@@ -585,10 +585,8 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         arg_idx: NodeIndex,
     ) {
-        // Honor removed-but-still-effective suppressImplicitAnyIndexErrors flag
-        if self.ctx.compiler_options.suppress_implicit_any_index_errors {
-            return;
-        }
+        // Note: suppressImplicitAnyIndexErrors was removed in TypeScript 6.0.
+        // tsc now emits TS5102 warning and still reports the errors.
         // TS7053 is a noImplicitAny error - suppress without it
         if !self.ctx.no_implicit_any() {
             return;
