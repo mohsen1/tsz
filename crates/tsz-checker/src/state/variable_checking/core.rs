@@ -1426,7 +1426,6 @@ impl<'a> CheckerState<'a> {
                             false
                         };
                     if !is_mergeable_declaration
-                        && !is_bare_declaration
                         && !is_non_exported_ns_var
                         && !has_ns_export_visibility_mismatch
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
@@ -1533,10 +1532,15 @@ impl<'a> CheckerState<'a> {
                                 break;
                             }
                             if other_decl.is_some() {
-                                if self.is_bare_var_declaration_node(other_decl) {
-                                    continue;
-                                }
-                                let other_type = self.get_type_of_node(other_decl);
+                                let other_is_bare = self.is_bare_var_declaration_node(other_decl)
+                                    && !self.is_var_decl_in_for_in_or_for_of(other_decl);
+                                let other_type = if other_is_bare {
+                                    // Bare `var x;` declarations have type `any`.
+                                    // tsc treats them as establishing type `any` for TS2403.
+                                    TypeId::ANY
+                                } else {
+                                    self.get_type_of_node(other_decl)
+                                };
                                 // Check if other declaration is mergeable (namespace, etc.)
                                 let other_node_kind =
                                     self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
@@ -1592,12 +1596,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         raw_declared_type
                     };
-                    // Don't store bare declarations (`var x;`) unless a prior type
-                    // was found from lib or earlier local declarations — bare vars
-                    // don't establish a type constraint for TS2403.
-                    if !is_bare_declaration || prior_type_found.is_some() {
-                        self.ctx.var_decl_types.insert(sym_id, type_to_store);
-                    }
+                    // Always store the declared type, including bare declarations
+                    // (`var x;` → type `any`). In tsc, bare declarations establish
+                    // type `any` for TS2403 purposes, so subsequent declarations
+                    // with different types correctly trigger TS2403.
+                    self.ctx.var_decl_types.insert(sym_id, type_to_store);
                 }
             }
         } else {
