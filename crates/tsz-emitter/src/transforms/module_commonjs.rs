@@ -67,6 +67,11 @@ fn collect_export_name_from_declaration(
                 if arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
+                // Skip overload signatures (no body) — if the implementation
+                // also has `export`, it will be collected separately.
+                if func.body.is_none() {
+                    return;
+                }
                 if let Some(name) = get_identifier_text(arena, func.name)
                     && !exports.contains(&name)
                 {
@@ -554,10 +559,13 @@ pub fn collect_export_names_with_options(
             // export function foo() {}
             // Note: overloaded functions produce multiple FUNCTION_DECLARATION nodes
             // with the same name; deduplicate to avoid repeated exports.
+            // Skip overload signatures (no body) — if the implementation also has
+            // `export`, it will be added when we encounter it.
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
                     && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                     && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                    && func.body.is_some()
                     && let Some(name) = get_identifier_text(arena, func.name)
                     && !exports.contains(&name)
                 {
@@ -672,10 +680,14 @@ pub fn collect_export_names_categorized(
         // Direct: export function f() {}
         // Note: overloaded functions produce multiple FUNCTION_DECLARATION nodes
         // with the same name; deduplicate to emit only one `exports.X = X;`.
+        // Only count functions that have a body (implementation), not overload
+        // signatures.  When an overload signature has `export` but the
+        // implementation does not, tsc does NOT export the function.
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
             if let Some(func) = arena.get_function(node)
                 && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                 && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                && func.body.is_some()
                 && let Some(name) = get_identifier_text(arena, func.name)
                 && !func_exports.iter().any(|(e, _)| e == &name)
             {
@@ -683,6 +695,8 @@ pub fn collect_export_names_categorized(
             }
         }
         // Wrapped: ExportDeclaration { clause: FunctionDeclaration }
+        // Only include functions with a body (implementation), not overload
+        // signatures, matching tsc behavior.
         else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
             && let Some(export_decl) = arena.get_export_decl(node)
             && !export_decl.is_type_only
@@ -692,6 +706,7 @@ pub fn collect_export_names_categorized(
             && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(clause_node)
             && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+            && func.body.is_some()
             && let Some(name) = get_identifier_text(arena, func.name)
             && !func_exports.iter().any(|(e, _)| e == &name)
         {

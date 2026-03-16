@@ -929,8 +929,13 @@ impl<'a> Printer<'a> {
                         .unwrap_or(0);
                     all_func_exports.push((pos, exported_name.clone(), local_name.clone()));
                 }
-                // Sort by source position
-                all_func_exports.sort_by_key(|(pos, _, _)| *pos);
+                // Sort by source position, with alphabetical tiebreaker for
+                // exports referencing the same function (same position).
+                // This matches tsc: `exports.j = j;` before `exports.jj = j;`
+                // and `exports.default = f;` before `exports.f = f;`.
+                all_func_exports.sort_by(|(pos_a, name_a, _), (pos_b, name_b, _)| {
+                    pos_a.cmp(pos_b).then_with(|| name_a.cmp(name_b))
+                });
                 // Emit in source order
                 for (_, exported_name, local_name) in &all_func_exports {
                     self.write("exports.");
