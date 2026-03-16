@@ -287,6 +287,8 @@ impl<'a> CheckerState<'a> {
             // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
             self.ctx.application_symbols_resolved.clear();
             self.ctx.application_symbols_resolution_set.clear();
+            // Reset global resolution fuel for the new file.
+            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
 
             // Register Function DefIds in the interner BEFORE building the environment.
             // This ensures `T extends Function` constraint checks during type alias

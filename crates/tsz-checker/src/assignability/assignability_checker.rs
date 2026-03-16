@@ -486,6 +486,12 @@ impl<'a> CheckerState<'a> {
 
     /// Ensure relation preconditions (lazy refs + application symbols) for one type.
     pub(crate) fn ensure_relation_input_ready(&mut self, type_id: TypeId) {
+        // Global fuel guard: bail when total resolution work across all top-level
+        // calls has exceeded the budget. Prevents OOM on DOM-heavy React code
+        // where many top-level calls each reset per-call fuel.
+        if crate::state_domain::type_environment::lazy::global_resolution_fuel_exhausted() {
+            return;
+        }
         self.ensure_refs_resolved(type_id);
         self.ensure_application_symbols_resolved(type_id);
     }
@@ -598,6 +604,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
         use crate::state_domain::type_environment::lazy::{
             enter_refs_resolution_scope, exit_refs_resolution_scope,
+            global_resolution_fuel_exhausted, increment_global_resolution_fuel,
             increment_refs_resolution_fuel, refs_resolution_fuel_exhausted,
         };
 
@@ -633,6 +640,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 increment_refs_resolution_fuel();
+                increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    break;
+                }
                 if let Some(result) = self.resolve_and_insert_def_type(def_id)
                     && result != TypeId::ERROR
                     && result != TypeId::ANY

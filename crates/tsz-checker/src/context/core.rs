@@ -620,12 +620,22 @@ impl<'a> CheckerContext<'a> {
     /// Consume one unit of type resolution fuel.
     /// Returns true if fuel is still available, false if exhausted.
     /// When exhausted, type resolution should return ERROR to prevent timeout.
+    /// Also tracks a thread-local global fuel counter that is NOT reset when
+    /// child contexts are created for cross-arena delegation, preventing
+    /// unbounded total work across multiple contexts.
     pub fn consume_fuel(&self) -> bool {
         let fuel = self.type_resolution_fuel.get();
         if fuel == 0 {
             return false;
         }
         self.type_resolution_fuel.set(fuel - 1);
+        // Thread-local global fuel prevents OOM when child contexts each get
+        // fresh per-context fuel (cross-arena delegation). This is the only
+        // fuel counter that survives context boundaries.
+        if crate::state_domain::type_environment::lazy::global_resolution_fuel_exhausted() {
+            return false;
+        }
+        crate::state_domain::type_environment::lazy::increment_global_resolution_fuel();
         true
     }
 
