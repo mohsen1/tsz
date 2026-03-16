@@ -1119,21 +1119,24 @@ impl<'a> CheckerState<'a> {
             // even if the symbol type was previously cached as a concrete type.
             // `compute_final_type` may return a cached type for for-in/for-of loops,
             // so we must override that for bare redeclarations.
-            let raw_declared_type =
-                if var_decl.type_annotation.is_none() && var_decl.initializer.is_none() {
-                    TypeId::ANY
-                } else if var_decl.type_annotation.is_none() && var_decl.initializer.is_some() {
-                    // For TS2403, when the initializer is a bare enum identifier (e.g., `var x = E`),
-                    // tsc treats the declared type as `typeof E` (the enum object type), not `E`.
-                    // This ensures `var x = E; var x = E.a;` correctly triggers TS2403 because
-                    // `typeof E` and `E` are not type-identical.
-                    self.initializer_ts2403_type(var_decl.initializer, final_type)
-                } else {
-                    // When the type annotation is `typeof EnumSymbol`, resolve to the enum
-                    // object type. This matches tsc where `typeof E` is the enum object
-                    // shape, ensuring `var e = E; var e: typeof E;` is compatible.
-                    self.annotation_ts2403_type(var_decl.type_annotation, final_type)
-                };
+            let is_in_for_in_or_for_of = self.is_var_decl_in_for_in_or_for_of(decl_idx);
+            let raw_declared_type = if var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && !is_in_for_in_or_for_of
+            {
+                TypeId::ANY
+            } else if var_decl.type_annotation.is_none() && var_decl.initializer.is_some() {
+                // For TS2403, when the initializer is a bare enum identifier (e.g., `var x = E`),
+                // tsc treats the declared type as `typeof E` (the enum object type), not `E`.
+                // This ensures `var x = E; var x = E.a;` correctly triggers TS2403 because
+                // `typeof E` and `E` are not type-identical.
+                self.initializer_ts2403_type(var_decl.initializer, final_type)
+            } else {
+                // When the type annotation is `typeof EnumSymbol`, resolve to the enum
+                // object type. This matches tsc where `typeof E` is the enum object
+                // shape, ensuring `var e = E; var e: typeof E;` is compatible.
+                self.annotation_ts2403_type(var_decl.type_annotation, final_type)
+            };
             // Variables without an initializer/annotation can still get a contextual type in some
             // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
             // type may already be cached from the contextual typing logic; prefer that over the
@@ -1342,8 +1345,11 @@ impl<'a> CheckerState<'a> {
             // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
             // Bare declarations (`var x;` with no annotation/initializer) don't establish a
             // type constraint and never trigger TS2403 in tsc.
-            let is_bare_declaration =
-                var_decl.type_annotation.is_none() && var_decl.initializer.is_none();
+            // Exception: for-in/for-of loop variables (`for (var x in obj)`) ARE typed
+            // (string for for-in, element type for for-of) even without explicit annotation.
+            let is_bare_declaration = var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && !is_in_for_in_or_for_of;
             let is_block_scoped = if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
                 && let Some(parent) = self.ctx.arena.get(ext.parent)
                 && parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
