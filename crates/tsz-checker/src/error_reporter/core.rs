@@ -1691,8 +1691,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        // Do NOT use display properties — tsc shows widened property types
+        // Widen the type for display — tsc shows widened property types
         // in error messages: `{ two: number }` not `{ two: 1 }`.
+        let display_ty = tsz_solver::widen_type(self.ctx.types, display_ty);
         let mut formatted = self.format_type_diagnostic(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
