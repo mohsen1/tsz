@@ -782,11 +782,22 @@ impl<'a> Printer<'a> {
         }
 
         // tsc emits `keyword: ` (non-shorthand, empty value) when the name is a reserved
-        // keyword, since shorthand property syntax like `{ return }` is invalid JS.
-        // Also emit non-shorthand when the name is not an Identifier (e.g. string/number literal).
-        let is_keyword_name =
-            name_node.is_some_and(|n| n.kind != tsz_scanner::SyntaxKind::Identifier as u16);
-        if is_keyword_name {
+        // keyword, since shorthand property syntax like `{ return }` or `{ class }` is
+        // invalid JS. Also handles non-Identifier names (string/number literals).
+        let is_non_shorthand_name = name_node.is_some_and(|n| {
+            // Not an Identifier node kind (e.g. NumericLiteral, StringLiteral)
+            if n.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                return true;
+            }
+            // Identifier whose text is a JS reserved keyword
+            if let Some(ident) = self.arena.get_identifier(n) {
+                if let Some(kw) = tsz_scanner::text_to_keyword(&ident.escaped_text) {
+                    return tsz_scanner::token_is_reserved_word(kw);
+                }
+            }
+            false
+        });
+        if is_non_shorthand_name {
             self.emit(shorthand.name);
             self.write(": ");
             return;
