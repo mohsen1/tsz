@@ -4,7 +4,7 @@
 
 use super::{BinderState, BinderStateScopeInputs, LibContext};
 use crate::lib_loader;
-use crate::module_resolution_debug::ModuleResolutionDebugger;
+use crate::modules::resolution_debug::ModuleResolutionDebugger;
 use crate::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, Symbol, SymbolArena,
     SymbolId, SymbolTable, flow_flags, symbol_flags,

@@ -120,9 +120,6 @@ pub use tsz_binder as binder;
 #[path = "../tests/binder_state_tests.rs"]
 mod binder_state_tests;
 
-// Module Resolution Debugging - re-exported from tsz-binder
-pub use tsz_binder::module_resolution_debug;
-
 // Lib Loader - re-exported from tsz-binder
 pub use tsz_binder::lib_loader;
 
