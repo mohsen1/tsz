@@ -1548,6 +1548,15 @@ impl<'a> CheckerState<'a> {
                             None
                         }
                     })
+                } else if clause.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    self.ctx.arena.get_interface(clause).and_then(|i| {
+                        let n = self.ctx.arena.get(i.name)?;
+                        if n.kind == SyntaxKind::Identifier as u16 {
+                            Some(i.name)
+                        } else {
+                            None
+                        }
+                    })
                 } else if clause.kind == SyntaxKind::Identifier as u16 {
                     Some(ed.export_clause)
                 } else {
