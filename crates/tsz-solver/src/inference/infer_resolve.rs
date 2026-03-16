@@ -433,8 +433,7 @@ impl<'a> InferenceContext<'a> {
         let no_object_property_candidates = !filtered_no_never
             .iter()
             .any(|candidate| candidate.from_object_property);
-        let nullable_union_inference =
-            has_nullish_candidates && no_object_property_candidates;
+        let nullable_union_inference = has_nullish_candidates && no_object_property_candidates;
         let resolved = if priority_implies_combination
             || all_from_index_signatures
             || nullable_union_inference
