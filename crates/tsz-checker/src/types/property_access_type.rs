@@ -1018,7 +1018,10 @@ impl<'a> CheckerState<'a> {
                     // should not emit TS2339. The type parameters will be inferred from the
                     // object literal, creating a circular dependency that tsc handles by
                     // deferring the check.
-                    if is_this_access && !self.ctx.this_type_stack.is_empty() {
+                    if is_this_access && self.ctx.this_type_stack.last().is_some_and(|&top| {
+                        matches!(self.ctx.types.lookup(top), Some(tsz_solver::TypeData::ThisType))
+                            || tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, top)
+                    }) {
                         return TypeId::ANY;
                     }
 
