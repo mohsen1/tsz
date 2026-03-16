@@ -1821,12 +1821,25 @@ impl<'a> CheckerState<'a> {
 
     /// Report a "type is not callable" error using solver diagnostics with source tracking.
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+
         // Suppress cascade errors from unresolved types
         if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
+        // For property access expressions (e.g., `obj.notMethod`), narrow the error
+        // span to just the property name, matching tsc's behavior for chained calls.
+        let report_idx = if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            access.name_or_argument
+        } else {
+            idx
+        };
+
+        if let Some(loc) = self.get_source_location(report_idx) {
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
