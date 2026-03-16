@@ -612,7 +612,33 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let method = self.ctx.arena.get_method_decl(member_node)?;
-                let name = self.get_property_name(method.name)?;
+                let name = match self.get_property_name(method.name) {
+                    Some(n) => n,
+                    None => {
+                        // Computed property with unresolvable name (e.g., [sym]).
+                        // We still need to check override + dynamic name (TS4127).
+                        let has_override = self.has_override_modifier(&method.modifiers)
+                            || self.has_jsdoc_override_tag(member_idx);
+                        if has_override {
+                            return Some(ClassMemberInfo {
+                                name: String::from("__computed"),
+                                type_id: TypeId::ANY,
+                                name_idx: method.name,
+                                visibility: MemberVisibility::Public,
+                                is_method: true,
+                                is_static: self.has_static_modifier(&method.modifiers),
+                                is_accessor: false,
+                                is_abstract: self.has_abstract_modifier(&method.modifiers),
+                                has_override: true,
+                                is_jsdoc_override: !self.has_override_modifier(&method.modifiers)
+                                    && self.has_jsdoc_override_tag(member_idx),
+                                has_dynamic_name: true,
+                                has_computed_non_literal_name: true,
+                            });
+                        }
+                        return None;
+                    }
+                };
                 if skip_private && self.has_private_modifier(&method.modifiers) {
                     return None;
                 }
