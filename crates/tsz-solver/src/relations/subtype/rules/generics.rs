@@ -205,6 +205,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // O(1) nominal class subtype check for TypeQuery (typeof) comparisons.
+        // When both symbols are classes and the source derives from the target,
+        // `typeof DerivedClass` is assignable to `typeof BaseClass`. This mirrors
+        // tsc's behavior where class hierarchy implies constructor type compatibility,
+        // even when construct signatures differ (e.g., generic base, non-generic derived).
+        if let Some(graph) = self.inheritance_graph
+            && let Some(is_class) = self.is_class_symbol
+        {
+            let s_is_class = is_class(s_sym);
+            let t_is_class = is_class(t_sym);
+            if s_is_class && t_is_class {
+                let s_sym_id = tsz_binder::SymbolId(s_sym.0);
+                let t_sym_id = tsz_binder::SymbolId(t_sym.0);
+                if graph.is_derived_from(s_sym_id, t_sym_id) {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
