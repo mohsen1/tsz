@@ -481,35 +481,76 @@ impl<'a> Printer<'a> {
     /// Try to inline a property access to a const enum member.
     /// Returns `Some("value /* EnumName.Member */")` if the access targets a const enum.
     fn try_inline_const_enum_property_access(&self, access: &AccessExprData) -> Option<String> {
-        // The expression must be a simple identifier (the enum name)
         let expr_node = self.arena.get(access.expression)?;
-        if expr_node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
 
-        // Look up in const enum values, scoped to the access position
-        let members =
-            self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
-
-        // The name must be a simple identifier (the member name)
+        // The name (member) must be a simple identifier
         let name_node = self.arena.get(access.name_or_argument)?;
         if name_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
         let member_name = &self.arena.get_identifier(name_node)?.escaped_text;
 
-        let value = members.get(member_name.as_str())?;
-        if self.ctx.options.remove_comments {
-            Some(value.to_js_literal())
-        } else {
-            Some(format!(
-                "{} /* {}.{} */",
-                value.to_js_literal(),
-                enum_name,
-                member_name
-            ))
+        // Case 1: Simple identifier expression (e.g., `EnumName.Member`)
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
+            let members =
+                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
+            let value = members.get(member_name.as_str())?;
+            return if self.ctx.options.remove_comments {
+                Some(value.to_js_literal())
+            } else {
+                Some(format!(
+                    "{} /* {}.{} */",
+                    value.to_js_literal(),
+                    enum_name,
+                    member_name
+                ))
+            };
         }
+
+        // Case 2: Property access expression (e.g., `Namespace.EnumName.Member`)
+        // The expression is `Namespace.EnumName` — extract the last identifier as enum name
+        if let Some(inner_access) = self.arena.get_access_expr(expr_node) {
+            let inner_name_node = self.arena.get(inner_access.name_or_argument)?;
+            if inner_name_node.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let enum_name = &self.arena.get_identifier(inner_name_node)?.escaped_text;
+            let members =
+                self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos as u32)?;
+            let value = members.get(member_name.as_str())?;
+
+            // Build the full qualifier text from source for the comment
+            let full_qualifier = if let Some(text) = self.source_text {
+                let start = self.arena.get(access.expression)?.pos as usize;
+                let end = self.arena.get(access.expression)?.end as usize;
+                if start < end && end <= text.len() {
+                    let raw = text[start..end].trim();
+                    if !raw.is_empty() {
+                        raw.to_string()
+                    } else {
+                        enum_name.clone()
+                    }
+                } else {
+                    enum_name.clone()
+                }
+            } else {
+                enum_name.clone()
+            };
+
+            return if self.ctx.options.remove_comments {
+                Some(value.to_js_literal())
+            } else {
+                Some(format!(
+                    "{} /* {}.{} */",
+                    value.to_js_literal(),
+                    full_qualifier,
+                    member_name
+                ))
+            };
+        }
+
+        None
     }
 
     /// Try to inline an element access to a const enum member.
