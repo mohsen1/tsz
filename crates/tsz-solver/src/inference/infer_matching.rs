@@ -785,9 +785,19 @@ impl<'a> InferenceContext<'a> {
         let source_list = self.interner.type_list(source_members);
         let target_list = self.interner.type_list(target_members);
 
-        let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = target_list
+        // Resolve Lazy types in target members and flatten any unions they resolve to.
+        // This is critical for type aliases used in union targets: e.g., `T | Primitive`
+        // where `Primitive = number | string | boolean | Date` must be flattened so that
+        // fixed member matching can properly skip source members like `number` or `string`.
+        let resolved_targets = self.resolve_and_flatten_union_members(&target_list);
+
+        // Similarly resolve source members so they can match resolved fixed targets.
+        let resolved_sources = self.resolve_and_flatten_union_members(&source_list);
+
+        let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = resolved_targets
             .iter()
-            .partition(|&&t| self.target_contains_inference_param(t));
+            .copied()
+            .partition(|&t| self.target_contains_inference_param(t));
 
         if parameterized.is_empty() {
             // No inference targets — nothing to infer
@@ -799,7 +809,7 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
 
-        for &source_ty in source_list.iter() {
+        for &source_ty in resolved_sources.iter() {
             // Skip source members that match fixed targets
             if fixed.contains(&source_ty) {
                 continue;
@@ -832,6 +842,40 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Resolve Lazy types in union members and flatten any unions they resolve to.
+    ///
+    /// When a union contains `Lazy(DefId)` members (e.g., type alias references like
+    /// `Primitive` in `T | Primitive`), this resolves them and flattens the result.
+    /// For example, if `Primitive = number | string | boolean | Date`, then:
+    ///   `[T, Lazy(Primitive)]` → `[T, number, string, boolean, Date]`
+    ///
+    /// This is necessary for correct inference matching: without flattening,
+    /// source members like `number` can't be matched against the opaque `Lazy(Primitive)`
+    /// and incorrectly get inferred against type parameter `T`.
+    fn resolve_and_flatten_union_members(&self, members: &[TypeId]) -> Vec<TypeId> {
+        let mut result = Vec::with_capacity(members.len());
+        for &member in members {
+            if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(member) {
+                if let Some(resolved) = self.resolve_lazy_for_inference(def_id, member) {
+                    if resolved != member {
+                        if let Some(TypeData::Union(inner_members)) = self.interner.lookup(resolved)
+                        {
+                            // Flatten: the lazy resolved to a union, add its members
+                            let inner = self.interner.type_list(inner_members);
+                            result.extend(inner.iter().copied());
+                            continue;
+                        }
+                        // Resolved to a non-union type, use the resolved form
+                        result.push(resolved);
+                        continue;
+                    }
+                }
+            }
+            result.push(member);
+        }
+        result
     }
 
     /// Check if two types share the same outer structure (same kind / same generic base).
