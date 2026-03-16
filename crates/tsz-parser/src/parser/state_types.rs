@@ -1387,7 +1387,7 @@ impl ParserState {
     }
 
     /// Parse a single mapped type member: `[K in T]?: U`
-    /// Returns a MappedType node without outer braces.
+    /// Returns a `MappedType` node without outer braces.
     /// Used when a mapped type member appears inside an interface or class body.
     pub(crate) fn parse_mapped_type_member(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1463,7 +1463,7 @@ impl ParserState {
     /// Parse a mapped type that appears mixed with regular members in a type literal (TS 4.1+).
     /// Called when we encounter `[identifier in ...]` while parsing type literal members.
     /// Already-parsed members are passed in; remaining members after the mapped type are also collected.
-    /// The result is a MappedType node with all regular members in its `members` field.
+    /// The result is a `MappedType` node with all regular members in its `members` field.
     pub(crate) fn parse_mapped_type_with_members(
         &mut self,
         start_pos: u32,

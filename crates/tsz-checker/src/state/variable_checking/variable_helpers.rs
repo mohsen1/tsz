@@ -394,12 +394,11 @@ impl<'a> CheckerState<'a> {
             return;
         };
         // Anonymous class: name is absent
-        if class.name.is_some() {
-            if let Some(name_node) = self.ctx.arena.get(class.name) {
-                if name_node.kind == SyntaxKind::Identifier as u16 {
-                    return;
-                }
-            }
+        if class.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(class.name)
+            && name_node.kind == SyntaxKind::Identifier as u16
+        {
+            return;
         }
         self.report_anonymous_class_private_members(name_idx, &class.members);
     }

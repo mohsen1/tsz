@@ -2061,10 +2061,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // type that differs from the source's literal
                         if let Some(TypeData::Literal(_)) =
                             self.interner.lookup(target_prop.type_id)
+                            && target_prop.type_id != disc_type
                         {
-                            if target_prop.type_id != disc_type {
-                                return false; // Discriminant mismatch
-                            }
+                            return false; // Discriminant mismatch
                         }
                         // If target property is a type parameter (contains placeholder),
                         // it's not a discriminant in the target - skip this property

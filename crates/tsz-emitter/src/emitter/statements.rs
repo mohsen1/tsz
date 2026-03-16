@@ -1296,21 +1296,16 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             let body_info =
                 super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
-            if !body_info.block_scoped_vars.is_empty() {
-                if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
+            if !body_info.block_scoped_vars.is_empty()
+                && let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
                     self.arena,
                     loop_stmt.statement,
                     &[],
                     &body_info.block_scoped_vars,
-                ) {
-                    self.emit_while_statement_with_capture(
-                        node,
-                        loop_stmt,
-                        &capture_info,
-                        &body_info,
-                    );
-                    return;
-                }
+                )
+            {
+                self.emit_while_statement_with_capture(node, loop_stmt, &capture_info, &body_info);
+                return;
             }
         }
 
@@ -1336,22 +1331,22 @@ impl<'a> Printer<'a> {
             let init_vars = self.collect_for_initializer_let_const_vars(loop_stmt.initializer);
             let body_info =
                 super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
-            if !init_vars.is_empty() || !body_info.block_scoped_vars.is_empty() {
-                if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
+            if (!init_vars.is_empty() || !body_info.block_scoped_vars.is_empty())
+                && let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
                     self.arena,
                     loop_stmt.statement,
                     &init_vars,
                     &body_info.block_scoped_vars,
-                ) {
-                    self.emit_for_statement_with_capture(
-                        node,
-                        loop_stmt,
-                        &capture_info,
-                        &init_vars,
-                        &body_info,
-                    );
-                    return;
-                }
+                )
+            {
+                self.emit_for_statement_with_capture(
+                    node,
+                    loop_stmt,
+                    &capture_info,
+                    &init_vars,
+                    &body_info,
+                );
+                return;
             }
         }
 
@@ -1950,9 +1945,9 @@ impl<'a> Printer<'a> {
         let bytes = text.as_bytes();
         let s = start as usize;
         let e = (end as usize).min(bytes.len());
-        for i in s..e {
-            if bytes[i] == b';' {
-                return Some(i as u32);
+        for (i, &byte) in bytes[s..e].iter().enumerate() {
+            if byte == b';' {
+                return Some((s + i) as u32);
             }
         }
         None
@@ -1983,16 +1978,16 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             let body_info =
                 super::es5::loop_capture::collect_loop_body_vars(self.arena, loop_stmt.statement);
-            if !body_info.block_scoped_vars.is_empty() {
-                if let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
+            if !body_info.block_scoped_vars.is_empty()
+                && let Some(capture_info) = super::es5::loop_capture::check_loop_needs_capture(
                     self.arena,
                     loop_stmt.statement,
                     &[],
                     &body_info.block_scoped_vars,
-                ) {
-                    self.emit_do_statement_with_capture(node, loop_stmt, &capture_info, &body_info);
-                    return;
-                }
+                )
+            {
+                self.emit_do_statement_with_capture(node, loop_stmt, &capture_info, &body_info);
+                return;
             }
         }
 

@@ -422,7 +422,9 @@ impl<'a> CheckerState<'a> {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
                 let prop_atom = self.ctx.types.intern_string(property_name);
 
-                if let Some(cached) = self
+                // property_cache stores Option<TypeId>: Some(id) = resolved type,
+                // None = property not found (fall through for TS2339 diagnostics).
+                if let Some(Some(type_id)) = self
                     .ctx
                     .narrowing_cache
                     .property_cache
@@ -430,33 +432,25 @@ impl<'a> CheckerState<'a> {
                     .get(&(resolved_base, prop_atom))
                     .copied()
                 {
-                    match cached {
-                        Some(type_id) => {
-                            let mut result_type = type_id;
-                            if base_nullish.is_some()
-                                && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
-                            {
-                                result_type = factory.union2(result_type, TypeId::UNDEFINED);
-                            }
-                            // Store in optional_chain_cache for instant hits next time.
-                            if skip_result_flow_for_result {
-                                self.ctx
-                                    .narrowing_cache
-                                    .optional_chain_cache
-                                    .borrow_mut()
-                                    .insert((object_type, prop_atom), result_type);
-                            }
-                            return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
-                                result_type
-                            } else {
-                                self.apply_flow_narrowing(idx, result_type)
-                            };
-                        }
-                        None => {
-                            // Fall through to full diagnostic path so TS2339 and related
-                            // diagnostics are still emitted at this access site.
-                        }
+                    let mut result_type = type_id;
+                    if base_nullish.is_some()
+                        && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                    {
+                        result_type = factory.union2(result_type, TypeId::UNDEFINED);
                     }
+                    // Store in optional_chain_cache for instant hits next time.
+                    if skip_result_flow_for_result {
+                        self.ctx
+                            .narrowing_cache
+                            .optional_chain_cache
+                            .borrow_mut()
+                            .insert((object_type, prop_atom), result_type);
+                    }
+                    return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
+                        result_type
+                    } else {
+                        self.apply_flow_narrowing(idx, result_type)
+                    };
                 }
 
                 let fast_result = self.ctx.types.resolve_property_access_with_options(

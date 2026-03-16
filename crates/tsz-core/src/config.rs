@@ -3347,18 +3347,16 @@ fn resolve_lib_files_from_embedded(
             Some(f) => *f,
             None => {
                 return Err(anyhow!(
-                    "unsupported compilerOptions.lib '{}' (not found in embedded libs)",
-                    lib_name,
+                    "unsupported compilerOptions.lib '{lib_name}' (not found in embedded libs)",
                 ));
             }
         };
         resolved.push(embedded_dir.join(filename));
 
-        if follow_references {
-            if let Some(content) = crate::embedded_libs::get_lib_content(filename) {
-                for reference in extract_lib_references(content) {
-                    pending.push_back(reference);
-                }
+        if follow_references && let Some(content) = crate::embedded_libs::get_lib_content(filename)
+        {
+            for reference in extract_lib_references(content) {
+                pending.push_back(reference);
             }
         }
     }
@@ -3382,10 +3380,10 @@ fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
     // In npm-installed TypeScript, `lib.d.ts` is the ES5+DOM bundle (equivalent
     // to `es5.full.d.ts` in the source tree). The default target name for ES3/ES5
     // is "lib", so we need this alias for the embedded fallback to work.
-    if !map.contains_key("lib") {
-        if let Some(&es5_full) = map.get("es5.full") {
-            map.insert("lib", es5_full);
-        }
+    if !map.contains_key("lib")
+        && let Some(&es5_full) = map.get("es5.full")
+    {
+        map.insert("lib", es5_full);
     }
     map
 }

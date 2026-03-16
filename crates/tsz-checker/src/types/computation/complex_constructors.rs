@@ -750,28 +750,25 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(m)
                 .is_some_and(|n| n.kind == syntax_kind_ext::CONSTRUCTOR)
-        }) {
-            if let Some(ctor_node) = self.ctx.arena.get(*ctor_idx)
-                && let Some(ctor) = self.ctx.arena.get_constructor(ctor_node)
-            {
-                for &param_idx in &ctor.parameters.nodes {
-                    if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                    {
-                        // Check if this parameter has the matching name
-                        let param_name = self
-                            .ctx
-                            .arena
-                            .get(param.name)
-                            .and_then(|n| self.ctx.arena.get_identifier(n))
-                            .map(|id| id.escaped_text.as_str());
-                        if param_name == Some(prop_name.as_str()) {
-                            // Check if the type annotation has generic construct sigs
-                            if param.type_annotation.is_some() {
-                                let param_type =
-                                    self.get_type_from_type_node(param.type_annotation);
-                                return self.type_has_generic_construct_signatures(param_type);
-                            }
+        }) && let Some(ctor_node) = self.ctx.arena.get(*ctor_idx)
+            && let Some(ctor) = self.ctx.arena.get_constructor(ctor_node)
+        {
+            for &param_idx in &ctor.parameters.nodes {
+                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    // Check if this parameter has the matching name
+                    let param_name = self
+                        .ctx
+                        .arena
+                        .get(param.name)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str());
+                    if param_name == Some(prop_name.as_str()) {
+                        // Check if the type annotation has generic construct sigs
+                        if param.type_annotation.is_some() {
+                            let param_type = self.get_type_from_type_node(param.type_annotation);
+                            return self.type_has_generic_construct_signatures(param_type);
                         }
                     }
                 }
