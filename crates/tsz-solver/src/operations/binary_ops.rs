@@ -986,9 +986,12 @@ impl<'a> BinaryOpEvaluator<'a> {
             }
             // For type parameters, check the constraint (e.g., K extends keyof T).
             // tsc uses getBaseConstraintOfType(type) for this check.
+            // When the constraint is a generic Application/Lazy/Conditional that can't
+            // be fully resolved (e.g., Key<U> = keyof U where U is a type param),
+            // defer the check to instantiation time to avoid false TS2464.
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
-                .is_some_and(|c| self.is_valid_key_type_impl(c, defer_unresolved)),
+                .is_some_and(|c| self.is_valid_key_type_impl(c, true)),
             // keyof always produces string | number | symbol, which are all valid.
             Some(TypeData::KeyOf(_)) => true,
             // For intersection types, valid if any member is a valid key type.
@@ -1005,6 +1008,19 @@ impl<'a> BinaryOpEvaluator<'a> {
                 if defer_unresolved =>
             {
                 true
+            }
+            // Non-deferred Application/Lazy/Conditional: try evaluating before falling through.
+            // This handles cases like `Key<U> = keyof U` appearing as a type parameter constraint
+            // where the Application hasn't been resolved to KeyOf yet.
+            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::Conditional(_)) => {
+                let evaluated = self.interner.evaluate_type(type_id);
+                if evaluated != type_id {
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                } else {
+                    self.is_string_like(type_id)
+                        || self.is_number_like(type_id)
+                        || self.is_symbol_like(type_id)
+                }
             }
 
             // For indexed access, try resolving first. If it remains unresolved in generic
