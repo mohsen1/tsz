@@ -547,9 +547,6 @@ impl<'a> CheckerState<'a> {
 
             // Nullish coalescing: `a ?? b`
             if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
-                // TS2872: This kind of expression is always truthy.
-                self.check_always_truthy(left_idx);
-
                 // Propagate error types (don't collapse to unknown)
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
@@ -563,6 +560,14 @@ impl<'a> CheckerState<'a> {
                 let evaluated_left = self.evaluate_type_with_env(left_type);
                 let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
                 if cause.is_none() {
+                    // TS2869: Left operand is never nullish, right is unreachable.
+                    // This replaces the generic TS2872 ("always truthy") for ?? context.
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        right_idx,
+                        "Right operand of ?? is unreachable because the left operand is never nullish.",
+                        diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
+                    );
                     type_stack.push(left_type);
                 } else {
                     let result = match non_nullish {
