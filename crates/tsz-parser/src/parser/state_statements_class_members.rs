@@ -926,19 +926,18 @@ impl ParserState {
             && self.is_token(SyntaxKind::StaticKeyword)
             && self.look_ahead_is_static_block()
         {
-            if let Some(ref dec_list) = decorators {
-                if let Some(&first_dec_idx) = dec_list.nodes.first() {
-                    if let Some(dec_node) = self.arena.get(first_dec_idx) {
-                        let start = dec_node.pos;
-                        let length = dec_node.end.saturating_sub(dec_node.pos);
-                        self.parse_error_at(
-                            start,
-                            length,
-                            "Decorators are not valid here.",
-                            diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                        );
-                    }
-                }
+            if let Some(ref dec_list) = decorators
+                && let Some(&first_dec_idx) = dec_list.nodes.first()
+                && let Some(dec_node) = self.arena.get(first_dec_idx)
+            {
+                let start = dec_node.pos;
+                let length = dec_node.end.saturating_sub(dec_node.pos);
+                self.parse_error_at(
+                    start,
+                    length,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
             }
             return self.parse_static_block();
         }
