@@ -1569,6 +1569,9 @@ impl<'a> Printer<'a> {
         // Save the previous private field map (for nested classes)
         let prev_private_field_weakmaps = std::mem::take(&mut self.private_field_weakmaps);
         let prev_pending_weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
+        let prev_pending_static_private_inits =
+            std::mem::take(&mut self.pending_static_private_inits);
+        let prev_pending_private_class_alias = self.pending_private_class_alias.take();
         let prev_private_member_info = std::mem::take(&mut self.private_member_info);
 
         let has_any_private_lowering = !private_fields.is_empty()
@@ -1707,6 +1710,21 @@ impl<'a> Printer<'a> {
                 .filter(|f| !f.is_static)
                 .map(|f| format!("{} = new WeakMap()", f.weakmap_name))
                 .collect();
+
+            // Prepare static private field value initializations for after the class body.
+            // tsc emits: `_A_field = { value: <init> };` for each static private field.
+            self.pending_static_private_inits = private_fields
+                .iter()
+                .filter(|f| f.is_static)
+                .map(|f| (f.weakmap_name.clone(), f.initializer))
+                .collect();
+
+            // Store class alias for static privates: emit `_a = ClassName;` after class body
+            if let Some(ref alias) = private_class_alias {
+                if !class_name.is_empty() {
+                    self.pending_private_class_alias = Some((alias.clone(), class_name.clone()));
+                }
+            }
         }
 
         // For class expressions with static field initializers, we need to wrap
@@ -2912,10 +2930,40 @@ impl<'a> Printer<'a> {
 
         // Emit private field WeakMap initializations after class body:
         // _C_field1 = new WeakMap();
-        if !self.pending_weakmap_inits.is_empty() {
+        let has_weakmap_inits = !self.pending_weakmap_inits.is_empty();
+        let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
+        let private_class_alias_pair = self.pending_private_class_alias.take();
+
+        // Emit class alias for static private members: `_a = ClassName;`
+        // tsc emits this before WeakMap inits and static field value inits.
+        if let Some((ref alias, ref cls_name)) = private_class_alias_pair {
+            if has_weakmap_inits || !static_private_inits.is_empty() {
+                self.write_line();
+                self.write(alias);
+                self.write(" = ");
+                self.write(cls_name);
+                self.write(";");
+            }
+        }
+
+        if has_weakmap_inits {
             self.write_line();
             self.write(&self.pending_weakmap_inits.join(", "));
             self.write(";");
+        }
+
+        // Emit static private field value initializations after class body:
+        // `_A_field = { value: 10 };`
+        for (var_name, init_idx) in &static_private_inits {
+            self.write_line();
+            self.write(var_name);
+            self.write(" = { value: ");
+            if init_idx.is_some() {
+                self.emit_expression(*init_idx);
+            } else {
+                self.write("void 0");
+            }
+            self.write(" };");
         }
 
         // Emit deferred static blocks as IIFEs after the class body.
@@ -2930,6 +2978,8 @@ impl<'a> Printer<'a> {
         // Restore private field state (for nested classes)
         self.private_field_weakmaps = prev_private_field_weakmaps;
         self.pending_weakmap_inits = prev_pending_weakmap_inits;
+        self.pending_static_private_inits = prev_pending_static_private_inits;
+        self.pending_private_class_alias = prev_pending_private_class_alias;
         self.private_member_info = prev_private_member_info;
 
         // Track class name to prevent duplicate var declarations for merged namespaces.

@@ -497,6 +497,14 @@ pub struct Printer<'a> {
     /// Each entry is `_ClassName_fieldName = new WeakMap()`.
     pub(crate) pending_weakmap_inits: Vec<String>,
 
+    /// Pending static private field value initializations to emit after the class body.
+    /// Each entry is `(var_name, initializer_idx)` producing `_ClassName_field = { value: <init> };`
+    pub(crate) pending_static_private_inits: Vec<(String, NodeIndex)>,
+
+    /// Class alias variable name for static private member access (e.g., `_a`).
+    /// Emitted as `_a = ClassName;` after the class body.
+    pub(crate) pending_private_class_alias: Option<(String, String)>,
+
     /// When true, class emitter defers static block IIFEs.
     pub(crate) defer_class_static_blocks: bool,
 
@@ -650,6 +658,8 @@ impl<'a> Printer<'a> {
             private_field_weakmaps: FxHashMap::default(),
             private_member_info: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
+            pending_static_private_inits: Vec::new(),
+            pending_private_class_alias: None,
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
