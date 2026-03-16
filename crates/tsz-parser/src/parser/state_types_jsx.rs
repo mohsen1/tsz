@@ -512,6 +512,11 @@ impl ParserState {
         self.parse_expected(SyntaxKind::LessThanToken);
         let type_node = self.parse_non_predicate_type();
         self.parse_expected(SyntaxKind::GreaterThanToken);
+        // Save full-start position (including leading trivia) of the token
+        // after `>`. When trivia like conflict markers separates `>` from the
+        // next real token, we report "Expression expected" at the trivia start
+        // (right after `>`), matching tsc behavior.
+        let after_gt_full_start = self.token_full_start();
 
         // TypeScript doesn't allow bare 'yield' after type assertion
         // Unlike 'await', 'yield' is not allowed as a simple unary expression in this context
@@ -527,7 +532,15 @@ impl ParserState {
 
         let expression = self.parse_unary_expression();
         if expression.is_none() {
-            self.error_expression_expected();
+            use tsz_common::diagnostics::diagnostic_codes;
+            if self.should_report_error() {
+                self.parse_error_at(
+                    after_gt_full_start,
+                    0,
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
         }
         let end_pos = self.token_end();
 
