@@ -201,19 +201,23 @@ impl<'a> CheckerState<'a> {
                 // Report TS2300 on the class/function static member that conflicts.
                 // TSC reports "Duplicate identifier" on BOTH the class static member
                 // and the namespace export when they share the same name.
-                self.report_duplicate_on_class_static_member(sym_id, name);
+                // If the conflicting member is inherited (not directly declared),
+                // skip TS2300 — the class checker handles it as TS2417 instead.
+                let found_direct = self.report_duplicate_on_class_static_member(sym_id, name);
 
-                if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
-                    let decl_node = export_symbol.value_declaration;
-                    if decl_node != NodeIndex::NONE {
-                        let error_node = self
-                            .get_declaration_name_node(decl_node)
-                            .unwrap_or(decl_node);
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[name],
-                        );
+                if found_direct {
+                    if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
+                        let decl_node = export_symbol.value_declaration;
+                        if decl_node != NodeIndex::NONE {
+                            let error_node = self
+                                .get_declaration_name_node(decl_node)
+                                .unwrap_or(decl_node);
+                            self.error_at_node_msg(
+                                error_node,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                &[name],
+                            );
+                        }
                     }
                 }
                 continue;
@@ -238,12 +242,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report TS2300 on the class static member that conflicts with a namespace export.
-    fn report_duplicate_on_class_static_member(&mut self, sym_id: SymbolId, name: &str) {
+    /// Returns `true` if a direct (non-inherited) static member was found and reported.
+    fn report_duplicate_on_class_static_member(&mut self, sym_id: SymbolId, name: &str) -> bool {
         use tsz_common::diagnostics::diagnostic_codes;
         use tsz_parser::syntax_kind_ext;
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return;
+            return false;
         };
 
         for &decl_idx in &symbol.declarations {
@@ -303,10 +308,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                         &[name],
                     );
-                    return;
+                    return true;
                 }
             }
         }
+        false
     }
 
     /// Merge namespace exports into a constructor type for class+namespace merging.
