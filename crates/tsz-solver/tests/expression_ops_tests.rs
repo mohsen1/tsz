@@ -180,29 +180,33 @@ fn test_conditional_fresh_object_literals_get_complementary_optional_properties(
 
 #[test]
 fn test_template_always_string() {
+    let interner = TypeInterner::new();
     // `foo${bar}` -> string
-    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NUMBER]);
+    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
 fn test_template_empty() {
+    let interner = TypeInterner::new();
     // `` -> string
-    let result = compute_template_expression_type(&[]);
+    let result = compute_template_expression_type(&interner, &[], &[]);
     assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
 fn test_template_error_propagation() {
+    let interner = TypeInterner::new();
     // `foo${ERROR}` -> ERROR
-    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::ERROR]);
+    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::ERROR]);
     assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
 fn test_template_never_propagation() {
+    let interner = TypeInterner::new();
     // `foo${never}` -> never
-    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NEVER]);
+    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NEVER]);
     assert_eq!(result, TypeId::NEVER);
 }
 
@@ -301,22 +305,25 @@ fn test_bct_enum_members_widen_to_parent_enum() {
 
 #[test]
 fn test_template_expression_default_is_string() {
+    let interner = TypeInterner::new();
     // Template expressions without context produce string type
-    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NUMBER]);
+    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
 fn test_template_expression_error_propagation() {
+    let interner = TypeInterner::new();
     // ERROR in any part propagates
-    let result = compute_template_expression_type(&[TypeId::ERROR, TypeId::STRING]);
+    let result = compute_template_expression_type(&interner, &[], &[TypeId::ERROR, TypeId::STRING]);
     assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
 fn test_template_expression_never_propagation() {
+    let interner = TypeInterner::new();
     // NEVER in any part propagates
-    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NEVER]);
+    let result = compute_template_expression_type(&interner, &[], &[TypeId::STRING, TypeId::NEVER]);
     assert_eq!(result, TypeId::NEVER);
 }
 
