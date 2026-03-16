@@ -119,9 +119,23 @@ pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a primitive type (intrinsic or literal).
 pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Check well-known intrinsic TypeIds first
+    // Check well-known intrinsic primitive TypeIds first.
+    // In tsc, Primitive = String | Number | BigInt | Boolean | Null | Undefined | ESSymbol | Void.
+    // Exclude non-primitive intrinsics: object, never, unknown, any, error,
+    // function, and internal sentinels. Note: void IS a primitive in tsc.
     if type_id.is_intrinsic() {
-        return true;
+        return !matches!(
+            type_id,
+            TypeId::OBJECT
+                | TypeId::NEVER
+                | TypeId::UNKNOWN
+                | TypeId::ANY
+                | TypeId::ERROR
+                | TypeId::FUNCTION
+                | TypeId::PROMISE_BASE
+                | TypeId::DELEGATE
+                | TypeId::STRICT_ANY
+        );
     }
     matches!(
         types.lookup(type_id),
