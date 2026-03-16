@@ -181,22 +181,22 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// This applies to types like `{}` that structurally accept primitives,
-    /// and type parameters whose constraint is `{}` or missing.
+    /// In tsc, TS2638 only fires for type parameters whose constraint is
+    /// unconstrained or `{}` — concrete types like `{}` are valid RHS for `in`.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // `{}` (empty object type) may represent primitives
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        // Type parameters: check if constraint is missing or is `{}`
+        // Only type parameters can "may represent" a primitive.
+        // Concrete types (even `{}`) are valid as RHS of `in`.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
                 None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
+                Some(c) => {
+                    // A type param constrained to `{}` may also represent primitive
+                    tsz_solver::is_empty_object_type(self.ctx.types, c)
+                        || self.type_may_represent_primitive(c)
+                }
             };
         }
 
