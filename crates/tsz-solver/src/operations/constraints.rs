@@ -7,9 +7,8 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::operations::{
-    AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
-};
+use crate::operations::core::MAX_CONSTRAINT_STEPS;
+use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::types::{
     CallSignature, FunctionShape, MappedModifier, ObjectShape, ObjectShapeId, ParamInfo,
     PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
@@ -280,8 +279,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Use MappedType priority so that candidates from different
                             // properties are combined via union (matching tsc's
                             // PriorityImpliesCombination for MappedTypeConstraint).
-                            let template_priority =
-                                crate::types::InferencePriority::MappedType;
+                            let template_priority = crate::types::InferencePriority::MappedType;
                             for prop in &source_obj.properties {
                                 self.constrain_types(
                                     ctx,
@@ -508,40 +506,40 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     } else {
-                    // Check if any placeholder member structurally matches the source
-                    let structural_matches: Vec<TypeId> = placeholder_members
-                        .iter()
-                        .filter(|&&member| {
-                            self.types_share_outer_structure_for_constraint(source, member)
-                        })
-                        .copied()
-                        .collect();
+                        // Check if any placeholder member structurally matches the source
+                        let structural_matches: Vec<TypeId> = placeholder_members
+                            .iter()
+                            .filter(|&&member| {
+                                self.types_share_outer_structure_for_constraint(source, member)
+                            })
+                            .copied()
+                            .collect();
 
-                    if !structural_matches.is_empty() {
-                        // When multiple Object-type members match, prefer the one with
-                        // deeper property-level alignment. For example, given source
-                        // `{d: number[]}` and targets `{d: T}` vs `{d: T[]}`, the second
-                        // is better because the Array structure in `d` aligns. Without
-                        // this, both contribute candidates and the naked-type-param member
-                        // produces a too-wide inference (T = number[] instead of T = number).
-                        let best_matches = if structural_matches.len() > 1 {
-                            self.select_best_structural_matches_for_constraint(
-                                source,
-                                &structural_matches,
-                                var_map,
-                            )
+                        if !structural_matches.is_empty() {
+                            // When multiple Object-type members match, prefer the one with
+                            // deeper property-level alignment. For example, given source
+                            // `{d: number[]}` and targets `{d: T}` vs `{d: T[]}`, the second
+                            // is better because the Array structure in `d` aligns. Without
+                            // this, both contribute candidates and the naked-type-param member
+                            // produces a too-wide inference (T = number[] instead of T = number).
+                            let best_matches = if structural_matches.len() > 1 {
+                                self.select_best_structural_matches_for_constraint(
+                                    source,
+                                    &structural_matches,
+                                    var_map,
+                                )
+                            } else {
+                                structural_matches.clone()
+                            };
+                            for member in best_matches {
+                                self.constrain_types(ctx, var_map, source, member, priority);
+                            }
                         } else {
-                            structural_matches.clone()
-                        };
-                        for member in best_matches {
-                            self.constrain_types(ctx, var_map, source, member, priority);
+                            // No structural match — constrain against all placeholder members
+                            for member in placeholder_members {
+                                self.constrain_types(ctx, var_map, source, member, priority);
+                            }
                         }
-                    } else {
-                        // No structural match — constrain against all placeholder members
-                        for member in placeholder_members {
-                            self.constrain_types(ctx, var_map, source, member, priority);
-                        }
-                    }
                     } // close discriminant else
                 } else if placeholder_count == 0 {
                     // No placeholder members in the target union, but the SOURCE may
@@ -2181,10 +2179,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     break;
                 };
                 let mp_type = mp.type_id;
-                if !matches!(
-                    self.interner.lookup(mp_type),
-                    Some(TypeData::Literal(_))
-                ) {
+                if !matches!(self.interner.lookup(mp_type), Some(TypeData::Literal(_))) {
                     is_discriminant = false;
                     break;
                 }
