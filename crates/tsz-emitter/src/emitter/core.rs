@@ -15,6 +15,16 @@ use tsz_scanner::SyntaxKind;
 /// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
 pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
 
+/// A const enum entry scoped to a specific region of the source.
+/// File-level const enums use `(0, u32::MAX)` so they match any position.
+/// Function-scoped const enums use the enclosing function's `(pos, end)`.
+#[derive(Debug, Clone)]
+pub(crate) struct ScopedConstEnum {
+    pub scope_start: u32,
+    pub scope_end: u32,
+    pub values: FxHashMap<String, EnumValue>,
+}
+
 /// Info about a private class member for lowering.
 /// Determines the kind argument for `__classPrivateFieldGet`/`__classPrivateFieldSet`.
 #[derive(Debug, Clone)]
@@ -433,9 +443,11 @@ pub struct Printer<'a> {
     pub(crate) is_current_root_js_source: bool,
 
     /// Const enum member values for inlining at usage sites.
-    /// Maps `enum_name -> (member_name -> EnumValue)`.
-    /// Populated during `emit_source_file` pre-pass; consumed during property/element access.
-    pub(crate) const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
+    /// Maps `enum_name -> Vec<ScopedConstEnum>`.  Each entry carries the
+    /// position range of the scope it was declared in so that at inline time
+    /// we pick the right entry (the tightest scope that contains the access).
+    /// File-level const enums use `(0, u32::MAX)`.
+    pub(crate) const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
 
     /// Accumulated enum member values across all processed enum declarations.
     /// Used by `EnumES5Transformer` to resolve cross-enum references like
