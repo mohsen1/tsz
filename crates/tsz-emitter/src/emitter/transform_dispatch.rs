@@ -554,6 +554,13 @@ impl<'a> Printer<'a> {
                                 self.write_line();
                             }
                         }
+                    } else if !is_default
+                        && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        && self.variable_stmt_has_binding_pattern(node)
+                    {
+                        // Destructuring export: emit as comma expression
+                        // (e.g., `_a = expr, exports.x = _a.x, exports.rest = __rest(...)`)
+                        self.emit_cjs_destructuring_export(node);
                     } else if !is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
                         // For non-default class declarations, use the deferred export
                         // mechanism so exports.X = X; is emitted right after the class
@@ -1256,7 +1263,13 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
-                if !*is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                if !*is_default
+                    && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && self.variable_stmt_has_binding_pattern(node)
+                {
+                    // Destructuring export: emit as comma expression
+                    self.emit_cjs_destructuring_export(node);
+                } else if !*is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
                     // Use deferred export mechanism for class declarations so
                     // exports.X = X; appears before lowered static blocks/IIFEs.
                     if let Some(name_id) = names.first()
