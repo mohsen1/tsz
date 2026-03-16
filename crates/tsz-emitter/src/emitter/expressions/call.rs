@@ -11,7 +11,7 @@ impl<'a> Printer<'a> {
 
         if self.is_optional_chain(node) {
             if self.ctx.options.target.supports_es2020() {
-                self.emit(call.expression);
+                self.emit_unwrapping_type_args(call.expression);
                 if self.has_optional_call_token(node, call.expression, call.arguments.as_ref()) {
                     self.write("?.");
                 }
@@ -558,6 +558,20 @@ impl<'a> Printer<'a> {
                     if i >= 2 {
                         i -= 2;
                     }
+                }
+                // Skip over type arguments: `?.<T>()` → scan past `<T>` to find `?.`
+                b'>' => {
+                    let mut depth = 1u32;
+                    i -= 1;
+                    while i > start && depth > 0 {
+                        match bytes[i - 1] {
+                            b'>' => depth += 1,
+                            b'<' => depth -= 1,
+                            _ => {}
+                        }
+                        i -= 1;
+                    }
+                    // After skipping `<...>`, continue scanning for `?.`
                 }
                 b'?' if i >= 2 && bytes[i - 2] == b'.' => {
                     return true;
