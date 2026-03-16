@@ -1344,6 +1344,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
         }
 
+        // For simple identifiers, try full scope resolution (including function params,
+        // local variables, etc.) before falling back to lowering.
+        if let Some(name) = name_opt {
+            if let Some(sym_id) = self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, type_query.expr_name)
+            {
+                let factory = self.ctx.types.factory();
+                return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+            }
+            // Name not found in any scope — emit TS2304
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &[name]);
+            if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
+                self.ctx.error(
+                    expr_node.pos,
+                    expr_node.end - expr_node.pos,
+                    msg,
+                    diagnostic_codes::CANNOT_FIND_NAME,
+                );
+            }
+            return TypeId::ERROR;
+        }
+
         // Fall back to TypeLowering with proper value resolvers
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let ident = self.ctx.arena.get_identifier_at(node_idx)?;
