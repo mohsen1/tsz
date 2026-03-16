@@ -367,4 +367,85 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Emit TS7031 errors for binding elements in destructuring variable declarations
+    /// without type annotations or initializers (`var [a], {b};` under noImplicitAny).
+    pub(crate) fn emit_implicit_any_for_var_destructuring(&mut self, pattern_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+
+        let pattern_kind = pattern_node.kind;
+
+        if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            if let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
+                for &element_idx in &pattern.elements.nodes {
+                    if let Some(element_node) = self.ctx.arena.get(element_idx) {
+                        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                            continue;
+                        }
+                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
+                        {
+                            let name_is_pattern = self
+                                .ctx
+                                .arena
+                                .get(binding_elem.name)
+                                .map(|n| {
+                                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                })
+                                .unwrap_or(false);
+
+                            if name_is_pattern {
+                                self.emit_implicit_any_for_var_destructuring(binding_elem.name);
+                            } else if binding_elem.initializer.is_none() {
+                                let binding_name = self.parameter_name_for_error(binding_elem.name);
+                                self.error_at_node_msg(
+                                    binding_elem.name,
+                                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
+                                    &[&binding_name, "any"],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        } else if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            if let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
+                for &element_idx in &pattern.elements.nodes {
+                    if let Some(element_node) = self.ctx.arena.get(element_idx) {
+                        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                            continue;
+                        }
+                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
+                        {
+                            let name_is_pattern = self
+                                .ctx
+                                .arena
+                                .get(binding_elem.name)
+                                .map(|n| {
+                                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                })
+                                .unwrap_or(false);
+
+                            if name_is_pattern {
+                                self.emit_implicit_any_for_var_destructuring(binding_elem.name);
+                            } else if binding_elem.initializer.is_none() {
+                                let binding_name = self.parameter_name_for_error(binding_elem.name);
+                                self.error_at_node_msg(
+                                    binding_elem.name,
+                                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
+                                    &[&binding_name, "any"],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
