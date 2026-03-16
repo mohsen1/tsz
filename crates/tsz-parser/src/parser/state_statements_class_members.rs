@@ -552,12 +552,20 @@ impl ParserState {
             type_params
         });
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         let saved_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS;
-        let parameters = self.parse_parameter_list();
-        self.context_flags = saved_flags;
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        let parameters = if has_open_paren {
+            let params = self.parse_parameter_list();
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            params
+        } else {
+            // When `(` is missing (e.g., `constructor\n}`), skip parameter parsing
+            // and `)` expectation to avoid cascading `')' expected` errors.
+            self.context_flags = saved_flags;
+            NodeList::new()
+        };
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {

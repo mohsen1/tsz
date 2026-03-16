@@ -1521,7 +1521,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex) {
         use tsz_parser::parser::node_flags;
 
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+        // Unwrap through labeled statements to find the actual inner statement.
+        // e.g. `if (true) label: const c8 = 0;` — tsc reports TS1156 on `c8`.
+        let mut inner_idx = stmt_idx;
+        loop {
+            let Some(inner_node) = self.ctx.arena.get(inner_idx) else {
+                return;
+            };
+            if inner_node.kind == syntax_kind_ext::LABELED_STATEMENT {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(inner_node) {
+                    inner_idx = labeled.statement;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        let Some(node) = self.ctx.arena.get(inner_idx) else {
             return;
         };
 
@@ -1574,7 +1590,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // tsc reports TS1156 at the declaration's name identifier, not the keyword.
             // For `type Foo = ...`, tsc points at `Foo`, not `type`.
-            let error_node = self.get_declaration_name_node(stmt_idx).unwrap_or(stmt_idx);
+            let error_node = self
+                .get_declaration_name_node(inner_idx)
+                .unwrap_or(inner_idx);
 
             self.error_at_node(
                 error_node,
