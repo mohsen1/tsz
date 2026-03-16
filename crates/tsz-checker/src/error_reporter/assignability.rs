@@ -89,11 +89,10 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
                 .map(|p| p.type_id);
-            if let Some(src_type) = source_prop_type {
-                if tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type) {
+            if let Some(src_type) = source_prop_type
+                && tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type) {
                     return true;
                 }
-            }
         }
         false
     }
@@ -354,8 +353,8 @@ impl<'a> CheckerState<'a> {
         // TS2375: When exactOptionalPropertyTypes is enabled, check if the failure
         // is due to assigning undefined to optional properties that don't include undefined.
         // This mirrors tsc's reportRelationError which selects TS2375 over TS2322.
-        if self.has_exact_optional_property_mismatch(source, target) {
-            if let Some(loc) = self.get_source_location(anchor_idx) {
+        if self.has_exact_optional_property_mismatch(source, target)
+            && let Some(loc) = self.get_source_location(anchor_idx) {
                 let src_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
                 let tgt_str = self.format_assignability_type_for_message(target, source);
@@ -372,7 +371,6 @@ impl<'a> CheckerState<'a> {
                 ));
                 return;
             }
-        }
 
         // Use one solver-boundary analysis path for TS2322 metadata.
         let analysis = self.analyze_assignability_failure(source, target);
