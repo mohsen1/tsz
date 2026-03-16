@@ -158,6 +158,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -356,6 +357,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -545,6 +547,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -738,6 +741,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -924,6 +928,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -1138,6 +1143,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion.max_depth(),
                 parent.recursion_depth.borrow().depth(),
             )),
+            heritage_merge_depth: Cell::new(parent.heritage_merge_depth.get()),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),

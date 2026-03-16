@@ -29,6 +29,37 @@ thread_local! {
     static REFS_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     // Tracks whether we're inside a top-level `ensure_refs_resolved` call tree.
     static REFS_RESOLUTION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // Depth counter for recursive evaluate_type_with_env_impl calls.
+    // The cycle evaluate_type_with_env_impl → ensure_relation_input_ready →
+    // resolve_and_insert_def_type → get_type_of_symbol → evaluate_type_with_env_impl
+    // can cause unbounded stack growth. Must be thread-local because cross-arena
+    // delegation creates child CheckerContexts that reset per-context counters.
+    static EVAL_ENV_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Global accumulating fuel counter that does NOT reset between top-level
+    // ensure_relation_input_ready calls. Prevents OOM when many top-level calls
+    // each reset per-call fuel but together create unbounded type data
+    // (e.g., DOM types + module augmentation in reactTransitiveImportHasValidDeclaration).
+    static GLOBAL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+// Maximum global resolution fuel across all top-level calls per thread.
+// Normal code uses well under 5000 total resolutions. DOM-heavy React code
+// with module augmentations can explode to hundreds of thousands.
+const MAX_GLOBAL_RESOLUTION_FUEL: u32 = 5000;
+
+/// Check if global resolution fuel is exhausted.
+pub(crate) fn global_resolution_fuel_exhausted() -> bool {
+    GLOBAL_RESOLUTION_FUEL.get() >= MAX_GLOBAL_RESOLUTION_FUEL
+}
+
+/// Increment the global resolution fuel counter.
+pub(crate) fn increment_global_resolution_fuel() {
+    GLOBAL_RESOLUTION_FUEL.set(GLOBAL_RESOLUTION_FUEL.get() + 1);
+}
+
+/// Reset global resolution fuel (call at the start of each file's type-checking).
+pub(crate) fn reset_global_resolution_fuel() {
+    GLOBAL_RESOLUTION_FUEL.set(0);
 }
 
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
@@ -93,7 +124,28 @@ impl<'a> CheckerState<'a> {
             return cached.result;
         }
 
-        if REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL {
+        // Depth guard: evaluate_type_with_env_impl can recurse through
+        // ensure_relation_input_ready → resolve_and_insert_def_type →
+        // get_type_of_symbol → evaluate_type_with_env_impl, causing
+        // unbounded stack growth on cross-referencing module augmentations
+        // (e.g., react + create-emotion-styled). Uses thread-local counter
+        // because cross-arena delegation resets per-context counters.
+        let eval_depth = EVAL_ENV_DEPTH.get();
+        if eval_depth >= 5 {
+            return type_id;
+        }
+        EVAL_ENV_DEPTH.set(eval_depth + 1);
+
+        // Only resolve refs when not already inside an evaluate_type_with_env_impl
+        // call AND not inside symbol resolution. Nested evaluation or active symbol
+        // resolution can trigger compute_type_of_symbol → merge_interface_heritage_types,
+        // which creates large merged types that cause OOM in the solver's evaluator
+        // (module augmentations like react + create-emotion-styled).
+        if eval_depth == 0
+            && self.ctx.symbol_resolution_depth.get() == 0
+            && self.ctx.heritage_merge_depth.get() == 0
+            && REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL
+        {
             self.ensure_relation_input_ready(type_id);
         }
 
@@ -169,6 +221,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        EVAL_ENV_DEPTH.set(eval_depth);
         final_result
     }
 
@@ -816,6 +869,11 @@ impl<'a> CheckerState<'a> {
 
                 // Consume fuel for each DefId resolution (the expensive part)
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
+                increment_global_resolution_fuel();
+                if global_resolution_fuel_exhausted() {
+                    fully_resolved = false;
+                    break;
+                }
 
                 match self.resolve_lazy_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
@@ -837,6 +895,7 @@ impl<'a> CheckerState<'a> {
 
                 // Consume fuel for enum resolution too
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
+                increment_global_resolution_fuel();
 
                 match self.resolve_enum_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
@@ -859,6 +918,7 @@ impl<'a> CheckerState<'a> {
 
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
+                increment_global_resolution_fuel();
 
                 let resolved = self.type_reference_symbol_type(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);

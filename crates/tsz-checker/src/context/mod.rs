@@ -602,6 +602,11 @@ pub struct CheckerContext<'a> {
     /// Prevents stack overflow by bailing out when depth exceeds the limit.
     pub recursion_depth: RefCell<tsz_solver::recursion::DepthCounter>,
 
+    /// Dedicated depth counter for interface heritage merge recursion.
+    /// Heritage merging is expensive per level (resolves full interface types),
+    /// so it needs a tighter limit than the general recursion counter.
+    pub heritage_merge_depth: Cell<u32>,
+
     /// Current depth of call expression resolution.
     pub call_depth: RefCell<tsz_solver::recursion::DepthCounter>,
 
