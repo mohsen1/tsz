@@ -844,12 +844,12 @@ impl ParserState {
         let raw_text = self.scanner.get_token_text_ref().to_string();
 
         // Check for unterminated string literal.
-        // tsc emits TS1002 "Unterminated string literal" for newline-terminated strings
-        // and TS1126 "Unexpected end of text" for EOF-terminated strings.
+        // tsc emits TS1002 for regular unterminated strings (newline or EOF without backslash).
+        // tsc emits TS1126 for strings ending with an incomplete backslash escape at EOF.
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
-            let is_eof_unterminated =
+            let is_backslash_at_eof =
                 (self.scanner.get_token_flags() & TokenFlags::UnterminatedAtEof as u32) != 0;
-            if is_eof_unterminated {
+            if is_backslash_at_eof {
                 self.parse_error_at(
                     end_pos,
                     0,

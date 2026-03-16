@@ -1000,6 +1000,15 @@ impl ScannerState {
                 self.pos += 1;
                 if self.pos < self.end {
                     self.scan_string_escape(quote, &mut result);
+                } else {
+                    // Backslash at EOF — incomplete escape sequence.
+                    // Mark with UnterminatedAtEof so the parser can emit TS1126
+                    // instead of TS1002.
+                    self.token_flags |=
+                        TokenFlags::Unterminated as u32 | TokenFlags::UnterminatedAtEof as u32;
+                    self.token_value = result;
+                    self.token = SyntaxKind::StringLiteral;
+                    return;
                 }
             } else if ch == CharacterCodes::LINE_FEED || ch == CharacterCodes::CARRIAGE_RETURN {
                 // Unterminated string
@@ -1016,8 +1025,13 @@ impl ScannerState {
         }
 
         // Unterminated string — reached EOF without closing quote.
-        // Set UnterminatedAtEof to distinguish from newline-terminated (TS1002 vs TS1126).
-        self.token_flags |= TokenFlags::Unterminated as u32 | TokenFlags::UnterminatedAtEof as u32;
+        // If the string contains an invalid/incomplete escape sequence (e.g., \u{...
+        // without closing brace, or bare \u at EOF), tsc emits TS1126 "Unexpected end
+        // of text". Otherwise, tsc emits TS1002 "Unterminated string literal".
+        self.token_flags |= TokenFlags::Unterminated as u32;
+        if (self.token_flags & TokenFlags::ContainsInvalidEscape as u32) != 0 {
+            self.token_flags |= TokenFlags::UnterminatedAtEof as u32;
+        }
         self.token_value = result;
         self.token = SyntaxKind::StringLiteral;
     }
