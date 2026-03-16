@@ -39,8 +39,11 @@ impl ParserState {
     }
 
     /// Parse a type (handles keywords, type references, unions, intersections, conditionals).
+    ///
+    /// Type predicates (`x is T`) are NOT allowed here — matching tsc's `parseType()`.
+    /// Only return type positions (via `parse_return_type()`) allow type predicates.
     pub(crate) fn parse_type(&mut self) -> NodeIndex {
-        self.parse_type_with_predicates(true)
+        self.parse_type_with_predicates(false)
     }
 
     /// Parse a type in a context that explicitly disallows type predicates, such as
@@ -1615,21 +1618,14 @@ impl ParserState {
             let member = self.parse_type_member(false);
 
             // If parse_type_member returned NONE (couldn't parse) and we haven't advanced,
-            // skip the current token to prevent infinite loops
+            // skip the current token to prevent infinite loops.
+            // tsc always emits TS1131 "Property or signature expected" in the TypeMembers
+            // context via `parsingContextErrors`, regardless of the token kind.
             if member.is_none() && self.token_pos() == saved_pos {
-                // tsc emits TS1434 "Unexpected keyword or identifier" when the stuck token
-                // is an identifier or keyword, TS1131 "Property or signature expected" otherwise
-                if self.is_identifier_or_keyword() {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    );
-                }
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                );
                 self.next_token(); // Skip the problematic token
                 continue;
             }
