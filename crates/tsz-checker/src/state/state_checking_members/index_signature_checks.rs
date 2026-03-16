@@ -14,7 +14,6 @@ impl<'a> CheckerState<'a> {
     /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
     pub(crate) fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_scanner::SyntaxKind;
 
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -27,6 +26,15 @@ impl<'a> CheckerState<'a> {
         let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
             return;
         };
+
+        // TS1021: An index signature must have a type annotation.
+        if index_sig.type_annotation.is_none() {
+            self.error_at_node(
+                member_idx,
+                "An index signature must have a type annotation.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
+            );
+        }
 
         let param_idx = index_sig
             .parameters
@@ -71,48 +79,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if the type annotation is a valid index signature parameter type
         // Valid types: string, number, symbol (keywords), template literal type,
-        // or type references to string/number/symbol
-        let is_valid = match type_node.kind {
-            k if k == SyntaxKind::StringKeyword as u16 => true,
-            k if k == SyntaxKind::NumberKeyword as u16 => true,
-            k if k == SyntaxKind::SymbolKeyword as u16 => true,
-            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => true,
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                // Type references like "string", "number", "symbol" (referring to built-in types)
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
-                    tracing::trace!(
-                        type_name_idx = type_ref.type_name.0,
-                        "check_index_signature_parameter_type: got type_ref"
-                    );
-                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
-                        tracing::trace!(
-                            name_node_kind = name_node.kind,
-                            "check_index_signature_parameter_type: got name_node"
-                        );
-                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            let name = ident.escaped_text.as_str();
-                            tracing::trace!(
-                                type_name = name,
-                                "check_index_signature_parameter_type: got identifier"
-                            );
-                            matches!(name, "string" | "number" | "symbol")
-                        } else {
-                            tracing::trace!(
-                                "check_index_signature_parameter_type: not an identifier"
-                            );
-                            false
-                        }
-                    } else {
-                        tracing::trace!("check_index_signature_parameter_type: no name_node");
-                        false
-                    }
-                } else {
-                    tracing::trace!("check_index_signature_parameter_type: no type_ref");
-                    false
-                }
-            }
-            _ => false,
-        };
+        // or type references to string/number/symbol (including type aliases)
+        let is_valid =
+            self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation);
 
         tracing::trace!(
             is_valid,
@@ -144,6 +113,80 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a type node represents a valid index signature parameter type.
+    /// Valid types: string, number, symbol keywords, template literal types,
+    /// or type aliases that resolve to these.
+    pub(crate) fn is_valid_index_sig_param_type(
+        &self,
+        type_node_kind: u16,
+        type_annotation_idx: NodeIndex,
+    ) -> bool {
+        use crate::symbol_resolver::TypeSymbolResolution;
+        use tsz_scanner::SyntaxKind;
+
+        match type_node_kind {
+            k if k == SyntaxKind::StringKeyword as u16 => true,
+            k if k == SyntaxKind::NumberKeyword as u16 => true,
+            k if k == SyntaxKind::SymbolKeyword as u16 => true,
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => true,
+            k if k == syntax_kind_ext::UNION_TYPE => {
+                // A union type is valid if ALL members are valid index types
+                // (e.g., `string | number` is valid)
+                if let Some(type_node) = self.ctx.arena.get(type_annotation_idx)
+                    && let Some(composite) = self.ctx.arena.get_composite_type(type_node)
+                {
+                    composite.types.nodes.iter().all(|&member_idx| {
+                        if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                            self.is_valid_index_sig_param_type(member_node.kind, member_idx)
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_node) = self.ctx.arena.get(type_annotation_idx)
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+                {
+                    // Check for direct string/number/symbol name
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.as_str();
+                        if matches!(name, "string" | "number" | "symbol") {
+                            return true;
+                        }
+                    }
+
+                    // Check if this is a type alias that resolves to a valid index type
+                    if let TypeSymbolResolution::Type(sym_id) =
+                        self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                    {
+                        if let Some(&decl_idx) = symbol.declarations.first()
+                            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
+                            && let Some(alias_type_node) = self.ctx.arena.get(type_alias.type_node)
+                        {
+                            return self.is_valid_index_sig_param_type(
+                                alias_type_node.kind,
+                                type_alias.type_node,
+                            );
+                        }
+                    }
+
+                    false
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// Check if the type annotation of an index signature parameter is a type parameter
     /// or a literal type (triggers TS1337 instead of TS1268).
     pub(crate) fn is_type_param_or_literal_in_index_sig(
@@ -164,7 +207,24 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Type references: check if they resolve to type parameters
+        // Union types: check if any member is a literal type
+        if type_node_kind == syntax_kind_ext::UNION_TYPE {
+            if let Some(type_node) = self.ctx.arena.get(type_annotation_idx)
+                && let Some(composite) = self.ctx.arena.get_composite_type(type_node)
+            {
+                for &member_idx in &composite.types.nodes {
+                    if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                        if self.is_type_param_or_literal_in_index_sig(member_node.kind, member_idx)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Type references: check if they resolve to type parameters or literal type aliases
         if type_node_kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_node) = self.ctx.arena.get(type_annotation_idx)
             && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
@@ -173,9 +233,24 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0
             {
-                return true;
+                if (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
+                    return true;
+                }
+                // If it's a type alias, check the underlying type
+                if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0 {
+                    if let Some(&decl_idx) = symbol.declarations.first()
+                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
+                    {
+                        if let Some(alias_type_node) = self.ctx.arena.get(type_alias.type_node) {
+                            return self.is_type_param_or_literal_in_index_sig(
+                                alias_type_node.kind,
+                                type_alias.type_node,
+                            );
+                        }
+                    }
+                }
             }
             // Fallback: check the checker's type parameter stack (covers type params
             // from type aliases/generics that may not be in the binder's symbol table)
@@ -189,6 +264,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if a container node (class or interface) has an extends clause.
+    fn container_has_extends_clause(&self, container_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(container_node) else {
+            return false;
+        };
+        if let Some(iface) = self.ctx.arena.get_interface(node) {
+            return iface.heritage_clauses.is_some();
+        }
+        if let Some(class) = self.ctx.arena.get_class(node) {
+            return class.heritage_clauses.is_some();
+        }
         false
     }
 
@@ -214,6 +303,11 @@ impl<'a> CheckerState<'a> {
 
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
+
+        // Track whether this container extends a base type.
+        // Used to determine if a number index is inherited from a base type
+        // vs from another merged body of the same interface.
+        let has_extends_clause = self.container_has_extends_clause(container_node);
 
         // The solver's ObjectShape only has string_index/number_index fields,
         // so symbol index signatures get misclassified into string_index with
@@ -541,6 +635,7 @@ impl<'a> CheckerState<'a> {
                 let str_value_str = self.format_type(string_idx.value_type);
 
                 if !number_index_nodes.is_empty() {
+                    // Own number index — report on the number index node(s)
                     for &node_idx in &number_index_nodes {
                         self.error_at_node_msg(
                             node_idx,
@@ -548,14 +643,21 @@ impl<'a> CheckerState<'a> {
                             &["number", &num_value_str, "string", &str_value_str],
                         );
                     }
-                } else if string_index_nodes.is_empty() {
-                    // Both signatures are truly inherited (not from a merged
-                    // body) — report on the declaration name.  When only
-                    // number_index_nodes is empty but string_index_nodes has
-                    // entries, we are in a merged interface body that doesn't
-                    // own the number index; the body that does will emit the
-                    // error, so we skip to avoid a duplicate at a wrong
-                    // location.
+                } else if has_extends_clause && !string_index_nodes.is_empty() {
+                    // Number index inherited from base, own string index — report
+                    // on the string index node(s) (matches tsc behavior).
+                    for &node_idx in &string_index_nodes {
+                        self.error_at_node_msg(
+                            node_idx,
+                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &["number", &num_value_str, "string", &str_value_str],
+                        );
+                    }
+                } else if string_index_nodes.is_empty()
+                    || !synthesized_instance_number_index_types.is_empty()
+                {
+                    // Both signatures inherited or number from synthesized computed
+                    // members — report on the declaration name.
                     let error_node = self
                         .get_declaration_name_node(container_node)
                         .unwrap_or(container_node);
