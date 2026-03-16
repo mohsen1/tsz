@@ -943,7 +943,14 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                let resolved = self.type_reference_symbol_type(sym_id);
+                // CRITICAL: TypeQuery (`typeof X`) is a VALUE-space query.
+                // Use get_type_of_symbol which returns the constructor type for
+                // classes, NOT type_reference_symbol_type which returns the
+                // instance type (designed for TYPE position references).
+                // Without this, the type environment gets the instance type
+                // (ObjectWithIndex) for class symbols, causing false TS2345
+                // when comparing `typeof SubClass` against `typeof BaseClass`.
+                let resolved = self.get_type_of_symbol(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR {
