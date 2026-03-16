@@ -628,7 +628,7 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     /// Collect parameter decorators from a method's parameter list for ES5 emit.
-    /// Returns `Vec` of (runtime_param_index, decorator_node_indices).
+    /// Returns `Vec` of (`runtime_param_index`, `decorator_node_indices`).
     /// Skips the `this` parameter since it's erased in JS emit.
     fn collect_param_decorators_es5(&self, parameters: &NodeList) -> Vec<(usize, Vec<NodeIndex>)> {
         let mut result = Vec::new();
