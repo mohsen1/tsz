@@ -40,6 +40,12 @@ pub(crate) fn enum_member_name(arena: &NodeArena, idx: NodeIndex) -> String {
     let Some(node) = arena.get(idx) else {
         return String::new();
     };
+    // Private identifiers (#name) in enum members are parse errors.
+    // tsc's TS transformer replaces them with factory.createIdentifier(""),
+    // so we emit an empty name to match.
+    if node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
+        return String::new();
+    }
     if let Some(ident) = arena.get_identifier(node) {
         return ident.escaped_text.clone();
     }
