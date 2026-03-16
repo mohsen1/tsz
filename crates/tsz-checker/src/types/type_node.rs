@@ -1344,6 +1344,47 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
         }
 
+        // For qualified/generic typeof expressions (typeof A.B, typeof A<B>),
+        // check if the root identifier exists. If not, emit TS2304.
+        if name_opt.is_none() {
+            use tsz_parser::parser::syntax_kind_ext;
+            let mut root_idx = type_query.expr_name;
+            while let Some(node) = self.ctx.arena.get(root_idx) {
+                if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                    if let Some(qn) = self.ctx.arena.get_qualified_name(node) {
+                        root_idx = qn.left;
+                        continue;
+                    }
+                }
+                break;
+            }
+            if let Some(root_node) = self.ctx.arena.get(root_idx)
+                && root_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(root_ident) = self.ctx.arena.get_identifier(root_node)
+            {
+                let root_name = root_ident.escaped_text.as_str();
+                if self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, root_idx)
+                    .is_none()
+                    && !self.ctx.typeof_param_scope.contains_key(root_name)
+                {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &[root_name]);
+                    self.ctx.error(
+                        root_node.pos,
+                        root_node.end - root_node.pos,
+                        msg,
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                    return TypeId::ERROR;
+                }
+            }
+        }
+
         // For simple identifiers, try full scope resolution (including function params,
         // local variables, etc.) before falling back to lowering.
         if let Some(name) = name_opt {
