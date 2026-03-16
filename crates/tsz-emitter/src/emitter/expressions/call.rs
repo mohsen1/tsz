@@ -170,7 +170,11 @@ impl<'a> Printer<'a> {
         //   `import(expr)` → `Promise.resolve(\`${expr}\`).then(s => __importStar(require(s)))`
         // In CommonJS module mode, dynamic import() expressions need to be transformed
         // to use require() wrapped in __importStar for proper ESM/CJS interop.
-        if self.ctx.is_commonjs()
+        // Use is_effectively_commonjs() to also catch the case where module is temporarily
+        // set to None during CJS export body emission (e.g., inside exported async functions).
+        // Skip for node module CJS files where native import() is supported.
+        if self.ctx.is_effectively_commonjs()
+            && !self.ctx.options.resolved_node_module_to_cjs
             && let Some(expr_node) = self.arena.get(call.expression)
             && expr_node.kind == SyntaxKind::ImportKeyword as u16
         {
