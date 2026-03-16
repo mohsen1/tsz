@@ -659,22 +659,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.skip_this_binding.set(prev);
                     result
                 } else {
-                    // Unconstrained type parameters implicitly extend Object in tsc,
-                    // so properties like toString/valueOf/hasOwnProperty are accessible.
-                    // Fall back to the Object boxed interface type.
-                    if let Some(object_type) = crate::def::resolver::TypeResolver::get_boxed_type(
-                        self.db,
-                        IntrinsicKind::Object,
-                    ) {
-                        let result = self.resolve_property_access_inner(
-                            object_type,
-                            prop_name,
-                            Some(prop_atom),
-                        );
-                        if !result.is_not_found() {
-                            return result;
-                        }
-                    }
+                    // Unconstrained type parameters: in strict mode (strictNullChecks),
+                    // T without a constraint does NOT have Object prototype methods
+                    // like toString/valueOf. Property access on unconstrained T should
+                    // return PropertyNotFound, matching tsc behavior where the apparent
+                    // type of an unconstrained T is `{}` which doesn't expose Object
+                    // prototype methods for property access checking.
+                    //
+                    // When T extends {} explicitly, the constraint path above handles it
+                    // and Object prototype methods ARE accessible.
                     PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,
