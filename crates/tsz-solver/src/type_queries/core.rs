@@ -378,6 +378,11 @@ fn is_definitely_falsy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             let members = db.type_list(members);
             members.iter().any(|&m| is_definitely_falsy_type(db, m))
         }
+        // Type parameters: check if the constraint is definitely falsy.
+        // e.g., `T extends undefined` is definitely falsy.
+        Some(TypeData::TypeParameter(info)) => info
+            .constraint
+            .is_some_and(|c| is_definitely_falsy_type(db, c)),
         _ => false,
     }
 }
