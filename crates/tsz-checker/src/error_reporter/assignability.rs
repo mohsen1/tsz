@@ -525,17 +525,17 @@ impl<'a> CheckerState<'a> {
         // When the source is a string literal and the target contains string literal
         // union members, check for a close Levenshtein match and emit TS2820 instead
         // of the generic TS2322.
-        if let Some(loc) = self.get_source_location(anchor_idx) {
-            if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
+        if let Some(loc) = self.get_source_location(anchor_idx)
+            && let Some(diag) = self.try_string_literal_suggestion_diagnostic(
                 source,
                 target,
                 anchor_idx,
                 loc.start,
                 loc.length(),
-            ) {
-                self.ctx.push_diagnostic(diag);
-                return;
-            }
+            )
+        {
+            self.ctx.push_diagnostic(diag);
+            return;
         }
 
         // Use one solver-boundary analysis path for TS2322 metadata.
@@ -2029,9 +2029,9 @@ impl<'a> CheckerState<'a> {
             self.get_string_literal_from_ast(anchor_idx)?
         };
         let suggestion = self.find_string_literal_suggestion(&source_str, target)?;
-        let src_display = format!("\"{}\"", source_str);
+        let src_display = format!("\"{source_str}\"");
         let tgt_display = self.format_type_diagnostic(target);
-        let suggestion_quoted = format!("\"{}\"", suggestion);
+        let suggestion_quoted = format!("\"{suggestion}\"");
         let message = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
             &[&src_display, &tgt_display, &suggestion_quoted],
@@ -2065,14 +2065,12 @@ impl<'a> CheckerState<'a> {
             // Identifier used as property name: look for its initializer in context
             k if k == tsz_scanner::SyntaxKind::Identifier as u16 => {
                 // Try to look at the parent for PropertyAssignment
-                if let Some(ext) = self.ctx.arena.get_extended(idx) {
-                    if let Some(parent) = self.ctx.arena.get(ext.parent) {
-                        if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                            if let Some(prop) = self.ctx.arena.get_property_assignment(parent) {
-                                return self.get_string_literal_from_ast(prop.initializer);
-                            }
-                        }
-                    }
+                if let Some(ext) = self.ctx.arena.get_extended(idx)
+                    && let Some(parent) = self.ctx.arena.get(ext.parent)
+                    && parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.ctx.arena.get_property_assignment(parent)
+                {
+                    return self.get_string_literal_from_ast(prop.initializer);
                 }
                 None
             }
