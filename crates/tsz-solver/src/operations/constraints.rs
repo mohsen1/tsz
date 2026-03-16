@@ -7,9 +7,8 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::operations::{
-    AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
-};
+use crate::operations::core::MAX_CONSTRAINT_STEPS;
+use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::types::{
     CallSignature, FunctionShape, MappedModifier, ObjectShape, ObjectShapeId, ParamInfo,
     PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,

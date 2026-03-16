@@ -10,7 +10,11 @@ use crate::types::{
 };
 use crate::utils;
 
-pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
+pub(crate) fn property_is_readonly(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    prop_name: &str,
+) -> bool {
     match interner.lookup(type_id) {
         Some(TypeData::Lazy(_)) => {
             // Resolve lazy types (interfaces, classes, type aliases) before checking readonly.
