@@ -1191,8 +1191,41 @@ impl<'a> FlowAnalyzer<'a> {
                     GuardSense::from(effective_truth),
                 );
             }
-            // Unknown typeof string (e.g., host-defined types), no narrowing
-            return type_id;
+            // Non-standard typeof string (e.g. "Object", host-defined types).
+            // TypeScript behavior:
+            //   - true branch: remove primitive types (string, number, boolean)
+            //     because if typeof returned a non-standard string, x can't be primitive
+            //   - false branch: keep only primitive types (typeof can only ever
+            //     return standard strings at runtime, so the condition is always
+            //     false; the complement narrows to primitives)
+            if effective_truth {
+                return narrowing.narrow_excluding_types(
+                    type_id,
+                    &[TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN],
+                );
+            } else {
+                // Collect the primitive members from the source type
+                let s = narrowing.narrow_by_typeof(type_id, "string");
+                let n = narrowing.narrow_by_typeof(type_id, "number");
+                let b = narrowing.narrow_by_typeof(type_id, "boolean");
+                let mut parts = Vec::new();
+                if s != TypeId::NEVER {
+                    parts.push(s);
+                }
+                if n != TypeId::NEVER {
+                    parts.push(n);
+                }
+                if b != TypeId::NEVER {
+                    parts.push(b);
+                }
+                return if parts.is_empty() {
+                    type_id // no primitives in the type, no narrowing
+                } else if parts.len() == 1 {
+                    parts[0]
+                } else {
+                    self.interner.union(parts)
+                };
+            }
         }
 
         // typeof-based discriminant narrowing for unions:
