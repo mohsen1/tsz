@@ -17,6 +17,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
         use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_messages;
 
         // Optimization: Skip if already fully checked
         if self.ctx.checked_classes.contains(&stmt_idx) {
@@ -282,7 +283,6 @@ impl<'a> CheckerState<'a> {
 
                 if is_private_identifier {
                     use crate::context::ScriptTarget;
-                    use crate::diagnostics::diagnostic_messages;
 
                     // TS18028: Check for private identifiers when targeting ES5 or lower
                     let is_es5_or_lower = matches!(
@@ -354,6 +354,34 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
+                    }
+                }
+
+                // TS1024: 'readonly' modifier can only appear on a property declaration or index signature.
+                {
+                    let has_readonly_on_non_property = match member_node.kind {
+                        syntax_kind_ext::METHOD_DECLARATION => {
+                            if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+                                self.has_readonly_modifier(&method.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                                self.has_readonly_modifier(&accessor.modifiers)
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+                    if has_readonly_on_non_property {
+                        self.error_at_node(
+                            member_idx,
+                            diagnostic_messages::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+                            diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+                        );
                     }
                 }
 
