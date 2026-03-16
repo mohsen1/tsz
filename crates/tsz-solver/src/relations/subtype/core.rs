@@ -168,6 +168,17 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
     /// Controls how `any` is treated during subtype checks.
     pub any_propagation: AnyPropagationMode,
+    /// Whether to enforce weak type checking during nested structural comparisons.
+    /// When true, object comparisons will reject assignments where the target is a
+    /// "weak type" (all optional properties) and the source has no common properties.
+    /// This is set by CompatChecker to propagate TS2559 detection into nested property checks.
+    /// Default: false (SubtypeChecker alone doesn't enforce weak types).
+    pub enforce_weak_types: bool,
+    /// Tracks whether we're inside a property type comparison. When true, the weak
+    /// type check applies to object-to-object comparisons. This prevents the SubtypeChecker
+    /// from applying weak checks at the top level (where the CompatChecker already handles
+    /// them with proper exemptions like global Object and union-level policies).
+    pub(crate) in_property_check: bool,
     /// Whether recursive relation cycles and overflow should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).
     pub assume_related_on_cycle: bool,
@@ -208,6 +219,8 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
+            enforce_weak_types: false,
+            in_property_check: false,
             assume_related_on_cycle: true,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
@@ -242,6 +255,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             inheritance_graph: None,
             is_class_symbol: None,
             any_propagation: AnyPropagationMode::All,
+            enforce_weak_types: false,
+            in_property_check: false,
             assume_related_on_cycle: true,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
