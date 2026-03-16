@@ -8,8 +8,8 @@ use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 
-pub struct ClassInheritanceChecker<'a, 'ctx> {
-    pub ctx: &'a mut crate::CheckerContext<'ctx>,
+pub(crate) struct ClassInheritanceChecker<'a, 'ctx> {
+    pub(crate) ctx: &'a mut crate::CheckerContext<'ctx>,
 }
 
 impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
