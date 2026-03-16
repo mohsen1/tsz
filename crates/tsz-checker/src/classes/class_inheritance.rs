@@ -431,6 +431,9 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
     }
 
     fn error_base_cycle_for_symbol(&mut self, sym_id: SymbolId, direct_class_cycle: bool) {
+        // Track circular symbols so `new C` can return `C<unknown>` instead of `C<T>`.
+        self.ctx.circular_class_symbols.insert(sym_id);
+
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };

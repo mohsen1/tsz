@@ -559,6 +559,101 @@ impl<'a> CheckerState<'a> {
         self.ctx.class_instance_type_cache.get(&decl_idx).copied()
     }
 
+    /// Check if the target of a `new` expression is a class with circular
+    /// inheritance (TS2506 or TS2310 was emitted for this symbol).
+    pub(crate) fn is_circular_class_new(&self, expr_idx: NodeIndex) -> bool {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx));
+        match sym_id {
+            Some(id) => self.ctx.circular_class_symbols.contains(&id),
+            None => false,
+        }
+    }
+
+    /// Get the instance type for a class targeted by `new` when the constructor
+    /// has no construct signatures (circular inheritance). Returns the cached
+    /// instance type with type parameters substituted to `unknown`, matching tsc
+    /// behavior where `(new C).blah` on a circular class yields TS2339 on `C<unknown>`.
+    pub(crate) fn class_instance_type_for_circular_new(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::CLASS == 0 {
+            return None;
+        }
+
+        // Find the class declaration to get its instance type and type parameters.
+        let decl_idx = if symbol.value_declaration.is_some()
+            && self
+                .ctx
+                .arena
+                .get(symbol.value_declaration)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|&idx| {
+                    self.ctx
+                        .arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+                })
+                .unwrap_or(NodeIndex::NONE)
+        };
+
+        // Look up the cached instance type.
+        let instance_type = self
+            .ctx
+            .symbol_instance_types
+            .get(&sym_id)
+            .copied()
+            .or_else(|| self.ctx.class_instance_type_cache.get(&decl_idx).copied())?;
+
+        if instance_type == TypeId::ERROR {
+            return None;
+        }
+
+        // Count the class's type parameters. For generic classes, create an
+        // Application type `C<unknown, ...>` so the type formatter displays
+        // `C<unknown>` in diagnostics, matching tsc behavior.
+        let type_param_count = self
+            .ctx
+            .arena
+            .get(decl_idx)
+            .and_then(|n| self.ctx.arena.get_class(n))
+            .and_then(|c| c.type_parameters.as_ref())
+            .map_or(0, |list| list.nodes.len());
+
+        if type_param_count > 0 {
+            // Build Application(Lazy(DefId(C)), [unknown, ...]) so the formatter
+            // renders "C<unknown>" and property access checks the instance shape.
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let factory = self.ctx.types.factory();
+            let base = factory.lazy(def_id);
+            let unknown_args: Vec<TypeId> =
+                (0..type_param_count).map(|_| TypeId::UNKNOWN).collect();
+            return Some(factory.application(base, unknown_args));
+        }
+
+        Some(instance_type)
+    }
+
     /// Check if a type contains any abstract class constructors.
     pub(crate) fn type_contains_abstract_class(&self, type_id: TypeId) -> bool {
         self.type_contains_abstract_class_inner(type_id, &mut rustc_hash::FxHashSet::default())
