@@ -997,7 +997,20 @@ impl<'a> CheckerState<'a> {
         );
 
         match result {
-            CallResult::Success(return_type) => return_type,
+            CallResult::Success(return_type) => {
+                // For circular classes (TS2506), when `new` is called without
+                // explicit type arguments, the solver may return the raw instance
+                // type with unresolved type parameters (e.g. `M<T>` instead of
+                // `M<unknown>`). Detect this and substitute with `unknown`.
+                if self.is_circular_class_new(new_expr.expression) {
+                    if let Some(fixed) =
+                        self.class_instance_type_for_circular_new(new_expr.expression)
+                    {
+                        return fixed;
+                    }
+                }
+                return_type
+            }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
                 // In JS/checkJs files, functions with `this.prop = value` assignments
                 // are treated as constructor functions (tsc's isJSConstructor). Synthesize
@@ -1030,6 +1043,15 @@ impl<'a> CheckerState<'a> {
                 // transiently lose construct signatures. TypeScript suppresses TS2351
                 // here and reports the underlying class/argument diagnostics instead.
                 if self.new_target_is_class_symbol(new_expr.expression) {
+                    // Instead of returning ERROR (which suppresses TS2339 on property
+                    // access), try to return the class's instance type with type
+                    // parameters defaulted to `unknown`. This matches tsc behavior:
+                    // `(new C).blah` on a circular class produces TS2339 on `C<unknown>`.
+                    if let Some(instance_type) =
+                        self.class_instance_type_for_circular_new(new_expr.expression)
+                    {
+                        return instance_type;
+                    }
                     return TypeId::ERROR;
                 }
                 self.error_not_constructable_at(constructor_type, new_expr.expression);
