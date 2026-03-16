@@ -896,7 +896,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
             } else if self.is_token(SyntaxKind::OpenBraceToken) {
-                self.parse_jsx_expression()
+                self.parse_jsx_expression_for_attribute()
             } else if self.is_token(SyntaxKind::LessThanToken) {
                 self.parse_jsx_element_or_self_closing_or_fragment(true)
             } else {
@@ -969,6 +969,39 @@ impl ParserState {
     }
 
     /// Parse a JSX expression: {expr} or {...expr}
+    /// Parse a JSX expression used as an attribute initializer (`attr={expr}`).
+    ///
+    /// Emits TS17000 when the expression is empty (`attr={}`).
+    fn parse_jsx_expression_for_attribute(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        // Check for spread: {...}
+        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+
+        // Check for empty expression: {}
+        // Note: TS17000 for empty expressions is reported in the checker (checkGrammarJsxElement),
+        // not in the parser, matching tsc behavior (one error per JSX element).
+        let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
+            NodeIndex::NONE
+        } else {
+            self.parse_expression()
+        };
+
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_expression(
+            syntax_kind_ext::JSX_EXPRESSION,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxExpressionData {
+                dot_dot_dot_token,
+                expression,
+            },
+        )
+    }
+
     pub(crate) fn parse_jsx_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
