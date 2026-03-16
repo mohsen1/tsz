@@ -1456,13 +1456,23 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .is_some_and(|symbol| (symbol.flags & symbol_flags::CLASS) != 0)
-        {
-            return true;
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if (symbol.flags & symbol_flags::CLASS) != 0 {
+                return true;
+            }
+            // Variables initialized with class expressions (e.g., `let C = class { ... }`)
+            // should be treated as class symbols for circular self-reference suppression.
+            // The variable has VARIABLE flags, not CLASS, but `new C()` inside the class
+            // body is a valid self-referencing construct that tsc accepts.
+            if (symbol.flags & symbol_flags::VARIABLE) != 0
+                && symbol.value_declaration.is_some()
+                && let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration)
+                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                && let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+                && init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return true;
+            }
         }
         // Cross-file: in multi-file mode, the name may resolve to a namespace in the
         // current file while a class with the same name exists in another file
