@@ -281,6 +281,29 @@ impl<'a> CheckerState<'a> {
                         self.check_heritage_class_before_declaration(heritage_sym, expr_idx);
                     }
 
+                    // TS2709: Check if namespace-only symbol is used in an implements clause.
+                    // For extends clauses, the namespace check happens below inside
+                    // the is_extends_clause block.
+                    if !is_extends_clause {
+                        use tsz_binder::symbol_flags;
+                        let mut visited_aliases = Vec::new();
+                        let resolved_sym =
+                            self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
+                        let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
+                        if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
+                            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
+                            let has_non_namespace_value = (symbol.flags
+                                & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
+                                != 0;
+                            if is_namespace && !has_non_namespace_value {
+                                if let Some(name) = self.heritage_name_text(expr_idx) {
+                                    self.error_namespace_used_as_type_at(&name, expr_idx);
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
                         use tsz_binder::symbol_flags;
