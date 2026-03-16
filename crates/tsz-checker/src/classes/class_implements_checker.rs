@@ -1033,19 +1033,14 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
 
-                            // Check type compatibility.
-                            // Methods use bivariant relation (covariant returns);
-                            // properties use regular assignability.
-                            let mismatch_fn = if prop.is_method {
-                                should_report_member_type_mismatch_bivariant
-                            } else {
-                                should_report_member_type_mismatch
-                            };
+                            // Check type compatibility using regular assignability.
+                            // tsc uses the assignable relation (not bivariant) for
+                            // implements clause member type checking.
                             if interface_member_type != tsz_solver::TypeId::ANY
                                 && class_member_type != tsz_solver::TypeId::ANY
                                 && interface_member_type != tsz_solver::TypeId::ERROR
                                 && class_member_type != tsz_solver::TypeId::ERROR
-                                && mismatch_fn(
+                                && should_report_member_type_mismatch(
                                     self,
                                     class_member_type,
                                     interface_member_type,
@@ -1065,16 +1060,12 @@ impl<'a> CheckerState<'a> {
                             inherited_member_types.get(&member_name)
                         {
                             // Member inherited from base class — check type compatibility
-                            let mismatch_fn = if prop.is_method {
-                                should_report_member_type_mismatch_bivariant
-                            } else {
-                                should_report_member_type_mismatch
-                            };
+                            // tsc uses the assignable relation for implements clause checks.
                             if interface_member_type != tsz_solver::TypeId::ANY
                                 && inherited_type != tsz_solver::TypeId::ANY
                                 && interface_member_type != tsz_solver::TypeId::ERROR
                                 && inherited_type != tsz_solver::TypeId::ERROR
-                                && mismatch_fn(
+                                && should_report_member_type_mismatch(
                                     self,
                                     inherited_type,
                                     interface_member_type,

@@ -632,10 +632,20 @@ impl ParserState {
             self.make_node_list(vec![])
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'get' accessor cannot have parameters.",
-                diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
-            );
+            // Report error at the accessor name, matching tsc behavior
+            if let Some(name_node) = self.arena.get(name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A 'get' accessor cannot have parameters.",
+                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "A 'get' accessor cannot have parameters.",
+                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                );
+            }
             self.parse_parameter_list()
         };
         self.parse_expected(SyntaxKind::CloseParenToken);
@@ -792,10 +802,20 @@ impl ParserState {
         // emitter can preserve it.
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'set' accessor cannot have a return type annotation.",
-                diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-            );
+            // Report error at the accessor name, matching tsc behavior
+            if let Some(name_node) = self.arena.get(name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A 'set' accessor cannot have a return type annotation.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "A 'set' accessor cannot have a return type annotation.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                );
+            }
             self.parse_type()
         } else {
             NodeIndex::NONE
