@@ -612,9 +612,24 @@ impl<'a> Printer<'a> {
             );
 
             if can_strip {
-                // Safe to strip parens
-                self.emit(paren.expression);
-                return;
+                // Before stripping parens, check if there are comments between
+                // the `(` and the inner expression. tsc preserves parens when a
+                // comment exists inside them, e.g.:
+                //   `(/* TODO */ expr as T)` -> `(/* TODO */ expr)` (parens kept)
+                let actual_inner_start =
+                    self.skip_trivia_forward(inner.pos, inner.pos + 2048);
+                let has_inner_comment = if actual_inner_start > node.pos {
+                    self.all_comments
+                        .iter()
+                        .any(|c| c.pos >= node.pos && c.end <= actual_inner_start)
+                } else {
+                    false
+                };
+                if !has_inner_comment {
+                    self.emit(paren.expression);
+                    return;
+                }
+                // Fall through to emit with parens preserved
             }
 
             // Check if the unwrapped expression is already parenthesized
@@ -869,8 +884,12 @@ impl<'a> Printer<'a> {
             self.write("void 0");
             return;
         };
-
+        // Emit comments in the erased type assertion region before the inner expression.
+        if let Some(expr_node) = self.arena.get(assertion.expression) {
+            self.emit_comments_before_pos(expr_node.pos);
+        }
         self.emit_expression(assertion.expression);
+        // Trailing comments after the type are preserved by the statement emitter.
     }
 
     pub(in crate::emitter) fn emit_non_null_expression(&mut self, node: &Node) {
@@ -878,8 +897,12 @@ impl<'a> Printer<'a> {
             self.write("void 0");
             return;
         };
-
+        // Emit comments before the inner expression.
+        if let Some(expr_node) = self.arena.get(unary.expression) {
+            self.emit_comments_before_pos(expr_node.pos);
+        }
         self.emit_expression(unary.expression);
+        // Trailing comments are preserved by the statement emitter.
     }
 
     pub(in crate::emitter) fn emit_conditional(&mut self, node: &Node) {
