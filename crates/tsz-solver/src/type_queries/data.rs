@@ -1046,8 +1046,6 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
                 .iter()
                 .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
         }
-        // Function shapes have no named properties
-        Some(TypeData::Function(_)) => false,
         _ => false,
     }
 }
