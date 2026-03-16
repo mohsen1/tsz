@@ -1197,6 +1197,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a variable declaration is in a `for...in` or `for...of` statement.
     ///
     /// AST walk: `VariableDeclaration` → `VariableDeclarationList` → `ForInStatement | ForOfStatement`
+    #[allow(dead_code)]
     pub(crate) fn is_for_in_or_of_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
         // VariableDeclaration → parent (VariableDeclarationList)
         let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {

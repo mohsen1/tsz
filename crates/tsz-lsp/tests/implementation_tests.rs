@@ -685,8 +685,7 @@ fn test_resolve_target_kind_for_abstract_class() {
     // Abstract class may resolve as AbstractClass or ConcreteClass depending on binder
     assert!(
         kind == Some(TargetKind::AbstractClass) || kind == Some(TargetKind::ConcreteClass),
-        "Abstract class should resolve to some class target kind, got {:?}",
-        kind
+        "Abstract class should resolve to some class target kind, got {kind:?}"
     );
 }
 
@@ -957,7 +956,7 @@ fn test_multiple_interfaces_same_implementor() {
     for (line, name) in [(0, "A"), (1, "B"), (2, "C")] {
         let pos = Position::new(line, 10);
         let result = provider.get_implementations(root, pos);
-        assert!(result.is_some(), "Should find implementor of {}", name);
+        assert!(result.is_some(), "Should find implementor of {name}");
         assert_eq!(result.unwrap().len(), 1);
     }
 }

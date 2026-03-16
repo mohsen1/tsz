@@ -975,6 +975,7 @@ impl<'a> CheckerState<'a> {
     /// type Nested = (string | number) | boolean;
     /// // Normalized to Union(STRING, NUMBER, BOOLEAN)
     /// ```
+    #[allow(dead_code)]
     pub(super) fn is_type_query_in_non_flow_sensitive_signature_parameter(
         &self,
         idx: NodeIndex,
@@ -1029,6 +1030,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve a qualified name chain as a value property access chain
     /// for `typeof` context. Recurses through nested `QualifiedName` nodes
     /// so that `typeof a.b.c` resolves `a` as a value, then `.b`, then `.c`.
+    #[allow(dead_code)]
     pub(super) fn resolve_typeof_qualified_value_chain(
         &mut self,
         idx: NodeIndex,
@@ -1070,6 +1072,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(super) fn resolve_type_query_import_type_symbol(&self, idx: NodeIndex) -> Option<u32> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {

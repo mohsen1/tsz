@@ -484,8 +484,7 @@ fn test_formatting_empty_string() {
     // Empty string should produce empty or just a newline
     assert!(
         formatted.is_empty() || formatted == "\n",
-        "Empty source should format to empty or newline, got: {:?}",
-        formatted
+        "Empty source should format to empty or newline, got: {formatted:?}"
     );
 }
 
@@ -501,8 +500,7 @@ fn test_formatting_only_whitespace() {
     for line in formatted.lines() {
         assert!(
             !line.ends_with(' '),
-            "Line should not end with spaces: {:?}",
-            line
+            "Line should not end with spaces: {line:?}"
         );
     }
 }
@@ -535,8 +533,7 @@ fn test_formatting_tab_to_spaces() {
     if !formatted.contains('\t') {
         assert!(
             formatted.contains("  return"),
-            "Should convert tab to 2 spaces, got: {:?}",
-            formatted
+            "Should convert tab to 2 spaces, got: {formatted:?}"
         );
     }
 }
@@ -552,9 +549,7 @@ fn test_formatting_no_trailing_whitespace() {
     for (i, line) in formatted.lines().enumerate() {
         assert!(
             !line.ends_with(' ') && !line.ends_with('\t'),
-            "Line {} should not have trailing whitespace: {:?}",
-            i,
-            line
+            "Line {i} should not have trailing whitespace: {line:?}"
         );
     }
 }
@@ -784,8 +779,7 @@ fn test_format_no_final_newline_option() {
     let formatted = DocumentFormattingProvider::format_text(source, &options);
     assert!(
         !formatted.ends_with('\n'),
-        "Should not end with newline when insert_final_newline is false, got: {:?}",
-        formatted
+        "Should not end with newline when insert_final_newline is false, got: {formatted:?}"
     );
 }
 

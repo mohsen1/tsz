@@ -81,7 +81,8 @@ fn vlq_roundtrip_values() {
     let test_values = [0, 1, -1, 15, 16, -16, 100, -100, 1000, -1000, 10000, -10000];
     for val in test_values {
         let encoded = vlq::encode(val);
-        let (decoded, consumed) = vlq::decode(&encoded).expect(&format!("decode failed for {val}"));
+        let (decoded, consumed) =
+            vlq::decode(&encoded).unwrap_or_else(|| panic!("decode failed for {val}"));
         assert_eq!(
             decoded, val,
             "roundtrip failed for {val}, encoded={encoded}"

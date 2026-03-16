@@ -1669,7 +1669,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Walk the AST subtree rooted at `idx` and emit TS2314 for any
-    /// TYPE_REFERENCE nodes that reference a generic type without providing
+    /// `TYPE_REFERENCE` nodes that reference a generic type without providing
     /// the required type arguments.
     pub(crate) fn check_nested_type_refs_for_ts2314(&mut self, root: NodeIndex) {
         use tsz_parser::parser::node::NodeAccess;
@@ -1683,24 +1683,24 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                    if type_ref.type_arguments.is_none() {
-                        // No type arguments provided - check if generic type requires them
-                        self.check_type_ref_requires_args(type_ref.type_name, idx);
-                    }
-                    // Don't descend into TYPE_REFERENCE children to avoid double-checking
-                    // type arguments (those are separately validated when the outer
-                    // TYPE_REFERENCE has args).
-                    continue;
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            {
+                if type_ref.type_arguments.is_none() {
+                    // No type arguments provided - check if generic type requires them
+                    self.check_type_ref_requires_args(type_ref.type_name, idx);
                 }
+                // Don't descend into TYPE_REFERENCE children to avoid double-checking
+                // type arguments (those are separately validated when the outer
+                // TYPE_REFERENCE has args).
+                continue;
             }
             // Push children for traversal
             stack.extend(self.ctx.arena.get_children(idx));
         }
     }
 
-    /// Check if a TYPE_REFERENCE without type arguments references a generic type
+    /// Check if a `TYPE_REFERENCE` without type arguments references a generic type
     /// that requires type arguments (TS2314).
     fn check_type_ref_requires_args(&mut self, type_name_idx: NodeIndex, ref_idx: NodeIndex) {
         use crate::symbol_resolver::TypeSymbolResolution;

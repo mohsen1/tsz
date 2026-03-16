@@ -1823,6 +1823,7 @@ impl<'a> CheckerState<'a> {
     /// Check if two source positions are in different function scopes.
     /// Used for JSDoc typedef scoping — a typedef defined inside a function
     /// should not be visible outside that function.
+    #[allow(dead_code)]
     pub(crate) fn is_in_different_function_scope(&self, comment_pos: u32, anchor_pos: u32) -> bool {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return false;

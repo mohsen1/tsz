@@ -1022,8 +1022,7 @@ impl<'a> Printer<'a> {
         if groups.len() == 1 {
             match &groups[0] {
                 AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
-                AttrGroup::Spread(expr) => self.emit(*expr),
-                AttrGroup::InlinedObjectLiteral(expr) => self.emit(*expr),
+                AttrGroup::Spread(expr) | AttrGroup::InlinedObjectLiteral(expr) => self.emit(*expr),
             }
         } else if !self.ctx.needs_es2018_lowering {
             // ES2018+: inline spread syntax
@@ -1067,8 +1066,9 @@ impl<'a> Printer<'a> {
                 }
                 match group {
                     AttrGroup::Named(named) => self.emit_jsx_attrs_as_object(named),
-                    AttrGroup::Spread(expr) => self.emit(*expr),
-                    AttrGroup::InlinedObjectLiteral(expr) => self.emit(*expr),
+                    AttrGroup::Spread(expr) | AttrGroup::InlinedObjectLiteral(expr) => {
+                        self.emit(*expr)
+                    }
                 }
             }
             self.write(")");

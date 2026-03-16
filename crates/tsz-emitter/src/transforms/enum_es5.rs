@@ -582,10 +582,10 @@ impl<'a> EnumES5Transformer<'a> {
             // Insert trailing comment after the member statement (same line).
             // Only preserve block comments (/* ... */); tsc strips line comments (//) from
             // enum members during the transform phase.
-            if let Some(text) = trailing_comment {
-                if text.starts_with("/*") {
-                    statements.push(IRNode::TrailingComment(text.into()));
-                }
+            if let Some(text) = trailing_comment
+                && text.starts_with("/*")
+            {
+                statements.push(IRNode::TrailingComment(text.into()));
             }
         }
 

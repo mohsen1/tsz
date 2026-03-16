@@ -488,7 +488,7 @@ fn test_code_lens_interface_only_has_implementations_kind() {
     let impl_lens = lenses.iter().find(|l| {
         l.data
             .as_ref()
-            .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+            .is_some_and(|d| d.kind == CodeLensKind::Implementations)
     });
     assert!(
         impl_lens.is_some(),
@@ -515,7 +515,7 @@ fn test_code_lens_class_no_implementations_kind() {
     let impl_lens = lenses.iter().find(|l| {
         l.data
             .as_ref()
-            .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+            .is_some_and(|d| d.kind == CodeLensKind::Implementations)
     });
     assert!(
         impl_lens.is_none(),
@@ -542,7 +542,7 @@ fn test_code_lens_resolve_interface_implementations() {
     let impl_lens = lenses.iter().find(|l| {
         l.data
             .as_ref()
-            .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+            .is_some_and(|d| d.kind == CodeLensKind::Implementations)
     });
 
     if let Some(lens) = impl_lens {
@@ -677,15 +677,15 @@ fn test_code_lens_resolve_single_reference() {
         .expect("Should have function lens");
 
     let resolved = provider.resolve_code_lens(root, func_lens);
-    if let Some(resolved) = resolved {
-        if let Some(command) = resolved.command {
-            // Reference count depends on binder implementation
-            assert!(
-                command.title.contains("reference"),
-                "Should contain 'reference' in title, got: {}",
-                command.title
-            );
-        }
+    if let Some(resolved) = resolved
+        && let Some(command) = resolved.command
+    {
+        // Reference count depends on binder implementation
+        assert!(
+            command.title.contains("reference"),
+            "Should contain 'reference' in title, got: {}",
+            command.title
+        );
     }
 }
 
@@ -952,7 +952,7 @@ fn test_code_lens_class_implementing_interface() {
         l.range.start.line == 0
             && l.data
                 .as_ref()
-                .map_or(false, |d| d.kind == CodeLensKind::Implementations)
+                .is_some_and(|d| d.kind == CodeLensKind::Implementations)
     });
     assert!(
         impl_lens.is_some(),
@@ -980,14 +980,14 @@ fn test_code_lens_resolve_many_references() {
         .expect("Should have function lens");
 
     let resolved = provider.resolve_code_lens(root, func_lens);
-    if let Some(resolved) = resolved {
-        if let Some(command) = resolved.command {
-            assert!(
-                command.title.contains("reference"),
-                "Should contain 'reference' in title, got: {}",
-                command.title
-            );
-        }
+    if let Some(resolved) = resolved
+        && let Some(command) = resolved.command
+    {
+        assert!(
+            command.title.contains("reference"),
+            "Should contain 'reference' in title, got: {}",
+            command.title
+        );
     }
 }
 
@@ -1347,19 +1347,19 @@ fn test_code_lens_resolve_command_for_references() {
     let ref_lens = lenses.iter().find(|l| {
         l.data
             .as_ref()
-            .map_or(false, |d| d.kind == CodeLensKind::References)
+            .is_some_and(|d| d.kind == CodeLensKind::References)
             && l.range.start.line == 0
     });
 
     if let Some(lens) = ref_lens {
         let resolved = provider.resolve_code_lens(root, lens);
-        if let Some(resolved) = resolved {
-            if let Some(command) = resolved.command {
-                assert_eq!(
-                    command.command, "editor.action.showReferences",
-                    "References lens should use showReferences command"
-                );
-            }
+        if let Some(resolved) = resolved
+            && let Some(command) = resolved.command
+        {
+            assert_eq!(
+                command.command, "editor.action.showReferences",
+                "References lens should use showReferences command"
+            );
         }
     }
 }

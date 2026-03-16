@@ -237,15 +237,16 @@ impl<'a> CheckerState<'a> {
                 // `Int32Array<ArrayBufferLike>`. Without this, overload resolution
                 // fails because assignability compares against the raw interface
                 // with unresolved type parameters.
-                if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
-                    if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
-                        let default_args: Vec<tsz_solver::TypeId> = type_params
-                            .iter()
-                            .map(|p| p.default.unwrap_or(tsz_solver::TypeId::UNKNOWN))
-                            .collect();
-                        let app = self.ctx.types.application(type_id, default_args);
-                        return self.evaluate_application_type(app);
-                    }
+                if let Some(type_params) = self.ctx.get_def_type_params(def_id)
+                    && !type_params.is_empty()
+                    && type_params.iter().all(|p| p.default.is_some())
+                {
+                    let default_args: Vec<tsz_solver::TypeId> = type_params
+                        .iter()
+                        .map(|p| p.default.unwrap_or(tsz_solver::TypeId::UNKNOWN))
+                        .collect();
+                    let app = self.ctx.types.application(type_id, default_args);
+                    return self.evaluate_application_type(app);
                 }
 
                 // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type

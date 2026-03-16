@@ -676,10 +676,10 @@ fn test_type_definition_array_type() {
     let result = provider.get_type_definition(root, pos);
 
     // Should find the Item interface for an array of Items
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -785,10 +785,10 @@ fn test_type_definition_mapped_type() {
     let result = provider.get_type_definition(root, pos);
 
     // Mapped type alias reference: may resolve to Partial type alias
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -810,10 +810,10 @@ fn test_type_definition_conditional_type() {
     let result = provider.get_type_definition(root, pos);
 
     // Conditional type alias may resolve to the type alias declaration
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1226,10 +1226,10 @@ fn test_type_definition_promise_like_type_alias() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1250,10 +1250,10 @@ fn test_type_definition_record_type_alias() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1274,10 +1274,10 @@ fn test_type_definition_class_with_generics_and_constraints() {
     let pos = Position::new(6, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 3);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 3);
     }
 }
 
@@ -1371,10 +1371,10 @@ fn test_type_definition_readonly_property() {
     let pos = Position::new(3, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1395,10 +1395,10 @@ fn test_type_definition_nested_generic() {
     let pos = Position::new(4, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 3);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 3);
     }
 }
 
@@ -1419,10 +1419,10 @@ fn test_type_definition_function_expression_type() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1443,10 +1443,10 @@ fn test_type_definition_type_alias_with_keyof() {
     let pos = Position::new(5, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 4);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 4);
     }
 }
 
@@ -1467,10 +1467,10 @@ fn test_type_definition_const_enum_type() {
     let pos = Position::new(4, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1491,10 +1491,10 @@ fn test_type_definition_var_with_type_annotation() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1515,10 +1515,10 @@ fn test_type_definition_declared_type() {
     let pos = Position::new(3, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1539,10 +1539,10 @@ fn test_type_definition_type_alias_with_template_literal() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1584,10 +1584,10 @@ fn test_type_definition_object_type_literal() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1631,10 +1631,10 @@ fn test_type_definition_arrow_function_param() {
     let pos = Position::new(1, 13);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1700,10 +1700,10 @@ fn test_type_definition_optional_param() {
     let pos = Position::new(1, 14);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1725,11 +1725,11 @@ fn test_type_definition_class_with_heritage() {
     let pos = Position::new(2, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            // Should point to Derived class on line 1
-            assert_eq!(locations[0].range.start.line, 1);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        // Should point to Derived class on line 1
+        assert_eq!(locations[0].range.start.line, 1);
     }
 }
 
@@ -1751,10 +1751,10 @@ fn test_type_definition_generic_function_type() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1798,10 +1798,10 @@ fn test_type_definition_enum_as_type() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 
@@ -1824,11 +1824,11 @@ fn test_type_definition_deeply_nested_type() {
     let pos = Position::new(2, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            // Should point to Outer on line 1
-            assert_eq!(locations[0].range.start.line, 1);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        // Should point to Outer on line 1
+        assert_eq!(locations[0].range.start.line, 1);
     }
 }
 
@@ -1895,10 +1895,10 @@ fn test_type_definition_interface_with_generics() {
     let pos = Position::new(1, 4);
     let result = provider.get_type_definition(root, pos);
 
-    if let Some(locations) = result {
-        if !locations.is_empty() {
-            assert_eq!(locations[0].range.start.line, 0);
-        }
+    if let Some(locations) = result
+        && !locations.is_empty()
+    {
+        assert_eq!(locations[0].range.start.line, 0);
     }
 }
 

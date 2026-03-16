@@ -600,7 +600,7 @@ fn test_semantic_tokens_interface_property() {
     // Property signatures may or may not be emitted depending on binder support
     // Just verify no crash and basic token generation
     assert!(
-        decoded.len() >= 1,
+        !decoded.is_empty(),
         "Should have at least the interface token"
     );
 }
@@ -1533,8 +1533,7 @@ fn test_semantic_tokens_multiline_class_members() {
     let max_line = decoded.iter().map(|t| t.0).max().unwrap_or(0);
     assert!(
         max_line >= 4,
-        "Should have tokens across multiple lines, max line: {}",
-        max_line
+        "Should have tokens across multiple lines, max line: {max_line}"
     );
 }
 

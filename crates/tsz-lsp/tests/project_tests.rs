@@ -3646,8 +3646,7 @@ fn test_project_get_file_dependents() {
     // We just verify the function returns without error
     assert!(
         deps.is_empty() || deps.iter().any(|d| d.contains("b")),
-        "Dependents should either be empty (if specifier resolution differs) or include b.ts, got: {:?}",
-        deps
+        "Dependents should either be empty (if specifier resolution differs) or include b.ts, got: {deps:?}"
     );
 }
 
@@ -3665,8 +3664,7 @@ fn test_project_import_candidates_for_prefix() {
     let names: Vec<&str> = candidates.iter().map(|c| c.local_name.as_str()).collect();
     assert!(
         names.iter().any(|n: &&str| n.contains("calculate")),
-        "Should suggest exported symbols matching 'calc' prefix, got: {:?}",
-        names
+        "Should suggest exported symbols matching 'calc' prefix, got: {names:?}"
     );
 }
 
@@ -3837,8 +3835,7 @@ fn test_project_workspace_symbols_filter() {
         let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
         assert!(
             names.iter().any(|n: &&str| n.contains("alpha")),
-            "Should find symbols matching 'alpha' query, got: {:?}",
-            names
+            "Should find symbols matching 'alpha' query, got: {names:?}"
         );
     }
 }

@@ -556,7 +556,7 @@ fn test_document_symbols_namespace() {
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "MyApp");
     assert!(
-        symbols[0].children.len() >= 1,
+        !symbols[0].children.is_empty(),
         "Namespace should have children"
     );
 }

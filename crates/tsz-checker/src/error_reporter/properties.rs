@@ -901,20 +901,19 @@ impl<'a> CheckerState<'a> {
                     .resolve_type_to_symbol_id(type_id)
                     .and_then(|sym_id| self.ctx.symbol_to_def.borrow().get(&sym_id).copied())
             })
+            && let Some(def) = self.ctx.definition_store.get(def_id)
         {
-            if let Some(def) = self.ctx.definition_store.get(def_id) {
-                let def_name = self.ctx.types.resolve_atom(def.name);
-                if def_name == name {
-                    // Check if the body type is an empty object
-                    if let Some(body) = def.body {
-                        if tsz_solver::is_empty_object_type(self.ctx.types, body) {
-                            return true;
-                        }
-                    }
-                    // Check via symbol: if interface has no AST members
-                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                        return self.interface_has_no_members(sym_id);
-                    }
+            let def_name = self.ctx.types.resolve_atom(def.name);
+            if def_name == name {
+                // Check if the body type is an empty object
+                if let Some(body) = def.body
+                    && tsz_solver::is_empty_object_type(self.ctx.types, body)
+                {
+                    return true;
+                }
+                // Check via symbol: if interface has no AST members
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    return self.interface_has_no_members(sym_id);
                 }
             }
         }
@@ -924,12 +923,12 @@ impl<'a> CheckerState<'a> {
     /// Try to get the display name for a type, checking symbol and def store.
     fn dom_type_name(&self, type_id: TypeId) -> Option<String> {
         // Try Lazy(DefId) types directly
-        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id) {
-            if let Some(def) = self.ctx.definition_store.get(def_id) {
-                let name = self.ctx.types.resolve_atom(def.name);
-                if !name.is_empty() {
-                    return Some(name);
-                }
+        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name);
             }
         }
         // Try object shape symbol
@@ -937,10 +936,10 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
         {
             let shape = self.ctx.types.object_shape(shape_id);
-            if let Some(sym_id) = shape.symbol {
-                if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
-                    return Some(symbol.escaped_name.clone());
-                }
+            if let Some(sym_id) = shape.symbol
+                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            {
+                return Some(symbol.escaped_name.clone());
             }
         }
         // Try definition store by type body
@@ -949,12 +948,11 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .find_def_for_type(type_id)
             .or_else(|| self.ctx.definition_store.find_type_alias_by_body(type_id))
+            && let Some(def) = self.ctx.definition_store.get(def_id)
         {
-            if let Some(def) = self.ctx.definition_store.get(def_id) {
-                let name = self.ctx.types.resolve_atom(def.name);
-                if !name.is_empty() {
-                    return Some(name);
-                }
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name);
             }
         }
         None
@@ -970,12 +968,11 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                if let Some(iface) = self.ctx.arena.get_interface(node) {
-                    if !iface.members.nodes.is_empty() {
-                        return false;
-                    }
-                }
+            if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                && let Some(iface) = self.ctx.arena.get_interface(node)
+                && !iface.members.nodes.is_empty()
+            {
+                return false;
             }
         }
         true

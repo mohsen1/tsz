@@ -989,7 +989,7 @@ fn test_symbols_api_multiple_declarations() {
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(
-        tree.len() >= 1,
+        !tree.is_empty(),
         "Should have at least one symbol for multi-declaration"
     );
 }
@@ -1041,7 +1041,7 @@ class Point {
     assert_eq!(tree.len(), 1);
     assert_eq!(tree[0].name, "Point");
     assert!(
-        tree[0].children.len() >= 1,
+        !tree[0].children.is_empty(),
         "Should have constructor and/or method children"
     );
 }
@@ -1265,7 +1265,7 @@ abstract class Widget {
     assert_eq!(tree.len(), 1);
     assert_eq!(tree[0].name, "Widget");
     assert!(
-        tree[0].children.len() >= 1,
+        !tree[0].children.is_empty(),
         "Should have at least one method child"
     );
 }
@@ -1654,7 +1654,7 @@ fn test_symbols_api_export_default_class() {
     let root = parser.parse_source_file();
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
-    assert!(tree.len() >= 1);
+    assert!(!tree.is_empty());
 }
 
 #[test]

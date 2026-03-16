@@ -1489,13 +1489,13 @@ fn test_rename_in_template_literal() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 4), "person".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename in declaration and template"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename in declaration and template"
+        );
     }
 }
 
@@ -1510,13 +1510,13 @@ fn test_rename_in_optional_chaining() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 4), "data".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename in declaration and optional chaining"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename in declaration and optional chaining"
+        );
     }
 }
 
@@ -1546,10 +1546,10 @@ fn test_rename_in_array_pattern() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 5), "a".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename in array pattern and usage");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename in array pattern and usage");
     }
 }
 
@@ -1580,10 +1580,10 @@ fn test_rename_at_end_of_file() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(1, 0), "y".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename both occurrences");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename both occurrences");
     }
 }
 
@@ -1598,10 +1598,10 @@ fn test_rename_generator_function() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 10), "generator".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename generator function");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename generator function");
     }
 }
 
@@ -1616,10 +1616,10 @@ fn test_rename_in_for_of() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(1, 11), "element".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename for-of variable");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename for-of variable");
     }
 }
 
@@ -1634,13 +1634,13 @@ fn test_rename_namespace() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 10), "NS2".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename namespace declaration and usage"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename namespace declaration and usage"
+        );
     }
 }
 
@@ -1655,13 +1655,13 @@ fn test_rename_type_alias_in_function_params() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 5), "Identifier".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 3,
-                "Should rename type alias in all positions"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 3,
+            "Should rename type alias in all positions"
+        );
     }
 }
 
@@ -1738,15 +1738,15 @@ fn test_rename_variable_used_in_if_condition() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 4), "isReady".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename declaration and usage in if"
-            );
-            for e in edits {
-                assert_eq!(e.new_text, "isReady");
-            }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename declaration and usage in if"
+        );
+        for e in edits {
+            assert_eq!(e.new_text, "isReady");
         }
     }
 }
@@ -1762,13 +1762,13 @@ fn test_rename_variable_used_in_while_loop() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 4), "idx".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename in declaration and while loop"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename in declaration and while loop"
+        );
     }
 }
 
@@ -1784,12 +1784,12 @@ fn test_rename_function_with_multiple_calls() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 9), "sum".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 4, "Should rename declaration + 3 call sites");
-            for e in edits {
-                assert_eq!(e.new_text, "sum");
-            }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 4, "Should rename declaration + 3 call sites");
+        for e in edits {
+            assert_eq!(e.new_text, "sum");
         }
     }
 }
@@ -1805,13 +1805,13 @@ fn test_rename_const_with_type_annotation() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 6), "msg".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename const declaration and usage"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename const declaration and usage"
+        );
     }
 }
 
@@ -1841,10 +1841,10 @@ fn test_rename_var_in_switch_case() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 4), "status".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename in declaration and switch");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename in declaration and switch");
     }
 }
 
@@ -1859,10 +1859,10 @@ fn test_rename_var_in_return_statement() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 19), "output".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename in declaration and return");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename in declaration and return");
     }
 }
 
@@ -1877,10 +1877,10 @@ fn test_rename_class_with_extends() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 6), "Parent".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(edits.len() >= 2, "Should rename class and extends clause");
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(edits.len() >= 2, "Should rename class and extends clause");
     }
 }
 
@@ -1895,13 +1895,13 @@ fn test_rename_interface_with_extends() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 10), "Base".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename interface and extends clause"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename interface and extends clause"
+        );
     }
 }
 
@@ -1917,12 +1917,12 @@ fn test_rename_variable_shadowed_in_inner_scope() {
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     // Rename outer x
     let result = provider.provide_rename_edits(root, Position::new(0, 4), "outer".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            // Should only rename the outer x, not the inner shadowed one
-            for e in edits {
-                assert_eq!(e.new_text, "outer");
-            }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        // Should only rename the outer x, not the inner shadowed one
+        for e in edits {
+            assert_eq!(e.new_text, "outer");
         }
     }
 }
@@ -1938,13 +1938,13 @@ fn test_rename_async_arrow_function_param() {
     let line_map = LineMap::build(source);
     let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
     let result = provider.provide_rename_edits(root, Position::new(0, 18), "input".to_string());
-    if let Ok(edit) = result {
-        if let Some(edits) = edit.changes.get("test.ts") {
-            assert!(
-                edits.len() >= 2,
-                "Should rename param in async arrow function"
-            );
-        }
+    if let Ok(edit) = result
+        && let Some(edits) = edit.changes.get("test.ts")
+    {
+        assert!(
+            edits.len() >= 2,
+            "Should rename param in async arrow function"
+        );
     }
 }
 

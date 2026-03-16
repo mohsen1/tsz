@@ -1712,8 +1712,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 continue;
             }
             let (access_expr, is_bracket) = match &member.name {
-                MemberName::Identifier(name) => (name.clone(), false),
-                MemberName::Private(name) => (name.clone(), false),
+                MemberName::Identifier(name) | MemberName::Private(name) => (name.clone(), false),
                 MemberName::StringLiteral(name) => (format!("\"{name}\""), true),
                 MemberName::Computed(_) => {
                     let var = computed_key_vars

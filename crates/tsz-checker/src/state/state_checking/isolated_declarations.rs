@@ -458,11 +458,9 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::PROPERTY_DECLARATION => {
                     self.check_isolated_decl_property(member_idx);
                 }
-                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                    // Accessors are checked via TS7006/TS7010/TS7032 (implicit any),
-                    // not isolated declarations-specific errors
+                _ => {
+                    // GET_ACCESSOR/SET_ACCESSOR: checked via TS7006/TS7010/TS7032
                 }
-                _ => {}
             }
         }
     }

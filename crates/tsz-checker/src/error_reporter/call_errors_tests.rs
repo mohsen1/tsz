@@ -85,13 +85,11 @@ var r6 = c.y();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&6234),
-        "Expected TS6234 for calling getter `c.y()`, got: {:?}",
-        codes
+        "Expected TS6234 for calling getter `c.y()`, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2721),
-        "Should NOT emit TS2721 for calling getter on generic class, got: {:?}",
-        codes
+        "Should NOT emit TS2721 for calling getter on generic class, got: {codes:?}"
     );
 }
 
@@ -115,13 +113,11 @@ var r6 = c.y();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&6234),
-        "Expected TS6234 for calling getter `c.y()`, got: {:?}",
-        codes
+        "Expected TS6234 for calling getter `c.y()`, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2721) && !codes.contains(&2349),
-        "Should NOT emit TS2721 or TS2349 for getter call, got: {:?}",
-        codes
+        "Should NOT emit TS2721 or TS2349 for getter call, got: {codes:?}"
     );
 }
 

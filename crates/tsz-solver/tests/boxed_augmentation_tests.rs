@@ -2,7 +2,7 @@
 //!
 //! When a user augments a built-in interface (e.g., `interface Number extends ICloneable {}`),
 //! the boxed type registered from lib resolution may produce a different TypeId than the
-//! type produced by compute_type_of_symbol. The shape-level property superset check in
+//! type produced by `compute_type_of_symbol`. The shape-level property superset check in
 //! `is_target_boxed_type` must handle this case, allowing the primitive to be assignable
 //! to the augmented version of its boxed type.
 
@@ -10,7 +10,7 @@ use super::*;
 use crate::TypeInterner;
 use crate::types::IntrinsicKind;
 
-/// Helper to create a PropertyInfo with minimal boilerplate.
+/// Helper to create a `PropertyInfo` with minimal boilerplate.
 fn prop(interner: &TypeInterner, name: &str, type_id: TypeId) -> PropertyInfo {
     PropertyInfo {
         name: interner.intern_string(name),

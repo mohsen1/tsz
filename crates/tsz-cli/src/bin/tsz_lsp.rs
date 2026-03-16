@@ -200,7 +200,7 @@ impl LspServer {
                 let r = self.handle_completion_resolve(msg.params);
                 Some(self.make_response(id, r))
             }
-            Some("textDocument/definition") => {
+            Some("textDocument/definition") | Some("textDocument/declaration") => {
                 let r = self.handle_definition(msg.params);
                 Some(self.make_response(id, r))
             }
@@ -318,12 +318,6 @@ impl LspServer {
             }
             Some("workspace/symbol") => {
                 let r = self.handle_workspace_symbol(msg.params);
-                Some(self.make_response(id, r))
-            }
-
-            // ── Declaration (same as definition for TS) ───────────────
-            Some("textDocument/declaration") => {
-                let r = self.handle_definition(msg.params);
                 Some(self.make_response(id, r))
             }
 
@@ -992,19 +986,18 @@ impl LspServer {
                 .to_string();
 
             // Deserialize the typed CompletionItemData
-            if let Ok(data) = serde_json::from_value::<CompletionItemData>(data_val) {
-                if let Some((detail, documentation)) =
+            if let Ok(data) = serde_json::from_value::<CompletionItemData>(data_val)
+                && let Some((detail, documentation)) =
                     self.project.resolve_completion_with_data(&data, &label)
-                {
-                    if let Some(detail) = detail {
-                        item["detail"] = Value::from(detail);
-                    }
-                    if let Some(doc) = documentation {
-                        item["documentation"] = serde_json::json!({
-                            "kind": "markdown",
-                            "value": doc,
-                        });
-                    }
+            {
+                if let Some(detail) = detail {
+                    item["detail"] = Value::from(detail);
+                }
+                if let Some(doc) = documentation {
+                    item["documentation"] = serde_json::json!({
+                        "kind": "markdown",
+                        "value": doc,
+                    });
                 }
             }
         }

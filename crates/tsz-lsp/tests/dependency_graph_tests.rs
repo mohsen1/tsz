@@ -275,8 +275,7 @@ fn test_remove_middle_of_chain() {
     let affected = graph.get_affected_files("c.ts");
     assert!(
         affected.is_empty(),
-        "After removing b.ts, c.ts should have no affected files, got {:?}",
-        affected
+        "After removing b.ts, c.ts should have no affected files, got {affected:?}"
     );
 
     // a.ts still exists but its dependency on b.ts was cleared
@@ -647,7 +646,7 @@ fn test_long_chain_affected_count() {
     let mut graph = DependencyGraph::new();
     // Chain of 10: f0 -> f1 -> f2 -> ... -> f9
     for i in 0..9 {
-        let from = format!("f{}.ts", i);
+        let from = format!("f{i}.ts");
         let to = format!("f{}.ts", i + 1);
         graph.add_dependency(&from, &to);
     }
@@ -721,8 +720,7 @@ fn test_three_node_cycle_all_affected_from_any() {
         assert_eq!(
             affected.len(),
             3,
-            "All nodes in cycle should be affected when {} changes",
-            start
+            "All nodes in cycle should be affected when {start} changes"
         );
     }
 }
@@ -1323,8 +1321,7 @@ fn test_four_node_cycle_affected_from_any() {
         assert_eq!(
             affected.len(),
             4,
-            "All 4 nodes should be affected when {} changes",
-            start
+            "All 4 nodes should be affected when {start} changes"
         );
     }
 }

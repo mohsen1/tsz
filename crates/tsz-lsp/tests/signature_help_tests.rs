@@ -1503,8 +1503,7 @@ fn test_signature_help_applicable_span() {
     let span_text = &source[span_start..span_start + span_length];
     assert!(
         span_text.contains("10") && span_text.contains("20"),
-        "Span should cover arguments, got: '{}'",
-        span_text
+        "Span should cover arguments, got: '{span_text}'"
     );
 }
 

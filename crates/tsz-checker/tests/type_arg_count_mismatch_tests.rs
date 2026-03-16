@@ -50,13 +50,11 @@ var r7b = map<number>([1, ""], (x) => x.toString());
 
     assert!(
         codes.contains(&2558),
-        "Expected TS2558 for wrong type argument count, got: {:?}",
-        codes
+        "Expected TS2558 for wrong type argument count, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2345),
-        "Should not emit TS2345 when type arg count is wrong, got: {:?}",
-        codes
+        "Should not emit TS2345 when type arg count is wrong, got: {codes:?}"
     );
 }
 
@@ -72,13 +70,11 @@ var r = identity<number, string>(42);
 
     assert!(
         codes.contains(&2558),
-        "Expected TS2558 for too many type arguments, got: {:?}",
-        codes
+        "Expected TS2558 for too many type arguments, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2345),
-        "Should not emit TS2345 when type arg count is wrong, got: {:?}",
-        codes
+        "Should not emit TS2345 when type arg count is wrong, got: {codes:?}"
     );
 }
 
@@ -100,14 +96,12 @@ var r7 = map<number, string>([1, ""], (x) => x.toString());
     // Should emit TS2322 for the string element not assignable to number
     assert!(
         codes.contains(&2322),
-        "Expected TS2322 for type mismatch with correct type arg count, got: {:?}",
-        codes
+        "Expected TS2322 for type mismatch with correct type arg count, got: {codes:?}"
     );
     // Should NOT emit TS2558
     assert!(
         !codes.contains(&2558),
-        "Should not emit TS2558 when type arg count is correct, got: {:?}",
-        codes
+        "Should not emit TS2558 when type arg count is correct, got: {codes:?}"
     );
 }
 
@@ -123,13 +117,11 @@ var r = create<number>(1);
     // U has no default, so providing 1 of 2-3 is wrong
     assert!(
         codes.contains(&2558),
-        "Expected TS2558 when providing too few type args (below min), got: {:?}",
-        codes
+        "Expected TS2558 when providing too few type args (below min), got: {codes:?}"
     );
     assert!(
         !codes.contains(&2345),
-        "Should not emit TS2345 when type arg count is wrong, got: {:?}",
-        codes
+        "Should not emit TS2345 when type arg count is wrong, got: {codes:?}"
     );
 }
 
@@ -144,8 +136,7 @@ var r1 = create<number>(1, "hello");
 
     assert!(
         !codes.contains(&2558),
-        "Should not emit TS2558 when type arg count is within valid range, got: {:?}",
-        codes
+        "Should not emit TS2558 when type arg count is within valid range, got: {codes:?}"
     );
 }
 
@@ -161,13 +152,11 @@ var r = add<number>(1, 2);
 
     assert!(
         codes.contains(&2558),
-        "Expected TS2558 for type args on non-generic function, got: {:?}",
-        codes
+        "Expected TS2558 for type args on non-generic function, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2345),
-        "Should not emit TS2345 when type args given to non-generic function, got: {:?}",
-        codes
+        "Should not emit TS2345 when type args given to non-generic function, got: {codes:?}"
     );
 }
 
@@ -184,14 +173,12 @@ var r = pair<number>(1);
 
     assert!(
         codes.contains(&2558),
-        "Expected TS2558 for wrong type argument count, got: {:?}",
-        codes
+        "Expected TS2558 for wrong type argument count, got: {codes:?}"
     );
     // Should not emit TS2554 (wrong argument count) because the type arg
     // count was already wrong — tsc doesn't check arguments in this case
     assert!(
         !codes.contains(&2554),
-        "Should not emit TS2554 when type arg count is wrong, got: {:?}",
-        codes
+        "Should not emit TS2554 when type arg count is wrong, got: {codes:?}"
     );
 }

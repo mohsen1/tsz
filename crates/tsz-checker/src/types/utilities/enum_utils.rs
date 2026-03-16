@@ -629,7 +629,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Inner implementation of overlap checking (after depth guard).
+    // Inner implementation of overlap checking (after depth guard).
 
     /// Check if a type is a "weak type" (all properties optional) for overlap purposes.
     /// tsc never emits TS2367 when comparing against weak types.

@@ -281,7 +281,7 @@ fn test_scope_walker_resolve_identifier_usage() {
             }
             None
         })
-        .last(); // The last occurrence should be the usage in 'x + 1'
+        .next_back(); // The last occurrence should be the usage in 'x + 1'
 
     if let Some(usage_idx) = x_usage {
         let mut walker = ScopeWalker::new(arena, &binder);
@@ -410,7 +410,7 @@ fn test_resolve_node_cached_returns_same_as_uncached() {
             }
             None
         })
-        .last()
+        .next_back()
         .expect("should find x usage");
 
     // Resolve without cache
@@ -455,7 +455,7 @@ fn test_resolve_node_cached_hits_on_second_call() {
             }
             None
         })
-        .last()
+        .next_back()
         .expect("should find x usage");
 
     let mut walker = ScopeWalker::new(arena, &binder);
@@ -1657,7 +1657,7 @@ fn test_resolve_node_cached_with_none_stats() {
             }
             None
         })
-        .last()
+        .next_back()
         .expect("should find x usage");
 
     // Resolve with cache but None stats (should not panic)

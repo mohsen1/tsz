@@ -1334,8 +1334,7 @@ fn test_highlight_reassignment_is_write() {
         .count();
     assert!(
         write_count >= 2,
-        "Should have at least 2 writes (declaration + reassignments), got {}",
-        write_count
+        "Should have at least 2 writes (declaration + reassignments), got {write_count}"
     );
 }
 
@@ -1542,7 +1541,7 @@ fn test_highlight_import_specifier() {
     let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
     let highlights = provider.get_document_highlights(root, Position::new(0, 9));
     if let Some(hl) = highlights {
-        assert!(hl.len() >= 1, "Should find at least import specifier");
+        assert!(!hl.is_empty(), "Should find at least import specifier");
     }
 }
 
@@ -1600,7 +1599,7 @@ fn test_highlight_namespace_variable() {
     let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
     let highlights = provider.get_document_highlights(root, Position::new(0, 10));
     if let Some(hl) = highlights {
-        assert!(hl.len() >= 1, "Should highlight NS");
+        assert!(!hl.is_empty(), "Should highlight NS");
     }
 }
 
@@ -1741,7 +1740,7 @@ fn test_highlight_enum_member() {
     let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
     let highlights = provider.get_document_highlights(root, Position::new(0, 5));
     if let Some(hl) = highlights {
-        assert!(hl.len() >= 1);
+        assert!(!hl.is_empty());
     }
 }
 
@@ -1789,7 +1788,7 @@ fn test_highlight_destructured_variable() {
     let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
     let highlights = provider.get_document_highlights(root, Position::new(0, 8));
     if let Some(hl) = highlights {
-        assert!(hl.len() >= 1);
+        assert!(!hl.is_empty());
     }
 }
 

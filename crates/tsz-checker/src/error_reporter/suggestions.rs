@@ -366,7 +366,7 @@ impl<'a> CheckerState<'a> {
     // String Literal Suggestion Helpers (TS2820)
     // =========================================================================
 
-    /// Find the best string literal suggestion from a union of string literals.
+    // Find the best string literal suggestion from a union of string literals.
     // =========================================================================
     // Levenshtein Distance
     // =========================================================================
