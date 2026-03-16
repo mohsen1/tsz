@@ -468,7 +468,7 @@ impl<'a> CheckerState<'a> {
                 if !name.is_empty()
                     && name
                         .chars()
-                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                        .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
                 {
                     if let Some(previous_name) = current_name.take() {
                         typedefs.push((previous_name, current_info));
