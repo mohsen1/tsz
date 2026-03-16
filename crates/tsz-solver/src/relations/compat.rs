@@ -1393,6 +1393,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // void, symbol, unique symbol) have no properties that could overlap
                 // with the weak type's optional properties, so they violate.
                 // Empty objects ({}) do NOT violate – they are assignable to weak types.
+                // Non-primitive intrinsic types (object, never, unknown, any, Function)
+                // are also exempt — they don't represent concrete values with wrong properties.
                 return crate::visitors::visitor_predicates::is_primitive_type(
                     self.interner,
                     source,
