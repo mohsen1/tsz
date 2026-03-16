@@ -443,10 +443,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let allow_indexed_structural = !has_string_index
                     && (!has_number_index || source_kind == Some(IntrinsicKind::String));
                 if !allow_indexed_structural {
-                    if let Some(s_kind) = source_kind
-                        && self.is_boxed_primitive_subtype(s_kind, target)
-                    {
-                        return SubtypeResult::True;
+                    // Primitives must NOT be assignable to pure index-signature
+                    // types (e.g., `string` to `{ [index: string]: any }`), even
+                    // though their boxed wrappers would be structurally compatible.
+                    // Only allow the boxed fallback when the target has named
+                    // properties (a mixed interface, not a pure index type).
+                    if !t_shape.properties.is_empty() {
+                        if let Some(s_kind) = source_kind
+                            && self.is_boxed_primitive_subtype(s_kind, target)
+                        {
+                            return SubtypeResult::True;
+                        }
                     }
                     if let Some(tracer) = &mut self.tracer
                         && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
@@ -468,6 +475,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if result.is_true() {
                     return result;
                 }
+                // Boxed fallback is safe here (no properties guard needed):
+                // structural matching was already attempted above.
                 if let Some(kind) = self.apparent_primitive_kind(source)
                     && self.is_boxed_primitive_subtype(kind, target)
                 {
