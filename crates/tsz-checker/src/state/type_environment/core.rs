@@ -1231,8 +1231,69 @@ impl<'a> CheckerState<'a> {
     /// const m3: Map = {};  // ❌ K is required
     /// ```
     pub(crate) fn count_required_type_params(&mut self, sym_id: SymbolId) -> usize {
+        // First try the fast AST-level check. This avoids recursive resolution
+        // issues when a type parameter default references the type being declared
+        // (e.g., `interface SelfRef<T = SelfRef> {}`). In such cases,
+        // `get_type_params_for_symbol` would recursively try to resolve the
+        // default, fail, and incorrectly report the param as required.
+        if let Some(ast_count) = self.count_required_type_params_from_ast(sym_id) {
+            return ast_count;
+        }
         let type_params = self.get_type_params_for_symbol(sym_id);
         type_params.iter().filter(|p| p.default.is_none()).count()
+    }
+
+    /// Count required type params by inspecting the AST directly, without resolving
+    /// defaults. Returns `Some(count)` if AST-level info is available, `None` otherwise.
+    pub(crate) fn count_required_type_params_from_ast(&self, sym_id: SymbolId) -> Option<usize> {
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let flags = symbol.flags;
+        let decl_candidates: Vec<_> =
+            if symbol.value_declaration != tsz_parser::parser::NodeIndex::NONE {
+                std::iter::once(symbol.value_declaration)
+                    .chain(symbol.declarations.iter().copied())
+                    .collect()
+            } else {
+                symbol.declarations.clone()
+            };
+
+        for decl_idx in decl_candidates {
+            let node = self.ctx.arena.get(decl_idx)?;
+            let type_params_list = if flags & tsz_binder::symbol_flags::INTERFACE != 0 {
+                self.ctx
+                    .arena
+                    .get_interface(node)
+                    .and_then(|iface| iface.type_parameters.as_ref())
+            } else if flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0 {
+                self.ctx
+                    .arena
+                    .get_type_alias(node)
+                    .and_then(|ta| ta.type_parameters.as_ref())
+            } else if flags & tsz_binder::symbol_flags::CLASS != 0 {
+                self.ctx
+                    .arena
+                    .get_class(node)
+                    .and_then(|c| c.type_parameters.as_ref())
+            } else {
+                None
+            };
+
+            if let Some(list) = type_params_list {
+                let required = list
+                    .nodes
+                    .iter()
+                    .filter(|&&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|n| self.ctx.arena.get_type_parameter(n))
+                            .is_some_and(|tp| tp.default == tsz_parser::parser::NodeIndex::NONE)
+                    })
+                    .count();
+                return Some(required);
+            }
+        }
+        None
     }
 
     /// Create a union type from multiple types.
