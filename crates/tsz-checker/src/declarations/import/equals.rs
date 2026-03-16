@@ -199,7 +199,10 @@ impl<'a> CheckerState<'a> {
         // TS1392: An import alias cannot use 'import type'.
         // Only applies to namespace alias forms like `import type Foo = ns.Foo`.
         // `import type X = require("...")` is valid since TS 3.8.
-        if import.is_type_only && require_module_specifier.is_none() {
+        // Suppress when parse errors exist — malformed imports like
+        // `import type defer * as ns from "./a"` already have parser errors,
+        // and TS1392 is a cascading false positive on the recovered AST.
+        if import.is_type_only && require_module_specifier.is_none() && !self.ctx.has_parse_errors {
             self.error_at_node(
                 stmt_idx,
                 "An import alias cannot use 'import type'",
