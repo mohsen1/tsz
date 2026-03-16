@@ -364,10 +364,8 @@ impl<'a> Printer<'a> {
         }
 
         if empty_named_import_preserves_side_effects {
-            self.write("require(\"");
-            self.write(&module_spec);
-            self.write("\");");
-            self.write_line();
+            // `import {} from "x"` has no runtime bindings; tsc elides it in CJS mode.
+            // Only bare `import "x"` (handled earlier) preserves side effects.
             return;
         }
 

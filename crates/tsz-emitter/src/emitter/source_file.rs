@@ -1460,17 +1460,31 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            // `export enum` / `export const enum` — the enum is inside an ExportDeclaration
+            // `export enum` / `export const enum` / `export namespace` / `export function`
+            // — the declaration is inside an ExportDeclaration wrapper
             if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                 && let Some(export_data) = self.arena.get_export_decl(stmt_node)
                 && export_data.export_clause.is_some()
             {
                 let clause_idx = export_data.export_clause;
-                if let Some(clause_node) = self.arena.get(clause_idx)
-                    && clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
-                {
-                    self.try_register_const_enum(evaluator, clause_idx);
+                if let Some(clause_node) = self.arena.get(clause_idx) {
+                    if clause_node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                        self.try_register_const_enum(evaluator, clause_idx);
+                    }
+                    // Recurse into exported namespace/module bodies
+                    if let Some(module_data) = self.arena.get_module(clause_node) {
+                        self.recurse_into_module_body(evaluator, module_data.body);
+                    }
+                    // Recurse into exported function bodies
+                    if let Some(func) = self.arena.get_function(clause_node) {
+                        if let Some(body_node) = self.arena.get(func.body)
+                            && let Some(block) = self.arena.get_block(body_node)
+                        {
+                            self.collect_const_enums_recursive(evaluator, &block.statements);
+                        }
+                    }
                 }
+                continue;
             }
 
             // Recurse into function/method/constructor bodies
@@ -1491,11 +1505,7 @@ impl<'a> Printer<'a> {
 
             // Recurse into namespace/module bodies
             if let Some(module_data) = self.arena.get_module(stmt_node) {
-                if let Some(body_node) = self.arena.get(module_data.body)
-                    && let Some(block) = self.arena.get_block(body_node)
-                {
-                    self.collect_const_enums_recursive(evaluator, &block.statements);
-                }
+                self.recurse_into_module_body(evaluator, module_data.body);
                 continue;
             }
 
@@ -1550,6 +1560,25 @@ impl<'a> Printer<'a> {
         let values = evaluator.evaluate_enum(enum_idx);
         if !values.is_empty() {
             self.const_enum_values.insert(name, values);
+        }
+    }
+
+    /// Helper: recurse into a module/namespace body for const enum collection.
+    /// Handles both `Block` and `ModuleBlock` body nodes.
+    fn recurse_into_module_body(&mut self, evaluator: &mut EnumEvaluator, body_idx: NodeIndex) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+        // Try regular Block first
+        if let Some(block) = self.arena.get_block(body_node) {
+            self.collect_const_enums_recursive(evaluator, &block.statements);
+            return;
+        }
+        // Try ModuleBlock (namespace bodies use this)
+        if let Some(module_block) = self.arena.get_module_block(body_node) {
+            if let Some(statements) = &module_block.statements {
+                self.collect_const_enums_recursive(evaluator, statements);
+            }
         }
     }
 
