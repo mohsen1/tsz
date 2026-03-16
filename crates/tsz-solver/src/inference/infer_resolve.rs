@@ -396,12 +396,51 @@ impl<'a> InferenceContext<'a> {
             .map(|c| {
                 matches!(
                     c.priority,
-                    InferencePriority::ReturnType | InferencePriority::LowPriority
+                    InferencePriority::ReturnType
+                        | InferencePriority::LowPriority
+                        | InferencePriority::MappedType
                 )
             })
             .unwrap_or(false);
-        let resolved = if priority_implies_combination {
-            // Union: used for return type inference and low-priority contexts
+        // When ALL candidates come from index signature inference (e.g.,
+        // {a: string, b: number} → {[key: string]: T}), use union semantics.
+        // The index signature T represents the union of all property value types.
+        // tsc handles this via getCommonSupertype's fallback to getUnionType when
+        // no single supertype exists, but only for this pattern — for direct
+        // parameter inference (e.g., f<T>(x: T, y: T) called as f(1, "")),
+        // tsc picks the first non-superseded candidate.
+        let all_from_index_signatures = filtered_no_never
+            .iter()
+            .all(|candidate| candidate.from_index_signature);
+        // When candidates include nullish types (undefined/null) and no candidates
+        // are from object properties, use union semantics. This matches tsc's
+        // getCommonSupertype behavior for nullable inference patterns like
+        // equal<T>(a: T, b: T) called as equal(B, undefined | D) → T = B | undefined | D.
+        let has_nullish_candidates = candidate_types.iter().any(|&ty| {
+            if ty == TypeId::UNDEFINED || ty == TypeId::NULL || ty == TypeId::VOID {
+                return true;
+            }
+            // Also check inside union candidates: `undefined | D` contains undefined
+            if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
+                let member_list = self.interner.type_list(members);
+                member_list
+                    .iter()
+                    .any(|&m| m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID)
+            } else {
+                false
+            }
+        });
+        let no_object_property_candidates = !filtered_no_never
+            .iter()
+            .any(|candidate| candidate.from_object_property);
+        let nullable_union_inference =
+            has_nullish_candidates && no_object_property_candidates;
+        let resolved = if priority_implies_combination
+            || all_from_index_signatures
+            || nullable_union_inference
+        {
+            // Union: used for return type inference, low-priority contexts,
+            // index signature inference, and nullable parameter inference
             self.best_common_type(&candidate_types)
         } else {
             // Common supertype: used for NakedTypeVariable and other direct inference.
