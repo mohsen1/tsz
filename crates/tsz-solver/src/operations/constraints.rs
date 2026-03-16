@@ -7,8 +7,9 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::operations::core::MAX_CONSTRAINT_STEPS;
-use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
+use crate::operations::{
+    AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
+};
 use crate::types::{
     CallSignature, FunctionShape, MappedModifier, ObjectShape, ObjectShapeId, ParamInfo,
     PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
@@ -275,20 +276,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 priority,
                             );
 
-                            // Infer template (T) from property value types.
-                            // Use MappedType priority so candidates from multiple properties
-                            // are combined via union, matching tsc's PriorityImpliesCombination
-                            // which includes MappedTypeConstraint. Without this, inference from
-                            // `{ [P in K]: T }` picks only the first property's type as T
-                            // instead of creating a union of all property types.
-                            let mapped_priority = crate::types::InferencePriority::MappedType;
+                            // Infer template (T) from property value types
                             for prop in &source_obj.properties {
                                 self.constrain_types(
                                     ctx,
                                     var_map,
                                     prop.type_id,
                                     mapped.template,
-                                    mapped_priority,
+                                    priority,
                                 );
                             }
                             return;
@@ -505,19 +500,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .collect();
 
                     if !structural_matches.is_empty() {
-                        // Discriminated union inference: if the source is an object
-                        // with discriminant properties (literal-typed properties that
-                        // appear in target union members), narrow to only the matching
-                        // variant(s). This matches tsc's behavior for patterns like:
-                        //   type Item<T> = { kind: 'a', data: T } | { kind: 'b', data: T[] }
-                        //   foo({ kind: 'b', data: [1, 2] }) → infer only from kind:'b' variant
-                        let infer_targets = if structural_matches.len() > 1 {
-                            self.filter_by_discriminant(source, &structural_matches)
+                        // When multiple Object-type members match, prefer the one with
+                        // deeper property-level alignment. For example, given source
+                        // `{d: number[]}` and targets `{d: T}` vs `{d: T[]}`, the second
+                        // is better because the Array structure in `d` aligns. Without
+                        // this, both contribute candidates and the naked-type-param member
+                        // produces a too-wide inference (T = number[] instead of T = number).
+                        let best_matches = if structural_matches.len() > 1 {
+                            self.select_best_structural_matches_for_constraint(
+                                source,
+                                &structural_matches,
+                                var_map,
+                            )
                         } else {
-                            structural_matches
+                            structural_matches.clone()
                         };
-
-                        for member in infer_targets {
+                        for member in best_matches {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     } else {
@@ -726,8 +724,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let var = ctx.fresh_var();
                         use std::fmt::Write;
                         src_placeholder_buf.clear();
-                        write!(src_placeholder_buf, "__infer_src_{}", var.0)
-                            .expect("write to String is infallible");
+                        write!(src_placeholder_buf, "__infer_src_{}", var.0).unwrap();
                         let placeholder_atom = self.interner.intern_string(&src_placeholder_buf);
                         ctx.register_type_param(placeholder_atom, var, tp.is_const);
 
@@ -1988,6 +1985,86 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         None
     }
 
+    /// When multiple union members structurally match the source (e.g., both are
+    /// Object types), select the ones with the deepest property-level alignment.
+    ///
+    /// For source `{d: T[]}` and candidates `{d: P}` vs `{d: P[]}`, the second
+    /// candidate scores higher because the Array wrapper in property `d` aligns
+    /// with the source. This prevents the naked-type-param member from producing
+    /// a too-wide inference candidate.
+    fn select_best_structural_matches_for_constraint(
+        &self,
+        source: TypeId,
+        candidates: &[TypeId],
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> Vec<TypeId> {
+        let Some(TypeData::Object(s_shape_id)) = self.interner.lookup(source) else {
+            return candidates.to_vec();
+        };
+        let s_shape = self.interner.object_shape(s_shape_id);
+        if s_shape.properties.is_empty() {
+            return candidates.to_vec();
+        }
+
+        // Score each candidate by how many properties have structural alignment
+        // with the source (e.g., Array-to-Array, Object-to-Object) rather than
+        // matching a naked type parameter placeholder.
+        let scored: Vec<(TypeId, usize)> = candidates
+            .iter()
+            .map(|&candidate| {
+                let score = self.score_property_alignment(&s_shape.properties, candidate, var_map);
+                (candidate, score)
+            })
+            .collect();
+
+        let max_score = scored.iter().map(|(_, s)| *s).max().unwrap_or(0);
+        if max_score == 0 {
+            // All candidates have the same score — return all
+            return candidates.to_vec();
+        }
+
+        scored
+            .into_iter()
+            .filter(|(_, s)| *s == max_score)
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Score how well a target object type's properties structurally align with
+    /// source properties. Each property where the target has a structural wrapper
+    /// (Array, Tuple, Function, etc.) that matches the source property's outer
+    /// structure scores 1. Naked type parameter placeholders score 0.
+    fn score_property_alignment(
+        &self,
+        source_props: &[PropertyInfo],
+        target: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> usize {
+        let Some(TypeData::Object(t_shape_id)) = self.interner.lookup(target) else {
+            return 0;
+        };
+        let t_shape = self.interner.object_shape(t_shape_id);
+        let mut score = 0;
+        for s_prop in source_props {
+            // Find matching property in target
+            if let Ok(idx) = t_shape
+                .properties
+                .binary_search_by_key(&s_prop.name, |p| p.name)
+            {
+                let t_prop_type = t_shape.properties[idx].type_id;
+                // If target property is a placeholder (inference var), no alignment bonus
+                if var_map.contains_key(&t_prop_type) {
+                    continue;
+                }
+                // If both have the same outer structure, score a point
+                if self.types_share_outer_structure_for_constraint(s_prop.type_id, t_prop_type) {
+                    score += 1;
+                }
+            }
+        }
+        score
+    }
+
     /// Check if two types share the same outer structure for constraint matching.
     ///
     /// Used to prefer structural matches over naked type params when constraining
@@ -2010,75 +2087,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Tuple(_), TypeData::Tuple(_))
             | (TypeData::Array(_), TypeData::Array(_)) => true,
             _ => false,
-        }
-    }
-
-    /// Filter target union members by discriminant properties.
-    ///
-    /// When the source is an object with properties whose types are unit/literal
-    /// types (e.g., `kind: 'b'`), check each target member for corresponding
-    /// properties with literal types. Only keep members whose discriminant values
-    /// match the source's discriminant values. If no discriminant is found or
-    /// filtering eliminates all members, return the original list.
-    fn filter_by_discriminant(&self, source: TypeId, targets: &[TypeId]) -> Vec<TypeId> {
-        // Get source object properties
-        let source_shape_id = match self.interner.lookup(source) {
-            Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
-            _ => return targets.to_vec(),
-        };
-        let source_obj = self.interner.object_shape(source_shape_id);
-
-        // Find discriminant properties in the source: properties with literal types.
-        // Store (property_name_atom_raw, literal_type_id) pairs.
-        let mut discriminants: Vec<(tsz_common::interner::Atom, TypeId)> = Vec::new();
-        for prop in &source_obj.properties {
-            if let Some(TypeData::Literal(_)) = self.interner.lookup(prop.type_id) {
-                discriminants.push((prop.name, prop.type_id));
-            }
-        }
-
-        if discriminants.is_empty() {
-            return targets.to_vec();
-        }
-
-        // Filter targets: keep members whose discriminant properties match
-        let filtered: Vec<TypeId> = targets
-            .iter()
-            .filter(|&&target_member| {
-                let target_shape_id = match self.interner.lookup(target_member) {
-                    Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
-                    _ => return true, // Non-object targets pass through
-                };
-                let target_obj = self.interner.object_shape(target_shape_id);
-
-                // For each source discriminant, check if the target has a matching
-                // property with a specific literal type
-                for &(disc_name, disc_type) in &discriminants {
-                    if let Some(target_prop) =
-                        target_obj.properties.iter().find(|p| p.name == disc_name)
-                    {
-                        // Target has this property - check if it has a specific literal
-                        // type that differs from the source's literal
-                        if let Some(TypeData::Literal(_)) =
-                            self.interner.lookup(target_prop.type_id)
-                            && target_prop.type_id != disc_type
-                        {
-                            return false; // Discriminant mismatch
-                        }
-                        // If target property is a type parameter (contains placeholder),
-                        // it's not a discriminant in the target - skip this property
-                    }
-                }
-                true
-            })
-            .copied()
-            .collect();
-
-        // Only use filtered result if it's non-empty
-        if filtered.is_empty() {
-            targets.to_vec()
-        } else {
-            filtered
         }
     }
 
@@ -2536,7 +2544,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target: &ObjectShape,
-        _priority: crate::types::InferencePriority,
+        priority: crate::types::InferencePriority,
     ) {
         let string_index = target.string_index.as_ref();
         let number_index = target.number_index.as_ref();
@@ -2544,12 +2552,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if string_index.is_none() && number_index.is_none() {
             return;
         }
-
-        // Use MappedType priority so that candidates from multiple properties are
-        // combined via union. This matches tsc's behavior: for `{ [x: string]: T }`,
-        // calling with `{ a: number, b: string }` should infer T = number | string.
-        // Without combination priority, common supertype picks only the first type.
-        let idx_priority = crate::types::InferencePriority::MappedType;
 
         for (i, prop) in source_props.iter().enumerate() {
             let prop_type = self.optional_property_type(prop);
@@ -2562,18 +2564,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ctx.add_index_signature_candidate_with_index(
                         var,
                         prop_type,
-                        idx_priority,
+                        priority,
                         property_index,
                         false,
                     );
                 } else {
-                    self.constrain_types(
-                        ctx,
-                        var_map,
-                        prop_type,
-                        number_idx.value_type,
-                        idx_priority,
-                    );
+                    self.constrain_types(ctx, var_map, prop_type, number_idx.value_type, priority);
                 }
             }
 
@@ -2582,18 +2578,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ctx.add_index_signature_candidate_with_index(
                         var,
                         prop_type,
-                        idx_priority,
+                        priority,
                         property_index,
                         false,
                     );
                 } else {
-                    self.constrain_types(
-                        ctx,
-                        var_map,
-                        prop_type,
-                        string_idx.value_type,
-                        idx_priority,
-                    );
+                    self.constrain_types(ctx, var_map, prop_type, string_idx.value_type, priority);
                 }
             }
         }
