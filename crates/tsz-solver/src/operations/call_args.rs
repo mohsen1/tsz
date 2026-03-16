@@ -329,8 +329,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
                     index: i,
-                    // Use the declared param_type (without implicit `| undefined`
-                    // for optional params) so error messages match tsc's display.
                     expected: param_type,
                     actual: *arg_type,
                     // NOTE: fallback_return is ERROR here; the caller

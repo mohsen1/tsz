@@ -181,23 +181,42 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type "may represent a primitive value" for TS2638.
-    /// This applies to types like `{}` that structurally accept primitives,
-    /// and type parameters whose constraint is `{}` or missing.
+    /// In tsc, this check fires for type parameters (InstantiableNonPrimitive) whose
+    /// constraint is missing or could also represent a primitive. Empty object types
+    /// like `{}` are NOT flagged — they structurally accept primitives, but an empty
+    /// object value at runtime is always an object, not a primitive.
     fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
-        // `{}` (empty object type) may represent primitives
-        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
-            return true;
-        }
-
-        // Type parameters: check if constraint is missing or is `{}`
+        // Type parameters: check if constraint is missing or could be primitive
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
             return match crate::query_boundaries::state::checking::type_parameter_constraint(
                 self.ctx.types,
                 ty,
             ) {
                 None => true, // Unconstrained type param may be primitive
-                Some(c) => self.type_may_represent_primitive(c),
+                Some(c) => {
+                    // A type param constrained to `{}` may still be primitive
+                    if tsz_solver::is_empty_object_type(self.ctx.types, c) {
+                        return true;
+                    }
+                    self.type_may_represent_primitive(c)
+                }
             };
+        }
+
+        // Union: any member may represent primitive
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&m| self.type_may_represent_primitive(m));
+        }
+
+        // Intersection: all members may represent primitive
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
+        {
+            return members
+                .iter()
+                .all(|&m| self.type_may_represent_primitive(m));
         }
 
         false

@@ -62,7 +62,9 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
 use tracing::{debug, info, trace};
 
-use tsz::lsp::{CompletionItemKind, FormattingOptions, Position, Project, Range};
+use tsz::lsp::{
+    CompletionItemData, CompletionItemKind, FormattingOptions, Position, Project, Range,
+};
 
 /// TSZ Language Server
 #[derive(Parser, Debug)]
@@ -964,11 +966,10 @@ impl LspServer {
                 {
                     ci["detail"] = Value::from(format!("Auto import from '{source}'"));
                 }
-                // Attach resolve data so completionItem/resolve can look up docs
-                ci["data"] = serde_json::json!({
-                    "fileName": &file_name,
-                    "label": &item.label,
-                });
+                // Attach typed resolve data so completionItem/resolve can look up docs
+                if let Some(ref data) = item.data {
+                    ci["data"] = serde_json::to_value(data).unwrap_or(Value::Null);
+                }
                 ci
             })
             .collect();
@@ -983,26 +984,28 @@ impl LspServer {
         // The params IS the completion item itself
         let mut item = params.unwrap_or(Value::Null);
 
-        if let Some(data) = item.get("data") {
-            let file_name = data
-                .get("fileName")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let label = data
+        if let Some(data_val) = item.get("data").cloned() {
+            let label = item
                 .get("label")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
 
-            if let Some((_detail, documentation)) =
-                self.project.resolve_completion(&file_name, &label)
-                && let Some(doc) = documentation
-            {
-                item["documentation"] = serde_json::json!({
-                    "kind": "markdown",
-                    "value": doc,
-                });
+            // Deserialize the typed CompletionItemData
+            if let Ok(data) = serde_json::from_value::<CompletionItemData>(data_val) {
+                if let Some((detail, documentation)) =
+                    self.project.resolve_completion_with_data(&data, &label)
+                {
+                    if let Some(detail) = detail {
+                        item["detail"] = Value::from(detail);
+                    }
+                    if let Some(doc) = documentation {
+                        item["documentation"] = serde_json::json!({
+                            "kind": "markdown",
+                            "value": doc,
+                        });
+                    }
+                }
             }
         }
 

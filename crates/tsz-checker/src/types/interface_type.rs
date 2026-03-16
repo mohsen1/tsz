@@ -427,6 +427,21 @@ impl<'a> CheckerState<'a> {
 
         trace!(decls = declarations.len(), derived_type_id = %derived_type.0, "merge_interface_heritage_types called");
 
+        // Depth guard: heritage merging can trigger get_type_of_symbol on base
+        // interfaces, which in turn calls compute_type_of_symbol →
+        // merge_interface_heritage_types again for cross-referencing interfaces.
+        // Use a dedicated counter with a tight limit (10) because each heritage
+        // merge cycle is expensive (it resolves full interface types).
+        let heritage_depth = self.ctx.heritage_merge_depth.get();
+        if heritage_depth >= 3 {
+            return derived_type;
+        }
+        // Bail out early if type resolution fuel is exhausted.
+        if !self.ctx.consume_fuel() {
+            return derived_type;
+        }
+        self.ctx.heritage_merge_depth.set(heritage_depth + 1);
+
         let mut pushed_derived = false;
         let mut derived_param_updates = Vec::new();
         let current_sym = declarations
@@ -610,6 +625,7 @@ impl<'a> CheckerState<'a> {
             self.pop_type_parameters(derived_param_updates);
         }
 
+        self.ctx.heritage_merge_depth.set(heritage_depth);
         derived_type
     }
 
@@ -626,16 +642,33 @@ impl<'a> CheckerState<'a> {
     /// # Returns
     /// The merged `TypeId`
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        if derived == base {
+            return derived;
+        }
+        // Depth guard: merge_interface_types can recurse through merge_properties
+        // and resolve_type_for_interface_merge, creating an unbounded cycle.
+        if !self.ctx.enter_recursion() {
+            return derived;
+        }
+        let result = self.merge_interface_types_impl(derived, base);
+        self.ctx.leave_recursion();
+        result
+    }
+
+    fn merge_interface_types_impl(&mut self, derived: TypeId, base: TypeId) -> TypeId {
         use tracing::trace;
         use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
         use tsz_solver::{CallableShape, ObjectShape};
 
-        trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
-        let factory = self.ctx.types.factory();
-
-        if derived == base {
+        // Bail out if type resolution fuel is exhausted to prevent
+        // expensive merges from hanging on augmented module interfaces
+        // (e.g., react + create-emotion-styled cross-referencing).
+        if !self.ctx.consume_fuel() {
             return derived;
         }
+
+        trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
+        let factory = self.ctx.types.factory();
 
         // Resolve Application/Lazy types before classification.
         // When an interface extends a type alias (e.g., `interface TaggedPair<T> extends Pair<T>`
@@ -856,7 +889,13 @@ impl<'a> CheckerState<'a> {
 
     fn resolve_type_for_interface_merge(&mut self, type_id: TypeId) -> TypeId {
         if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, type_id) {
-            let evaluated = self.evaluate_type_with_env(type_id);
+            // Use the solver evaluator directly without ensure_relation_input_ready.
+            // evaluate_type_with_env triggers lazy ref resolution which can cause
+            // explosive type creation on augmented module interfaces (react + emotion).
+            use tsz_solver::TypeEvaluator;
+            let env = self.ctx.type_env.borrow();
+            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+            let evaluated = evaluator.evaluate(type_id);
             if evaluated != type_id {
                 return evaluated;
             }

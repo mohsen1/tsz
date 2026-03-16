@@ -105,6 +105,7 @@ impl<'a> CheckerContext<'a> {
             class_decl_miss_cache: RefCell::new(FxHashSet::default()),
             jsx_intrinsic_props_cache: FxHashMap::default(),
             jsx_import_source_checked: false,
+            deferred_jsx_import_source_error: None,
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -157,6 +158,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -302,6 +304,7 @@ impl<'a> CheckerContext<'a> {
             class_decl_miss_cache: RefCell::new(FxHashSet::default()),
             jsx_intrinsic_props_cache: FxHashMap::default(),
             jsx_import_source_checked: false,
+            deferred_jsx_import_source_error: None,
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -354,6 +357,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -490,6 +494,7 @@ impl<'a> CheckerContext<'a> {
             class_decl_miss_cache: RefCell::new(FxHashSet::default()),
             jsx_intrinsic_props_cache: FxHashMap::default(),
             jsx_import_source_checked: false,
+            deferred_jsx_import_source_error: None,
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -542,6 +547,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -682,6 +688,7 @@ impl<'a> CheckerContext<'a> {
             class_decl_miss_cache: RefCell::new(FxHashSet::default()),
             jsx_intrinsic_props_cache: FxHashMap::default(),
             jsx_import_source_checked: false,
+            deferred_jsx_import_source_error: None,
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -734,6 +741,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -867,6 +875,7 @@ impl<'a> CheckerContext<'a> {
             class_decl_miss_cache: RefCell::new(FxHashSet::default()),
             jsx_intrinsic_props_cache: FxHashMap::default(),
             jsx_import_source_checked: false,
+            deferred_jsx_import_source_error: None,
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -919,6 +928,7 @@ impl<'a> CheckerContext<'a> {
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),
+            heritage_merge_depth: Cell::new(0),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
@@ -1076,6 +1086,7 @@ impl<'a> CheckerContext<'a> {
             class_decl_miss_cache: RefCell::new(FxHashSet::default()),
             jsx_intrinsic_props_cache: FxHashMap::default(),
             jsx_import_source_checked: false,
+            deferred_jsx_import_source_error: None,
             // Symbol dependency keys are SymbolId; isolate per binder.
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
@@ -1132,6 +1143,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion.max_depth(),
                 parent.recursion_depth.borrow().depth(),
             )),
+            heritage_merge_depth: Cell::new(parent.heritage_merge_depth.get()),
             call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
