@@ -217,6 +217,29 @@ impl<'a> CheckerState<'a> {
             // The tag name is a reference to a component (function or class)
             let component_type = self.compute_type_of_node(tag_name_idx);
             let evaluated = self.evaluate_type_with_env(component_type);
+
+            // If the resolved type is string-like or a keyof type (e.g., `keyof ReactHTML`),
+            // treat it as an intrinsic element. tsc allows `<Tag>` where Tag has a string
+            // type without emitting TS2604.
+            if self.is_jsx_string_tag_type(evaluated)
+                || tsz_solver::type_queries::is_keyof_type(self.ctx.types, evaluated)
+            {
+                self.check_grammar_jsx_element(jsx_opening.attributes);
+                if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+                        && let Some(exports) = symbol.exports.as_ref()
+                        && let Some(element_sym_id) = exports.get("Element")
+                    {
+                        return self.type_reference_symbol_type(element_sym_id);
+                    }
+                }
+                return TypeId::ANY;
+            }
+
             let jsx_element_expr_type = self.get_jsx_element_type_for_check();
 
             // TS2786: component return type must be valid JSX element
