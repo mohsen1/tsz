@@ -55,9 +55,11 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████████████████] 99.2% (1,389 / 1,400 tests)
+Progress: [████████░░░░░░░░░░░░] 37.9% (2,394 / 6,320 tests)
 ```
 <!-- FOURSLASH_END -->
 
+Of the enabled tests, 99%+ pass. ~3,926 tests are skipped pending deeper infrastructure
+(code fixes, refactoring, type-aware completions, formatting).
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
