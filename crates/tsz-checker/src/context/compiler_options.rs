@@ -12,7 +12,7 @@ use super::CheckerContext;
 ///
 /// Use this for checking file names other than the current file.
 /// For the current file, prefer `CheckerContext::is_declaration_file()`.
-pub fn is_declaration_file_name(file_name: &str) -> bool {
+pub(crate) fn is_declaration_file_name(file_name: &str) -> bool {
     file_name.ends_with(".d.ts")
         || file_name.ends_with(".d.tsx")
         || file_name.ends_with(".d.mts")

@@ -13,7 +13,7 @@
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 
 mod compiler_options;
-pub use compiler_options::is_declaration_file_name;
+pub(crate) use compiler_options::is_declaration_file_name;
 mod constructors;
 mod core;
 mod def_mapping;
@@ -88,20 +88,20 @@ pub struct EnclosingClassInfo {
 
 /// Info about a label in scope for break/continue validation.
 #[derive(Clone, Debug)]
-pub struct LabelInfo {
+pub(crate) struct LabelInfo {
     /// The label name (e.g., "outer").
-    pub name: String,
+    pub(crate) name: String,
     /// Whether the label is on an iteration statement (for continue validation).
     /// Only iteration labels can be targets of continue statements.
-    pub is_iteration: bool,
+    pub(crate) is_iteration: bool,
     /// The function depth when this label was defined.
     /// Used to detect if a jump crosses a function boundary.
-    pub function_depth: u32,
+    pub(crate) function_depth: u32,
     /// Whether the label was targeted by a break/continue statement.
     /// Used for TS7028 (unused label) detection.
-    pub referenced: bool,
+    pub(crate) referenced: bool,
     /// The AST node index of the label identifier (for error reporting).
-    pub label_node: tsz_parser::parser::NodeIndex,
+    pub(crate) label_node: tsz_parser::parser::NodeIndex,
 }
 
 /// Persistent cache for type checking results across LSP queries.
@@ -155,9 +155,9 @@ pub struct TypeCache {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct EnvEvalCacheEntry {
-    pub result: TypeId,
-    pub depth_exceeded: bool,
+pub(crate) struct EnvEvalCacheEntry {
+    pub(crate) result: TypeId,
+    pub(crate) depth_exceeded: bool,
 }
 
 /// Info about a symbol that came from destructuring a union type.
@@ -165,17 +165,17 @@ pub struct EnvEvalCacheEntry {
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
 /// narrowing `isSuccess` should also narrow `data`.
 #[derive(Clone, Debug)]
-pub struct DestructuredBindingInfo {
+pub(crate) struct DestructuredBindingInfo {
     /// The source type of the entire destructured expression (the union)
-    pub source_type: TypeId,
+    pub(crate) source_type: TypeId,
     /// The property name that this symbol corresponds to (for object patterns)
-    pub property_name: String,
+    pub(crate) property_name: String,
     /// The element index for array/tuple patterns (`u32::MAX` if object pattern)
-    pub element_index: u32,
+    pub(crate) element_index: u32,
     /// The binding group ID — all symbols from the same destructuring share this
-    pub group_id: u32,
+    pub(crate) group_id: u32,
     /// Whether this is a const binding (only const bindings support correlated narrowing)
-    pub is_const: bool,
+    pub(crate) is_const: bool,
 }
 
 /// Shared state for type checking.
