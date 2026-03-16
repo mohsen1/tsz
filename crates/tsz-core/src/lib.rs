@@ -368,6 +368,10 @@ struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_target_or_module")]
     module: Option<u32>,
 
+    /// Interpret optional property types as written, rather than adding 'undefined'.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    exact_optional_property_types: Option<bool>,
+
     /// When true, do not include any library files.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_lib: Option<bool>,
@@ -599,7 +603,7 @@ impl CompilerOptions {
             isolated_modules: false,
             no_unchecked_indexed_access: false,
             strict_bind_call_apply: false,
-            exact_optional_property_types: false,
+            exact_optional_property_types: self.exact_optional_property_types.unwrap_or(false),
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
             target: self.resolve_target(),
