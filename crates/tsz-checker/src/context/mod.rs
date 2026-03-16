@@ -625,6 +625,12 @@ pub struct CheckerContext<'a> {
     /// (e.g., `@typedef {string | JsonArray} Json` where `JsonArray = ReadonlyArray<Json>`).
     pub resolving_jsdoc_typedefs: RefCell<Vec<String>>,
 
+    /// Current anchor position for typedef scoping during JSDoc type resolution.
+    /// When set, `resolve_jsdoc_type_name` will skip typedefs that are inside a
+    /// function body that doesn't contain this position.
+    /// `u32::MAX` means no scoping (global search).
+    pub jsdoc_typedef_anchor_pos: std::cell::Cell<u32>,
+
     /// Stack of expected return types for functions.
     pub return_type_stack: Vec<TypeId>,
     /// Stack of contextual yield types for generator functions.
