@@ -20,7 +20,8 @@
 //! ```
 
 use crate::transforms::emit_utils::{
-    identifier_text as get_identifier_text, sanitize_module_name, string_literal_text,
+    identifier_text as get_identifier_text, sanitize_module_name, specifier_name_text,
+    string_literal_text,
 };
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
@@ -455,10 +456,36 @@ pub fn collect_export_names_with_options(
                         continue;
                     }
 
-                    // Only pre-initialize local exports (no module specifier)
-                    if export_decl.module_specifier.is_none()
-                        && let Some(clause_node) = arena.get(export_decl.export_clause)
-                    {
+                    if let Some(clause_node) = arena.get(export_decl.export_clause) {
+                        // For re-exports with named specifiers (e.g., export { "<X>" as "<Y>" } from "mod"),
+                        // also collect their exported names for the preamble void 0 initialization.
+                        // tsc gathers all export void 0s (both local and re-export) into one chained line.
+                        if export_decl.module_specifier.is_some() {
+                            if let Some(named_exports) = arena.get_named_imports(clause_node) {
+                                for &spec_idx in &named_exports.elements.nodes {
+                                    if let Some(spec) = arena.get_specifier_at(spec_idx) {
+                                        if spec.is_type_only {
+                                            continue;
+                                        }
+                                        if let Some(name) =
+                                            specifier_name_text(arena, spec.name)
+                                        {
+                                            exports.push(name);
+                                        }
+                                    }
+                                }
+                            }
+                            // Also collect `export * as "name" from "mod"`
+                            else if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                                if let Some(name) =
+                                    specifier_name_text(arena, export_decl.export_clause)
+                                {
+                                    exports.push(name);
+                                }
+                            }
+                            continue;
+                        }
+
                         if let Some(named_exports) = arena.get_named_imports(clause_node) {
                             // Lazily build name sets on first use
                             let vn = value_names.get_or_insert_with(|| {
@@ -497,7 +524,8 @@ pub fn collect_export_names_with_options(
                                         continue;
                                     }
                                     // Use the exported name (name), not the local name (property_name)
-                                    if let Some(name) = get_identifier_text(arena, spec.name) {
+                                    // The exported name can be a string literal (e.g., export { x as "<X>" })
+                                    if let Some(name) = specifier_name_text(arena, spec.name) {
                                         exports.push(name);
                                     }
                                 }
@@ -705,12 +733,13 @@ pub fn collect_export_names_categorized(
                     && !spec.is_type_only
                 {
                     // The local name is property_name if present, otherwise name
+                    // Both can be string literals in ES2022+ arbitrary module namespace identifiers
                     let local_name = if spec.property_name.is_some() {
-                        get_identifier_text(arena, spec.property_name)
+                        specifier_name_text(arena, spec.property_name)
                     } else {
-                        get_identifier_text(arena, spec.name)
+                        specifier_name_text(arena, spec.name)
                     };
-                    let exported_name = get_identifier_text(arena, spec.name);
+                    let exported_name = specifier_name_text(arena, spec.name);
                     if let (Some(local), Some(exported)) = (local_name, exported_name)
                         && func_decl_names.contains(&local)
                         && !func_exports.iter().any(|(e, _)| e == &exported)

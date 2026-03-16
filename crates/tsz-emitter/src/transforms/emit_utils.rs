@@ -18,6 +18,20 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Get the name text from an import/export specifier name node.
+/// Handles both identifiers (`foo`) and string literals (`"<X>"`).
+/// Returns `None` if the node is neither.
+pub(crate) fn specifier_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        arena.get_identifier(node).map(|id| id.escaped_text.clone())
+    } else if node.kind == SyntaxKind::StringLiteral as u16 {
+        arena.get_literal(node).map(|lit| lit.text.clone())
+    } else {
+        None
+    }
+}
+
 /// Get enum member name from a node index (identifier or string literal).
 ///
 /// Returns the identifier's escaped text or the literal's text, or an empty string
