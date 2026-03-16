@@ -122,7 +122,26 @@ impl<'a> Printer<'a> {
             && node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
             && let Some(data) = self.arena.get_expr_type_args(node)
         {
+            // If the inner expression is an optional chain, we need parens to
+            // preserve the chain boundary. Without parens, a subsequent `.prop`
+            // or `()` would become part of the optional chain, changing semantics.
+            // Example: `a?.b<c>.d` must emit `(a?.b).d`, not `a?.b.d`.
+            let needs_parens = if let Some(inner) = self.arena.get(data.expression) {
+                if let Some(access) = self.arena.get_access_expr(inner) {
+                    access.question_dot_token
+                } else {
+                    (inner.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
+                }
+            } else {
+                false
+            };
+            if needs_parens {
+                self.write("(");
+            }
             self.emit(data.expression);
+            if needs_parens {
+                self.write(")");
+            }
         } else {
             self.emit(idx);
         }
