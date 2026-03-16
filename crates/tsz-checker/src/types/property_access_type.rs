@@ -831,8 +831,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(ns_name) = self.entity_name_text(access.expression) {
                         self.error_namespace_used_as_value_at(&ns_name, access.expression);
                     }
-                    // Also emit TS2693 for the type-only member itself
-                    self.error_type_only_value_at(property_name, access.name_or_argument);
+                    // tsc does NOT emit TS2693 for the type-only member
+                    // when TS2708 was already emitted for the namespace.
                 }
                 return TypeId::ERROR;
             }
