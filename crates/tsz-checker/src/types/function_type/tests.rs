@@ -59,7 +59,7 @@ fn async_arrow_generic_promise_return_no_false_error() {
 }
 
 #[test]
-#[ignore = "requires global Promise type not available in test harness"]
+#[ignore = "async Promise unwrapping requires global Promise type not available in test harness"]
 fn async_inferred_return_unwraps_promise() {
     let diags = async_diagnostics(
         "declare function load(): Promise<boolean>;
@@ -72,7 +72,7 @@ fn async_inferred_return_unwraps_promise() {
 }
 
 #[test]
-#[ignore = "requires global Promise type not available in test harness"]
+#[ignore = "async Promise unwrapping requires global Promise type not available in test harness"]
 fn async_inferred_return_unwraps_promise_then_chain() {
     let diags = async_diagnostics(
         "declare function load(): Promise<boolean>;
@@ -94,7 +94,7 @@ fn async_inferred_return_non_promise_wraps_once() {
 }
 
 #[test]
-#[ignore = "requires global Promise type not available in test harness"]
+#[ignore = "async Promise unwrapping requires global Promise type not available in test harness"]
 fn async_inferred_return_union_with_promise() {
     let diags = async_diagnostics(
         "declare function load(): Promise<boolean>;
