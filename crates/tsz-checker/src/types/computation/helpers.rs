@@ -166,9 +166,16 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
-                return true;
-            }
+            // Non-array-applicable object types (e.g., interfaces with index
+            // signatures or extra properties) are irrelevant for array literal
+            // contextual typing.  tsc uses `someType(contextualType, isTupleLikeType)`
+            // to decide tuple context — it only cares whether any union member is
+            // tuple/array-like, not whether other members are object-like.  Treating
+            // them as ambiguous discards the contextual type entirely, causing array
+            // literals to widen (e.g., `["a"]` becomes `string[]`), which then fails
+            // assignability against the tuple member.
+            //
+            // Skip object-like members and let `applicable_shapes.len() > 1` decide.
         }
 
         applicable_shapes.len() > 1
