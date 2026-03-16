@@ -313,6 +313,9 @@ mod class_comprehensive_tests;
 #[path = "../tests/bct_tests.rs"]
 mod bct_tests;
 #[cfg(test)]
+#[path = "../tests/boxed_augmentation_tests.rs"]
+mod boxed_augmentation_tests;
+#[cfg(test)]
 #[path = "tests/classify_array_like_tests.rs"]
 mod classify_array_like_tests;
 #[cfg(test)]
