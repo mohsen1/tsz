@@ -129,7 +129,7 @@ pub use tsz_common::limits::MAX_TREE_WALK_ITERATIONS;
 pub use tsz_common::limits::MAX_TYPE_RESOLUTION_OPS;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum EnumKind {
+pub(crate) enum EnumKind {
     Numeric,
     String,
     Mixed,

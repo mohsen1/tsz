@@ -13,7 +13,7 @@
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 
 mod compiler_options;
-pub use compiler_options::is_declaration_file_name;
+pub(crate) use compiler_options::is_declaration_file_name;
 mod constructors;
 mod core;
 mod def_mapping;
@@ -88,20 +88,20 @@ pub struct EnclosingClassInfo {
 
 /// Info about a label in scope for break/continue validation.
 #[derive(Clone, Debug)]
-pub struct LabelInfo {
+pub(crate) struct LabelInfo {
     /// The label name (e.g., "outer").
-    pub name: String,
+    pub(crate) name: String,
     /// Whether the label is on an iteration statement (for continue validation).
     /// Only iteration labels can be targets of continue statements.
-    pub is_iteration: bool,
+    pub(crate) is_iteration: bool,
     /// The function depth when this label was defined.
     /// Used to detect if a jump crosses a function boundary.
-    pub function_depth: u32,
+    pub(crate) function_depth: u32,
     /// Whether the label was targeted by a break/continue statement.
     /// Used for TS7028 (unused label) detection.
-    pub referenced: bool,
+    pub(crate) referenced: bool,
     /// The AST node index of the label identifier (for error reporting).
-    pub label_node: tsz_parser::parser::NodeIndex,
+    pub(crate) label_node: tsz_parser::parser::NodeIndex,
 }
 
 /// Persistent cache for type checking results across LSP queries.
@@ -155,9 +155,9 @@ pub struct TypeCache {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct EnvEvalCacheEntry {
-    pub result: TypeId,
-    pub depth_exceeded: bool,
+pub(crate) struct EnvEvalCacheEntry {
+    pub(crate) result: TypeId,
+    pub(crate) depth_exceeded: bool,
 }
 
 /// Info about a symbol that came from destructuring a union type.
@@ -165,17 +165,17 @@ pub struct EnvEvalCacheEntry {
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
 /// narrowing `isSuccess` should also narrow `data`.
 #[derive(Clone, Debug)]
-pub struct DestructuredBindingInfo {
+pub(crate) struct DestructuredBindingInfo {
     /// The source type of the entire destructured expression (the union)
-    pub source_type: TypeId,
+    pub(crate) source_type: TypeId,
     /// The property name that this symbol corresponds to (for object patterns)
-    pub property_name: String,
+    pub(crate) property_name: String,
     /// The element index for array/tuple patterns (`u32::MAX` if object pattern)
-    pub element_index: u32,
+    pub(crate) element_index: u32,
     /// The binding group ID — all symbols from the same destructuring share this
-    pub group_id: u32,
+    pub(crate) group_id: u32,
     /// Whether this is a const binding (only const bindings support correlated narrowing)
-    pub is_const: bool,
+    pub(crate) is_const: bool,
 }
 
 /// Shared state for type checking.
@@ -378,7 +378,7 @@ pub struct CheckerContext<'a> {
     ///
     /// The cache also preserves whether evaluation exceeded the solver recursion
     /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
-    pub env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
@@ -427,7 +427,7 @@ pub struct CheckerContext<'a> {
     // --- Destructured Binding Tracking ---
     /// Maps destructured const binding symbols to their source union type info.
     /// Used for correlated discriminant narrowing (TS 4.6+ feature).
-    pub destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
+    pub(crate) destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
     /// Counter for generating unique binding group IDs.
     pub next_binding_group_id: u32,
     /// Maps destructured binding element symbols to (`source_expression`, `property_name`).
@@ -825,7 +825,7 @@ pub struct CheckerContext<'a> {
     /// Stack of labels in scope.
     /// Each entry contains (`label_name`, `is_iteration`, `function_depth_when_defined`).
     /// Used for labeled break/continue validation.
-    pub label_stack: Vec<LabelInfo>,
+    pub(crate) label_stack: Vec<LabelInfo>,
 
     /// Whether there was a loop/switch in an outer function scope.
     /// Used to determine TS1107 vs TS1105 for unlabeled break statements.
