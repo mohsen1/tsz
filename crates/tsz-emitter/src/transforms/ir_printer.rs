@@ -1476,8 +1476,59 @@ impl<'a> IRPrinter<'a> {
                             return;
                         }
 
+                        // Handle ES5TemplateLiteral directive — downlevel template literals
+                        // to string concatenation using .concat() calls
+                        if matches!(
+                            directive,
+                            crate::context::transform::TransformDirective::ES5TemplateLiteral { .. }
+                        ) {
+                            if let Some(ref transforms) = self.transforms {
+                                let mut printer = AstPrinter::with_transforms_and_options(
+                                    arena,
+                                    transforms.clone(),
+                                    PrinterOptions {
+                                        target: crate::emitter::ScriptTarget::ES5,
+                                        ..PrinterOptions::default()
+                                    },
+                                );
+                                if let Some(source_text) = self.source_text {
+                                    printer.set_source_text(source_text);
+                                }
+                                printer.emit(*idx);
+                                self.write(printer.get_output());
+                                return;
+                            }
+                        }
+
                         // Note: For other directive types, fall through to source text copy
                         // This is intentional - we only handle directives that are ready
+                    }
+                }
+
+                // When transforms exist, delegate to AstPrinter so that nested
+                // directives (e.g. ES5 template literal downleveling, this/arguments
+                // substitution) inside this subtree are applied correctly.
+                if let Some(arena) = self.arena
+                    && let Some(ref transforms) = self.transforms
+                    && !transforms.is_empty()
+                {
+                    let mut printer = AstPrinter::with_transforms_and_options(
+                        arena,
+                        transforms.clone(),
+                        PrinterOptions {
+                            target: crate::emitter::ScriptTarget::ES5,
+                            ..PrinterOptions::default()
+                        },
+                    );
+                    if let Some(source_text) = self.source_text {
+                        printer.set_source_text(source_text);
+                    }
+                    printer.emit(*idx);
+                    let output = printer.get_output().to_string();
+                    let trimmed = output.trim();
+                    if !trimmed.is_empty() {
+                        self.write(trimmed);
+                        return;
                     }
                 }
 

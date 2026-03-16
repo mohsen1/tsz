@@ -332,6 +332,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -422,6 +423,7 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_target_es5(true);
                             ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                             ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                            ns_emitter.set_transforms(self.transforms.clone());
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
                             }
@@ -984,6 +986,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1169,6 +1172,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_target_es5(self.ctx.target_es5);
                 ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                ns_emitter.set_transforms(self.transforms.clone());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -1236,6 +1240,7 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_target_es5(self.ctx.target_es5);
                     ns_emitter.set_remove_comments(self.ctx.options.remove_comments);
                     ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
+                    ns_emitter.set_transforms(self.transforms.clone());
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
                     }
