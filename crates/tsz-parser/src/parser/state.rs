@@ -666,11 +666,9 @@ impl ParserState {
 
         if is_await {
             // In async contexts, 'await' cannot be used as a binding identifier.
-            // In static blocks, 'await' is only reserved in module contexts (ECMAScript
-            // modules implicitly make 'await' a keyword at the top level and in static blocks).
-            if self.in_async_context()
-                || (self.in_static_block_context() && self.in_module_context())
-            {
+            // In static blocks, 'await' is always reserved — TSC treats class static
+            // blocks as having an implicit async-like context regardless of module mode.
+            if self.in_async_context() || self.in_static_block_context() {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
