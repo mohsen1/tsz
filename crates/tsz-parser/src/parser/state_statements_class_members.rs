@@ -1629,7 +1629,8 @@ impl ParserState {
                 && self.class_member_initializer_continues_on_next_line()
                 && !(is_computed_name
                     && type_annotation == NodeIndex::NONE
-                    && self.is_token(SyntaxKind::OpenBracketToken))
+                    && self.is_token(SyntaxKind::OpenBracketToken)
+                    && !self.look_ahead_is_invalid_class_member_method_like_continuation())
             {
                 self.report_missing_semicolon_after_class_field_initializer();
                 self.recover_invalid_class_member_initializer_continuation();
