@@ -44,6 +44,19 @@ pub trait TypeResolver {
         None
     }
 
+    /// Resolve a `TypeQuery` (`typeof X`) to the value-space type for a symbol.
+    ///
+    /// For classes, this must return the **constructor type** (with construct signatures
+    /// and static members), NOT the instance type. This distinction is critical:
+    /// `typeof MyClass` should give the constructor, not `MyClass` the instance.
+    ///
+    /// Default implementation delegates to `resolve_ref`. Implementations that store
+    /// instance types under `SymbolRef` (like `TypeEnvironment`) should override this
+    /// to return the constructor type via the `DefId` path.
+    fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.resolve_ref(symbol, interner)
+    }
+
     /// Get type parameters for a symbol (for generic type aliases/interfaces).
     /// Returns None by default; implementations can override to support
     /// Application type expansion.
@@ -645,6 +658,27 @@ impl TypeEnvironment {
 
 impl TypeResolver for TypeEnvironment {
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.get(symbol)
+    }
+
+    fn resolve_type_query(
+        &self,
+        symbol: SymbolRef,
+        _interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        // For TypeQuery (typeof X), we need the VALUE-space type:
+        // - For classes: the constructor type (stored under DefId in the types map)
+        // - For other symbols: same as resolve_ref
+        //
+        // The SymbolRef entry may contain the instance type (inserted by
+        // type_reference_symbol_type via insert_type_env_symbol), but the DefId
+        // entry always has the constructor type (inserted by get_type_of_symbol).
+        if let Some(&def_id) = self.symbol_to_def.get(&symbol.0) {
+            if let Some(ty) = self.get_def(DefId(def_id.0)) {
+                return Some(ty);
+            }
+        }
+        // Fallback to SymbolRef lookup for non-class symbols
         self.get(symbol)
     }
 
