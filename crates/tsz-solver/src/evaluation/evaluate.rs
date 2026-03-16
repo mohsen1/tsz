@@ -155,7 +155,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// rather than being bound to the Lazy type's own identity. This is used
     /// during interface heritage merging so that `this` can later be correctly
     /// bound to the final derived interface type.
-    pub fn with_suppress_this_binding(mut self) -> Self {
+    pub const fn with_suppress_this_binding(mut self) -> Self {
         self.suppress_this_binding = true;
         self
     }

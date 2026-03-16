@@ -221,7 +221,7 @@ pub enum InterfaceMergeKind {
 impl InterfaceMergeKind {
     /// Returns true if this kind represents a type whose properties can be
     /// structurally merged with another interface type (Callable, Object,
-    /// or ObjectWithIndex).
+    /// or `ObjectWithIndex`).
     pub const fn is_structurally_mergeable(&self) -> bool {
         matches!(
             self,
