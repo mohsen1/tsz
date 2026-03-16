@@ -495,7 +495,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // `T | undefined | null` — constrain source against it.
                     // Defaults don't prevent inference; they're used as fallback
                     // during resolution when no candidates are found.
-                    self.constrain_types(ctx, var_map, source, member, priority);
+                    //
+                    // However, skip inference when the source already matches a fixed
+                    // (non-placeholder) member of the target union. This implements
+                    // tsc's inferFromMatchingTypes filtering: for `T | Primitive`,
+                    // a source type `number` matches `Primitive` and should NOT be
+                    // inferred as a candidate for T.
+                    let fixed_members: Vec<TypeId> = t_members
+                        .iter()
+                        .filter(|&&m| {
+                            member_visited.clear();
+                            !self.type_contains_placeholder(m, var_map, &mut member_visited)
+                        })
+                        .copied()
+                        .collect();
+                    let source_matches_fixed = if !fixed_members.is_empty() {
+                        let fixed_union = self.interner.union(fixed_members);
+                        self.checker.is_assignable_to(source, fixed_union)
+                    } else {
+                        false
+                    };
+                    if !source_matches_fixed {
+                        self.constrain_types(ctx, var_map, source, member, priority);
+                    }
                 } else if placeholder_count > 1 {
                     // Multiple placeholder-containing members: prefer structural matches.
                     // For example, when source is `Foo<U>` and target is `V | Foo<V>`,
