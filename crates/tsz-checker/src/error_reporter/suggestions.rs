@@ -367,59 +367,6 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Find the best string literal suggestion from a union of string literals.
-    /// Used by TS2820: "Type '{0}' is not assignable to type '{1}'. Did you mean '{2}'?"
-    ///
-    /// Returns the suggested string literal (without quotes) if a close match is found.
-    pub(crate) fn find_string_literal_suggestion(
-        &self,
-        source_value: &str,
-        target: TypeId,
-    ) -> Option<String> {
-        // Collect string literal members from the target type.
-        // TS2820 only makes sense for UNION targets — when the target is a single
-        // string literal, the "did you mean" would suggest the target itself, which
-        // is redundant (TS2322 already shows both types). tsc behaves the same way.
-        let candidates: Vec<tsz_common::interner::Atom> = if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, target)
-        {
-            members
-                .iter()
-                .filter_map(|&m| {
-                    tsz_solver::type_queries::get_string_literal_value(self.ctx.types, m)
-                })
-                .collect()
-        } else {
-            return None;
-        };
-
-        if candidates.is_empty() {
-            return None;
-        }
-
-        let name_len = source_value.len();
-        let maximum_length_difference = if name_len * 34 / 100 > 2 {
-            name_len * 34 / 100
-        } else {
-            2
-        };
-        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
-        let mut best_candidate: Option<String> = None;
-
-        for atom in &candidates {
-            let candidate_str = self.ctx.types.resolve_atom_ref(*atom);
-            Self::consider_identifier_suggestion(
-                source_value,
-                &candidate_str,
-                name_len,
-                maximum_length_difference,
-                &mut best_distance,
-                &mut best_candidate,
-            );
-        }
-
-        best_candidate
-    }
-
     // =========================================================================
     // Levenshtein Distance
     // =========================================================================
