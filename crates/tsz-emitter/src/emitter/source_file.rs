@@ -418,8 +418,13 @@ impl<'a> Printer<'a> {
         // Whether we need "use strict" at the top of this output.
         // For .cts/.cjs files where module was overridden from ESM to CJS,
         // tsc does NOT add "use strict" — the file is emitted as plain CJS.
+        // But when inside AMD/UMD wrappers (original_module_kind is AMD/UMD),
+        // "use strict" IS needed inside the define() callback body.
+        let is_suppressed_cts_override = self.ctx.original_module_kind.is_some_and(|mk| {
+            !matches!(mk, ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        });
         let needs_use_strict_cjs =
-            is_top_level_cjs && is_file_module && self.ctx.original_module_kind.is_none();
+            is_top_level_cjs && is_file_module && !is_suppressed_cts_override;
         let needs_use_strict_amd_umd = is_amd_or_umd && is_file_module && !has_module_wrapper_stmt;
         let needs_use_strict_always = self.ctx.options.always_strict
             && !has_module_wrapper_stmt
