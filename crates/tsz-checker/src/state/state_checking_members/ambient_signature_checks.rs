@@ -453,12 +453,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1245: Method '{0}' cannot have an implementation because it is marked abstract.
+        // TSC anchors this error at the method name, not the whole member node.
         if method.body.is_some() && self.has_abstract_modifier(&method.modifiers) {
             let name_text = self
                 .get_property_name(method.name)
                 .unwrap_or_else(|| "unknown".to_string());
             self.error_at_node(
-                member_idx,
+                method.name,
                 &format!("Method '{name_text}' cannot have an implementation because it is marked abstract."),
                 diagnostic_codes::METHOD_CANNOT_HAVE_AN_IMPLEMENTATION_BECAUSE_IT_IS_MARKED_ABSTRACT,
             );

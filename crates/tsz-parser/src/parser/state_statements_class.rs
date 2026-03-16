@@ -318,6 +318,13 @@ impl ParserState {
             } else if mod_kind == SyntaxKind::OverrideKeyword {
                 seen_override = true;
             } else if mod_kind == SyntaxKind::ReadonlyKeyword {
+                if seen_readonly {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'readonly' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
                 seen_readonly = true;
             }
 
