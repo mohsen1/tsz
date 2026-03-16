@@ -14,11 +14,29 @@ impl<'a> Printer<'a> {
     /// Emit class member modifiers (static, public, private, etc.)
     pub(in crate::emitter) fn emit_class_member_modifiers(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
+            // When there are duplicate static modifiers (parse error recovery),
+            // suppress all static output to match tsc behavior.
+            let static_count = mods
+                .nodes
+                .iter()
+                .filter(|&&idx| {
+                    self.arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
+                })
+                .count();
+            let suppress_static = static_count > 1;
+
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     // Emit the modifier keyword based on its kind
                     let keyword = match mod_node.kind as u32 {
-                        k if k == SyntaxKind::StaticKeyword as u32 => "static",
+                        k if k == SyntaxKind::StaticKeyword as u32 => {
+                            if suppress_static {
+                                continue;
+                            }
+                            "static"
+                        }
                         k if k == SyntaxKind::PublicKeyword as u32 => "public",
                         k if k == SyntaxKind::PrivateKeyword as u32 => "private",
                         k if k == SyntaxKind::ProtectedKeyword as u32 => "protected",
@@ -250,6 +268,20 @@ impl<'a> Printer<'a> {
     /// Emit method modifiers for JavaScript (static, async, and ES decorators)
     pub(in crate::emitter) fn emit_method_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
+            // Count static modifiers - when there are duplicates (parse error
+            // recovery), tsc drops all static modifiers since the second
+            // `static` is treated as the property name, not a modifier.
+            let static_count = mods
+                .nodes
+                .iter()
+                .filter(|&&idx| {
+                    self.arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
+                })
+                .count();
+            let suppress_static = static_count > 1;
+
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
@@ -260,7 +292,9 @@ impl<'a> Printer<'a> {
                             self.write_line();
                         }
                     } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        self.write("static ");
+                        if !suppress_static {
+                            self.write("static ");
+                        }
                     } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
                         self.write("async ");
                     }
