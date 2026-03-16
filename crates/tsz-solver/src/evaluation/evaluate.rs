@@ -157,6 +157,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.cache.drain()
     }
 
+    /// Pre-seed the evaluator's cache with previously computed evaluation results.
+    /// This prevents re-evaluation of intermediate types (e.g., nested generic
+    /// applications) that were already computed in earlier evaluator runs.
+    pub fn seed_cache(&mut self, entries: impl Iterator<Item = (TypeId, TypeId)>) {
+        self.cache.extend(entries);
+    }
+
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         if self.no_unchecked_indexed_access != enabled {
             self.cache.clear();

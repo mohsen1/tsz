@@ -1703,6 +1703,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Skip check if the type resolves to a valid index signature type
+        // (e.g., type alias to string/number/symbol)
+        if self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation) {
+            return;
+        }
+
         // Check AST to detect type parameters and literal types (TS1337).
         let is_generic_or_literal =
             self.is_type_param_or_literal_in_index_sig(type_node.kind, param_data.type_annotation);

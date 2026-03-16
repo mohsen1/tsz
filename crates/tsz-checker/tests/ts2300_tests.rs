@@ -288,7 +288,10 @@ fn duplicate_function_implementations() {
 fn field_and_getter_with_same_name() {
     verify_errors(
         "class C { x: number; get x(): number { return 1; } }",
-        &[(1, 26, "Duplicate identifier 'x'.")],
+        &[
+            (1, 11, "Duplicate identifier 'x'."),
+            (1, 26, "Duplicate identifier 'x'."),
+        ],
     );
 }
 
@@ -297,7 +300,10 @@ fn field_and_getter_with_same_name() {
 fn method_and_getter_with_same_name() {
     verify_errors(
         "class C { m() {} get m() { return 1; } }",
-        &[(1, 22, "Duplicate identifier 'm'.")],
+        &[
+            (1, 11, "Duplicate identifier 'm'."),
+            (1, 22, "Duplicate identifier 'm'."),
+        ],
     );
 }
 
@@ -308,9 +314,9 @@ fn getter_setter_pair_allowed() {
 }
 
 /// A method followed by accessor declarations with the same computed symbol name
-/// should only report duplicates on the later accessors, not on the original method.
+/// reports TS2300 on all conflicting declarations (method and accessors).
 #[test]
-fn computed_symbol_method_and_accessor_pair_only_reports_late_accessors() {
+fn computed_symbol_method_and_accessor_pair_reports_all_duplicates() {
     let diagnostics = verify_errors(
         r#"
 class C {
@@ -320,6 +326,7 @@ class C {
 }
 "#,
         &[
+            (3, 5, "Duplicate identifier '[Symbol.toPrimitive]'."),
             (4, 9, "Duplicate identifier '[Symbol.toPrimitive]'."),
             (5, 9, "Duplicate identifier '[Symbol.toPrimitive]'."),
         ],
@@ -328,8 +335,8 @@ class C {
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert_eq!(
         ts2300_errors.len(),
-        2,
-        "expected only the later accessor declarations to report TS2300, got: {diagnostics:?}"
+        3,
+        "expected all conflicting declarations to report TS2300, got: {diagnostics:?}"
     );
 }
 

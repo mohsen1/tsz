@@ -132,13 +132,25 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_await_expression(&mut self, node: &Node) {
         // AwaitExpression is stored with UnaryExprDataEx
         let Some(unary) = self.arena.get_unary_expr_ex(node) else {
-            self.write(if self.ctx.emit_await_as_yield {
+            self.write(if self.ctx.emit_await_as_yield_await {
+                "yield"
+            } else if self.ctx.emit_await_as_yield {
                 "yield"
             } else {
                 "await"
             });
             return;
         };
+
+        // Async generator lowering: `await expr` → `yield __await(expr)`
+        if self.ctx.emit_await_as_yield_await {
+            self.write("yield ");
+            self.write_helper("__await");
+            self.write("(");
+            self.emit_expression(unary.expression);
+            self.write(")");
+            return;
+        }
 
         // For ES2015/ES2016 async lowering, emit yield instead of await.
         // When yield replaces await inside a binary expression, we need parens

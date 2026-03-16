@@ -129,18 +129,7 @@ impl<'a> CheckerState<'a> {
                     .properties
                     .iter()
                     .find(|p| p.name == prop_atom && p.optional)
-                    .map(|p| {
-                        // For optional properties, include | undefined in the diagnostic
-                        // type to match tsc: "not assignable to type 'X | undefined'"
-                        if self.ctx.strict_null_checks() {
-                            self.ctx
-                                .types
-                                .factory()
-                                .union(vec![p.type_id, tsz_solver::TypeId::UNDEFINED])
-                        } else {
-                            p.type_id
-                        }
-                    })
+                    .map(|p| p.type_id)
             });
 
             let effective_type =

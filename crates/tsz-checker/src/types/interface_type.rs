@@ -287,7 +287,7 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
 
-                // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                // TS1268/TS1337: Check index signature parameter type validity.
                 // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                 let has_param_grammar_error =
                     param_data.dot_dot_dot_token || param_data.question_token;
@@ -296,13 +296,37 @@ impl<'a> CheckerState<'a> {
                     || key_type == TypeId::SYMBOL
                     || is_template_literal_type(self.ctx.types, key_type);
 
-                if !is_valid_index_type && !has_param_grammar_error {
+                // Also check syntactically for type aliases that resolve to valid types
+                let is_valid_via_alias = if let Some(type_node) =
+                    self.ctx.arena.get(param_data.type_annotation)
+                {
+                    self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation)
+                } else {
+                    false
+                };
+
+                if !is_valid_index_type && !is_valid_via_alias && !has_param_grammar_error {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.error_at_node(
-                        param_idx,
-                        diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
-                        diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                    // Check if this is a literal type or generic type (TS1337 vs TS1268)
+                    let type_node = self.ctx.arena.get(param_data.type_annotation);
+                    let type_node_kind = type_node.map(|n| n.kind).unwrap_or(0);
+                    let is_generic_or_literal = self.is_type_param_or_literal_in_index_sig(
+                        type_node_kind,
+                        param_data.type_annotation,
                     );
+                    if is_generic_or_literal {
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                        );
+                    } else {
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                        );
+                    }
                 }
 
                 let value_type = if index_sig.type_annotation.is_some() {
