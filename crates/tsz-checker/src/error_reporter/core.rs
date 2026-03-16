@@ -1691,11 +1691,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        // Always enable display properties — the TypeFormatter only applies
-        // them when a specific TypeId has stored display props (fresh object
-        // literals). This enables literal display through intersection members
-        // and other nested types, not just top-level fresh objects.
-        let mut formatted = self.format_type_diagnostic_with_display(display_ty);
+        // Do NOT use display properties — tsc shows widened property types
+        // in error messages: `{ two: number }` not `{ two: 1 }`.
+        let mut formatted = self.format_type_diagnostic(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')
