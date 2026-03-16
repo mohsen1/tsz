@@ -295,6 +295,11 @@ pub struct CheckerContext<'a> {
     /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
     pub narrowing_cache: tsz_solver::NarrowingCache,
 
+    /// Cache for `is_narrowable_identifier` results.
+    /// This is pure (depends only on AST structure), so it never needs invalidation.
+    /// Avoids 4-5 binder/arena lookups per call on the hot cached-node path.
+    pub narrowable_identifier_cache: RefCell<FxHashMap<u32, bool>>,
+
     /// Cache for switch-reference relevance checks.
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
