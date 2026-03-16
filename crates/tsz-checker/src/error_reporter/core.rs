@@ -551,6 +551,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For IndexAccess types, display the evaluated form when it resolves to a
+        // concrete type (union, object, primitive). This makes error messages show
+        // the resolved type instead of the raw indexed access syntax.
+        // e.g., `Pairs<FooBar>[keyof FooBar]` → `{ key: "foo"; value: string; } | { key: "bar"; value: number; }`
+        if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty) {
+            return true;
+        }
+
         matches!(
             evaluated,
             TypeId::STRING
