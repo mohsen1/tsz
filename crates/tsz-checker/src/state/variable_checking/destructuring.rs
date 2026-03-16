@@ -1281,9 +1281,29 @@ impl<'a> CheckerState<'a> {
     /// The rest type is the parent type with all statically-named non-rest properties
     /// excluded (like `Omit<T, 'a' | 'b'>`). For union parent types, compute the rest
     /// for each member and union the results.
-    fn compute_object_rest_type(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
+    ///
+    /// For type parameters, the rest type is the type parameter itself. We cannot
+    /// express `Omit<T, K>` directly, so we preserve the type parameter's identity.
+    /// This ensures that when a generic function returns `{ ...rest, b: a }`, the
+    /// return type contains `T` and is properly instantiated at call sites.
+    pub(crate) fn compute_object_rest_type(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) -> TypeId {
         // Collect the names of all non-rest sibling properties in this binding pattern.
         let excluded = self.collect_non_rest_property_names(pattern_idx);
+
+        // For type parameters, preserve the generic identity.
+        // The rest of `T extends { a, b }` with `a` excluded is `Omit<T, "a">`,
+        // which we approximate as T itself. This preserves T in the function's
+        // inferred return type so that instantiation at call sites works correctly.
+        // Without this, rest resolves to a concrete object from the constraint,
+        // losing generic properties that only appear when T is instantiated.
+        let is_type_param = query::type_parameter_constraint(self.ctx.types, parent_type).is_some();
+        if is_type_param {
+            return parent_type;
+        }
 
         // For union types, compute rest type for each member and union them.
         if let Some(members) = query::union_members(self.ctx.types, parent_type) {
