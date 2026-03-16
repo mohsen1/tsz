@@ -122,16 +122,18 @@ impl<'a> CheckerState<'a> {
         loop {
             let node_modules = dir.join("node_modules");
             if node_modules.is_dir() {
-                let candidate1 = node_modules.join(source).join(format!("{suffix}.d.ts"));
-                if candidate1.is_file() {
+                let pkg_dir = node_modules.join(source);
+                // Check <pkg>/<suffix>.d.ts and <pkg>/<suffix>/index.d.ts
+                if pkg_dir.join(format!("{suffix}.d.ts")).is_file()
+                    || pkg_dir.join(suffix).join("index.d.ts").is_file()
+                {
                     return true;
                 }
 
-                let candidate2 = node_modules
-                    .join("@types")
-                    .join(source)
-                    .join(format!("{suffix}.d.ts"));
-                if candidate2.is_file() {
+                let types_dir = node_modules.join("@types").join(source);
+                if types_dir.join(format!("{suffix}.d.ts")).is_file()
+                    || types_dir.join(suffix).join("index.d.ts").is_file()
+                {
                     return true;
                 }
             }
