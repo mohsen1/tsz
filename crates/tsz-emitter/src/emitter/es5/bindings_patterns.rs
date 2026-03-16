@@ -1397,15 +1397,155 @@ impl<'a> Printer<'a> {
         // Note: We only pre-register for VARIABLE_DECLARATION_LIST nodes, not assignment targets
         self.pre_register_for_of_loop_variable(for_in_of.initializer);
 
-        // Emit the value binding: var item = _c.value;
-        self.emit_for_of_value_binding_iterator_es5_async(for_in_of.initializer, &loop_result_name);
-        self.write_line();
-        self.write(&loop_guard_name);
-        self.write(" = false;");
-        self.write_line();
+        // Check if the initializer is a `using` declaration that needs dispose lowering.
+        let using_info = if !self.ctx.options.target.supports_es2025() {
+            self.for_of_initializer_using_info(for_in_of.initializer)
+        } else {
+            None
+        };
 
-        // Emit the loop body
-        self.emit_for_of_body(for_in_of.statement);
+        if let Some((var_name, using_async)) = using_info {
+            // For `using` in for-await-of with async iterator lowering:
+            // Emit: _c = _f.value;
+            // Then: _d = false;
+            // Then: const d1_1 = _c;
+            // Then: const env = ...; try { const d1 = __addDisposable(env, d1_1, ...); body } catch/finally
+            let value_temp = loop_result_name.clone();
+
+            // Emit value assignment to a temp that was declared in the hoisted vars
+            let value_assign_temp = self.get_temp_var_name();
+            self.hoisted_for_of_temps.push(value_assign_temp.clone());
+            self.write(&value_assign_temp);
+            self.write(" = ");
+            self.write(&value_temp);
+            self.write(".value;");
+            self.write_line();
+            self.write(&loop_guard_name);
+            self.write(" = false;");
+            self.write_line();
+
+            // Register the outer for-await-of error container name so that
+            // next_disposable_env_names doesn't collide with it.
+            self.generated_temp_names
+                .insert(error_container_name.clone());
+
+            // Generate temp name for the renamed variable: d1 -> d1_1
+            let (env_name, error_name, result_name) = self.next_disposable_env_names();
+            let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
+            self.generated_temp_names.insert(temp_var_name.clone());
+
+            // Determine if we use const or var based on target
+            let kw = if self.ctx.target_es5 { "var" } else { "const" };
+
+            // Emit: const d1_1 = _c;
+            self.write(kw);
+            self.write(" ");
+            self.write(&temp_var_name);
+            self.write(" = ");
+            self.write(&value_assign_temp);
+            self.write(";");
+            self.write_line();
+
+            // Emit dispose wrapper: const env = ...; try { const d1 = __addDisposable(env, d1_1, false); body } catch/finally
+            self.write(kw);
+            self.write(" ");
+            self.write(&env_name);
+            self.write(" = { stack: [], error: void 0, hasError: false };");
+            self.write_line();
+            self.write("try {");
+            self.write_line();
+            self.increase_indent();
+
+            self.write(kw);
+            self.write(" ");
+            self.write(&var_name);
+            self.write(" = ");
+            self.write_helper("__addDisposableResource");
+            self.write("(");
+            self.write(&env_name);
+            self.write(", ");
+            self.write(&temp_var_name);
+            self.write(", ");
+            self.write(if using_async { "true" } else { "false" });
+            self.write(");");
+            self.write_line();
+
+            // Emit body
+            self.emit_for_of_body(for_in_of.statement);
+
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("catch (");
+            self.write(&error_name);
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.write(&env_name);
+            self.write(".error = ");
+            self.write(&error_name);
+            self.write(";");
+            self.write_line();
+            self.write(&env_name);
+            self.write(".hasError = true;");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("finally {");
+            self.write_line();
+            self.increase_indent();
+            if using_async {
+                let await_kw = if self.ctx.emit_await_as_yield {
+                    "yield"
+                } else {
+                    "await"
+                };
+                self.write(kw);
+                self.write(" ");
+                self.write(&result_name);
+                self.write(" = ");
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+                self.write("if (");
+                self.write(&result_name);
+                self.write(")");
+                self.write_line();
+                self.increase_indent();
+                self.write(await_kw);
+                self.write(" ");
+                self.write(&result_name);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+            } else {
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+        } else {
+            // Normal (non-using) path
+            // Emit the value binding: var item = _c.value;
+            self.emit_for_of_value_binding_iterator_es5_async(
+                for_in_of.initializer,
+                &loop_result_name,
+            );
+            self.write_line();
+            self.write(&loop_guard_name);
+            self.write(" = false;");
+            self.write_line();
+
+            // Emit the loop body
+            self.emit_for_of_body(for_in_of.statement);
+        }
 
         // Exit the loop body scope
         self.ctx.block_scope_state.exit_scope();
