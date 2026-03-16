@@ -4,7 +4,7 @@ use super::*;
 use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
-use crate::operations::MAX_CONSTRAINT_STEPS;
+use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::types::{MappedType, TypeData, Visibility};
 
