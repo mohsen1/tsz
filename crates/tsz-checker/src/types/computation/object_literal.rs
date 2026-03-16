@@ -271,10 +271,19 @@ impl<'a> CheckerState<'a> {
                         // produces `{ x: string }`. Only preserve literals when:
                         // - A const assertion is active (`as const`)
                         // - A contextual type narrows the property to a literal
+                        // - The value has a type assertion (`as T` or `<T>expr`):
+                        //   tsc creates non-widening literal types from type assertions,
+                        //   so `{ value: 0 as 0 }` produces `{ value: 0 }`, not `{ value: number }`.
+                        let value_has_type_assertion =
+                            self.ctx.arena.get(prop.initializer).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::AS_EXPRESSION
+                                    || n.kind == syntax_kind_ext::TYPE_ASSERTION
+                            });
                         let final_type = if !self.ctx.in_const_assertion
                             && !self.ctx.preserve_literal_types
                             && property_context_type.is_none()
                             && !had_object_context
+                            && !value_has_type_assertion
                         {
                             self.widen_literal_type(value_type)
                         } else {
