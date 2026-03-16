@@ -55,6 +55,49 @@ pub(super) fn is_object_prototype_method(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Check if the assignment failure is due to exact optional property types.
+    ///
+    /// When `exactOptionalPropertyTypes` is enabled, optional properties don't
+    /// implicitly include `undefined`. If the source has `undefined` for properties
+    /// that are optional in the target, this is an exact optional property mismatch
+    /// and should produce TS2375 instead of TS2322.
+    ///
+    /// Mirrors tsc's `getExactOptionalUnassignableProperties` + `isExactOptionalPropertyMismatch`.
+    pub(super) fn has_exact_optional_property_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            return false;
+        }
+        // Evaluate types to resolve Lazy(DefId) references to concrete Object shapes
+        let target_eval = self.evaluate_type_for_assignability(target);
+        let source_eval = self.evaluate_type_for_assignability(source);
+        let Some(target_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_eval)
+        else {
+            return false;
+        };
+        let source_shape = tsz_solver::type_queries::get_object_shape(self.ctx.types, source_eval);
+        for target_prop in &target_shape.properties {
+            if !target_prop.optional {
+                continue;
+            }
+            // Check if the source has a property with the same name that includes undefined
+            let source_prop_type = source_shape
+                .as_ref()
+                .and_then(|s| s.properties.iter().find(|p| p.name == target_prop.name))
+                .map(|p| p.type_id);
+            if let Some(src_type) = source_prop_type {
+                if tsz_solver::type_queries::type_includes_undefined(self.ctx.types, src_type) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Get the declaring type name for a property in a target type.
     /// For inherited properties (e.g., from a base class), returns the base class name.
     /// Falls back to formatting the target type if no parent info is available.
@@ -306,6 +349,29 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.push_diagnostic(diag);
             return;
+        }
+
+        // TS2375: When exactOptionalPropertyTypes is enabled, check if the failure
+        // is due to assigning undefined to optional properties that don't include undefined.
+        // This mirrors tsc's reportRelationError which selects TS2375 over TS2322.
+        if self.has_exact_optional_property_mismatch(source, target) {
+            if let Some(loc) = self.get_source_location(anchor_idx) {
+                let src_str =
+                    self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+                let tgt_str = self.format_assignability_type_for_message(target, source);
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
+                    &[&src_str, &tgt_str],
+                );
+                self.ctx.push_diagnostic(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
+                ));
+                return;
+            }
         }
 
         // Use one solver-boundary analysis path for TS2322 metadata.
