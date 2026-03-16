@@ -553,6 +553,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // For TypeReference nodes, do NOT recurse into type arguments.
+            // Generic type application provides structural wrapping that breaks
+            // direct circularity (e.g., `type HTML = { [K in 'div']: Block<HTML> }`
+            // where `Block<P> = <T>(func: HTML) => {}` is not circular).
+            // Identifiers also have no meaningful children to recurse into.
+            return false;
         }
 
         // Recurse into children
