@@ -182,6 +182,13 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether recursive relation cycles and overflow should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).
     pub assume_related_on_cycle: bool,
+    /// When `true`, DefId-level cycle detection compares Application type
+    /// arguments before assuming related. This prevents false identity matches
+    /// for recursive generic interfaces like `IPromise<T>` vs `Promise<T>`
+    /// where the structures are identical but the type arguments at the cycle
+    /// point differ (e.g., `IPromise2<W, U>` vs `Promise2<any, W>`).
+    /// Used by `are_types_identical_for_redeclaration` for TS2403 identity checks.
+    pub identity_cycle_check: bool,
     /// Cache for `evaluate_type` results within this `SubtypeChecker`'s lifetime.
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
@@ -222,6 +229,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             enforce_weak_types: false,
             in_property_check: false,
             assume_related_on_cycle: true,
+            identity_cycle_check: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
@@ -258,6 +266,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             enforce_weak_types: false,
             in_property_check: false,
             assume_related_on_cycle: true,
+            identity_cycle_check: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             eval_cache: FxHashMap::default(),
