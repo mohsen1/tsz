@@ -276,14 +276,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 priority,
                             );
 
-                            // Infer template (T) from property value types
+                            // Infer template (T) from property value types.
+                            // Use MappedType priority so that candidates from different
+                            // properties are combined via union (matching tsc's
+                            // PriorityImpliesCombination for MappedTypeConstraint).
+                            let template_priority =
+                                crate::types::InferencePriority::MappedType;
                             for prop in &source_obj.properties {
                                 self.constrain_types(
                                     ctx,
                                     var_map,
                                     prop.type_id,
                                     mapped.template,
-                                    priority,
+                                    template_priority,
                                 );
                             }
                             return;
