@@ -2156,10 +2156,19 @@ impl<'a> CheckerState<'a> {
 
         let decl_node = self.ctx.arena.get(value_decl)?;
 
-        // If not a variable declaration, it might be an import specifier or other
-        // cross-file reference. Return None to signal we can't determine locally.
+        // If not a variable declaration, check the declaration kind.
+        // Import specifiers are cross-file references we can't evaluate locally.
+        // Everything else (binding elements from destructuring, parameters, etc.)
+        // is definitively not evaluatable - tsc's evaluator only handles
+        // `isVariableDeclaration(declaration)`.
         if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return None;
+            if decl_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                || decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                || decl_node.kind == syntax_kind_ext::IMPORT_CLAUSE
+            {
+                return None; // Cross-file import - can't determine locally
+            }
+            return Some(false); // Binding element, parameter, etc. - not evaluatable
         }
 
         // Non-const variables are never evaluatable
