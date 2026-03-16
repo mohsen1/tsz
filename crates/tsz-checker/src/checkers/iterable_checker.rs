@@ -253,7 +253,12 @@ impl<'a> CheckerState<'a> {
             | FullIterableTypeKind::ComplexType
             | FullIterableTypeKind::Array(_)
             | FullIterableTypeKind::Tuple(_)
-            | FullIterableTypeKind::StringLiteral(_) => true,
+            | FullIterableTypeKind::StringLiteral(_) => {
+                // Application types (IterableIterator<T>, etc.), type parameters,
+                // complex types, arrays, tuples, and string literals all have
+                // next() via their iterator protocol or resolve to lib types.
+                true
+            }
             FullIterableTypeKind::FunctionOrCallable | FullIterableTypeKind::NotIterable => {
                 // Functions and NotIterable (Lazy/DefId types that couldn't be resolved,
                 // or truly non-iterable types) do NOT have next().

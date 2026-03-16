@@ -1948,12 +1948,8 @@ function f2<
 
     #[test]
     fn generic_array_like_context_provides_element_type() {
-        // When contextual type is a generic Application like ReadonlyArray<[K, V]>,
-        // ensure the solver extracts the element type from the type arguments.
-        // This exercises the Application → evaluation path in get_array_element_type.
-        // The full Iterable<readonly [K, V]> path (used by Map constructor) is
-        // validated by conformance tests (for-of37, for-of40, for-of50) since it
-        // requires Symbol.iterator from lib definitions.
+        // Exercises Application → evaluation path in get_array_element_type.
+        // Full Iterable path validated by conformance tests (for-of37/40/50).
         let source = r#"
 interface ReadonlyArray<T> {
     readonly length: number;
@@ -1972,35 +1968,30 @@ const r = f([["", true]]);
 
     #[test]
     fn array_param_context_still_works() {
-        // Ensure the fix doesn't break the already-working array parameter path.
-        // When the parameter is a plain array type (readonly (readonly [K, V])[]),
-        // contextual typing should still work without needing the fallback.
-        let source = r#"
-declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];
-const result = f([["", true]]);
-"#;
-        let errors = check_source_codes(source);
-        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        // Plain array type (readonly (readonly [K, V])[]) contextual typing should work.
+        let source = "declare function f<K, V>(entries: readonly (readonly [K, V])[]): [K, V];\nconst result = f([[\"\" , true]]);";
+        let errors: Vec<_> = check_source_codes(source)
+            .into_iter()
+            .filter(|&c| c != 2318)
+            .collect();
         assert!(
-            !semantic_errors.contains(&2345) && !semantic_errors.contains(&2769),
-            "Array parameter should contextually type elements as tuples, got: {semantic_errors:?}"
+            !errors.contains(&2345) && !errors.contains(&2769),
+            "Array param should contextually type tuples: {errors:?}"
         );
     }
 
     #[test]
     fn template_expr_without_context_stays_string() {
-        // Template expression assigned to `string` should still work (not break)
         let source = r#"
-function f(x: string, y: number): string {
-    return `${x} is ${y}`;
-}
+function f(x: string, y: number): string { return `${x} is ${y}`; }
 "#;
-        let errors = check_source_codes(source);
-        // Filter out TS2318 (lib not found) since test env has no lib definitions
-        let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        let errors: Vec<_> = check_source_codes(source)
+            .into_iter()
+            .filter(|&c| c != 2318)
+            .collect();
         assert!(
-            semantic_errors.is_empty(),
-            "Template expression returning string should produce no semantic errors, got: {semantic_errors:?}"
+            errors.is_empty(),
+            "Template returning string should have no errors: {errors:?}"
         );
     }
 }
