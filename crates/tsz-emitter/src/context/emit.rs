@@ -233,6 +233,9 @@ pub struct EmitContext {
     /// Used for ES2015/ES2016 async lowering (function* + yield pattern).
     pub emit_await_as_yield: bool,
 
+    /// When true, `await expr` becomes `yield __await(expr)` for async generator lowering.
+    pub emit_await_as_yield_await: bool,
+
     /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
 
@@ -266,6 +269,7 @@ impl EmitContext {
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
             emit_await_as_yield: false,
+            emit_await_as_yield_await: false,
             auto_detect_module: false,
             original_module_kind: None,
         };

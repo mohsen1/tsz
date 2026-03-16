@@ -973,9 +973,15 @@ impl<'a> LoweringPass<'a> {
 
         // Check if this is an async function needing lowering (target < ES2017)
         let base_directive = if self.ctx.needs_async_lowering && self.has_async_modifier(idx) {
-            self.mark_async_helpers();
             if func.asterisk_token {
+                // Async generators: at ES2015+ use __asyncGenerator + __await (no __awaiter).
+                // At ES5, also need __awaiter + __generator for the outer wrapper.
+                if self.ctx.target_es5 {
+                    self.mark_async_helpers();
+                }
                 self.mark_async_generator_helpers();
+            } else {
+                self.mark_async_helpers();
             }
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5
