@@ -133,7 +133,10 @@ impl<'a> CheckerState<'a> {
                         // For optional properties, include | undefined in the diagnostic
                         // type to match tsc: "not assignable to type 'X | undefined'"
                         if self.ctx.strict_null_checks() {
-                            self.ctx.types.factory().union(vec![p.type_id, tsz_solver::TypeId::UNDEFINED])
+                            self.ctx
+                                .types
+                                .factory()
+                                .union(vec![p.type_id, tsz_solver::TypeId::UNDEFINED])
                         } else {
                             p.type_id
                         }
