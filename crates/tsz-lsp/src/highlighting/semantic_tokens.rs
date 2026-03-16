@@ -128,6 +128,8 @@ pub struct SemanticTokensProvider<'a> {
     source_text: &'a str,
     builder: SemanticTokensBuilder,
     in_decorator: bool,
+    /// When set, only tokens within this range are emitted.
+    range_filter: Option<tsz_common::position::Range>,
 }
 
 impl<'a> SemanticTokensProvider<'a> {
@@ -145,6 +147,7 @@ impl<'a> SemanticTokensProvider<'a> {
             source_text,
             builder: SemanticTokensBuilder::new(),
             in_decorator: false,
+            range_filter: None,
         }
     }
 
@@ -156,6 +159,22 @@ impl<'a> SemanticTokensProvider<'a> {
         self.visit_node(root);
 
         // Take the builder and return the encoded data
+        std::mem::take(&mut self.builder).build()
+    }
+
+    /// Compute semantic tokens for a specific range of the file.
+    ///
+    /// Only emits tokens whose start position falls within the given range.
+    /// Returns a delta-encoded array of integers, just like `get_semantic_tokens`.
+    pub fn get_semantic_tokens_range(
+        &mut self,
+        root: NodeIndex,
+        range: &tsz_common::position::Range,
+    ) -> Vec<u32> {
+        self.range_filter = Some(*range);
+        self.visit_node(root);
+        self.range_filter = None;
+
         std::mem::take(&mut self.builder).build()
     }
 
@@ -526,6 +545,7 @@ impl<'a> SemanticTokensProvider<'a> {
     }
 
     /// Emit a semantic token for a specific node.
+    /// If a range filter is active, tokens outside the range are skipped.
     fn emit_token_for_node(
         &mut self,
         node_idx: NodeIndex,
@@ -537,6 +557,20 @@ impl<'a> SemanticTokensProvider<'a> {
         };
         let pos = self.line_map.offset_to_position(node.pos, self.source_text);
         let length = node.end - node.pos;
+
+        // Range filter: skip tokens outside the requested range
+        if let Some(ref range) = self.range_filter {
+            let end_pos = self.line_map.offset_to_position(node.end, self.source_text);
+            // Skip if token ends before range start or starts after range end
+            if end_pos.line < range.start.line
+                || (end_pos.line == range.start.line && end_pos.character < range.start.character)
+                || pos.line > range.end.line
+                || (pos.line == range.end.line && pos.character > range.end.character)
+            {
+                return;
+            }
+        }
+
         self.builder
             .push(pos.line, pos.character, length, token_type, modifiers);
     }

@@ -163,6 +163,19 @@ pub struct CompletionItem {
         deserialize_with = "deserialize_additional_edits::deserialize"
     )]
     pub additional_text_edits: Option<Vec<crate::rename::TextEdit>>,
+    /// Opaque data preserved between completion and resolve requests.
+    /// Contains the file name and label so the server can look up documentation on demand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<CompletionItemData>,
+}
+
+/// Data attached to a completion item for lazy resolve.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CompletionItemData {
+    /// The file where this completion was requested.
+    pub file_name: String,
+    /// The original position of the completion request.
+    pub position: tsz_common::position::Position,
 }
 
 /// Custom deserializer that always returns None for `additional_text_edits`.
@@ -198,6 +211,7 @@ impl CompletionItem {
             kind_modifiers: None,
             replacement_span: None,
             additional_text_edits: None,
+            data: None,
         }
     }
 

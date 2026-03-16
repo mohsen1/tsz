@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! TSZ Language Server Protocol (LSP) Server
 //!
 //! A fully-featured LSP server for TypeScript/JavaScript backed by the
@@ -11,6 +12,7 @@
 //! Supported LSP features:
 //! - textDocument/hover
 //! - textDocument/completion (with auto-import additionalTextEdits)
+//! - completionItem/resolve (lazy documentation loading)
 //! - textDocument/definition
 //! - textDocument/declaration
 //! - textDocument/typeDefinition
@@ -29,10 +31,16 @@
 //! - textDocument/foldingRange
 //! - textDocument/signatureHelp
 //! - textDocument/semanticTokens/full
+//! - textDocument/semanticTokens/range
 //! - textDocument/documentHighlight
 //! - textDocument/inlayHint
+//! - inlayHint/resolve
 //! - textDocument/documentLink
+//! - textDocument/documentColor
+//! - textDocument/colorPresentation
 //! - textDocument/linkedEditingRange
+//! - textDocument/diagnostic (pull model, LSP 3.17)
+//! - workspace/diagnostic (pull model, LSP 3.17)
 //! - textDocument/publishDiagnostics (server-initiated, with stale dependent updates)
 //! - callHierarchy/incomingCalls
 //! - callHierarchy/outgoingCalls
@@ -41,6 +49,8 @@
 //! - typeHierarchy/subtypes
 //! - textDocument/prepareTypeHierarchy
 //! - workspace/symbol
+//! - workspace/willRenameFiles (auto-update imports on file rename)
+//! - workspace/didRenameFiles (auto-update imports on file rename)
 //! - workspace/didChangeConfiguration
 //! - workspace/didChangeWatchedFiles
 //! - workspace/executeCommand
@@ -184,6 +194,10 @@ impl LspServer {
                 let r = self.handle_completion(msg.params);
                 Some(self.make_response(id, r))
             }
+            Some("completionItem/resolve") => {
+                let r = self.handle_completion_resolve(msg.params);
+                Some(self.make_response(id, r))
+            }
             Some("textDocument/definition") => {
                 let r = self.handle_definition(msg.params);
                 Some(self.make_response(id, r))
@@ -244,12 +258,28 @@ impl LspServer {
                 let r = self.handle_semantic_tokens_full(msg.params);
                 Some(self.make_response(id, r))
             }
+            Some("textDocument/semanticTokens/range") => {
+                let r = self.handle_semantic_tokens_range(msg.params);
+                Some(self.make_response(id, r))
+            }
             Some("textDocument/documentHighlight") => {
                 let r = self.handle_document_highlight(msg.params);
                 Some(self.make_response(id, r))
             }
             Some("textDocument/inlayHint") => {
                 let r = self.handle_inlay_hint(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("inlayHint/resolve") => {
+                let r = self.handle_inlay_hint_resolve(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("textDocument/documentColor") => {
+                let r = self.handle_document_color(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("textDocument/colorPresentation") => {
+                let r = self.handle_color_presentation(msg.params);
                 Some(self.make_response(id, r))
             }
             Some("textDocument/documentLink") => {
@@ -321,6 +351,26 @@ impl LspServer {
             Some("workspace/executeCommand") => {
                 let r = self.handle_execute_command(msg.params);
                 Some(self.make_response(id, r))
+            }
+
+            // ── Diagnostic pull model (LSP 3.17) ─────────────────
+            Some("textDocument/diagnostic") => {
+                let r = self.handle_document_diagnostic(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("workspace/diagnostic") => {
+                let r = self.handle_workspace_diagnostic(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── File operations ─────────────────────────────────────
+            Some("workspace/willRenameFiles") => {
+                let r = self.handle_will_rename_files(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("workspace/didRenameFiles") => {
+                self.handle_did_rename_files(msg.params);
+                None
             }
 
             // Unknown request → method not found
@@ -547,7 +597,7 @@ impl LspServer {
                 "hoverProvider": true,
                 "completionProvider": {
                     "triggerCharacters": [".", "<", "/", "\"", "'", "`", "@"],
-                    "resolveProvider": false,
+                    "resolveProvider": true,
                 },
                 "definitionProvider": true,
                 "declarationProvider": true,
@@ -595,15 +645,20 @@ impl LspServer {
                         ]
                     },
                     "full": true,
-                    "range": false,
+                    "range": true,
                 },
                 "documentHighlightProvider": true,
-                "inlayHintProvider": true,
+                "inlayHintProvider": { "resolveProvider": true },
+                "colorProvider": true,
                 "documentLinkProvider": { "resolveProvider": false },
                 "linkedEditingRangeProvider": true,
                 "callHierarchyProvider": true,
                 "typeHierarchyProvider": true,
                 "workspaceSymbolProvider": true,
+                "diagnosticProvider": {
+                    "interFileDependencies": true,
+                    "workspaceDiagnostics": true,
+                },
                 "executeCommandProvider": {
                     "commands": ["tsz.organizeImports", "tsz.applyCodeAction"]
                 },
@@ -613,6 +668,12 @@ impl LspServer {
                         "changeNotifications": true
                     },
                     "fileOperations": {
+                        "willRename": {
+                            "filters": [{
+                                "scheme": "file",
+                                "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
+                            }]
+                        },
                         "didRename": {
                             "filters": [{
                                 "scheme": "file",
@@ -769,6 +830,49 @@ impl LspServer {
         }
     }
 
+    // ─── Diagnostic Pull Model ────────────────────────────────────────
+
+    fn handle_document_diagnostic(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        let diagnostics = self.project.get_diagnostics(&file_name).unwrap_or_default();
+
+        let lsp_diags: Vec<Value> = diagnostics
+            .iter()
+            .map(|d| Self::diagnostic_to_json(d))
+            .collect();
+
+        Ok(serde_json::json!({
+            "kind": "full",
+            "items": lsp_diags,
+        }))
+    }
+
+    fn handle_workspace_diagnostic(&mut self, _params: Option<Value>) -> Result<Value> {
+        let mut items = Vec::new();
+
+        let file_names: Vec<String> = self.project.file_names().map(|s| s.to_string()).collect();
+        for file_name in &file_names {
+            let diagnostics = self.project.get_diagnostics(file_name).unwrap_or_default();
+
+            let lsp_diags: Vec<Value> = diagnostics
+                .iter()
+                .map(|d| Self::diagnostic_to_json(d))
+                .collect();
+
+            items.push(serde_json::json!({
+                "kind": "full",
+                "uri": Self::file_name_to_uri(file_name),
+                "items": lsp_diags,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "items": items,
+        }))
+    }
+
     // ─── Hover ──────────────────────────────────────────────────────────
 
     fn handle_hover(&mut self, params: Option<Value>) -> Result<Value> {
@@ -872,6 +976,11 @@ impl LspServer {
                         ci["detail"] = Value::from(format!("Auto import from '{source}'"));
                     }
                 }
+                // Attach resolve data so completionItem/resolve can look up docs
+                ci["data"] = serde_json::json!({
+                    "fileName": &file_name,
+                    "label": &item.label,
+                });
                 ci
             })
             .collect();
@@ -880,6 +989,37 @@ impl LspServer {
             "isIncomplete": false,
             "items": lsp_items,
         }))
+    }
+
+    fn handle_completion_resolve(&mut self, params: Option<Value>) -> Result<Value> {
+        // The params IS the completion item itself
+        let mut item = params.unwrap_or(Value::Null);
+
+        if let Some(data) = item.get("data") {
+            let file_name = data
+                .get("fileName")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let label = data
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            if let Some((_detail, documentation)) =
+                self.project.resolve_completion(&file_name, &label)
+            {
+                if let Some(doc) = documentation {
+                    item["documentation"] = serde_json::json!({
+                        "kind": "markdown",
+                        "value": doc,
+                    });
+                }
+            }
+        }
+
+        Ok(item)
     }
 
     // ─── Definition ─────────────────────────────────────────────────────
@@ -1410,6 +1550,18 @@ impl LspServer {
         }
     }
 
+    fn handle_semantic_tokens_range(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+        let range = Self::extract_range(&params, "range")
+            .ok_or_else(|| anyhow::anyhow!("Missing range"))?;
+
+        match self.project.get_semantic_tokens_range(&file_name, range) {
+            Some(data) => Ok(serde_json::json!({ "data": data })),
+            None => Ok(serde_json::json!({ "data": [] })),
+        }
+    }
+
     // ─── Document Highlight ─────────────────────────────────────────────
 
     fn handle_document_highlight(&mut self, params: Option<Value>) -> Result<Value> {
@@ -1472,6 +1624,112 @@ impl LspServer {
             }
             None => Ok(Value::Array(vec![])),
         }
+    }
+
+    fn handle_inlay_hint_resolve(&mut self, params: Option<Value>) -> Result<Value> {
+        // The params IS the inlay hint itself - just add a tooltip if missing
+        let mut hint = params.unwrap_or(Value::Null);
+
+        // If no tooltip yet, add a description based on the kind
+        if hint.get("tooltip").is_none() {
+            let kind = hint.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
+            let label = hint
+                .get("label")
+                .and_then(|l| l.as_str())
+                .unwrap_or_default();
+
+            let tooltip = match kind {
+                1 => {
+                    // Type hint
+                    format!("Inferred type{}", label)
+                }
+                2 => {
+                    // Parameter hint
+                    format!("Parameter name{}", label)
+                }
+                _ => String::new(),
+            };
+
+            if !tooltip.is_empty() {
+                hint["tooltip"] = serde_json::json!({
+                    "kind": "markdown",
+                    "value": format!("```typescript\n{tooltip}\n```"),
+                });
+            }
+        }
+
+        Ok(hint)
+    }
+
+    // ─── Document Colors ─────────────────────────────────────────────────
+
+    fn handle_document_color(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        match self.project.get_document_colors(&file_name) {
+            Some(colors) => {
+                let lsp_colors: Vec<Value> = colors
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "range": Self::range_to_json(&c.range),
+                            "color": {
+                                "red": c.color.red,
+                                "green": c.color.green,
+                                "blue": c.color.blue,
+                                "alpha": c.color.alpha,
+                            },
+                        })
+                    })
+                    .collect();
+                Ok(Value::Array(lsp_colors))
+            }
+            None => Ok(Value::Array(vec![])),
+        }
+    }
+
+    fn handle_color_presentation(&mut self, params: Option<Value>) -> Result<Value> {
+        // Convert a color back to a text representation
+        let color = params
+            .as_ref()
+            .and_then(|p| p.get("color"))
+            .ok_or_else(|| anyhow::anyhow!("Missing color"))?;
+
+        let r = color.get("red").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let g = color.get("green").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let b = color.get("blue").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let a = color.get("alpha").and_then(|v| v.as_f64()).unwrap_or(1.0);
+
+        let ri = (r * 255.0).round() as u8;
+        let gi = (g * 255.0).round() as u8;
+        let bi = (b * 255.0).round() as u8;
+
+        let mut presentations = Vec::new();
+
+        // #rrggbb format
+        presentations.push(serde_json::json!({
+            "label": format!("#{ri:02x}{gi:02x}{bi:02x}"),
+        }));
+
+        // #rrggbbaa format (only if alpha != 1.0)
+        if (a - 1.0).abs() > f64::EPSILON {
+            let ai = (a * 255.0).round() as u8;
+            presentations.push(serde_json::json!({
+                "label": format!("#{ri:02x}{gi:02x}{bi:02x}{ai:02x}"),
+            }));
+        }
+
+        // rgb() format
+        presentations.push(serde_json::json!({
+            "label": if (a - 1.0).abs() > f64::EPSILON {
+                format!("rgba({ri}, {gi}, {bi}, {a:.2})")
+            } else {
+                format!("rgb({ri}, {gi}, {bi})")
+            },
+        }));
+
+        Ok(Value::Array(presentations))
     }
 
     // ─── Document Links ─────────────────────────────────────────────────
@@ -1905,6 +2163,128 @@ impl LspServer {
     fn is_ts_file(path: &str) -> bool {
         let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
         extensions.iter().any(|ext| path.ends_with(ext))
+    }
+
+    // ─── File Rename ───────────────────────────────────────────────────
+
+    fn handle_will_rename_files(&mut self, params: Option<Value>) -> Result<Value> {
+        let files = params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut all_changes = serde_json::Map::new();
+
+        for file_entry in &files {
+            let old_uri = match file_entry.get("oldUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+            let new_uri = match file_entry.get("newUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+
+            let old_path = Self::uri_to_file_name(old_uri);
+            let new_path = Self::uri_to_file_name(new_uri);
+
+            let edits = self.project.get_file_rename_edits(&old_path, &new_path);
+
+            for (file_name, file_edits) in edits {
+                let uri = Self::file_name_to_uri(&file_name);
+                let lsp_edits: Vec<Value> = file_edits
+                    .iter()
+                    .map(|edit| {
+                        serde_json::json!({
+                            "range": Self::range_to_json(&edit.range),
+                            "newText": edit.new_text,
+                        })
+                    })
+                    .collect();
+
+                // Merge with existing edits for this file
+                all_changes
+                    .entry(uri)
+                    .or_insert_with(|| Value::Array(vec![]))
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(lsp_edits);
+            }
+        }
+
+        if all_changes.is_empty() {
+            Ok(Value::Null)
+        } else {
+            Ok(serde_json::json!({
+                "changes": all_changes,
+            }))
+        }
+    }
+
+    fn handle_did_rename_files(&mut self, params: Option<Value>) {
+        let files = match params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+        {
+            Some(f) => f.clone(),
+            None => return,
+        };
+
+        for file_entry in &files {
+            let old_uri = match file_entry.get("oldUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+            let new_uri = match file_entry.get("newUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+
+            let old_path = Self::uri_to_file_name(old_uri);
+            let new_path = Self::uri_to_file_name(new_uri);
+
+            // Compute workspace edits to update import paths
+            let edits = self.project.get_file_rename_edits(&old_path, &new_path);
+
+            // Apply edits via workspace/applyEdit request
+            if !edits.is_empty() {
+                let mut changes = serde_json::Map::new();
+                for (file_name, file_edits) in edits {
+                    let uri = Self::file_name_to_uri(&file_name);
+                    let lsp_edits: Vec<Value> = file_edits
+                        .iter()
+                        .map(|edit| {
+                            serde_json::json!({
+                                "range": Self::range_to_json(&edit.range),
+                                "newText": edit.new_text,
+                            })
+                        })
+                        .collect();
+                    changes.insert(uri, Value::Array(lsp_edits));
+                }
+
+                self.pending_notifications.push(JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "workspace/applyEdit".to_string(),
+                    params: serde_json::json!({
+                        "label": "Update imports for renamed file",
+                        "edit": {
+                            "changes": changes,
+                        },
+                    }),
+                });
+            }
+
+            // Update project state: remove old file, add new
+            if let Some(file) = self.project.file(&old_path) {
+                let source = file.source_text().to_string();
+                self.project.remove_file(&old_path);
+                self.project.set_file(new_path.clone(), source);
+            }
+        }
     }
 
     // ─── Execute Command ───────────────────────────────────────────────
