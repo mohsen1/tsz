@@ -127,9 +127,40 @@ impl ParserState {
             return self.parse_arrow_function_expression_with_async(false);
         }
 
-        // Start at precedence 2 to skip comma operator (precedence 1)
-        // Comma expressions are only valid in certain contexts (e.g., for loop)
-        self.parse_binary_expression(2)
+        // Parse the non-assignment binary expression first.
+        // Start at precedence 2 to skip comma operator (precedence 1).
+        // Assignment operators return precedence 0 in get_operator_precedence,
+        // so they are NOT consumed by the binary expression chain. Instead,
+        // we handle them here, matching tsc's parseAssignmentExpressionOrHigher.
+        let start_pos = self.token_pos();
+        let left = self.parse_binary_expression(2);
+
+        // Check if the next token is an assignment operator.
+        // Rescan `>` to handle compound tokens like `>>=` and `>>>=`.
+        let op = if self.is_token(SyntaxKind::GreaterThanToken) {
+            self.try_rescan_greater_token()
+        } else {
+            self.token()
+        };
+
+        if self.is_assignment_operator(op) {
+            let operator_token = op as u16;
+            self.next_token();
+            let right = self.parse_assignment_expression();
+            let end_pos = self.token_end();
+            return self.arena.add_binary_expr(
+                syntax_kind_ext::BINARY_EXPRESSION,
+                start_pos,
+                end_pos,
+                BinaryExprData {
+                    left,
+                    operator_token,
+                    right,
+                },
+            );
+        }
+
+        left
     }
 
     // Parse async arrow function: async (x) => ... or async x => ...
