@@ -1002,13 +1002,12 @@ impl<'a> CheckerState<'a> {
                 // explicit type arguments, the solver may return the raw instance
                 // type with unresolved type parameters (e.g. `M<T>` instead of
                 // `M<unknown>`). Detect this and substitute with `unknown`.
-                if self.is_circular_class_new(new_expr.expression) {
-                    if let Some(fixed) =
+                if self.is_circular_class_new(new_expr.expression)
+                    && let Some(fixed) =
                         self.class_instance_type_for_circular_new(new_expr.expression)
                     {
                         return fixed;
                     }
-                }
                 return_type
             }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
