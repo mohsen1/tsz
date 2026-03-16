@@ -2306,7 +2306,10 @@ fn test_prepare_on_function_with_default_params() {
     let pos = Position::new(0, 9);
     let item = provider.prepare(root, pos);
 
-    assert!(item.is_some(), "Should find call hierarchy item for function with default params");
+    assert!(
+        item.is_some(),
+        "Should find call hierarchy item for function with default params"
+    );
     if let Some(item) = item {
         assert_eq!(item.name, "greet");
         assert_eq!(item.kind, SymbolKind::Function);
@@ -2331,7 +2334,10 @@ fn test_prepare_not_on_type_annotation() {
     let pos = Position::new(0, 10);
     let item = provider.prepare(root, pos);
 
-    assert!(item.is_none(), "Should not find call hierarchy item for type annotation");
+    assert!(
+        item.is_none(),
+        "Should not find call hierarchy item for type annotation"
+    );
 }
 
 #[test]
@@ -2353,8 +2359,14 @@ fn test_outgoing_calls_from_ternary_expression() {
     let calls = provider.outgoing_calls(root, pos);
 
     let names: Vec<_> = calls.iter().map(|c| c.to.name.as_str()).collect();
-    assert!(names.contains(&"a"), "Should find outgoing call to 'a', got: {names:?}");
-    assert!(names.contains(&"b"), "Should find outgoing call to 'b', got: {names:?}");
+    assert!(
+        names.contains(&"a"),
+        "Should find outgoing call to 'a', got: {names:?}"
+    );
+    assert!(
+        names.contains(&"b"),
+        "Should find outgoing call to 'b', got: {names:?}"
+    );
 }
 
 #[test]
@@ -2382,7 +2394,8 @@ fn test_prepare_on_function_with_many_params() {
 
 #[test]
 fn test_outgoing_calls_from_do_while_loop() {
-    let source = "function step() {}\nfunction loop_fn() {\n  do {\n    step();\n  } while (false);\n}\n";
+    let source =
+        "function step() {}\nfunction loop_fn() {\n  do {\n    step();\n  } while (false);\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
@@ -2473,9 +2486,18 @@ fn test_outgoing_calls_from_nested_if_else() {
     let calls = provider.outgoing_calls(root, pos);
 
     let names: Vec<_> = calls.iter().map(|c| c.to.name.as_str()).collect();
-    assert!(names.contains(&"alpha"), "Should find call to 'alpha', got: {names:?}");
-    assert!(names.contains(&"beta"), "Should find call to 'beta', got: {names:?}");
-    assert!(names.contains(&"gamma"), "Should find call to 'gamma', got: {names:?}");
+    assert!(
+        names.contains(&"alpha"),
+        "Should find call to 'alpha', got: {names:?}"
+    );
+    assert!(
+        names.contains(&"beta"),
+        "Should find call to 'beta', got: {names:?}"
+    );
+    assert!(
+        names.contains(&"gamma"),
+        "Should find call to 'gamma', got: {names:?}"
+    );
 }
 
 #[test]
