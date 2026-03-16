@@ -172,15 +172,23 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 if let Some(method) = self.arena.get_method_decl(node) {
-                    if self.ctx.target_es5
-                        && let Some(mods) = &method.modifiers
-                        && mods.nodes.iter().any(|&mod_idx| {
+                    let is_async_method = method.modifiers.as_ref().is_some_and(|mods| {
+                        mods.nodes.iter().any(|&mod_idx| {
                             self.arena
                                 .get(mod_idx)
                                 .is_some_and(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
                         })
-                    {
-                        self.mark_async_helpers();
+                    });
+                    if is_async_method && self.ctx.needs_async_lowering {
+                        if method.asterisk_token {
+                            // Async generator method: needs __asyncGenerator + __await
+                            if self.ctx.target_es5 {
+                                self.mark_async_helpers();
+                            }
+                            self.mark_async_generator_helpers();
+                        } else if self.ctx.target_es5 {
+                            self.mark_async_helpers();
+                        }
                     }
                     // Set __metadata helper when a decorated method WITH a body exists.
                     // Overload signatures (no body) are not emitted as __decorate targets.

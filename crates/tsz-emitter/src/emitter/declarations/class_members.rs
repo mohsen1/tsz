@@ -83,8 +83,10 @@ impl<'a> Printer<'a> {
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         let needs_async_lowering =
             is_async && self.ctx.needs_async_lowering && !method.asterisk_token;
+        let needs_async_generator_lowering =
+            is_async && self.ctx.needs_async_lowering && method.asterisk_token;
 
-        if needs_async_lowering {
+        if needs_async_lowering || needs_async_generator_lowering {
             // Emit static modifier if present
             if self
                 .arena
@@ -97,8 +99,8 @@ impl<'a> Printer<'a> {
             self.emit_method_modifiers_js(&method.modifiers);
         }
 
-        // Emit generator asterisk
-        if method.asterisk_token {
+        // Emit generator asterisk (skip for async generators being lowered)
+        if method.asterisk_token && !needs_async_generator_lowering {
             self.write("*");
         }
 
@@ -164,7 +166,9 @@ impl<'a> Printer<'a> {
             self.skip_comments_in_range(type_node.pos, type_node.end);
         }
 
-        if needs_async_lowering {
+        if needs_async_generator_lowering {
+            self.emit_method_async_generator_lowered_body(method.body, method.name);
+        } else if needs_async_lowering {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
         } else {
             self.write(" ");
@@ -257,6 +261,53 @@ impl<'a> Printer<'a> {
             }
         }
         self.ctx.emit_await_as_yield = false;
+
+        self.decrease_indent();
+        self.write("});");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    /// Emit async generator method body lowered to __asyncGenerator for ES2015 target.
+    /// `async *f() { ... }` becomes `f() { return __asyncGenerator(this, arguments, function* f_1() { ... }); }`
+    fn emit_method_async_generator_lowered_body(&mut self, body: NodeIndex, name_idx: NodeIndex) {
+        let method_name = if name_idx.is_some() {
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, name_idx)
+        } else {
+            String::new()
+        };
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        // return __asyncGenerator(this, arguments, function* name_1() {
+        self.write("return ");
+        self.write_helper("__asyncGenerator");
+        self.write("(this, arguments, function* ");
+        if !method_name.is_empty() {
+            self.write(&method_name);
+            self.write("_1");
+        }
+        self.write("() {");
+        self.write_line();
+        self.increase_indent();
+
+        // Set flag so `await expr` emits as `yield __await(expr)`
+        let saved = self.ctx.emit_await_as_yield_await;
+        self.ctx.emit_await_as_yield_await = true;
+
+        if let Some(body_node) = self.arena.get(body)
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            for &stmt in &block.statements.nodes {
+                self.emit(stmt);
+                self.write_line();
+            }
+        }
+
+        self.ctx.emit_await_as_yield_await = saved;
 
         self.decrease_indent();
         self.write("});");
