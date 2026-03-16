@@ -638,14 +638,18 @@ impl<'a> CheckerState<'a> {
         // Check direct object types
         if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-            && !shape.properties.is_empty() && shape.properties.iter().all(|p| p.optional) {
-                return true;
-            }
+            && !shape.properties.is_empty()
+            && shape.properties.iter().all(|p| p.optional)
+        {
+            return true;
+        }
         // Check union: if ALL members are weak types
         if let Some(members) = query::union_members(self.ctx.types, type_id)
-            && !members.is_empty() && members.iter().all(|&m| self.is_weak_type_for_overlap(m)) {
-                return true;
-            }
+            && !members.is_empty()
+            && members.iter().all(|&m| self.is_weak_type_for_overlap(m))
+        {
+            return true;
+        }
         false
     }
 
