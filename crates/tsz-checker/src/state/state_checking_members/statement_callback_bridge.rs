@@ -945,6 +945,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     self.check_verbatim_module_syntax_export_default(clause_idx);
                 }
 
+                // TS1269: Cannot use 'export import' on a type or type-only namespace
+                // when 'isolatedModules' or 'verbatimModuleSyntax' is enabled.
+                if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                    && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                {
+                    self.check_export_import_equals_type_only(export_idx, clause_idx);
+                }
+
                 if self
                     .ctx
                     .arena
