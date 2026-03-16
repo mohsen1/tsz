@@ -1458,12 +1458,30 @@ impl<'a> CheckerState<'a> {
                     // When function + class both export as default, tsc emits
                     // TS2323 + TS2813 + TS2814 (merge conflict diagnostics).
                     self.emit_function_class_default_merge_errors(&export_default_indices);
-                } else if has_class && value_count > 1 {
-                    // When a class + value export as default, tsc emits TS2323
-                    // ("Cannot redeclare exported variable 'default'") on each
-                    // declaration. This is a class/value merge conflict.
+                } else if has_class && value_count > 1 && {
+                    // tsc emits TS2323 only when a named variable reference
+                    // (export default foo) accompanies a class, not for anonymous
+                    // expressions (export default {...}). multipleExportDefault3/4
+                    // have class + object literal and expect TS2528.
+                    export_default_indices.iter().any(|&idx| {
+                        self.ctx
+                            .arena
+                            .get_export_decl_at(idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16)
+                    })
+                } {
                     for &export_idx in &export_default_indices {
-                        let anchor = self.get_default_export_anchor(export_idx);
+                        // For expression-style exports, anchor at the export
+                        // statement (col 1), not the expression (col 16).
+                        let default_anchor = self.get_default_export_anchor(export_idx);
+                        let is_expr = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(export_idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16);
+                        let anchor = if is_expr { export_idx } else { default_anchor };
                         self.error_at_node(
                             anchor,
                             "Cannot redeclare exported variable 'default'.",
