@@ -218,6 +218,20 @@ pub enum InterfaceMergeKind {
     Other,
 }
 
+impl InterfaceMergeKind {
+    /// Returns true if this kind represents a type whose properties can be
+    /// structurally merged with another interface type (Callable, Object,
+    /// or ObjectWithIndex).
+    pub fn is_structurally_mergeable(&self) -> bool {
+        matches!(
+            self,
+            InterfaceMergeKind::Callable(_)
+                | InterfaceMergeKind::Object(_)
+                | InterfaceMergeKind::ObjectWithIndex(_)
+        )
+    }
+}
+
 /// Classify a type for interface merging operations.
 ///
 /// This function examines a type and returns information about how to handle it
