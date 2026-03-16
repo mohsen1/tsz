@@ -502,6 +502,16 @@ impl<'a> CheckerState<'a> {
             // Empty array literal: infer from context or use never[]/any[]
             // TypeScript uses "evolving array types" where [] starts as never[] and widens
             // via control flow.
+
+            // When [] is the receiver of a property/element access (e.g., `[].map(...)`),
+            // always use `never[]` regardless of any leaked contextual type. Without this,
+            // nested generic calls like `[].map(() => [].map(p => ({ X: p })))` propagate
+            // the outer callback's inferred return type into the inner [], causing false
+            // TS2322 errors.
+            if self.empty_array_literal_prefers_never(idx) {
+                return factory.array(TypeId::NEVER);
+            }
+
             if let Some(contextual) = self.ctx.contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
