@@ -939,6 +939,19 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // TypeQuery represents `typeof X` — a value-space query.
+                // If the symbol is already registered in the environment (e.g.,
+                // as a class constructor type from get_type_of_symbol), skip
+                // re-resolution. type_reference_symbol_type returns the TYPE-space
+                // result (instance type for classes), which would incorrectly
+                // overwrite the VALUE-space result (constructor type) needed by
+                // typeof expressions.
+                if let Ok(env) = self.ctx.type_env.try_borrow() {
+                    if env.contains(tsz_solver::SymbolRef(sym_id.0)) {
+                        continue;
+                    }
+                }
+
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
