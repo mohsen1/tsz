@@ -466,6 +466,22 @@ impl ParserState {
             return self.parse_function_type();
         }
 
+        // Empty parens `()` without `=>` is still a function type (just missing the arrow).
+        // Route to parse_function_type so the missing `=>` emits TS1005 instead of TS1110.
+        if self.is_token(SyntaxKind::OpenParenToken) {
+            let snapshot = self.scanner.save_state();
+            let saved_token = self.current_token;
+            self.next_token(); // consume (
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                // Empty parens - treat as function type
+                self.scanner.restore_state(snapshot);
+                self.current_token = saved_token;
+                return self.parse_function_type();
+            }
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+        }
+
         self.next_token();
         // Re-enable conditional types inside parentheses, even if they were disabled
         // for an outer `infer T extends X` disambiguation. Matches tsc's
