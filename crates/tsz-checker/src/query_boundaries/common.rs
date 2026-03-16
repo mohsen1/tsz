@@ -112,11 +112,13 @@ pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// This matches tsc's `isGenericMappedType`.
 pub(crate) fn is_generic_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if let Some(mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
+        // Match tsc's isGenericMappedType: only check constraint and name_type.
+        // The template always contains the mapped type's own iteration variable
+        // which is NOT an external type parameter.
         tsz_solver::type_queries::contains_type_parameters_db(db, mapped.constraint)
             || mapped
                 .name_type
                 .is_some_and(|nt| tsz_solver::type_queries::contains_type_parameters_db(db, nt))
-            || tsz_solver::type_queries::contains_type_parameters_db(db, mapped.template)
     } else {
         false
     }
