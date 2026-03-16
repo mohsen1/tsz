@@ -436,9 +436,31 @@ impl ParserState {
             || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_identifier_or_keyword()
         {
-            Some(TypeMemberPropertyOrMethodName::Property(
-                self.parse_property_name(),
-            ))
+            // Lookahead: match tsc's isTypeMemberStart() — after consuming the property name,
+            // the next token must be a valid type member continuation token (`:`, `?`, `(`, `<`,
+            // `,`, or ASI-eligible). Without this check, keywords like `return` in
+            // `{ return true; }` would be greedily parsed as property names.
+            let snapshot = self.scanner.save_state();
+            let saved_token = self.current_token;
+            self.next_token(); // skip past the property name
+            let is_valid_continuation = matches!(
+                self.current_token,
+                SyntaxKind::OpenParenToken
+                    | SyntaxKind::LessThanToken
+                    | SyntaxKind::QuestionToken
+                    | SyntaxKind::ColonToken
+                    | SyntaxKind::CommaToken
+            ) || self.can_parse_semicolon();
+            self.scanner.restore_state(snapshot);
+            self.current_token = saved_token;
+
+            if is_valid_continuation {
+                Some(TypeMemberPropertyOrMethodName::Property(
+                    self.parse_property_name(),
+                ))
+            } else {
+                None
+            }
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             if self.look_ahead_is_index_signature() || self.look_ahead_is_empty_index_signature() {
                 let modifiers = self.readonly_modifier_node_list(start_pos, readonly);
