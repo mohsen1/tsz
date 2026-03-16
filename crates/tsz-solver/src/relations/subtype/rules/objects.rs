@@ -106,6 +106,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Weak type check (TS2559): if the target is a "weak type" (all properties optional,
+        // at least one property, no index signatures), reject if the source has properties
+        // but none in common with the target. This check is propagated from CompatChecker
+        // via the `enforce_weak_types` flag so it applies during nested property type
+        // comparisons. The `in_property_check` guard ensures this only fires for nested
+        // comparisons — the CompatChecker handles top-level weak checks with proper
+        // exemptions (global Object, union-level policies, etc.).
+        // Check ordering: O(1) flag/length guards first, then O(n) shape scan, then O(m+n) merge.
+        if self.enforce_weak_types
+            && self.in_property_check
+            && !source.properties.is_empty()
+            && Self::is_weak_type_shape(target)
+            && !crate::utils::has_common_property_name(&source.properties, &target.properties)
+        {
+            return SubtypeResult::False;
+        }
+
         // Fast fail for private/protected members: check these first so unrelated
         // class instances can fail before expensive public method comparison.
         for t_prop in &target.properties {
@@ -366,6 +383,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.bind_property_receiver_this(target_receiver, self.optional_property_type(target));
         let allow_bivariant = source.is_method || target.is_method;
 
+        // Mark that we're inside a property comparison so nested weak type checks
+        // apply to recursive structural comparisons of property types.
+        let prev_in_property_check = self.in_property_check;
+        self.in_property_check = true;
+        let result = self.check_property_types(
+            source,
+            target,
+            source_receiver,
+            target_receiver,
+            source_read,
+            target_read,
+            allow_bivariant,
+        );
+        self.in_property_check = prev_in_property_check;
+        result
+    }
+
+    /// Inner property type comparison with `in_property_check` already set.
+    /// Separated to ensure `in_property_check` is always restored via the caller.
+    fn check_property_types(
+        &mut self,
+        source: &PropertyInfo,
+        target: &PropertyInfo,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
+        source_read: TypeId,
+        target_read: TypeId,
+        allow_bivariant: bool,
+    ) -> SubtypeResult {
         // Rule #26: Split Accessors - Covariant reads
         // Source read type must be subtype of target read type
         if source_read != target_read
@@ -1087,5 +1133,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             prop.write_type
         }
+    }
+
+    /// Check if an object shape is a "weak type": all properties are optional,
+    /// there is at least one property, and there are no index signatures.
+    /// Weak types trigger TS2559 when the source has no common properties.
+    fn is_weak_type_shape(shape: &ObjectShape) -> bool {
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|p| p.optional)
     }
 }
