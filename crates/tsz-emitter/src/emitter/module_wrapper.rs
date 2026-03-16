@@ -233,9 +233,19 @@ impl<'a> Printer<'a> {
         self.write(") {");
         self.write_line();
         self.increase_indent();
+
+        // AMD modules get "use strict" inside the define() callback, matching tsc.
+        // Only emit for module files (files with import/export syntax).
+        if self.file_is_module(&source.statements) {
+            self.write("\"use strict\";");
+            self.write_line();
+            self.ctx.options.suppress_use_strict = true;
+        }
+
         self.register_system_import_substitutions(source, &dep_vars);
 
         self.emit_module_wrapper_body(source_node, source_idx);
+        self.ctx.options.suppress_use_strict = false;
 
         self.decrease_indent();
         self.write("});");
@@ -292,7 +302,17 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        // UMD modules get "use strict" inside the factory callback, matching tsc.
+        if let Some(source) = self.arena.get_source_file(source_node)
+            && self.file_is_module(&source.statements)
+        {
+            self.write("\"use strict\";");
+            self.write_line();
+            self.ctx.options.suppress_use_strict = true;
+        }
+
         self.emit_module_wrapper_body(source_node, source_idx);
+        self.ctx.options.suppress_use_strict = false;
 
         self.decrease_indent();
         self.write("});");
@@ -827,6 +847,11 @@ impl<'a> Printer<'a> {
 
         let mut needs_import_default = false;
         let mut needs_import_star = false;
+
+        // Check if lowering pass detected dynamic import() calls needing __importStar
+        if self.transforms.helpers_populated() && self.transforms.helpers().import_star {
+            needs_import_star = true;
+        }
 
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
