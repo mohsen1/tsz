@@ -11,6 +11,7 @@ use tsz_solver::TypeId;
 /// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
 /// This is a purely syntactic check -- it does NOT look at types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum SyntacticNullishness {
     /// The expression is always nullish (e.g., `null`, `undefined`).
     #[allow(dead_code)]
@@ -26,6 +27,7 @@ impl<'a> CheckerState<'a> {
     /// that determines whether an expression can ever be nullish, WITHOUT consulting the
     /// type system. For example, a variable `foo: string` returns `Sometimes` (it could
     /// theoretically be reassigned at runtime), while a literal `"hello"` returns `Never`.
+    #[allow(dead_code)]
     fn get_syntactic_nullishness(&self, idx: NodeIndex) -> SyntacticNullishness {
         let Some(node) = self.ctx.arena.get(idx) else {
             return SyntacticNullishness::Sometimes;
