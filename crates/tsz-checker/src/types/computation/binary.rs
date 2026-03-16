@@ -10,6 +10,7 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     fn is_valid_in_operator_rhs(&mut self, ty: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
+        use tsz_solver::TypeData;
 
         if matches!(
             ty,
@@ -18,9 +19,18 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if query::is_type_parameter_like(self.ctx.types, ty)
-            || query::is_object_like_type(self.ctx.types, ty)
-        {
+        // For type parameters, check if their constraint is assignable to object.
+        // Unconstrained type params are NOT valid (could be primitive).
+        // For union constraints, if ANY constituent is object-like, the param
+        // is valid (tsc allows `T extends object | "hello"` for `in`).
+        if let Some(TypeData::TypeParameter(tp)) = self.ctx.types.lookup(ty) {
+            return match tp.constraint {
+                Some(c) => self.is_type_param_constraint_valid_for_in(c),
+                None => false, // Unconstrained T could be primitive
+            };
+        }
+
+        if query::is_object_like_type(self.ctx.types, ty) {
             return true;
         }
 
@@ -39,46 +49,38 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if an AST node is a nullish coalescing expression (`??`) or a
-    /// literal value (string, number, boolean, bigint, template), unwrapping
-    /// parentheses. TSC only emits TS2869 for these syntactic forms; general
-    /// non-nullable expressions (identifiers, property access, `&&` chains)
-    /// do not trigger TS2869 even when their type is never nullish.
-    fn is_nullish_coalescing_or_literal(
-        arena: &tsz_parser::parser::NodeArena,
-        node_idx: NodeIndex,
-    ) -> bool {
-        use tsz_scanner::SyntaxKind;
+    /// For type parameter constraints: ALL constituents must be valid for `in`.
+    /// `T extends object` is valid, but `T extends object | "hello"` is not
+    /// because T could be instantiated with `"hello"` (a primitive).
+    fn is_type_param_constraint_valid_for_in(&mut self, constraint: TypeId) -> bool {
+        // Just delegate to the main check — the constraint itself must be fully valid
+        self.is_valid_in_operator_rhs(constraint)
+    }
 
-        let Some(node) = arena.get(node_idx) else {
-            return false;
-        };
+    /// Check if a type "may represent a primitive value" for TS2638.
+    /// This applies to types like `{}` that structurally accept primitives,
+    /// and type parameters whose constraint is `{}` or missing.
+    fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
+        use tsz_solver::TypeData;
 
-        // Unwrap parentheses: (expr) -> expr
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = arena.get_parenthesized(node) {
-                return Self::is_nullish_coalescing_or_literal(arena, paren.expression);
-            }
-            return false;
+        // `{}` (empty object type) may represent primitives
+        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
+            return true;
         }
 
-        // Binary expression: check if it's a `??`
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = arena.get_binary_expr(node) {
-                return binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
+        // Type parameters: check if constraint is missing or is `{}`
+        match self.ctx.types.lookup(ty) {
+            Some(TypeData::TypeParameter(tp)) => {
+                match tp.constraint {
+                    None => true, // Unconstrained type param may be primitive
+                    Some(c) => self.type_may_represent_primitive(c),
+                }
             }
-            return false;
+            // BoundParameter is a de Bruijn index with no constraint info
+            // at the solver level; treat as potentially primitive.
+            Some(TypeData::BoundParameter(_)) => true,
+            _ => false,
         }
-
-        // Literal values: string, number, bigint, template, true, false
-        let kind = node.kind;
-        kind == SyntaxKind::StringLiteral as u16
-            || kind == SyntaxKind::NumericLiteral as u16
-            || kind == SyntaxKind::BigIntLiteral as u16
-            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            || kind == SyntaxKind::TrueKeyword as u16
-            || kind == SyntaxKind::FalseKeyword as u16
-            || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
     }
 
     /// Get the type of a binary expression.
@@ -449,6 +451,15 @@ impl<'a> CheckerState<'a> {
                         right_idx,
                         right_idx,
                     );
+                } else if self.type_may_represent_primitive(right_type) {
+                    // TS2638: Type '{}' may represent a primitive value, which is not
+                    // permitted as the right operand of the 'in' operator.
+                    let type_str = self.format_type(right_type);
+                    self.error_at_node_msg(
+                        right_idx,
+                        tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
+                        &[&type_str],
+                    );
                 }
 
                 type_stack.push(TypeId::BOOLEAN);
@@ -605,21 +616,12 @@ impl<'a> CheckerState<'a> {
                 // Don't report TS2869 for them — the right operand IS reachable.
                 let left_is_top_type =
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
-                // TSC only emits TS2869 when the left operand is syntactically
-                // guaranteed never-nullish: either a literal value or the result
-                // of another `??` (which always strips null/undefined). For general
-                // non-nullable expressions (identifiers, property access, `&&`
-                // chains, function calls), TSC does NOT emit TS2869.
-                let left_is_nullish_chain_or_literal =
-                    Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
-                if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
+                if cause.is_none() && !left_is_top_type {
                     // TS2869: Left operand is never nullish, right is unreachable.
                     // This replaces the generic TS2872 ("always truthy") for ?? context.
-                    // tsc reports the error on the inner expression, skipping parentheses.
                     use crate::diagnostics::diagnostic_codes;
-                    let error_node = self.ctx.arena.skip_parenthesized(left_idx);
                     self.error_at_node(
-                        error_node,
+                        right_idx,
                         "Right operand of ?? is unreachable because the left operand is never nullish.",
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );
