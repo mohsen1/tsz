@@ -1195,11 +1195,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a variable declaration is in a `for...in` or `for...of` statement.
+    /// These loop variables get their type from the iterable expression, not from
+    /// the variable declaration itself.
     ///
-    /// AST walk: `VariableDeclaration` → `VariableDeclarationList` → `ForInStatement | ForOfStatement`
-    #[allow(dead_code)]
+    /// AST walk: `VariableDeclaration` → `VariableDeclarationList` → `ForInStatement`/`ForOfStatement`
     pub(crate) fn is_for_in_or_of_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        // VariableDeclaration → parent (VariableDeclarationList)
         let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
             return false;
         };
@@ -1207,15 +1207,14 @@ impl<'a> CheckerState<'a> {
         if vdl_idx.is_none() {
             return false;
         }
-        // VariableDeclarationList → parent (ForInStatement | ForOfStatement?)
         let Some(vdl_ext) = self.ctx.arena.get_extended(vdl_idx) else {
             return false;
         };
-        let for_idx = vdl_ext.parent;
-        if for_idx.is_none() {
+        let parent_idx = vdl_ext.parent;
+        if parent_idx.is_none() {
             return false;
         }
-        let Some(parent_node) = self.ctx.arena.get(for_idx) else {
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
             return false;
         };
         parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
