@@ -1006,10 +1006,14 @@ impl<'a> CheckerState<'a> {
         // emit TS7031 for each leaf binding element under noImplicitAny.
         // This must be done before the symbol check since destructuring declarations
         // don't get a symbol assigned to the declaration node itself.
+        // Skip for-in/for-of loop variables and catch clause variables — they get
+        // their types from the loop expression or catch clause, not from an initializer.
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
             && var_decl.type_annotation.is_none()
             && var_decl.initializer.is_none()
+            && !is_catch_variable
+            && !self.is_var_decl_in_for_in_or_of(decl_idx)
         {
             let is_destructuring_pattern =
                 self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
@@ -1715,6 +1719,25 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Check if a variable declaration is inside a for-in or for-of loop.
+    /// AST: VariableDeclaration → VariableDeclarationList → ForInStatement/ForOfStatement
+    fn is_var_decl_in_for_in_or_of(&self, decl_idx: NodeIndex) -> bool {
+        // VariableDeclaration → parent (VariableDeclarationList)
+        let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+            return false;
+        };
+        let vdl_idx = ext.parent;
+        // VariableDeclarationList → parent (ForInStatement/ForOfStatement?)
+        let Some(vdl_ext) = self.ctx.arena.get_extended(vdl_idx) else {
+            return false;
+        };
+        let Some(gp_node) = self.ctx.arena.get(vdl_ext.parent) else {
+            return false;
+        };
+        gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
     }
 }
 
