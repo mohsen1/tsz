@@ -128,7 +128,32 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            self.check_assignable_or_report_at(
+            // ImportCallOptions is a weak type (all optional properties).
+            // When the source is a primitive/literal, emit TS2559 directly with
+            // the correct type names matching tsc's format.
+            if tsz_solver::is_primitive_type(self.ctx.types, options_type) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                // Use the literal text from the AST for string/numeric literals;
+                // for other primitives, fall back to the type formatter.
+                let source_str = self
+                    .ctx
+                    .arena
+                    .get(options_idx)
+                    .and_then(|n| self.ctx.arena.get_literal(n))
+                    .map(|lit| format!("\"{}\"", lit.text))
+                    .unwrap_or_else(|| self.format_type(options_type));
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    &[&source_str, "ImportCallOptions"],
+                );
+                self.error_at_node(
+                    options_idx,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                );
+                return;
+            }
+            self.check_assignable_or_report_at_exact_anchor(
                 options_type,
                 import_call_options_type,
                 options_idx,
@@ -147,8 +172,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check assignability — emit TS2322 if not assignable
-        self.check_assignable_or_report_at(
+        // Check assignability — emit TS2322/TS2559 if not assignable
+        self.check_assignable_or_report_at_exact_anchor(
             options_type,
             import_call_options_type,
             options_idx,

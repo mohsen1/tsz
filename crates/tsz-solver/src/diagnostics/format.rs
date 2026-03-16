@@ -481,6 +481,19 @@ impl<'a> TypeFormatter<'a> {
                 self.format_template_literal(spans.as_ref()).into()
             }
             TypeData::TypeQuery(sym) => {
+                // Check if the symbol is a namespace import (import * as X from "mod")
+                // — tsc displays these as `typeof import("mod")` rather than `typeof X`.
+                if let Some(arena) = self.symbol_arena
+                    && let Some(symbol) = arena.get(SymbolId(sym.0))
+                    && symbol.import_name.as_deref() == Some("*")
+                    && let Some(ref module_specifier) = symbol.import_module
+                {
+                    let display_name = module_specifier
+                        .strip_prefix("./")
+                        .or_else(|| module_specifier.strip_prefix("../"))
+                        .unwrap_or(module_specifier);
+                    return format!("typeof import(\"{display_name}\")").into();
+                }
                 let name = if let Some(name) = self.resolve_symbol_ref_name(*sym) {
                     name
                 } else {
