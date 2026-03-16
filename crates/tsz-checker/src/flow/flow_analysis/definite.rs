@@ -215,7 +215,66 @@ impl<'a> CheckerState<'a> {
             && let Some(info) = self.ctx.destructured_bindings.get(&sym_id).cloned()
             && info.is_const
         {
-            return self.apply_correlated_narrowing(&analyzer, sym_id, &info, narrowed, flow_node);
+            let correlated =
+                self.apply_correlated_narrowing(&analyzer, sym_id, &info, narrowed, flow_node);
+            // Also apply source-based property narrowing if available.
+            // Example: `if (action.payload) { const { kind, payload } = action; ... }`
+            // Correlated narrows payload to `number | undefined` (from kind === 'A'),
+            // source-based strips `undefined` (from action.payload truthiness).
+            // The combined result intersects both narrowings.
+            if let Some((source_expr, prop_name)) =
+                self.ctx.destructured_binding_sources.get(&sym_id).cloned()
+            {
+                let narrowed_via_source = self.narrow_destructured_binding_via_source(
+                    &analyzer,
+                    source_expr,
+                    &prop_name,
+                    declared_type,
+                    flow_node,
+                );
+                if narrowed_via_source != declared_type && narrowed_via_source != correlated {
+                    // Intersect correlated and source-based narrowing results.
+                    // Keep only types that appear in both narrowed sets.
+                    let c_members = union_members_for_type(self.ctx.types, correlated);
+                    let s_members = union_members_for_type(self.ctx.types, narrowed_via_source);
+                    match (c_members, s_members) {
+                        (Some(c), Some(s)) => {
+                            let filtered: Vec<TypeId> =
+                                c.iter().filter(|t| s.contains(t)).copied().collect();
+                            if !filtered.is_empty() {
+                                return tsz_solver::utils::union_or_single(
+                                    self.ctx.types,
+                                    filtered,
+                                );
+                            }
+                        }
+                        (Some(c), None) => {
+                            let filtered: Vec<TypeId> = c
+                                .iter()
+                                .filter(|&&t| t == narrowed_via_source)
+                                .copied()
+                                .collect();
+                            if !filtered.is_empty() {
+                                return tsz_solver::utils::union_or_single(
+                                    self.ctx.types,
+                                    filtered,
+                                );
+                            }
+                        }
+                        (None, Some(s)) => {
+                            if s.contains(&correlated) {
+                                return correlated;
+                            }
+                        }
+                        (None, None) => {
+                            if correlated == narrowed_via_source {
+                                return correlated;
+                            }
+                        }
+                    }
+                }
+            }
+            return correlated;
         }
 
         // Flow-based property narrowing for destructured bindings.

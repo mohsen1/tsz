@@ -795,7 +795,8 @@ impl<'a> FlowAnalyzer<'a> {
             // Use Solver-First architecture: delegate to TypeGuard::Truthy
             _ => {
                 let condition_ref = self.arena.skip_parenthesized_and_assertions(condition_idx);
-                if self.is_matching_reference(condition_ref, target) {
+                let matches = self.is_matching_reference(condition_ref, target);
+                if matches {
                     return narrowing.narrow_type(
                         type_id,
                         &TypeGuard::Truthy,
