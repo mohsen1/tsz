@@ -29,8 +29,11 @@ pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
 }
 
-pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<OutputFile>> {
+pub(crate) fn emit_outputs(
+    context: EmitOutputsContext<'_>,
+) -> Result<(Vec<OutputFile>, Vec<tsz_common::diagnostics::Diagnostic>)> {
     let mut outputs = Vec::new();
+    let mut emit_diagnostics: Vec<tsz_common::diagnostics::Diagnostic> = Vec::new();
     let new_line = new_line_str(context.options.printer.new_line);
     let declaration_bundle_path = context.options.out_file.as_ref().and_then(|out_file| {
         declaration_bundle_output_path(
@@ -335,6 +338,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                 }
 
                 let mut contents = emitter.emit(file.source_file);
+                emit_diagnostics.extend(emitter.take_diagnostics());
                 let map_json = map_info
                     .as_ref()
                     .and_then(|_| emitter.generate_source_map_json());
@@ -412,7 +416,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
         });
     }
 
-    Ok(outputs)
+    Ok((outputs, emit_diagnostics))
 }
 
 fn map_output_info(output_path: &Path) -> Option<(PathBuf, String, String)> {
