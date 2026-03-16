@@ -1472,7 +1472,7 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             // Default: template literals produce string type
-            expression_ops::compute_template_expression_type(&part_types)
+            expression_ops::compute_template_expression_type(self.ctx.types, &texts, &part_types)
         }
     }
 
