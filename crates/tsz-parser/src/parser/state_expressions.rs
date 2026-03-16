@@ -979,7 +979,7 @@ impl ParserState {
 
     fn parse_binary_expression_rhs(
         &mut self,
-        left: NodeIndex,
+        _left: NodeIndex,
         op: SyntaxKind,
         precedence: u8,
     ) -> NodeIndex {
