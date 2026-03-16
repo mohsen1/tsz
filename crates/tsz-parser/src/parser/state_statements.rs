@@ -1062,6 +1062,7 @@ impl ParserState {
     }
 
     /// Look ahead to see if we have `export =`.
+    #[allow(dead_code)]
     fn look_ahead_is_export_assignment(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
