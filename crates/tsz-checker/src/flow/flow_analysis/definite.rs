@@ -11,7 +11,7 @@ use tsz_binder::{SymbolId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -539,7 +539,12 @@ impl<'a> CheckerState<'a> {
                 }
                 Some(current)
             } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, member) {
-                elems.get(binding.element_index as usize).map(|e| e.type_id)
+                resolve_tuple_binding_type(
+                    self.ctx.types,
+                    &elems,
+                    binding.element_index as usize,
+                    binding.is_rest,
+                )
             } else {
                 None
             }
@@ -798,7 +803,12 @@ impl<'a> CheckerState<'a> {
                 }
                 resolved
             } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, *member) {
-                elems.get(info.element_index as usize).map(|e| e.type_id)
+                resolve_tuple_binding_type(
+                    self.ctx.types,
+                    &elems,
+                    info.element_index as usize,
+                    info.is_rest,
+                )
             } else {
                 None
             };
@@ -863,4 +873,27 @@ impl<'a> CheckerState<'a> {
     // NOTE: Rule #42 captured-variable methods (is_inside_closure, is_mutable_binding,
     // is_captured_variable, find_enclosing_function_scope) were removed. Rule #42 is now
     // enforced at the flow-graph level in check_flow() (core.rs START node handling).
+}
+
+/// Resolve a tuple binding's type from its elements, handling rest bindings.
+///
+/// For rest bindings (`...rest`), finds the rest element from `element_index` onward
+/// and wraps its inner type as an array. For non-rest bindings, returns the element
+/// at the given index directly.
+fn resolve_tuple_binding_type(
+    db: &dyn tsz_solver::QueryDatabase,
+    elems: &[TupleElement],
+    element_index: usize,
+    is_rest: bool,
+) -> Option<TypeId> {
+    if is_rest {
+        let rest_elem = elems
+            .iter()
+            .skip(element_index)
+            .find(|e| e.rest)
+            .or_else(|| elems.get(element_index))?;
+        Some(db.factory().array(rest_elem.type_id))
+    } else {
+        elems.get(element_index).map(|e| e.type_id)
+    }
 }
