@@ -150,7 +150,7 @@ FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts |
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/emptyObjectNotSubtypeOfIndexSignatureContainingObject2.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[]
+FAIL TypeScript/tests/cases/compiler/ensureNoCrashExportAssignmentDefineProperrtyPotentialMerge.ts | expected:[TS2323] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/erasableSyntaxOnly.ts | expected:[TS1294] actual:[TS7055]
 FAIL TypeScript/tests/cases/compiler/erasableSyntaxOnlyDeclaration.ts | expected:[TS1046] actual:[]
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType02.ts | expected:[TS2713] actual:[TS2702]
@@ -318,7 +318,6 @@ FAIL TypeScript/tests/cases/compiler/inferenceAndHKTs.ts | expected:[] actual:[T
 FAIL TypeScript/tests/cases/compiler/inferenceAndSelfReferentialConstraint.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inferenceExactOptionalProperties2.ts | expected:[TS2345] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/inferenceFromIncompleteSource.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/inferenceOfNullableObjectTypesWithCommonBase.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/inferenceOptionalPropertiesToIndexSignatures.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/inferenceOuterResultNotIncorrectlyInstantiatedWithInnerResult.ts | expected:[TS2322,TS2769] actual:[TS2322,TS2769]
 FAIL TypeScript/tests/cases/compiler/inferenceShouldFailOnEvolvingArrays.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
@@ -1690,7 +1689,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuper
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithNumericIndexer5.ts | expected:[TS2420] actual:[]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers.ts | expected:[TS2416,TS2564] actual:[TS2416,TS2564]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithObjectMembers5.ts | expected:[TS2420,TS2559,TS2564] actual:[TS2420,TS2564]
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/discriminatedUnionInference.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts | expected:[TS2345,TS2769] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithFunctionTypedArguments2.ts | expected:[TS2345] actual:[TS2345]
@@ -4758,6 +4756,7 @@ PASS TypeScript/tests/cases/compiler/inferenceExactOptionalProperties1.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromGenericClassNoCrash1.ts
 PASS TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
 PASS TypeScript/tests/cases/compiler/inferenceLimit.ts
+PASS TypeScript/tests/cases/compiler/inferenceOfNullableObjectTypesWithCommonBase.ts
 PASS TypeScript/tests/cases/compiler/inferenceOptionalProperties.ts
 PASS TypeScript/tests/cases/compiler/inferenceOptionalPropertiesStrict.ts
 PASS TypeScript/tests/cases/compiler/inferenceUnionOfObjectsMappedContextualType.ts
@@ -12336,6 +12335,7 @@ PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIde
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/unionTypeIdentity.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/bivariantInferences.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/contextualSignatureInstantiation.ts
+PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/discriminatedUnionInference.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallTypeArgumentInference.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithArrayLiteralArgs.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithConstraintsTypeArgumentInference.ts
