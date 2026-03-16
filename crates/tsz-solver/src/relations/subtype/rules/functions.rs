@@ -1584,10 +1584,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for t_sig in &target.construct_signatures {
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
-                if self
-                    .check_call_signature_subtype_as_constructor(s_sig, t_sig)
-                    .is_true()
-                {
+                let result = self.check_call_signature_subtype_as_constructor(s_sig, t_sig);
+                if result.is_true() {
                     found_match = true;
                     break;
                 }
