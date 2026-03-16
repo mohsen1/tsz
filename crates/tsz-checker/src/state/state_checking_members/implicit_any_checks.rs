@@ -41,14 +41,12 @@ impl<'a> CheckerState<'a> {
         let is_rest = param.dot_dot_dot_token;
         // Skip rest parameters named 'arguments' — tsc emits TS1100 instead of TS7019
         // for `...arguments` because 'arguments' is a reserved identifier in strict mode.
-        if param.dot_dot_dot_token {
-            if let Some(name_node) = self.ctx.arena.get(param.name) {
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    if ident.escaped_text.as_str() == "arguments" {
-                        return;
-                    }
-                }
-            }
+        if param.dot_dot_dot_token
+            && let Some(name_node) = self.ctx.arena.get(param.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && ident.escaped_text.as_str() == "arguments"
+        {
+            return;
         }
         // Skip parameters that have explicit type annotations
         if param.type_annotation.is_some() {
