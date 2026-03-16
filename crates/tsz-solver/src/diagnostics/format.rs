@@ -1454,26 +1454,25 @@ impl<'a> TypeFormatter<'a> {
         let mut current_parent = sym.parent;
 
         use tsz_binder::symbol_flags;
-        let qualify_namespaces_for_enum_type =
-            sym.has_any_flags(symbol_flags::ENUM) && !sym.has_any_flags(symbol_flags::ENUM_MEMBER);
 
+        // Walk up the parent chain, qualifying with namespace/enum parents.
+        // tsc qualifies type names with their containing namespace(s) and enum(s).
+        // Skip file-level module symbols (synthetic names like __test1__, "file.ts", etc.)
+        // as those represent file modules, not declared namespaces.
         while current_parent != SymbolId::NONE {
             if let Some(parent_sym) = arena.get(current_parent) {
-                if parent_sym.has_any_flags(symbol_flags::ENUM)
-                    || (qualify_namespaces_for_enum_type
-                        && parent_sym.has_any_flags(
-                            symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
-                        ))
-                {
+                let is_qualifying_parent = parent_sym.has_any_flags(symbol_flags::ENUM)
+                    || parent_sym
+                        .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE);
+                let name = &parent_sym.escaped_name;
+                let is_file_module = name.starts_with('"')
+                    || name.starts_with("__")
+                    || name.contains('/')
+                    || name.contains('\\')
+                    || name.is_empty();
+                if is_qualifying_parent && !is_file_module {
                     qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
                     current_parent = parent_sym.parent;
-                    if sym.has_any_flags(symbol_flags::ENUM_MEMBER)
-                        && !parent_sym.has_any_flags(
-                            symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
-                        )
-                    {
-                        break;
-                    }
                 } else {
                     break;
                 }

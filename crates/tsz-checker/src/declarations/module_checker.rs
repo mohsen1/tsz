@@ -325,12 +325,19 @@ impl<'a> CheckerState<'a> {
         if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let base = module_name.trim_end_matches(dts_suffix);
-            let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                ts_ext
+            let suggested = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                format!("{base}{ts_ext}")
             } else {
-                js_ext
+                use tsz_common::common::ModuleKind;
+                match self.ctx.compiler_options.module {
+                    ModuleKind::CommonJS
+                    | ModuleKind::AMD
+                    | ModuleKind::UMD
+                    | ModuleKind::System
+                    | ModuleKind::None => base.to_string(),
+                    _ => format!("{base}{js_ext}"),
+                }
             };
-            let suggested = format!("{base}{ext}");
             let message = format_message(
                 diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
                 &[&suggested],
@@ -948,6 +955,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
         if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return;
+        }
+
+        // Skip local-export checks when the export is in a wrong context (inside block/function).
+        // The grammar error (TS1233) is the primary error; TS2661/TS2304 shouldn't also fire.
+        if self.is_in_non_module_element_context(named_exports_idx) {
             return;
         }
 
