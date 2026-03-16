@@ -1387,7 +1387,17 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
         let source_shape_id = match extractor.extract(source) {
             Some(id) => id,
-            None => return false,
+            None => {
+                // No extractable object shape. Primitive and literal types (string,
+                // number, boolean, bigint, their literal variants, null, undefined,
+                // void, symbol, unique symbol) have no properties that could overlap
+                // with the weak type's optional properties, so they violate.
+                // Empty objects ({}) do NOT violate – they are assignable to weak types.
+                return crate::visitors::visitor_predicates::is_primitive_type(
+                    self.interner,
+                    source,
+                );
+            }
         };
 
         let source_shape = self
