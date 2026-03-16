@@ -27,21 +27,22 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // TS1021: An index signature must have a type annotation.
-        if index_sig.type_annotation.is_none() {
-            self.error_at_node(
-                member_idx,
-                "An index signature must have a type annotation.",
-                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
-            );
-        }
-
         let param_idx = index_sig
             .parameters
             .nodes
             .first()
             .copied()
             .unwrap_or(NodeIndex::NONE);
+
+        // Track whether any grammar error was found — TSC's checkGrammarIndexSignatureParameters
+        // uses early returns, so TS1021 only fires when ALL previous checks pass.
+        let mut has_grammar_error = false;
+
+        // TS1096: multiple parameters — checked first by TSC and suppresses all later grammar errors.
+        if index_sig.parameters.nodes.len() != 1 {
+            has_grammar_error = true;
+            // TS1096 is already emitted by the parser.
+        }
 
         let Some(param_node) = self.ctx.arena.get(param_idx) else {
             return;
@@ -51,7 +52,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1017: rest parameter — suppresses later grammar errors.
+        if param_data.dot_dot_dot_token {
+            has_grammar_error = true;
+        }
+
         if self.has_parameter_property_modifier(&param_data.modifiers) {
+            has_grammar_error = true;
             self.error_at_node(
                 param_idx,
                 "A parameter property is only allowed in a constructor implementation.",
@@ -59,8 +66,14 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS1019: question mark on param — suppresses later grammar errors.
+        if param_data.question_token {
+            has_grammar_error = true;
+        }
+
         // TSC anchors TS2371 at the parameter name, not the initializer.
         if param_data.initializer.is_some() {
+            has_grammar_error = true;
             self.error_at_node(
                 param_data.name,
                 "A parameter initializer is only allowed in a function or constructor implementation.",
@@ -90,9 +103,8 @@ impl<'a> CheckerState<'a> {
 
         // Suppress TS1268 when the parameter already has grammar errors (rest/optional)
         // -- tsc doesn't report invalid param types on already-malformed index signatures.
-        let has_param_grammar_error = param_data.dot_dot_dot_token || param_data.question_token;
-
-        if !is_valid && !has_param_grammar_error {
+        if !is_valid && !has_grammar_error {
+            has_grammar_error = true;
             // TS1337: when the type is a generic type parameter or literal type,
             // emit the more specific "cannot be a literal type or generic type" message.
             let is_generic_or_literal = self
@@ -110,6 +122,19 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
                 );
             }
+        }
+
+        // TS1021: An index signature must have a type annotation.
+        // This is the LAST grammar check in TSC's checkGrammarIndexSignatureParameters,
+        // so it only fires when no earlier grammar error was found.
+        // Also suppressed when the file has parse errors (TSC skips grammar checks
+        // when parseDiagnostics.length > 0).
+        if index_sig.type_annotation.is_none() && !has_grammar_error && !self.has_parse_errors() {
+            self.error_at_node(
+                member_idx,
+                "An index signature must have a type annotation.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
+            );
         }
     }
 
