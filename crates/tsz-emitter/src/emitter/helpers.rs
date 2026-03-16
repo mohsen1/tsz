@@ -1361,14 +1361,15 @@ impl<'a> Printer<'a> {
                 }
 
                 if let Some(comment_start) = found_line_comment
-                    && pos >= comment_start {
-                        // `pos` is inside (or at) the line comment; rewind
-                        // to just before the `//`.
-                        pos = comment_start;
-                        // Now continue the outer loop which will decrement
-                        // pos and re-check.
-                        continue;
-                    }
+                    && pos >= comment_start
+                {
+                    // `pos` is inside (or at) the line comment; rewind
+                    // to just before the `//`.
+                    pos = comment_start;
+                    // Now continue the outer loop which will decrement
+                    // pos and re-check.
+                    continue;
+                }
             }
 
             return bytes[pos] == b',';
