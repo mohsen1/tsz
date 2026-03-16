@@ -376,7 +376,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> Option<String> {
         // Collect string literal members from the target type.
-        // Target may be a union of string literals, or a single string literal.
+        // TS2820 only makes sense for UNION targets — when the target is a single
+        // string literal, the "did you mean" would suggest the target itself, which
+        // is redundant (TS2322 already shows both types). tsc behaves the same way.
         let candidates: Vec<tsz_common::interner::Atom> = if let Some(members) =
             tsz_solver::type_queries::get_union_members(self.ctx.types, target)
         {
@@ -386,10 +388,6 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::type_queries::get_string_literal_value(self.ctx.types, m)
                 })
                 .collect()
-        } else if let Some(atom) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, target)
-        {
-            vec![atom]
         } else {
             return None;
         };
