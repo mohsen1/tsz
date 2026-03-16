@@ -828,19 +828,14 @@ impl<'a> CheckerState<'a> {
                 // the parameter's type annotation keyword
                 if let Some(idx_data) = self.ctx.arena.get_index_signature(member_node) {
                     for &param_idx in &idx_data.parameters.nodes {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx) {
-                            if let Some(param_data) = self.ctx.arena.get_parameter(param_node) {
-                                if let Some(type_node) =
-                                    self.ctx.arena.get(param_data.type_annotation)
-                                {
-                                    if type_node.kind
-                                        == tsz_scanner::SyntaxKind::NumberKeyword as u16
-                                    {
-                                        number_index_sig_node = Some(member_idx);
-                                    } else {
-                                        string_index_sig_node = Some(member_idx);
-                                    }
-                                }
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
+                            && let Some(type_node) = self.ctx.arena.get(param_data.type_annotation)
+                        {
+                            if type_node.kind == tsz_scanner::SyntaxKind::NumberKeyword as u16 {
+                                number_index_sig_node = Some(member_idx);
+                            } else {
+                                string_index_sig_node = Some(member_idx);
                             }
                         }
                     }

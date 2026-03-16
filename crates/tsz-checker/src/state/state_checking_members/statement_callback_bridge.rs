@@ -1571,11 +1571,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let Some(inner_node) = self.ctx.arena.get(inner_idx) else {
                 return;
             };
-            if inner_node.kind == syntax_kind_ext::LABELED_STATEMENT {
-                if let Some(labeled) = self.ctx.arena.get_labeled_statement(inner_node) {
-                    inner_idx = labeled.statement;
-                    continue;
-                }
+            if inner_node.kind == syntax_kind_ext::LABELED_STATEMENT
+                && let Some(labeled) = self.ctx.arena.get_labeled_statement(inner_node)
+            {
+                inner_idx = labeled.statement;
+                continue;
             }
             break;
         }

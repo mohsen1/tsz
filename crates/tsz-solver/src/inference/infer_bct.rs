@@ -192,10 +192,8 @@ impl<'a> InferenceContext<'a> {
                 has_undefined = true;
             } else if ty == TypeId::NULL {
                 has_null = true;
-            } else {
-                if primary_seen.insert(ty) {
-                    primary_types.push(ty);
-                }
+            } else if primary_seen.insert(ty) {
+                primary_types.push(ty);
             }
         }
 

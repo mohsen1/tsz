@@ -363,18 +363,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Chain assignment: `exports = module.exports` or `module.exports = exports = {}`
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = arena.get_binary_expr(node) {
-                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
-                    return Self::is_exports_or_module_exports_or_chain_in_arena(
-                        arena,
-                        binary.left,
-                    ) || Self::is_exports_or_module_exports_or_chain_in_arena(
-                        arena,
-                        binary.right,
-                    );
-                }
-            }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return Self::is_exports_or_module_exports_or_chain_in_arena(arena, binary.left)
+                || Self::is_exports_or_module_exports_or_chain_in_arena(arena, binary.right);
         }
 
         false
@@ -458,14 +452,12 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = arena.get(decl_idx) else {
             return;
         };
-        if let Some(var_decl) = arena.get_variable_declaration(decl_node) {
-            if var_decl.initializer.is_some()
-                && Self::is_exports_or_module_exports_or_chain_in_arena(arena, var_decl.initializer)
-            {
-                if let Some(name_ident) = arena.get_identifier_at(var_decl.name) {
-                    aliases.insert(name_ident.escaped_text.clone());
-                }
-            }
+        if let Some(var_decl) = arena.get_variable_declaration(decl_node)
+            && var_decl.initializer.is_some()
+            && Self::is_exports_or_module_exports_or_chain_in_arena(arena, var_decl.initializer)
+            && let Some(name_ident) = arena.get_identifier_at(var_decl.name)
+        {
+            aliases.insert(name_ident.escaped_text.clone());
         }
     }
 
@@ -486,25 +478,20 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if the identifier is a variable alias for exports/module.exports
-                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0 {
-                            let decl_idx = symbol.value_declaration;
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                if let Some(var_decl) =
-                                    self.ctx.arena.get_variable_declaration(decl_node)
-                                {
-                                    if var_decl.initializer.is_some()
-                                        && Self::is_exports_or_module_exports_or_chain_in_arena(
-                                            self.ctx.arena,
-                                            var_decl.initializer,
-                                        )
-                                    {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
+                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
+                {
+                    let decl_idx = symbol.value_declaration;
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                        && var_decl.initializer.is_some()
+                        && Self::is_exports_or_module_exports_or_chain_in_arena(
+                            self.ctx.arena,
+                            var_decl.initializer,
+                        )
+                    {
+                        return true;
                     }
                 }
             }

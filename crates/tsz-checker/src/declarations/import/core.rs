@@ -269,10 +269,10 @@ impl<'a> CheckerState<'a> {
         import_name: &str,
     ) -> bool {
         for key in [module_name, normalized] {
-            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(key) {
-                if augmentations.iter().any(|aug| aug.name == import_name) {
-                    return true;
-                }
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(key)
+                && augmentations.iter().any(|aug| aug.name == import_name)
+            {
+                return true;
             }
         }
         false
@@ -1675,7 +1675,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is NOT in a valid module-element context (SourceFile or ModuleBlock).
+    /// Check if a node is NOT in a valid module-element context (`SourceFile` or `ModuleBlock`).
     /// Returns true when the node is inside a block, function body, or other non-module context.
     pub(crate) fn is_in_non_module_element_context(&self, node_idx: NodeIndex) -> bool {
         let parent_idx = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
