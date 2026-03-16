@@ -437,6 +437,24 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
     ) {
+        self.check_type_parameters_for_missing_names_inner(type_parameters, None);
+    }
+
+    /// Like `check_type_parameters_for_missing_names` but with the enclosing
+    /// declaration name for TS2716 circular default detection.
+    pub(crate) fn check_type_parameters_for_missing_names_with_enclosing(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        enclosing_name: &str,
+    ) {
+        self.check_type_parameters_for_missing_names_inner(type_parameters, Some(enclosing_name));
+    }
+
+    fn check_type_parameters_for_missing_names_inner(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        enclosing_name: Option<&str>,
+    ) {
         let Some(list) = type_parameters else {
             return;
         };
@@ -516,10 +534,37 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // NOTE: TS2716 (circular default) is not yet implemented.
-        // It requires checking if the default type references the enclosing
-        // interface/type alias itself (e.g., `interface SelfRef<T = SelfRef>`),
-        // which needs enclosing declaration context.
+        // TS2716: Type parameter has a circular default.
+        // Detects when a default references the enclosing type itself,
+        // e.g., `interface SelfRef<T = SelfRef>`.
+        if let Some(enc_name) = enclosing_name {
+            let enc_set: FxHashSet<&str> = std::iter::once(enc_name).collect();
+            for (i, &param_idx) in list.nodes.iter().enumerate() {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                if param.default.is_none() {
+                    continue;
+                }
+                let mut refs_in_default = Vec::new();
+                self.collect_type_references_in_type(param.default, &enc_set, &mut refs_in_default);
+                if !refs_in_default.is_empty() {
+                    // Get the type parameter name for the error message
+                    let param_name = param_names
+                        .get(i)
+                        .map(|(_, name)| name.as_str())
+                        .unwrap_or("T");
+                    self.error_at_node_msg(
+                        param.default,
+                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_DEFAULT,
+                        &[param_name],
+                    );
+                }
+            }
+        }
 
         for &param_idx in &list.nodes {
             self.check_type_parameter_node_for_missing_names(param_idx);
@@ -1776,7 +1821,20 @@ impl<'a> CheckerState<'a> {
 
         // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
         // and circular defaults (TS2716)
-        self.check_type_parameters_for_missing_names(&alias.type_parameters);
+        let alias_name_str = self
+            .ctx
+            .arena
+            .get(alias.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|id| id.escaped_text.to_string());
+        if let Some(ref name) = alias_name_str {
+            self.check_type_parameters_for_missing_names_with_enclosing(
+                &alias.type_parameters,
+                name,
+            );
+        } else {
+            self.check_type_parameters_for_missing_names(&alias.type_parameters);
+        }
 
         let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
         if let Some(type_params) = &alias.type_parameters {

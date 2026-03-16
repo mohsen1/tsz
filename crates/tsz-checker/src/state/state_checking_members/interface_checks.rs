@@ -65,7 +65,20 @@ impl<'a> CheckerState<'a> {
 
         // Check type parameter defaults for ordering (TS2706), forward references (TS2744),
         // and circular defaults (TS2716)
-        self.check_type_parameters_for_missing_names(&iface.type_parameters);
+        let iface_name_str = self
+            .ctx
+            .arena
+            .get(iface.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|id| id.escaped_text.to_string());
+        if let Some(ref name) = iface_name_str {
+            self.check_type_parameters_for_missing_names_with_enclosing(
+                &iface.type_parameters,
+                name,
+            );
+        } else {
+            self.check_type_parameters_for_missing_names(&iface.type_parameters);
+        }
 
         // Collect interface type parameter names for TS2304 checking in heritage clauses
         let interface_type_param_names: Vec<String> = type_param_updates
