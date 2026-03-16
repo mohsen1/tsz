@@ -782,8 +782,11 @@ impl<'a> CheckerState<'a> {
                     .should_skip_no_implicit_return_check(check_return_type, has_type_annotation)
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
+                // TSC points TS7030 to: return type annotation > method name > node itself
                 use crate::diagnostics::diagnostic_messages;
-                let error_node = if method.name.is_some() {
+                let error_node = if method.type_annotation.is_some() {
+                    method.type_annotation
+                } else if method.name.is_some() {
                     method.name
                 } else {
                     method.body
@@ -1431,8 +1434,11 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     // TS7030: noImplicitReturns - not all code paths return a value
+                    // TSC points TS7030 to: return type annotation > accessor name > node itself
                     use crate::diagnostics::diagnostic_messages;
-                    let error_node = if accessor.name.is_some() {
+                    let error_node = if accessor.type_annotation.is_some() {
+                        accessor.type_annotation
+                    } else if accessor.name.is_some() {
                         accessor.name
                     } else {
                         accessor.body
