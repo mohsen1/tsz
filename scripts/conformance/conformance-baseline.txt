@@ -28,7 +28,6 @@ FAIL TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs1.ts | expected:
 FAIL TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts | expected:[TS2855] actual:[TS2339,TS7053]
 FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping.ts | expected:[TS2301] actual:[TS2300,TS2301]
 FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
-FAIL TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/clodulesDerivedClasses.ts | expected:[TS2322,TS2417,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS7031]
@@ -612,6 +611,7 @@ FAIL TypeScript/tests/cases/compiler/reactReduxLikeDeferredInferenceAllowsAssign
 FAIL TypeScript/tests/cases/compiler/reactSFCAndFunctionResolvable.tsx | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/reactTagNameComponentWithPropsNoOOM.tsx | expected:[] actual:[TS2604]
 FAIL TypeScript/tests/cases/compiler/reactTagNameComponentWithPropsNoOOM2.tsx | expected:[] actual:[TS2604]
+FAIL TypeScript/tests/cases/compiler/reactTransitiveImportHasValidDeclaration.ts | expected:[TS2883] actual:[TS2686,TS2883]
 FAIL TypeScript/tests/cases/compiler/recursiveBaseCheck5.ts | expected:[TS2310,TS2339] actual:[TS2310]
 FAIL TypeScript/tests/cases/compiler/recursiveBaseConstructorCreation3.ts | expected:[TS2314,TS2351] actual:[TS2314]
 FAIL TypeScript/tests/cases/compiler/recursiveComplicatedClasses.ts | expected:[TS2300,TS2322,TS2345,TS2454,TS2507,TS2564] actual:[TS2300,TS2322,TS2454,TS2564]
@@ -649,7 +649,7 @@ FAIL TypeScript/tests/cases/compiler/reservedWords2.ts | expected:[TS1005,TS1109
 FAIL TypeScript/tests/cases/compiler/reservedWords3.ts | expected:[TS1003,TS1005,TS1390] actual:[TS7006]
 FAIL TypeScript/tests/cases/compiler/resolutionCandidateFromPackageJsonField2.ts | expected:[TS5097] actual:[TS5097]
 FAIL TypeScript/tests/cases/compiler/restInvalidArgumentType.ts | expected:[TS2454,TS2700] actual:[TS2454,TS2700]
-FAIL TypeScript/tests/cases/compiler/restParameterNotLast.ts | expected:[TS1014,TS7006,TS7019] actual:[TS1014]
+FAIL TypeScript/tests/cases/compiler/restParameterNotLast.ts | expected:[TS1014,TS7006,TS7019] actual:[TS1014,TS7006,TS7019]
 FAIL TypeScript/tests/cases/compiler/restParameterWithBindingPattern3.ts | expected:[TS1186,TS2322,TS2493,TS2566] actual:[TS1186,TS2322,TS2493,TS2566]
 FAIL TypeScript/tests/cases/compiler/restUnion3.ts | expected:[TS2700] actual:[TS2700]
 FAIL TypeScript/tests/cases/compiler/returnTypeInferenceContextualParameterTypesInGenerator1.ts | expected:[] actual:[TS2345]
@@ -1141,7 +1141,7 @@ FAIL TypeScript/tests/cases/conformance/internalModules/moduleDeclarations/nonIn
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts | expected:[TS7027] actual:[TS7027]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackOnConstructor.ts | expected:[] actual:[TS1093]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNestedParameter.ts | expected:[] actual:[TS2554]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339,TS2345]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts | expected:[TS2322,TS2540,TS2882] actual:[TS2339,TS2882]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag14.ts | expected:[TS1005] actual:[]
@@ -1384,7 +1384,7 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Generics/parserGeneri
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/MissingTokens/parserMissingToken2.ts | expected:[TS1161] actual:[]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ModuleDeclarations/parserModule1.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ObjectTypes/parserObjectType5.ts | expected:[TS1005] actual:[TS1005]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ParameterLists/parserParameterList11.ts | expected:[TS1047,TS2370,TS7019] actual:[TS1047,TS2370]
+FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ParameterLists/parserParameterList11.ts | expected:[TS1047,TS2370,TS7019] actual:[TS1047,TS2370,TS7019]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserindenter.ts | expected:[TS2304,TS2322,TS2345,TS2503,TS2662,TS6053,TS7006] actual:[TS2304,TS2322,TS2345,TS2503,TS2552,TS2662,TS6053]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509667.ts | expected:[TS1003] actual:[TS1003,TS1005]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser579071.ts | expected:[TS1005] actual:[TS1005]
@@ -2452,6 +2452,7 @@ PASS TypeScript/tests/cases/compiler/classOverloadForFunction.ts
 PASS TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
+PASS TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance3.ts
