@@ -102,9 +102,11 @@ in PRs. Splitting by logical category would improve all three.
 
 ## 4. Dead Code & Unused Imports
 
-### Status: EXCELLENT (zero warnings workspace-wide)
+### Status: EXCELLENT (zero errors, one style warning workspace-wide)
 
-- **Zero compiler warnings** across the entire workspace (all crates)
+- **Zero clippy errors** across the entire workspace (all crates)
+- **Zero compiler warnings** across the entire workspace
+- One clippy style warning remaining: `match-same-arms` in checker (intentional readability pattern)
 - All `#[allow(dead_code)]` annotations have justification comments
 - Solver inference module has targeted dead_code allows for scaffolded
   infrastructure (variance analysis, conditional type inference, constraint resolution)
@@ -168,6 +170,11 @@ in PRs. Splitting by logical category would improve all three.
   to `ObjectShape`, and `object_with_symbol()` factory to `TypeFactory`.
   Removed `ObjectFlags` from architecture contract safe imports list.
 - [x] Eliminate `ObjectFlags` import from `tsz-lowering` crate
+- [x] Resolve all clippy errors workspace-wide — 30+ collapsible-if/match/bool fixes across
+  solver, checker, emitter, LSP, core, CLI; doc-markdown fixes; useless-asref; format-args
+- [x] Tighten `pub` to `pub(crate)` for 6 checker-internal items (ClassInheritanceChecker,
+  LabelInfo, EnvEvalCacheEntry, DestructuredBindingInfo, EnumKind, is_declaration_file_name)
+  plus 3 CheckerContext fields using those types
 
 ### Tier 2: Near-term (maintainability)
 - [ ] Split `evaluate_tests.rs` (42K lines) into category files
@@ -198,4 +205,6 @@ in PRs. Splitting by logical category would improve all three.
   eliminate need for checker to import solver-internal flags
 - **Zero bare unwrap() in production** — all production code uses `expect("reason")`
 - **Zero compiler warnings** — entire workspace builds warning-free
-- **Minimal public API surface** — solver-internal items properly scoped with `pub(crate)`
+- **Minimal public API surface** — solver-internal and checker-internal items properly scoped with `pub(crate)`
+- **Zero clippy errors** — CI enforces clippy deny-warnings; all style/complexity lints pass
+- **Idiomatic Rust patterns** — let-chains, `is_some_and`/`is_none_or`, inline format args
