@@ -463,9 +463,21 @@ impl<'a> Printer<'a> {
 
                 hoisted.insert(stmt_idx);
             }
-            // Case 2: `export default function name() {}` parsed as a direct
-            // FUNCTION_DECLARATION with export modifier (rare in our parser)
-            // — for now we handle only the EXPORT_DECLARATION wrapper above.
+            // Case 2: Non-exported function declarations — also hoisted in system modules.
+            // TSC hoists ALL function declarations to the outer scope.
+            if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                let Some(func_decl) = self.arena.get_function(stmt_node) else {
+                    continue;
+                };
+                let func_name = self.get_identifier_text_idx(func_decl.name);
+                if func_name.is_empty() {
+                    continue;
+                }
+                // Emit the function at the outer scope
+                self.emit(stmt_idx);
+                self.write_line();
+                hoisted.insert(stmt_idx);
+            }
         }
 
         hoisted
@@ -533,9 +545,29 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                     && export_decl.module_specifier.is_none()
-                    && !export_decl.is_default_export
                     && let Some(clause_node) = self.arena.get(export_decl.export_clause)
                 {
+                    // `export default class {}` or `export default class Foo {}` —
+                    // hoist `var default_1;` or `var Foo;` respectively.
+                    if export_decl.is_default_export
+                        && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    {
+                        if let Some(class_decl) = self.arena.get_class(clause_node) {
+                            let class_name = self.get_identifier_text_idx(class_decl.name);
+                            let name = if class_name.is_empty() {
+                                "default_1".to_string()
+                            } else {
+                                class_name
+                            };
+                            if seen.insert(name.clone()) {
+                                names.push(name);
+                            }
+                        }
+                        continue;
+                    }
+                    if export_decl.is_default_export {
+                        continue;
+                    }
                     if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                         for name in self.collect_variable_names_from_node(clause_node) {
                             if !name.is_empty() && seen.insert(name.clone()) {
@@ -560,6 +592,19 @@ impl<'a> Printer<'a> {
                         let name = self.get_identifier_text_idx(class_decl.name);
                         if !name.is_empty() && seen.insert(name.clone()) {
                             names.push(name);
+                        }
+                    }
+                    if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        && let Some(module_decl) = self.arena.get_module(clause_node)
+                    {
+                        let is_ambient = self
+                            .arena
+                            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
+                        if !is_ambient {
+                            let name = self.get_identifier_text_idx(module_decl.name);
+                            if !name.is_empty() && seen.insert(name.clone()) {
+                                names.push(name);
+                            }
                         }
                     }
                 }
@@ -1107,8 +1152,22 @@ impl<'a> Printer<'a> {
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                 self.emit_system_variable_initializers(stmt_node);
             } else {
+                // For MODULE_DECLARATION (direct or inside EXPORT_DECLARATION),
+                // mark the namespace name as declared so the IIFE emitter doesn't
+                // emit a duplicate `var` declaration (the var is already hoisted).
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(module_decl) = self.arena.get_module(stmt_node)
+                {
+                    let module_name = self.get_identifier_text_idx(module_decl.name);
+                    if !module_name.is_empty() {
+                        self.declared_namespace_names.insert(module_name);
+                    }
+                }
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                    && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+                    && clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module_decl) = self.arena.get_module(clause_node)
                 {
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
@@ -1210,12 +1269,48 @@ impl<'a> Printer<'a> {
         let Some(export_decl) = self.arena.get_export_decl(node) else {
             return false;
         };
-        if export_decl.is_default_export || export_decl.module_specifier.is_some() {
+        if export_decl.module_specifier.is_some() {
             return false;
         }
         let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
             return false;
         };
+
+        // Handle `export default class {}` — emit `default_1 = class {}; exports_1("default", default_1);`
+        if export_decl.is_default_export && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            if let Some(class_decl) = self.arena.get_class(clause_node) {
+                let class_name = self.get_identifier_text_idx(class_decl.name);
+                let gen_name = if class_name.is_empty() {
+                    "default_1".to_string()
+                } else {
+                    class_name.clone()
+                };
+                self.write(&gen_name);
+                self.write(" = ");
+                // Emit class as anonymous class expression
+                self.anonymous_default_export_name = None;
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+                self.emit_class_es6(clause_node, export_decl.export_clause);
+                self.defer_class_static_blocks = false;
+                let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"default\", ");
+                self.write(&gen_name);
+                self.write(");");
+                if !deferred.is_empty() {
+                    self.emit_static_block_iifes(deferred);
+                }
+                return true;
+            }
+        }
+
+        if export_decl.is_default_export {
+            return false;
+        }
 
         if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
             self.emit_system_variable_initializers(clause_node);

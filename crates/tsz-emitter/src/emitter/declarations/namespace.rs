@@ -271,13 +271,23 @@ impl<'a> Printer<'a> {
             self.write(&name);
             self.write(" = {}));");
         } else if cjs_export_fold {
-            // CJS export fold: (N || (exports.N = N = {}))
-            self.write(&name);
-            self.write(" || (exports.");
-            self.write(&name);
-            self.write(" = ");
-            self.write(&name);
-            self.write(" = {}));");
+            if self.in_system_execute_body {
+                // System module: (N || (exports_1("N", N = {})))
+                self.write(&name);
+                self.write(" || (exports_1(\"");
+                self.write(&name);
+                self.write("\", ");
+                self.write(&name);
+                self.write(" = {})));");
+            } else {
+                // CJS export fold: (N || (exports.N = N = {}))
+                self.write(&name);
+                self.write(" || (exports.");
+                self.write(&name);
+                self.write(" = ");
+                self.write(&name);
+                self.write(" = {}));");
+            }
         } else {
             self.write(&name);
             self.write(" || (");
