@@ -1315,9 +1315,11 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            // Skip line comments: either we land on a `/` that's part of `//`,
-            // or we land on any character that belongs to a line comment.
-            // Check whether the current line starts with `//` (after leading whitespace).
+            // Skip line comments: the current `pos` might be inside a `//`
+            // comment that either starts the line or appears inline after code
+            // (e.g. `value, // comment`).  Scan forwards from the start of the
+            // line to find the first `//` that is not inside a string/regex,
+            // and if `pos` is at or after it, rewind to just before the `//`.
             {
                 // Find the start of the current line.
                 let line_start = {
@@ -1327,16 +1329,46 @@ impl<'a> Printer<'a> {
                     }
                     ls
                 };
-                // Skip leading whitespace on this line.
-                let mut tok = line_start;
-                while tok < pos && matches!(bytes[tok], b' ' | b'\t') {
-                    tok += 1;
+
+                // Scan forward through the line to find an unquoted `//`.
+                // We do a simplified scan: track single/double quotes and
+                // skip escaped characters.  Regex literals could in theory
+                // contain `//` but that is extremely rare and would require a
+                // full parser rescan; the simplified approach is sufficient for
+                // the trailing-comma detection use case.
+                let mut scan = line_start;
+                let mut found_line_comment = None;
+                while scan + 1 <= pos {
+                    let b = bytes[scan];
+                    if b == b'/' && scan + 1 < bytes.len() && bytes[scan + 1] == b'/' {
+                        found_line_comment = Some(scan);
+                        break;
+                    }
+                    // Skip string literals so `"//"` doesn't trigger.
+                    if b == b'"' || b == b'\'' || b == b'`' {
+                        scan += 1;
+                        while scan < bytes.len() && bytes[scan] != b {
+                            if bytes[scan] == b'\\' {
+                                scan += 1; // skip escaped char
+                            }
+                            scan += 1;
+                        }
+                        // skip closing quote
+                        scan += 1;
+                        continue;
+                    }
+                    scan += 1;
                 }
-                // If the line starts with `//`, skip the entire line.
-                if tok + 1 < bytes.len() && bytes[tok] == b'/' && bytes[tok + 1] == b'/' {
-                    // Rewind to before this line's newline (the '\n' at line_start - 1).
-                    pos = if line_start > 0 { line_start } else { 0 };
-                    continue;
+
+                if let Some(comment_start) = found_line_comment {
+                    if pos >= comment_start {
+                        // `pos` is inside (or at) the line comment; rewind
+                        // to just before the `//`.
+                        pos = comment_start;
+                        // Now continue the outer loop which will decrement
+                        // pos and re-check.
+                        continue;
+                    }
                 }
             }
 

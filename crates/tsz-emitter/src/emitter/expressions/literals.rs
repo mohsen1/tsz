@@ -280,6 +280,43 @@ impl<'a> Printer<'a> {
                                     self.write(",");
                                 }
                             }
+
+                            // --- Step D: emit trailing same-line comments after the comma ---
+                            // In source like `elem, // comment\n`, the comment follows the
+                            // comma on the same line.  Emit it inline so it stays on the
+                            // same output line; otherwise Step A of the next element would
+                            // place it on its own line.
+                            if let Some(text) = self.source_text {
+                                let comma_source_pos = self
+                                    .find_comma_pos_after(elem_end, node.end)
+                                    .unwrap_or(elem_end)
+                                    as usize;
+                                while self.comment_emit_idx < self.all_comments.len() {
+                                    let c_pos =
+                                        self.all_comments[self.comment_emit_idx].pos as usize;
+                                    let c_end =
+                                        self.all_comments[self.comment_emit_idx].end as usize;
+                                    // Only consider comments after the comma and on the same
+                                    // source line (no newline between comma and comment start).
+                                    if c_pos >= comma_source_pos
+                                        && c_end <= node.end as usize
+                                        && !text[comma_source_pos.min(text.len())
+                                            ..c_pos.min(text.len())]
+                                            .contains('\n')
+                                    {
+                                        self.write_space();
+                                        let comment_text =
+                                            crate::safe_slice::slice(text, c_pos, c_end);
+                                        self.write_comment_with_reindent(
+                                            comment_text,
+                                            Some(c_pos as u32),
+                                        );
+                                        self.comment_emit_idx += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
