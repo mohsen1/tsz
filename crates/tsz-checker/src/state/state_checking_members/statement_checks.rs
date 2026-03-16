@@ -58,6 +58,12 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::MODULE_DECLARATION => {
                     self.ctx.arena.get_module(stmt_node).map(|m| &m.modifiers)
                 }
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::IMPORT_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_import_decl(stmt_node)
+                    .map(|i| &i.modifiers),
                 _ => None,
             };
 
