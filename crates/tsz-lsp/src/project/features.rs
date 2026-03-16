@@ -265,6 +265,41 @@ impl Project {
         result
     }
 
+    /// Resolve a completion item by filling in documentation and detail.
+    ///
+    /// This implements the LSP `completionItem/resolve` request. The initial
+    /// completion response returns items without heavy fields (documentation, detail).
+    /// When the user focuses on an item, the editor sends a resolve request and
+    /// this method computes hover info to fill in the missing data.
+    pub fn resolve_completion(
+        &self,
+        file_name: &str,
+        label: &str,
+    ) -> Option<(Option<String>, Option<String>)> {
+        let file = self.files.get(file_name)?;
+        let arena = file.arena();
+        let binder = file.binder();
+        let source_text = file.source_text();
+        let root = file.root();
+
+        // Look up the symbol by name in the binder's file locals
+        let sym_id = binder.file_locals.get(label);
+
+        if let Some(sid) = sym_id {
+            if let Some(symbol) = binder.get_symbol(sid) {
+                // Extract JSDoc documentation from the declaration
+                let documentation = symbol.declarations.first().map(|decl_idx| {
+                    crate::jsdoc::jsdoc_for_node(arena, root, *decl_idx, source_text)
+                });
+                let documentation = documentation.filter(|s| !s.is_empty());
+
+                return Some((None, documentation));
+            }
+        }
+
+        None
+    }
+
     /// Diagnostics within a single file.
     pub fn get_diagnostics(&mut self, file_name: &str) -> Option<Vec<LspDiagnostic>> {
         let start = Instant::now();
@@ -626,6 +661,18 @@ impl Project {
         Some(provider.get_semantic_tokens(file.root()))
     }
 
+    /// Get semantic tokens for a specific range in a file (encoded as delta array).
+    pub fn get_semantic_tokens_range(&self, file_name: &str, range: Range) -> Option<Vec<u32>> {
+        let file = self.files.get(file_name)?;
+        let mut provider = crate::highlighting::semantic_tokens::SemanticTokensProvider::new(
+            file.arena(),
+            file.binder(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.get_semantic_tokens_range(file.root(), &range))
+    }
+
     /// Get document highlights for a position in a file.
     pub fn get_document_highlighting(
         &self,
@@ -717,6 +764,20 @@ impl Project {
         provider.outgoing_calls(file.root(), position)
     }
 
+    /// Get document colors for a file (hex color literals in strings).
+    pub fn get_document_colors(
+        &self,
+        file_name: &str,
+    ) -> Option<Vec<crate::editor_decorations::document_color::ColorInformation>> {
+        let file = self.files.get(file_name)?;
+        let provider = crate::editor_decorations::document_color::DocumentColorProvider::new(
+            file.arena(),
+            file.line_map(),
+            file.source_text(),
+        );
+        Some(provider.provide_document_colors(file.root()))
+    }
+
     /// Get document links for a file.
     pub fn get_document_links(
         &self,
@@ -744,6 +805,144 @@ impl Project {
             file.source_text(),
         );
         provider.provide_linked_editing_ranges(file.root(), position)
+    }
+
+    /// Compute workspace edits for file renames.
+    ///
+    /// When a file is renamed/moved, this finds all import specifiers across the
+    /// project that referenced the old path and produces text edits to update them.
+    pub fn get_file_rename_edits(
+        &self,
+        old_path: &str,
+        new_path: &str,
+    ) -> FxHashMap<String, Vec<crate::rename::TextEdit>> {
+        let mut workspace_edits: FxHashMap<String, Vec<crate::rename::TextEdit>> =
+            FxHashMap::default();
+
+        // Normalize paths by stripping common extensions for comparison
+        let strip_ext = |p: &str| -> String {
+            let p = p
+                .strip_suffix(".ts")
+                .or_else(|| p.strip_suffix(".tsx"))
+                .or_else(|| p.strip_suffix(".js"))
+                .or_else(|| p.strip_suffix(".jsx"))
+                .or_else(|| p.strip_suffix(".mts"))
+                .or_else(|| p.strip_suffix(".cts"))
+                .unwrap_or(p);
+            p.to_string()
+        };
+
+        let old_base = strip_ext(old_path);
+        let new_base = strip_ext(new_path);
+
+        for (file_name, file) in &self.files {
+            let provider = crate::rename::file_rename::FileRenameProvider::new(
+                file.arena(),
+                file.line_map(),
+                file.source_text(),
+            );
+            let locations = provider.find_import_specifier_nodes(file.root());
+
+            for loc in locations {
+                // Check if this import specifier references the old file
+                // Resolve relative specifier to absolute path
+                let resolved = self.resolve_specifier(file_name, &loc.current_specifier);
+                let resolved_base = strip_ext(&resolved);
+
+                if resolved_base == old_base {
+                    // Compute the new relative specifier
+                    let new_specifier = self.compute_relative_specifier(file_name, &new_base);
+
+                    // The range includes quotes, so build the edit with quotes
+                    let quote = if loc.current_specifier.contains('\'') {
+                        '\''
+                    } else {
+                        '"'
+                    };
+                    // Adjust range to only replace the content inside quotes
+                    let inner_range = tsz_common::position::Range::new(
+                        tsz_common::position::Position::new(
+                            loc.range.start.line,
+                            loc.range.start.character + 1,
+                        ),
+                        tsz_common::position::Position::new(
+                            loc.range.end.line,
+                            loc.range.end.character.saturating_sub(1),
+                        ),
+                    );
+                    let _ = quote; // suppress unused warning, quote is in original text
+                    workspace_edits.entry(file_name.clone()).or_default().push(
+                        crate::rename::TextEdit {
+                            range: inner_range,
+                            new_text: new_specifier,
+                        },
+                    );
+                }
+            }
+        }
+
+        workspace_edits
+    }
+
+    /// Resolve a module specifier relative to the importing file.
+    fn resolve_specifier(&self, from_file: &str, specifier: &str) -> String {
+        if !specifier.starts_with('.') {
+            // Bare specifier (e.g., "react") - return as-is
+            return specifier.to_string();
+        }
+        // Resolve relative to the directory of from_file
+        let dir = if let Some(idx) = from_file.rfind('/') {
+            &from_file[..idx]
+        } else {
+            "."
+        };
+
+        let mut parts: Vec<&str> = dir.split('/').collect();
+        for segment in specifier.split('/') {
+            match segment {
+                "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                s => parts.push(s),
+            }
+        }
+        parts.join("/")
+    }
+
+    /// Compute a relative module specifier from one file to another.
+    fn compute_relative_specifier(&self, from_file: &str, to_path: &str) -> String {
+        let from_dir = if let Some(idx) = from_file.rfind('/') {
+            &from_file[..idx]
+        } else {
+            "."
+        };
+
+        // Split into path components
+        let from_parts: Vec<&str> = from_dir.split('/').collect();
+        let to_parts: Vec<&str> = to_path.split('/').collect();
+
+        // Find common prefix length
+        let common = from_parts
+            .iter()
+            .zip(to_parts.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        let ups = from_parts.len() - common;
+        let mut result = String::new();
+        if ups == 0 {
+            result.push_str("./");
+        } else {
+            for _ in 0..ups {
+                result.push_str("../");
+            }
+        }
+
+        let remaining: Vec<&str> = to_parts[common..].to_vec();
+        result.push_str(&remaining.join("/"));
+
+        result
     }
 
     /// Format a document using the built-in formatter.
