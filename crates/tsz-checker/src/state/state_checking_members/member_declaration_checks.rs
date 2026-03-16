@@ -108,15 +108,21 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| self.jsdoc_access_level(member_idx))
                         };
                         // Don't return immediately - a getter/setter pair may have
-                        // different visibility. Use the most permissive level (tsc
+                        // different visibility. Track the accessor access level and
+                        // use the most permissive level when both are found (tsc
                         // allows reads when getter is public even if setter is private).
                         match access_level {
-                            Some(MemberAccessLevel::Private) | None => return MemberLookup::Public,
+                            None => {
+                                // No explicit modifier = public; any public accessor
+                                // makes the pair publicly accessible.
+                                return MemberLookup::Public;
+                            }
                             Some(level) => {
                                 accessor_access = Some(match accessor_access {
-                                    // First accessor found
-                                    None | Some(MemberAccessLevel::Private) => level,
-                                    // If either accessor is non-private, use the most permissive level
+                                    // First accessor found - use its level
+                                    None => level,
+                                    // Both accessors found - use the most permissive
+                                    Some(MemberAccessLevel::Private) => level,
                                     Some(prev) => prev,
                                 });
                             }
@@ -973,7 +979,12 @@ impl<'a> CheckerState<'a> {
                         // Optional methods (g?(): T) also don't need implementations —
                         // they are standalone declarations, not overload signatures.
                         let is_abstract = self.has_abstract_modifier(&method.modifiers);
-                        if method.body.is_none() && !is_abstract && !method.question_token {
+                        let is_declare = self.has_declare_modifier(&method.modifiers);
+                        if method.body.is_none()
+                            && !is_abstract
+                            && !is_declare
+                            && !method.question_token
+                        {
                             // Method overload signature - check for implementation.
                             // TSC only reports TS2391 on the LAST overload in a consecutive
                             // group with the same name, so skip ahead to find it.
@@ -1400,7 +1411,25 @@ impl<'a> CheckerState<'a> {
                 let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {
                     continue;
                 };
-                self.get_type_of_node(decorator.expression);
+                let decorator_type = self.get_type_of_node(decorator.expression);
+
+                // TS1329: Check if the decorator accepts too few arguments for this position.
+                // For experimental decorators on methods/accessors, the decorator is called
+                // with 3 arguments (target, propertyKey, descriptor). If the decorator has
+                // call signatures but none can accept 3 args, it's likely a factory that
+                // should be called first: @dec() instead of @dec.
+                if self.ctx.compiler_options.experimental_decorators
+                    && !is_abstract
+                    && (node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        || node.kind == syntax_kind_ext::GET_ACCESSOR
+                        || node.kind == syntax_kind_ext::SET_ACCESSOR)
+                {
+                    self.check_method_decorator_arity(
+                        decorator.expression,
+                        decorator_type,
+                        modifier_idx,
+                    );
+                }
             }
         }
 
@@ -1432,11 +1461,87 @@ impl<'a> CheckerState<'a> {
 
                         if let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) {
                             self.get_type_of_node(decorator.expression);
+
+                            // TS1308: Check for await expressions in decorator arguments.
+                            // Decorator arguments are evaluated in the enclosing scope,
+                            // not the decorated method's scope. An await in a non-async
+                            // enclosing function should trigger TS1308.
+                            self.check_await_expression(decorator.expression);
                         }
                     }
                 }
             }
         }
+    }
+
+    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
+    ///
+    /// For experimental decorators, method/accessor decorators are called as
+    /// `decorator(target, propertyKey, descriptor)` — 3 arguments.
+    /// If the decorator expression has call signatures but none can accept 3 args,
+    /// emit TS1329 suggesting to call it first: `@dec()` instead of `@dec`.
+    fn check_method_decorator_arity(
+        &mut self,
+        decorator_expr: NodeIndex,
+        decorator_type: TypeId,
+        decorator_node: NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // Skip validation for error/any/unknown types
+        if decorator_type == TypeId::ERROR
+            || decorator_type == TypeId::ANY
+            || decorator_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        // Try multiple approaches to get call signatures:
+        // 1. Direct function shape (works for simple function types)
+        // 2. Call signatures query (works for overloaded/complex types)
+        let has_too_few_args = if let Some(shape) =
+            crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
+        {
+            let max_params = shape.params.len();
+            let has_rest = shape.params.iter().any(|p| p.rest);
+            max_params < 3 && !has_rest
+        } else if let Some(callable) = crate::query_boundaries::class_type::callable_shape_for_type(
+            self.ctx.types,
+            decorator_type,
+        ) {
+            // Check if ALL call signatures accept fewer than 3 args
+            !callable.call_signatures.is_empty()
+                && callable.call_signatures.iter().all(|sig| {
+                    let has_rest = sig.params.iter().any(|p| p.rest);
+                    sig.params.len() < 3 && !has_rest
+                })
+        } else {
+            false
+        };
+
+        if has_too_few_args {
+            let name = self.get_decorator_expression_name(decorator_expr);
+            let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
+                .replace("{0}", &name);
+            self.error_at_node(
+                decorator_node,
+                &msg,
+                diagnostic_codes::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT,
+            );
+        }
+    }
+
+    /// Get the text name of a decorator expression for error messages.
+    /// For simple identifiers like `dec`, returns "dec".
+    /// For member access like `a.b`, returns "a.b".
+    /// Falls back to "decorator" if the name can't be determined.
+    fn get_decorator_expression_name(&self, expr: NodeIndex) -> String {
+        if let Some(node) = self.ctx.arena.get(expr) {
+            if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                return ident.escaped_text.to_string();
+            }
+        }
+        "decorator".to_string()
     }
 
     /// TS2838: Check that all `infer X` declarations with the same name in a

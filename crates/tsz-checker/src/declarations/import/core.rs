@@ -257,6 +257,25 @@ impl<'a> CheckerState<'a> {
             || self.resolve_import_via_all_binders(module_name, normalized, import_name)
             || self.cross_file_export_is_actual_export(module_name, import_name)
             || self.cross_file_export_is_actual_export(normalized, import_name)
+            || self.import_found_via_module_augmentation(module_name, normalized, import_name)
+    }
+
+    /// Check if a symbol is declared in a module augmentation targeting the given module.
+    /// `declare module "x" { type C = ... }` makes `C` importable from module `"x"`.
+    fn import_found_via_module_augmentation(
+        &self,
+        module_name: &str,
+        normalized: &str,
+        import_name: &str,
+    ) -> bool {
+        for key in [module_name, normalized] {
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(key) {
+                if augmentations.iter().any(|aug| aug.name == import_name) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Like `resolve_cross_file_export_from_file`, but filters out symbols that
@@ -1450,20 +1469,38 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Emit TS2528 only when there are conflicting value exports
-            // (interface-only or interface + one value group is OK)
-            let is_conflict = value_count > 1 || (!has_interface && !all_same_function);
+            // Emit TS2528 for any multiple default exports that are not
+            // function overloads. tsc only allows multiple export default
+            let is_conflict = !all_same_function || value_count > 1;
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
                     // TS2323 + TS2813 + TS2814 (merge conflict diagnostics).
                     self.emit_function_class_default_merge_errors(&export_default_indices);
-                } else if has_class && value_count > 1 {
-                    // When a class + value export as default, tsc emits TS2323
-                    // ("Cannot redeclare exported variable 'default'") on each
-                    // declaration. This is a class/value merge conflict.
+                } else if has_class && value_count > 1 && {
+                    // tsc emits TS2323 only when a named variable reference
+                    // (export default foo) accompanies a class, not for anonymous
+                    // expressions (export default {...}). multipleExportDefault3/4
+                    // have class + object literal and expect TS2528.
+                    export_default_indices.iter().any(|&idx| {
+                        self.ctx
+                            .arena
+                            .get_export_decl_at(idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16)
+                    })
+                } {
                     for &export_idx in &export_default_indices {
-                        let anchor = self.get_default_export_anchor(export_idx);
+                        // For expression-style exports, anchor at the export
+                        // statement (col 1), not the expression (col 16).
+                        let default_anchor = self.get_default_export_anchor(export_idx);
+                        let is_expr = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(export_idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .is_some_and(|c| c.kind == SyntaxKind::Identifier as u16);
+                        let anchor = if is_expr { export_idx } else { default_anchor };
                         self.error_at_node(
                             anchor,
                             "Cannot redeclare exported variable 'default'.",
@@ -1635,6 +1672,70 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if a node is NOT in a valid module-element context (SourceFile or ModuleBlock).
+    /// Returns true when the node is inside a block, function body, or other non-module context.
+    pub(crate) fn is_in_non_module_element_context(&self, node_idx: NodeIndex) -> bool {
+        let parent_idx = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let parent_kind = parent_idx
+            .and_then(|p| self.ctx.arena.get(p))
+            .map(|p| p.kind);
+
+        // For import-equals inside `export import X = N;`, the direct parent is
+        // EXPORT_DECLARATION. Look through it to the grandparent.
+        let effective_parent_kind = if matches!(parent_kind, Some(k) if k == syntax_kind_ext::EXPORT_DECLARATION)
+        {
+            parent_idx
+                .and_then(|p| self.ctx.arena.get_extended(p))
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .map(|p| p.kind)
+        } else {
+            parent_kind
+        };
+
+        match effective_parent_kind {
+            Some(k) if k == syntax_kind_ext::SOURCE_FILE || k == syntax_kind_ext::MODULE_BLOCK => {
+                false
+            }
+            None => false, // Top-level
+            _ => true,
+        }
+    }
+
+    /// Check if a node is inside a function/method body.
+    /// Walks up the parent chain to find a function-like ancestor.
+    pub(crate) fn is_inside_function_body(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        while current.is_some() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    return true;
+                }
+                k if k == syntax_kind_ext::SOURCE_FILE || k == syntax_kind_ext::MODULE_BLOCK => {
+                    return false;
+                }
+                _ => continue,
+            }
+        }
         false
     }
 

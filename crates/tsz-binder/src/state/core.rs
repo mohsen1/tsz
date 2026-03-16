@@ -458,7 +458,12 @@ impl BinderState {
 
     /// Declare a symbol in the current persistent scope.
     /// This adds the symbol to the persistent scope table for later querying.
+    /// Skipped during module augmentation to prevent augmented symbols from
+    /// leaking into the augmenting file's scope (and subsequently into file_locals/globals).
     pub(crate) fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
+        if self.in_module_augmentation {
+            return;
+        }
         if self.current_scope_id.is_some()
             && let Some(scope) = self.scopes.get_mut(self.current_scope_id.0 as usize)
         {

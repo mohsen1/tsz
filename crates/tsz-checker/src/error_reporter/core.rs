@@ -551,6 +551,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For IndexAccess types, display the evaluated form when it resolves to a
+        // concrete type (union, object, primitive). This makes error messages show
+        // the resolved type instead of the raw indexed access syntax.
+        // e.g., `Pairs<FooBar>[keyof FooBar]` → `{ key: "foo"; value: string; } | { key: "bar"; value: number; }`
+        if tsz_solver::type_queries::is_index_access_type(self.ctx.types, ty) {
+            return true;
+        }
+
         matches!(
             evaluated,
             TypeId::STRING
@@ -1212,28 +1220,10 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            // For display purposes, preserve literal types from the AST.
-            // tsc shows `{ x: "hello" }` (literal) in error messages even though
-            // the property type is widened to `string` for type checking.
-            let display_value = if let Some(init_node) = self.ctx.arena.get(prop.initializer) {
-                match init_node.kind {
-                    k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
-                        || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-                    {
-                        self.ctx
-                            .arena
-                            .get_literal(init_node)
-                            .map(|lit| format!("\"{}\"", lit.text))
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-
-            let value_display = display_value.unwrap_or_else(|| {
-                self.format_type_for_assignability_message(self.widen_type_for_display(value_type))
-            });
+            // tsc displays the widened type for object literal properties in
+            // assignability errors — e.g. `{ 0: string }` not `{ 0: "1" }`.
+            let value_display =
+                self.format_type_for_assignability_message(self.widen_type_for_display(value_type));
             parts.push(format!("{display_name}: {value_display}"));
         }
 
@@ -1691,11 +1681,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
-        // Always enable display properties — the TypeFormatter only applies
-        // them when a specific TypeId has stored display props (fresh object
-        // literals). This enables literal display through intersection members
-        // and other nested types, not just top-level fresh objects.
-        let mut formatted = self.format_type_diagnostic_with_display(display_ty);
+        // Do NOT use display properties — tsc shows widened property types
+        // in error messages: `{ two: number }` not `{ two: 1 }`.
+        let mut formatted = self.format_type_diagnostic(display_ty);
 
         // Preserve generic instantiations for nominal class instance names when possible.
         if !formatted.contains('<')

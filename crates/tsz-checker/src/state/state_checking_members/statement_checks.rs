@@ -58,6 +58,12 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::MODULE_DECLARATION => {
                     self.ctx.arena.get_module(stmt_node).map(|m| &m.modifiers)
                 }
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::IMPORT_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_import_decl(stmt_node)
+                    .map(|i| &i.modifiers),
                 _ => None,
             };
 
@@ -317,9 +323,10 @@ impl<'a> CheckerState<'a> {
         } else {
             // Unlabeled break - must be inside iteration or switch
             if self.ctx.iteration_depth == 0 && self.ctx.switch_depth == 0 {
-                // Check if we're inside a function that's inside a loop
-                // If so, emit TS1107 (crossing function boundary) instead of TS1105
-                if self.ctx.function_depth > 0 && self.ctx.had_outer_loop {
+                // Check if we're inside any function body.
+                // TSC emits TS1107 when break appears inside any function body
+                // with no enclosing loop/switch, regardless of outer context.
+                if self.ctx.function_depth > 0 {
                     self.error_at_node(
                         stmt_idx,
                         "Jump target cannot cross function boundary.",
@@ -400,9 +407,11 @@ impl<'a> CheckerState<'a> {
         } else {
             // Unlabeled continue - must be inside iteration
             if self.ctx.iteration_depth == 0 {
-                // Check if we're inside a function that's inside a loop
-                // If so, emit TS1107 (crossing function boundary) instead of TS1104
-                if self.ctx.function_depth > 0 && self.ctx.had_outer_loop {
+                // Check if we're inside a function body (any function creates a boundary).
+                // TSC emits TS1107 when continue/break appears inside any function body
+                // with no enclosing loop in that function, regardless of whether there's
+                // an outer loop. The function boundary itself is the issue.
+                if self.ctx.function_depth > 0 {
                     self.error_at_node(
                         stmt_idx,
                         "Jump target cannot cross function boundary.",

@@ -707,8 +707,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     .should_skip_no_implicit_return_check(check_return_type, has_declared_return)
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
+                // TSC points TS7030 to: return type annotation > function name > node itself
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                let error_node = if func.name.is_some() {
+                let error_node = if func.type_annotation.is_some() {
+                    func.type_annotation
+                } else if func.name.is_some() {
                     func.name
                 } else {
                     func.body
@@ -940,6 +943,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // TS1284/TS1285: export default VMS checks (ESM mode only)
                 if export_decl.is_default_export && !cjs_vms_emitted {
                     self.check_verbatim_module_syntax_export_default(clause_idx);
+                }
+
+                // TS1269: Cannot use 'export import' on a type or type-only namespace
+                // when 'isolatedModules' or 'verbatimModuleSyntax' is enabled.
+                if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                    && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                {
+                    self.check_export_import_equals_type_only(export_idx, clause_idx);
                 }
 
                 if self
@@ -1207,15 +1218,47 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         }
 
-        // Delegate to a helper that checks should_skip
+        // Delegate to a helper that checks should_skip.
+        // Match TSC's isStatementKindThatDoesNotAffectControlFlow:
+        // - Skip type-only declarations (interface, type alias)
+        // - Skip function declarations (hoisted)
+        // - Skip const enums when preserveConstEnums is false (erased, no runtime code)
+        // - Skip non-instantiated module declarations (ambient/declare modules)
+        // - Skip empty statements and blocks
+        // - Skip var declarations without initializers (hoisted)
         let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
-            node.kind == syntax_kind_ext::EMPTY_STATEMENT
+            if node.kind == syntax_kind_ext::EMPTY_STATEMENT
                 || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                || node.kind == syntax_kind_ext::MODULE_DECLARATION
                 || node.kind == syntax_kind_ext::BLOCK
-                || CheckerState::is_var_without_initializer(self, stmt_idx, node)
+            {
+                true
+            } else if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                // Const enums are erased unless preserveConstEnums is set
+                if let Some(enum_data) = self.ctx.arena.get_enum(node) {
+                    let is_const = self
+                        .ctx
+                        .arena
+                        .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
+                    is_const && !self.ctx.compiler_options.preserve_const_enums
+                } else {
+                    false
+                }
+            } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // Skip only ambient (declare) modules; namespace with executable code is instantiated
+                if let Some(module_data) = self.ctx.arena.get_module(node) {
+                    let is_ambient = self
+                        .ctx
+                        .arena
+                        .has_modifier(&module_data.modifiers, SyntaxKind::DeclareKeyword);
+                    is_ambient || self.ctx.arena.get(module_data.body).is_none()
+                } else {
+                    false
+                }
+            } else {
+                CheckerState::is_var_without_initializer(self, stmt_idx, node)
+            }
         } else {
             false
         };
@@ -1521,7 +1564,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex) {
         use tsz_parser::parser::node_flags;
 
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+        // Unwrap through labeled statements to find the actual inner statement.
+        // e.g. `if (true) label: const c8 = 0;` — tsc reports TS1156 on `c8`.
+        let mut inner_idx = stmt_idx;
+        loop {
+            let Some(inner_node) = self.ctx.arena.get(inner_idx) else {
+                return;
+            };
+            if inner_node.kind == syntax_kind_ext::LABELED_STATEMENT {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(inner_node) {
+                    inner_idx = labeled.statement;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        let Some(node) = self.ctx.arena.get(inner_idx) else {
             return;
         };
 
@@ -1574,7 +1633,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // tsc reports TS1156 at the declaration's name identifier, not the keyword.
             // For `type Foo = ...`, tsc points at `Foo`, not `type`.
-            let error_node = self.get_declaration_name_node(stmt_idx).unwrap_or(stmt_idx);
+            let error_node = self
+                .get_declaration_name_node(inner_idx)
+                .unwrap_or(inner_idx);
 
             self.error_at_node(
                 error_node,
@@ -1620,6 +1681,122 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::A_LABEL_IS_NOT_ALLOWED_HERE,
             );
         }
+    }
+
+    fn check_grammar_module_element_context(&mut self, stmt_idx: NodeIndex) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // Suppress grammar errors when file has parse errors (matches tsc behavior)
+        if self.ctx.has_syntax_parse_errors {
+            return false;
+        }
+
+        // Check if the parent is a valid module-element context (SourceFile or ModuleBlock).
+        // For import-equals inside `export import X = N;`, the direct parent is
+        // EXPORT_DECLARATION — look through it to the grandparent.
+        let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+        let parent_kind = parent_idx
+            .and_then(|p| self.ctx.arena.get(p))
+            .map(|p| p.kind);
+        let effective_parent_kind = if matches!(parent_kind, Some(k) if k == syntax_kind_ext::EXPORT_DECLARATION)
+        {
+            parent_idx
+                .and_then(|p| self.ctx.arena.get_extended(p))
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .map(|p| p.kind)
+        } else {
+            parent_kind
+        };
+
+        let is_valid_context = match effective_parent_kind {
+            Some(k) if k == syntax_kind_ext::SOURCE_FILE || k == syntax_kind_ext::MODULE_BLOCK => {
+                true
+            }
+            None => true, // Top-level
+            _ => false,
+        };
+
+        if is_valid_context {
+            return false;
+        }
+
+        // Determine which error to emit based on the statement kind
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        let (message, code) = match node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
+            {
+                (
+                    diagnostic_messages::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                    diagnostic_codes::AN_IMPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                )
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
+                    // Check if the export wraps a class/function declaration
+                    // (e.g., `export function foo()`, `export default class C`).
+                    // In tsc, these get TS1184 "Modifiers cannot appear here" instead.
+                    let clause_kind = self
+                        .ctx
+                        .arena
+                        .get(export_decl.export_clause)
+                        .map(|n| n.kind);
+                    let is_class_or_function = matches!(
+                        clause_kind,
+                        Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::CLASS_EXPRESSION
+                            || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    );
+
+                    let is_namespace_or_module = matches!(
+                        clause_kind,
+                        Some(k) if k == syntax_kind_ext::MODULE_DECLARATION
+                    );
+
+                    if is_namespace_or_module {
+                        // Namespace/module gets its own error (TS1235/TS1234) from
+                        // check_module_declaration. Don't also emit TS1233 for the export.
+                        return false;
+                    } else if is_class_or_function {
+                        // TS1184: Modifiers cannot appear here.
+                        (
+                            diagnostic_messages::MODIFIERS_CANNOT_APPEAR_HERE,
+                            diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                        )
+                    } else if export_decl.is_default_export {
+                        // TS1258: A default export must be at the top level
+                        (
+                            diagnostic_messages::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                            diagnostic_codes::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                        )
+                    } else {
+                        // TS1233: An export declaration can only be used at the top level
+                        (
+                            diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                            diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                        )
+                    }
+                } else {
+                    (
+                        diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                        diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
+                    )
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                (
+                    diagnostic_messages::AN_EXPORT_ASSIGNMENT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                    diagnostic_codes::AN_EXPORT_ASSIGNMENT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
+                )
+            }
+            _ => return false,
+        };
+
+        self.error_at_node(stmt_idx, message, code);
+        true
     }
 }
 
@@ -1819,7 +1996,9 @@ impl<'a> CheckerState<'a> {
             // Evaluation would fail (or unknown with non-number/string type).
             // Emit TS18033 if the type is not assignable to number.
             if !self.is_assignable_to(init_type, TypeId::NUMBER) {
-                let source_str = self.format_type(init_type);
+                // tsc displays widened types in TS18033: 'string' not '"bar"'
+                let widened = tsz_solver::widen_literal_type(self.ctx.types, init_type);
+                let source_str = self.format_type(widened);
                 let target_str = self.format_type(TypeId::NUMBER);
                 self.error_at_node_msg(
                     init_idx,

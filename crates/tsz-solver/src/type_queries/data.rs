@@ -1046,8 +1046,6 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
                 .iter()
                 .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
         }
-        // Function shapes have no named properties
-        Some(TypeData::Function(_)) => false,
         _ => false,
     }
 }
@@ -1112,6 +1110,14 @@ pub fn get_type_parameter_info(
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info),
         _ => None,
     }
+}
+
+/// Check if a type is a type parameter (`TypeParameter` or Infer).
+pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+    )
 }
 
 /// Get the constraint of a type parameter.

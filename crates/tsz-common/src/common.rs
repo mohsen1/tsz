@@ -250,6 +250,23 @@ impl ModuleKind {
                 | Self::Preserve
         )
     }
+
+    /// Check if this module kind supports a second argument in dynamic `import()`.
+    ///
+    /// Only `esnext`, `node16`, `node18`, `node20`, `nodenext`, and `preserve`
+    /// support the options argument in `import(specifier, options)` (TS1324).
+    #[must_use]
+    pub const fn supports_dynamic_import_options(self) -> bool {
+        matches!(
+            self,
+            Self::ESNext
+                | Self::Node16
+                | Self::Node18
+                | Self::Node20
+                | Self::NodeNext
+                | Self::Preserve
+        )
+    }
 }
 
 /// New line kind for source file emission.

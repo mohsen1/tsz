@@ -375,17 +375,66 @@ pub(crate) fn check_parameter_initializers_in_type(
     for &param_idx in &parameters.nodes {
         if let Some(param_node) = ctx.arena.get(param_idx)
             && let Some(param) = ctx.arena.get_parameter(param_node)
-            && param.initializer.is_some()
         {
-            // TSC anchors the error at the parameter name, not the initializer
-            let name_node = ctx.arena.get(param.name).unwrap_or(param_node);
+            if param.initializer.is_some() {
+                // TSC anchors the error at the parameter name, not the initializer
+                let name_node = ctx.arena.get(param.name).unwrap_or(param_node);
+                ctx.error(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A parameter initializer is only allowed in a function or constructor implementation."
+                        .to_string(),
+                    2371,
+                );
+            }
+            // Also check binding elements inside destructuring patterns for initializers
+            // e.g. `type Foo = ({ first = 0 }: T) => void` — TSC reports TS2371 at `first`
+            check_binding_pattern_initializers(ctx, param.name);
+        }
+    }
+}
+
+fn check_binding_pattern_initializers(
+    ctx: &mut crate::CheckerContext,
+    name_idx: tsz_parser::parser::NodeIndex,
+) {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let Some(name_node) = ctx.arena.get(name_idx) else {
+        return;
+    };
+
+    if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+        && name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+    {
+        return;
+    }
+
+    let Some(pattern) = ctx.arena.get_binding_pattern(name_node) else {
+        return;
+    };
+
+    let elements = pattern.elements.nodes.clone();
+    for &elem_idx in &elements {
+        let Some(elem_node) = ctx.arena.get(elem_idx) else {
+            continue;
+        };
+        let Some(elem) = ctx.arena.get_binding_element(elem_node) else {
+            continue;
+        };
+        let has_init = elem.initializer != tsz_parser::parser::NodeIndex::NONE;
+        let elem_name = elem.name;
+        if has_init {
+            let anchor = ctx.arena.get(elem_name).unwrap_or(elem_node);
             ctx.error(
-                name_node.pos,
-                name_node.end - name_node.pos,
+                anchor.pos,
+                anchor.end - anchor.pos,
                 "A parameter initializer is only allowed in a function or constructor implementation."
                     .to_string(),
                 2371,
             );
         }
+        // Recurse into nested binding patterns
+        check_binding_pattern_initializers(ctx, elem_name);
     }
 }

@@ -1172,6 +1172,17 @@ impl ParserState {
                 continue;
             }
 
+            // Handle @ inside enum body - not a valid enum member start.
+            // Emit TS1132 and break out so the outer statement parser handles the
+            // decorator-like syntax (producing TS1146 + TS1128 matching tsc).
+            if self.is_token(SyntaxKind::AtToken) {
+                self.parse_error_at_current_token(
+                    "Enum member expected.",
+                    diagnostic_codes::ENUM_MEMBER_EXPECTED,
+                );
+                break;
+            }
+
             // Enum member names can be identifiers, string literals, or computed property names.
             // Numeric literals are parsed as names for error recovery (TS2452 reported by checker).
             // Computed property names ([x]) are not valid in enums but we recover gracefully.
@@ -1402,7 +1413,11 @@ impl ParserState {
                 // TS1029: 'export' modifier must precede 'declare' modifier.
                 // Skip for `declare export as namespace` (valid UMD pattern) and
                 // `declare export = expr` (export assignment — TS1120 handles it).
-                if !self.is_token(SyntaxKind::AsKeyword) && !self.is_token(SyntaxKind::EqualsToken)
+                // Also skip when already in an ambient context (e.g. inside `declare module`),
+                // because the checker will emit TS1038 instead and tsc does not emit both.
+                if !self.is_token(SyntaxKind::AsKeyword)
+                    && !self.is_token(SyntaxKind::EqualsToken)
+                    && (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
                 {
                     self.parse_error_at(
                         export_start,

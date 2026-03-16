@@ -15,6 +15,16 @@ use tsz_scanner::SyntaxKind;
 /// A class field initializer entry: (`field_name`, `initializer_node`, `init_end`, `leading_comments`, `trailing_comments`).
 pub(crate) type FieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
 
+/// A const enum entry scoped to a specific region of the source.
+/// File-level const enums use `(0, u32::MAX)` so they match any position.
+/// Function-scoped const enums use the enclosing function's `(pos, end)`.
+#[derive(Debug, Clone)]
+pub(crate) struct ScopedConstEnum {
+    pub scope_start: u32,
+    pub scope_end: u32,
+    pub values: FxHashMap<String, EnumValue>,
+}
+
 /// Info about a private class member for lowering.
 /// Determines the kind argument for `__classPrivateFieldGet`/`__classPrivateFieldSet`.
 #[derive(Debug, Clone)]
@@ -125,6 +135,12 @@ pub struct PrinterOptions {
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
     pub suppress_use_strict: bool,
+    /// When true, null and undefined are meaningful types in unions for metadata serialization.
+    /// Matches tsc's strictNullChecks behavior in decorator metadata emission.
+    pub strict_null_checks: bool,
+    /// When true, do not elide any imports or exports not explicitly marked as type-only.
+    /// Corresponds to `--verbatimModuleSyntax`.
+    pub verbatim_module_syntax: bool,
 }
 
 impl Default for PrinterOptions {
@@ -157,6 +173,8 @@ impl Default for PrinterOptions {
             jsx_fragment_factory: None,
             jsx_import_source: None,
             suppress_use_strict: false,
+            strict_null_checks: false,
+            verbatim_module_syntax: false,
         }
     }
 }
@@ -380,6 +398,16 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
 
+    /// Temp variable names for CJS/AMD exported destructuring patterns.
+    /// These are emitted as `var _a, _b;` BEFORE the `__esModule` marker,
+    /// matching tsc's placement (between "use strict" and Object.defineProperty).
+    pub(crate) cjs_destructuring_export_temps: Vec<String>,
+
+    /// Byte offset where CJS destructuring export temps should be inserted.
+    pub(crate) cjs_destr_hoist_byte_offset: usize,
+    /// Line number where CJS destructuring export temps should be inserted.
+    pub(crate) cjs_destr_hoist_line: u32,
+
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
 
@@ -433,9 +461,11 @@ pub struct Printer<'a> {
     pub(crate) is_current_root_js_source: bool,
 
     /// Const enum member values for inlining at usage sites.
-    /// Maps `enum_name -> (member_name -> EnumValue)`.
-    /// Populated during `emit_source_file` pre-pass; consumed during property/element access.
-    pub(crate) const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
+    /// Maps `enum_name -> Vec<ScopedConstEnum>`.  Each entry carries the
+    /// position range of the scope it was declared in so that at inline time
+    /// we pick the right entry (the tightest scope that contains the access).
+    /// File-level const enums use `(0, u32::MAX)`.
+    pub(crate) const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
 
     /// Accumulated enum member values across all processed enum declarations.
     /// Used by `EnumES5Transformer` to resolve cross-enum references like
@@ -472,6 +502,10 @@ pub struct Printer<'a> {
     /// Source file name for jsx=react-jsxdev mode (e.g., "file.tsx").
     /// Used to emit `const _jsxFileName = "file.tsx";` and source location args.
     pub(crate) jsx_dev_file_name: Option<String>,
+
+    /// When true, the current source file is a JavaScript file (.js/.jsx/.cjs/.mjs).
+    /// JS files do not undergo import elision since all imports are value imports.
+    pub(crate) source_is_js_file: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -592,6 +626,9 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            cjs_destructuring_export_temps: Vec::new(),
+            cjs_destr_hoist_byte_offset: 0,
+            cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
@@ -612,6 +649,7 @@ impl<'a> Printer<'a> {
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
+            source_is_js_file: false,
         }
     }
 

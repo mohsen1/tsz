@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! TSZ Language Server Protocol (LSP) Server
 //!
 //! A fully-featured LSP server for TypeScript/JavaScript backed by the
@@ -10,27 +11,37 @@
 //!
 //! Supported LSP features:
 //! - textDocument/hover
-//! - textDocument/completion
+//! - textDocument/completion (with auto-import additionalTextEdits)
+//! - completionItem/resolve (lazy documentation loading)
 //! - textDocument/definition
+//! - textDocument/declaration
 //! - textDocument/typeDefinition
 //! - textDocument/references
 //! - textDocument/implementation
 //! - textDocument/documentSymbol
 //! - textDocument/formatting
+//! - textDocument/rangeFormatting
+//! - textDocument/onTypeFormatting
 //! - textDocument/rename
 //! - textDocument/prepareRename
-//! - textDocument/codeAction
+//! - textDocument/codeAction (quickfix, refactor, source.organizeImports)
 //! - textDocument/codeLens
 //! - codeLens/resolve
 //! - textDocument/selectionRange
 //! - textDocument/foldingRange
 //! - textDocument/signatureHelp
 //! - textDocument/semanticTokens/full
+//! - textDocument/semanticTokens/range
 //! - textDocument/documentHighlight
 //! - textDocument/inlayHint
+//! - inlayHint/resolve
 //! - textDocument/documentLink
+//! - textDocument/documentColor
+//! - textDocument/colorPresentation
 //! - textDocument/linkedEditingRange
-//! - textDocument/publishDiagnostics (server-initiated)
+//! - textDocument/diagnostic (pull model, LSP 3.17)
+//! - workspace/diagnostic (pull model, LSP 3.17)
+//! - textDocument/publishDiagnostics (server-initiated, with stale dependent updates)
 //! - callHierarchy/incomingCalls
 //! - callHierarchy/outgoingCalls
 //! - textDocument/prepareCallHierarchy
@@ -38,6 +49,11 @@
 //! - typeHierarchy/subtypes
 //! - textDocument/prepareTypeHierarchy
 //! - workspace/symbol
+//! - workspace/willRenameFiles (auto-update imports on file rename)
+//! - workspace/didRenameFiles (auto-update imports on file rename)
+//! - workspace/didChangeConfiguration
+//! - workspace/didChangeWatchedFiles
+//! - workspace/executeCommand
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -164,7 +180,10 @@ impl LspServer {
                 self.handle_did_close(msg.params);
                 None
             }
-            Some("textDocument/didSave") => None, // We already have latest content
+            Some("textDocument/didSave") => {
+                self.handle_did_save(msg.params);
+                None
+            }
 
             // ── Language features ───────────────────────────────────────
             Some("textDocument/hover") => {
@@ -173,6 +192,10 @@ impl LspServer {
             }
             Some("textDocument/completion") => {
                 let r = self.handle_completion(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("completionItem/resolve") => {
+                let r = self.handle_completion_resolve(msg.params);
                 Some(self.make_response(id, r))
             }
             Some("textDocument/definition") => {
@@ -235,12 +258,28 @@ impl LspServer {
                 let r = self.handle_semantic_tokens_full(msg.params);
                 Some(self.make_response(id, r))
             }
+            Some("textDocument/semanticTokens/range") => {
+                let r = self.handle_semantic_tokens_range(msg.params);
+                Some(self.make_response(id, r))
+            }
             Some("textDocument/documentHighlight") => {
                 let r = self.handle_document_highlight(msg.params);
                 Some(self.make_response(id, r))
             }
             Some("textDocument/inlayHint") => {
                 let r = self.handle_inlay_hint(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("inlayHint/resolve") => {
+                let r = self.handle_inlay_hint_resolve(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("textDocument/documentColor") => {
+                let r = self.handle_document_color(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("textDocument/colorPresentation") => {
+                let r = self.handle_color_presentation(msg.params);
                 Some(self.make_response(id, r))
             }
             Some("textDocument/documentLink") => {
@@ -278,6 +317,60 @@ impl LspServer {
             Some("workspace/symbol") => {
                 let r = self.handle_workspace_symbol(msg.params);
                 Some(self.make_response(id, r))
+            }
+
+            // ── Declaration (same as definition for TS) ───────────────
+            Some("textDocument/declaration") => {
+                let r = self.handle_definition(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── Range formatting ──────────────────────────────────────
+            Some("textDocument/rangeFormatting") => {
+                let r = self.handle_range_formatting(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── On-type formatting ────────────────────────────────────
+            Some("textDocument/onTypeFormatting") => {
+                let r = self.handle_on_type_formatting(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── Workspace notifications ───────────────────────────────
+            Some("workspace/didChangeConfiguration") => {
+                self.handle_did_change_configuration(msg.params);
+                None
+            }
+            Some("workspace/didChangeWatchedFiles") => {
+                self.handle_did_change_watched_files(msg.params);
+                None
+            }
+
+            // ── Execute command ────────────────────────────────────────
+            Some("workspace/executeCommand") => {
+                let r = self.handle_execute_command(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── Diagnostic pull model (LSP 3.17) ─────────────────
+            Some("textDocument/diagnostic") => {
+                let r = self.handle_document_diagnostic(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("workspace/diagnostic") => {
+                let r = self.handle_workspace_diagnostic(msg.params);
+                Some(self.make_response(id, r))
+            }
+
+            // ── File operations ─────────────────────────────────────
+            Some("workspace/willRenameFiles") => {
+                let r = self.handle_will_rename_files(msg.params);
+                Some(self.make_response(id, r))
+            }
+            Some("workspace/didRenameFiles") => {
+                self.handle_did_rename_files(msg.params);
+                None
             }
 
             // Unknown request → method not found
@@ -389,50 +482,7 @@ impl LspServer {
         if let Some(diagnostics) = self.project.get_diagnostics(&file_name) {
             let lsp_diags: Vec<Value> = diagnostics
                 .iter()
-                .map(|d| {
-                    let mut diag = serde_json::json!({
-                        "range": Self::range_to_json(&d.range),
-                        "message": d.message,
-                    });
-                    if let Some(severity) = d.severity {
-                        diag["severity"] = Value::from(severity as u8);
-                    }
-                    if let Some(code) = d.code {
-                        diag["code"] = Value::from(code);
-                    }
-                    if let Some(ref source) = d.source {
-                        diag["source"] = Value::from(source.as_str());
-                    } else {
-                        diag["source"] = Value::from("tsz");
-                    }
-                    if let Some(ref related) = d.related_information {
-                        let ri: Vec<Value> = related
-                            .iter()
-                            .map(|r| {
-                                serde_json::json!({
-                                    "location": {
-                                        "uri": Self::file_name_to_uri(&r.location.file_path),
-                                        "range": Self::range_to_json(&r.location.range),
-                                    },
-                                    "message": r.message,
-                                })
-                            })
-                            .collect();
-                        diag["relatedInformation"] = Value::Array(ri);
-                    }
-                    // Tags for unnecessary/deprecated
-                    let mut tags = Vec::new();
-                    if d.reports_unnecessary == Some(true) {
-                        tags.push(Value::from(1)); // Unnecessary
-                    }
-                    if d.reports_deprecated == Some(true) {
-                        tags.push(Value::from(2)); // Deprecated
-                    }
-                    if !tags.is_empty() {
-                        diag["tags"] = Value::Array(tags);
-                    }
-                    diag
-                })
+                .map(|d| Self::diagnostic_to_json(d))
                 .collect();
 
             self.pending_notifications.push(JsonRpcNotification {
@@ -444,6 +494,51 @@ impl LspServer {
                 }),
             });
         }
+    }
+
+    fn diagnostic_to_json(d: &tsz::lsp::LspDiagnostic) -> Value {
+        let mut diag = serde_json::json!({
+            "range": Self::range_to_json(&d.range),
+            "message": d.message,
+        });
+        if let Some(severity) = d.severity {
+            diag["severity"] = Value::from(severity as u8);
+        }
+        if let Some(code) = d.code {
+            diag["code"] = Value::from(code);
+        }
+        if let Some(ref source) = d.source {
+            diag["source"] = Value::from(source.as_str());
+        } else {
+            diag["source"] = Value::from("tsz");
+        }
+        if let Some(ref related) = d.related_information {
+            let ri: Vec<Value> = related
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "location": {
+                            "uri": Self::file_name_to_uri(&r.location.file_path),
+                            "range": Self::range_to_json(&r.location.range),
+                        },
+                        "message": r.message,
+                    })
+                })
+                .collect();
+            diag["relatedInformation"] = Value::Array(ri);
+        }
+        // Tags for unnecessary/deprecated
+        let mut tags = Vec::new();
+        if d.reports_unnecessary == Some(true) {
+            tags.push(Value::from(1)); // Unnecessary
+        }
+        if d.reports_deprecated == Some(true) {
+            tags.push(Value::from(2)); // Deprecated
+        }
+        if !tags.is_empty() {
+            diag["tags"] = Value::Array(tags);
+        }
+        diag
     }
 
     // ─── JSON conversion helpers ────────────────────────────────────────
@@ -496,22 +591,37 @@ impl LspServer {
             "capabilities": {
                 "textDocumentSync": {
                     "openClose": true,
-                    "change": 1,  // Full sync
-                    "save": { "includeText": true }
+                    "change": 2,  // Incremental sync
+                    "save": { "includeText": false }
                 },
                 "hoverProvider": true,
                 "completionProvider": {
                     "triggerCharacters": [".", "<", "/", "\"", "'", "`", "@"],
-                    "resolveProvider": false,
+                    "resolveProvider": true,
                 },
                 "definitionProvider": true,
+                "declarationProvider": true,
                 "typeDefinitionProvider": true,
                 "referencesProvider": true,
                 "implementationProvider": true,
                 "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
+                "documentRangeFormattingProvider": true,
+                "documentOnTypeFormattingProvider": {
+                    "firstTriggerCharacter": ";",
+                    "moreTriggerCharacter": ["}", "\n"]
+                },
                 "renameProvider": { "prepareProvider": true },
-                "codeActionProvider": true,
+                "codeActionProvider": {
+                    "codeActionKinds": [
+                        "quickfix",
+                        "refactor",
+                        "refactor.extract",
+                        "source",
+                        "source.organizeImports",
+                        "source.fixAll"
+                    ]
+                },
                 "codeLensProvider": { "resolveProvider": true },
                 "selectionRangeProvider": true,
                 "foldingRangeProvider": true,
@@ -535,15 +645,43 @@ impl LspServer {
                         ]
                     },
                     "full": true,
-                    "range": false,
+                    "range": true,
                 },
                 "documentHighlightProvider": true,
-                "inlayHintProvider": true,
+                "inlayHintProvider": { "resolveProvider": true },
+                "colorProvider": true,
                 "documentLinkProvider": { "resolveProvider": false },
                 "linkedEditingRangeProvider": true,
                 "callHierarchyProvider": true,
                 "typeHierarchyProvider": true,
                 "workspaceSymbolProvider": true,
+                "diagnosticProvider": {
+                    "interFileDependencies": true,
+                    "workspaceDiagnostics": true,
+                },
+                "executeCommandProvider": {
+                    "commands": ["tsz.organizeImports", "tsz.applyCodeAction"]
+                },
+                "workspace": {
+                    "workspaceFolders": {
+                        "supported": true,
+                        "changeNotifications": true
+                    },
+                    "fileOperations": {
+                        "willRename": {
+                            "filters": [{
+                                "scheme": "file",
+                                "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
+                            }]
+                        },
+                        "didRename": {
+                            "filters": [{
+                                "scheme": "file",
+                                "pattern": { "glob": "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}" }
+                            }]
+                        }
+                    }
+                }
             },
             "serverInfo": {
                 "name": "tsz-lsp",
@@ -569,16 +707,110 @@ impl LspServer {
     }
 
     fn handle_did_change(&mut self, params: Option<Value>) {
-        if let Some((uri, text)) = (|| {
-            let p = params.as_ref()?;
-            let uri = p.get("textDocument")?.get("uri")?.as_str()?.to_string();
-            let changes = p.get("contentChanges")?.as_array()?;
-            let text = changes.last()?.get("text")?.as_str()?.to_string();
-            Some((uri, text))
-        })() {
+        if let Some(p) = params.as_ref() {
+            let uri = match p
+                .get("textDocument")
+                .and_then(|t| t.get("uri"))
+                .and_then(|u| u.as_str())
+            {
+                Some(u) => u.to_string(),
+                None => return,
+            };
             let file_name = Self::uri_to_file_name(&uri);
-            self.project.set_file(file_name, text);
+            let changes = match p.get("contentChanges").and_then(|c| c.as_array()) {
+                Some(c) => c,
+                None => return,
+            };
+
+            if changes.is_empty() {
+                return;
+            }
+
+            // Try incremental sync first: apply each change as a text edit
+            let has_range_changes = changes.iter().any(|c| c.get("range").is_some());
+
+            if has_range_changes {
+                // Incremental: apply text edits via Project::update_file
+                let edits: Vec<tsz::lsp::FormattingTextEdit> = changes
+                    .iter()
+                    .filter_map(|change| {
+                        let range_val = change.get("range")?;
+                        let start = range_val.get("start")?;
+                        let end = range_val.get("end")?;
+                        let range = Range::new(
+                            Position::new(
+                                start.get("line")?.as_u64()? as u32,
+                                start.get("character")?.as_u64()? as u32,
+                            ),
+                            Position::new(
+                                end.get("line")?.as_u64()? as u32,
+                                end.get("character")?.as_u64()? as u32,
+                            ),
+                        );
+                        let text = change.get("text")?.as_str()?.to_string();
+                        Some(tsz::lsp::FormattingTextEdit {
+                            range,
+                            new_text: text,
+                        })
+                    })
+                    .collect();
+
+                if !edits.is_empty() {
+                    // Convert FormattingTextEdit to TextEdit for update_file
+                    let text_edits: Vec<tsz::lsp::TextEdit> = edits
+                        .into_iter()
+                        .map(|e| tsz::lsp::TextEdit {
+                            range: e.range,
+                            new_text: e.new_text,
+                        })
+                        .collect();
+                    self.project.update_file(&file_name, &text_edits);
+                }
+            } else {
+                // Full sync fallback: take the last content change
+                if let Some(text) = changes
+                    .last()
+                    .and_then(|c| c.get("text"))
+                    .and_then(|t| t.as_str())
+                {
+                    self.project.set_file(file_name.clone(), text.to_string());
+                }
+            }
+
+            // Publish diagnostics for the changed file
             self.publish_diagnostics(&uri);
+
+            // Publish stale diagnostics for dependent files
+            self.publish_stale_diagnostics();
+        }
+    }
+
+    fn handle_did_save(&mut self, params: Option<Value>) {
+        // On save, re-publish diagnostics for the saved file and dependents
+        if let Some(uri) = Self::extract_uri(&params) {
+            self.publish_diagnostics(&uri);
+            self.publish_stale_diagnostics();
+        }
+    }
+
+    /// Publish diagnostics for all files that have been marked stale
+    /// (e.g., dependents of a changed file).
+    fn publish_stale_diagnostics(&mut self) {
+        let stale = self.project.get_stale_diagnostics();
+        for (file_name, diagnostics) in stale {
+            let uri = Self::file_name_to_uri(&file_name);
+            let lsp_diags: Vec<Value> = diagnostics
+                .iter()
+                .map(|d| Self::diagnostic_to_json(d))
+                .collect();
+            self.pending_notifications.push(JsonRpcNotification {
+                jsonrpc: "2.0".to_string(),
+                method: "textDocument/publishDiagnostics".to_string(),
+                params: serde_json::json!({
+                    "uri": uri,
+                    "diagnostics": lsp_diags,
+                }),
+            });
         }
     }
 
@@ -596,6 +828,49 @@ impl LspServer {
                 }),
             });
         }
+    }
+
+    // ─── Diagnostic Pull Model ────────────────────────────────────────
+
+    fn handle_document_diagnostic(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        let diagnostics = self.project.get_diagnostics(&file_name).unwrap_or_default();
+
+        let lsp_diags: Vec<Value> = diagnostics
+            .iter()
+            .map(|d| Self::diagnostic_to_json(d))
+            .collect();
+
+        Ok(serde_json::json!({
+            "kind": "full",
+            "items": lsp_diags,
+        }))
+    }
+
+    fn handle_workspace_diagnostic(&mut self, _params: Option<Value>) -> Result<Value> {
+        let mut items = Vec::new();
+
+        let file_names: Vec<String> = self.project.file_names().map(|s| s.to_string()).collect();
+        for file_name in &file_names {
+            let diagnostics = self.project.get_diagnostics(file_name).unwrap_or_default();
+
+            let lsp_diags: Vec<Value> = diagnostics
+                .iter()
+                .map(|d| Self::diagnostic_to_json(d))
+                .collect();
+
+            items.push(serde_json::json!({
+                "kind": "full",
+                "uri": Self::file_name_to_uri(file_name),
+                "items": lsp_diags,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "items": items,
+        }))
     }
 
     // ─── Hover ──────────────────────────────────────────────────────────
@@ -683,6 +958,29 @@ impl LspServer {
                         ci["insertTextFormat"] = Value::from(2); // Snippet format
                     }
                 }
+                // Auto-import: include additional text edits (e.g., import statements)
+                if let Some(ref edits) = item.additional_text_edits {
+                    let lsp_edits: Vec<Value> = edits
+                        .iter()
+                        .map(|edit| {
+                            serde_json::json!({
+                                "range": Self::range_to_json(&edit.range),
+                                "newText": edit.new_text,
+                            })
+                        })
+                        .collect();
+                    ci["additionalTextEdits"] = Value::Array(lsp_edits);
+                }
+                if let Some(ref source) = item.source {
+                    if item.detail.is_none() {
+                        ci["detail"] = Value::from(format!("Auto import from '{source}'"));
+                    }
+                }
+                // Attach resolve data so completionItem/resolve can look up docs
+                ci["data"] = serde_json::json!({
+                    "fileName": &file_name,
+                    "label": &item.label,
+                });
                 ci
             })
             .collect();
@@ -691,6 +989,37 @@ impl LspServer {
             "isIncomplete": false,
             "items": lsp_items,
         }))
+    }
+
+    fn handle_completion_resolve(&mut self, params: Option<Value>) -> Result<Value> {
+        // The params IS the completion item itself
+        let mut item = params.unwrap_or(Value::Null);
+
+        if let Some(data) = item.get("data") {
+            let file_name = data
+                .get("fileName")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let label = data
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            if let Some((_detail, documentation)) =
+                self.project.resolve_completion(&file_name, &label)
+            {
+                if let Some(doc) = documentation {
+                    item["documentation"] = serde_json::json!({
+                        "kind": "markdown",
+                        "value": doc,
+                    });
+                }
+            }
+        }
+
+        Ok(item)
     }
 
     // ─── Definition ─────────────────────────────────────────────────────
@@ -1047,7 +1376,45 @@ impl LspServer {
     }
 
     fn handle_code_lens_resolve(&mut self, params: Option<Value>) -> Result<Value> {
-        // Return the lens as-is for now
+        let p = params
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Missing params"))?;
+
+        let range = Self::extract_range(&params, "range")
+            .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
+
+        // Deserialize the data field to reconstruct the CodeLens
+        let data: Option<tsz::lsp::CodeLensData> = p
+            .get("data")
+            .and_then(|d| serde_json::from_value(d.clone()).ok());
+
+        let lens = tsz::lsp::CodeLens {
+            range,
+            command: None,
+            data,
+        };
+
+        if let Some(ref data) = lens.data {
+            let file_name = Self::uri_to_file_name(&data.file_path);
+            if let Some(resolved) = self.project.resolve_code_lens(&file_name, &lens) {
+                let mut l = serde_json::json!({
+                    "range": Self::range_to_json(&resolved.range),
+                });
+                if let Some(ref cmd) = resolved.command {
+                    let mut cmd_json = serde_json::json!({
+                        "title": cmd.title,
+                        "command": cmd.command,
+                    });
+                    if let Some(ref args) = cmd.arguments {
+                        cmd_json["arguments"] = Value::Array(args.clone());
+                    }
+                    l["command"] = cmd_json;
+                }
+                return Ok(l);
+            }
+        }
+
+        // Fallback: return as-is
         Ok(params.unwrap_or(Value::Null))
     }
 
@@ -1183,6 +1550,18 @@ impl LspServer {
         }
     }
 
+    fn handle_semantic_tokens_range(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+        let range = Self::extract_range(&params, "range")
+            .ok_or_else(|| anyhow::anyhow!("Missing range"))?;
+
+        match self.project.get_semantic_tokens_range(&file_name, range) {
+            Some(data) => Ok(serde_json::json!({ "data": data })),
+            None => Ok(serde_json::json!({ "data": [] })),
+        }
+    }
+
     // ─── Document Highlight ─────────────────────────────────────────────
 
     fn handle_document_highlight(&mut self, params: Option<Value>) -> Result<Value> {
@@ -1245,6 +1624,112 @@ impl LspServer {
             }
             None => Ok(Value::Array(vec![])),
         }
+    }
+
+    fn handle_inlay_hint_resolve(&mut self, params: Option<Value>) -> Result<Value> {
+        // The params IS the inlay hint itself - just add a tooltip if missing
+        let mut hint = params.unwrap_or(Value::Null);
+
+        // If no tooltip yet, add a description based on the kind
+        if hint.get("tooltip").is_none() {
+            let kind = hint.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
+            let label = hint
+                .get("label")
+                .and_then(|l| l.as_str())
+                .unwrap_or_default();
+
+            let tooltip = match kind {
+                1 => {
+                    // Type hint
+                    format!("Inferred type{}", label)
+                }
+                2 => {
+                    // Parameter hint
+                    format!("Parameter name{}", label)
+                }
+                _ => String::new(),
+            };
+
+            if !tooltip.is_empty() {
+                hint["tooltip"] = serde_json::json!({
+                    "kind": "markdown",
+                    "value": format!("```typescript\n{tooltip}\n```"),
+                });
+            }
+        }
+
+        Ok(hint)
+    }
+
+    // ─── Document Colors ─────────────────────────────────────────────────
+
+    fn handle_document_color(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        match self.project.get_document_colors(&file_name) {
+            Some(colors) => {
+                let lsp_colors: Vec<Value> = colors
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "range": Self::range_to_json(&c.range),
+                            "color": {
+                                "red": c.color.red,
+                                "green": c.color.green,
+                                "blue": c.color.blue,
+                                "alpha": c.color.alpha,
+                            },
+                        })
+                    })
+                    .collect();
+                Ok(Value::Array(lsp_colors))
+            }
+            None => Ok(Value::Array(vec![])),
+        }
+    }
+
+    fn handle_color_presentation(&mut self, params: Option<Value>) -> Result<Value> {
+        // Convert a color back to a text representation
+        let color = params
+            .as_ref()
+            .and_then(|p| p.get("color"))
+            .ok_or_else(|| anyhow::anyhow!("Missing color"))?;
+
+        let r = color.get("red").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let g = color.get("green").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let b = color.get("blue").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let a = color.get("alpha").and_then(|v| v.as_f64()).unwrap_or(1.0);
+
+        let ri = (r * 255.0).round() as u8;
+        let gi = (g * 255.0).round() as u8;
+        let bi = (b * 255.0).round() as u8;
+
+        let mut presentations = Vec::new();
+
+        // #rrggbb format
+        presentations.push(serde_json::json!({
+            "label": format!("#{ri:02x}{gi:02x}{bi:02x}"),
+        }));
+
+        // #rrggbbaa format (only if alpha != 1.0)
+        if (a - 1.0).abs() > f64::EPSILON {
+            let ai = (a * 255.0).round() as u8;
+            presentations.push(serde_json::json!({
+                "label": format!("#{ri:02x}{gi:02x}{bi:02x}{ai:02x}"),
+            }));
+        }
+
+        // rgb() format
+        presentations.push(serde_json::json!({
+            "label": if (a - 1.0).abs() > f64::EPSILON {
+                format!("rgba({ri}, {gi}, {bi}, {a:.2})")
+            } else {
+                format!("rgb({ri}, {gi}, {bi})")
+            },
+        }));
+
+        Ok(Value::Array(presentations))
     }
 
     // ─── Document Links ─────────────────────────────────────────────────
@@ -1468,6 +1953,392 @@ impl LspServer {
             })
             .collect();
         Ok(Value::Array(lsp_symbols))
+    }
+
+    // ─── Range Formatting ──────────────────────────────────────────────
+
+    fn handle_range_formatting(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        let range = Self::extract_range(&params, "range")
+            .ok_or_else(|| anyhow::anyhow!("Missing range"))?;
+
+        let options = params
+            .as_ref()
+            .and_then(|p| p.get("options"))
+            .map(|opts| FormattingOptions {
+                tab_size: opts.get("tabSize").and_then(|v| v.as_u64()).unwrap_or(4) as u32,
+                insert_spaces: opts
+                    .get("insertSpaces")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+                trim_trailing_whitespace: opts
+                    .get("trimTrailingWhitespace")
+                    .and_then(|v| v.as_bool()),
+                insert_final_newline: None,
+                trim_final_newlines: None,
+                semicolons: opts
+                    .get("semicolons")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            })
+            .unwrap_or_default();
+
+        // Format the whole document and filter edits to only those within the range
+        match self.project.format_document(&file_name, &options) {
+            Some(Ok(edits)) => {
+                let lsp_edits: Vec<Value> = edits
+                    .iter()
+                    .filter(|edit| {
+                        // Include edits that overlap with the requested range
+                        edit.range.start.line <= range.end.line
+                            && edit.range.end.line >= range.start.line
+                    })
+                    .map(|edit| {
+                        serde_json::json!({
+                            "range": Self::range_to_json(&edit.range),
+                            "newText": edit.new_text,
+                        })
+                    })
+                    .collect();
+                Ok(Value::Array(lsp_edits))
+            }
+            Some(Err(e)) => {
+                debug!("Range formatting error: {}", e);
+                Ok(Value::Array(vec![]))
+            }
+            None => Ok(Value::Array(vec![])),
+        }
+    }
+
+    // ─── On-Type Formatting ────────────────────────────────────────────
+
+    fn handle_on_type_formatting(&mut self, params: Option<Value>) -> Result<Value> {
+        let uri = Self::extract_uri(&params).ok_or_else(|| anyhow::anyhow!("Missing uri"))?;
+        let file_name = Self::uri_to_file_name(&uri);
+
+        let position = params
+            .as_ref()
+            .and_then(|p| p.get("position"))
+            .and_then(|pos| {
+                let line = pos.get("line")?.as_u64()? as u32;
+                let character = pos.get("character")?.as_u64()? as u32;
+                Some(Position::new(line, character))
+            })
+            .ok_or_else(|| anyhow::anyhow!("Missing position"))?;
+
+        let ch = params
+            .as_ref()
+            .and_then(|p| p.get("ch"))
+            .and_then(|c| c.as_str())
+            .unwrap_or(";");
+
+        let options = params
+            .as_ref()
+            .and_then(|p| p.get("options"))
+            .map(|opts| FormattingOptions {
+                tab_size: opts.get("tabSize").and_then(|v| v.as_u64()).unwrap_or(4) as u32,
+                insert_spaces: opts
+                    .get("insertSpaces")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+                trim_trailing_whitespace: None,
+                insert_final_newline: None,
+                trim_final_newlines: None,
+                semicolons: None,
+            })
+            .unwrap_or_default();
+
+        // Use the format_on_key API from the formatting provider
+        if let Some(file) = self.project.file(&file_name) {
+            let source = file.source_text();
+            let offset = file
+                .line_map()
+                .position_to_offset(position, source)
+                .unwrap_or(0);
+
+            match tsz::lsp::DocumentFormattingProvider::format_on_key(
+                source,
+                position.line,
+                offset,
+                ch,
+                &options,
+            ) {
+                Ok(edits) => {
+                    let lsp_edits: Vec<Value> = edits
+                        .iter()
+                        .map(|edit| {
+                            serde_json::json!({
+                                "range": Self::range_to_json(&edit.range),
+                                "newText": edit.new_text,
+                            })
+                        })
+                        .collect();
+                    return Ok(Value::Array(lsp_edits));
+                }
+                Err(e) => {
+                    debug!("On-type formatting error: {}", e);
+                    return Ok(Value::Array(vec![]));
+                }
+            }
+        }
+
+        Ok(Value::Array(vec![]))
+    }
+
+    // ─── Workspace Configuration ───────────────────────────────────────
+
+    fn handle_did_change_configuration(&mut self, params: Option<Value>) {
+        // Extract settings if provided
+        if let Some(settings) = params
+            .as_ref()
+            .and_then(|p| p.get("settings"))
+            .and_then(|s| s.get("tsz").or_else(|| s.get("typescript")))
+        {
+            // Apply strict mode setting if present
+            if let Some(strict) = settings.get("strict").and_then(|v| v.as_bool()) {
+                self.project.set_strict(strict);
+            }
+
+            debug!("Configuration updated: {:?}", settings);
+        }
+    }
+
+    // ─── Watched File Changes ──────────────────────────────────────────
+
+    fn handle_did_change_watched_files(&mut self, params: Option<Value>) {
+        let changes = match params
+            .as_ref()
+            .and_then(|p| p.get("changes"))
+            .and_then(|c| c.as_array())
+        {
+            Some(c) => c,
+            None => return,
+        };
+
+        for change in changes {
+            let uri = match change.get("uri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+            let change_type = change.get("type").and_then(|t| t.as_u64()).unwrap_or(0);
+            let file_name = Self::uri_to_file_name(uri);
+
+            match change_type {
+                1 => {
+                    // Created: read and add if it's a TS/JS file
+                    if Self::is_ts_file(&file_name) {
+                        if let Ok(content) = std::fs::read_to_string(&file_name) {
+                            self.project.set_file(file_name, content);
+                        }
+                    }
+                }
+                2 => {
+                    // Changed: update if we're tracking it
+                    if self.project.file(&file_name).is_some() {
+                        if let Ok(content) = std::fs::read_to_string(&file_name) {
+                            self.project.set_file(file_name, content);
+                        }
+                    }
+                }
+                3 => {
+                    // Deleted: remove from project
+                    self.project.remove_file(&file_name);
+                    // Clear diagnostics for deleted file
+                    self.pending_notifications.push(JsonRpcNotification {
+                        jsonrpc: "2.0".to_string(),
+                        method: "textDocument/publishDiagnostics".to_string(),
+                        params: serde_json::json!({
+                            "uri": uri,
+                            "diagnostics": [],
+                        }),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn is_ts_file(path: &str) -> bool {
+        let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+        extensions.iter().any(|ext| path.ends_with(ext))
+    }
+
+    // ─── File Rename ───────────────────────────────────────────────────
+
+    fn handle_will_rename_files(&mut self, params: Option<Value>) -> Result<Value> {
+        let files = params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut all_changes = serde_json::Map::new();
+
+        for file_entry in &files {
+            let old_uri = match file_entry.get("oldUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+            let new_uri = match file_entry.get("newUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+
+            let old_path = Self::uri_to_file_name(old_uri);
+            let new_path = Self::uri_to_file_name(new_uri);
+
+            let edits = self.project.get_file_rename_edits(&old_path, &new_path);
+
+            for (file_name, file_edits) in edits {
+                let uri = Self::file_name_to_uri(&file_name);
+                let lsp_edits: Vec<Value> = file_edits
+                    .iter()
+                    .map(|edit| {
+                        serde_json::json!({
+                            "range": Self::range_to_json(&edit.range),
+                            "newText": edit.new_text,
+                        })
+                    })
+                    .collect();
+
+                // Merge with existing edits for this file
+                all_changes
+                    .entry(uri)
+                    .or_insert_with(|| Value::Array(vec![]))
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(lsp_edits);
+            }
+        }
+
+        if all_changes.is_empty() {
+            Ok(Value::Null)
+        } else {
+            Ok(serde_json::json!({
+                "changes": all_changes,
+            }))
+        }
+    }
+
+    fn handle_did_rename_files(&mut self, params: Option<Value>) {
+        let files = match params
+            .as_ref()
+            .and_then(|p| p.get("files"))
+            .and_then(|f| f.as_array())
+        {
+            Some(f) => f.clone(),
+            None => return,
+        };
+
+        for file_entry in &files {
+            let old_uri = match file_entry.get("oldUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+            let new_uri = match file_entry.get("newUri").and_then(|u| u.as_str()) {
+                Some(u) => u,
+                None => continue,
+            };
+
+            let old_path = Self::uri_to_file_name(old_uri);
+            let new_path = Self::uri_to_file_name(new_uri);
+
+            // Compute workspace edits to update import paths
+            let edits = self.project.get_file_rename_edits(&old_path, &new_path);
+
+            // Apply edits via workspace/applyEdit request
+            if !edits.is_empty() {
+                let mut changes = serde_json::Map::new();
+                for (file_name, file_edits) in edits {
+                    let uri = Self::file_name_to_uri(&file_name);
+                    let lsp_edits: Vec<Value> = file_edits
+                        .iter()
+                        .map(|edit| {
+                            serde_json::json!({
+                                "range": Self::range_to_json(&edit.range),
+                                "newText": edit.new_text,
+                            })
+                        })
+                        .collect();
+                    changes.insert(uri, Value::Array(lsp_edits));
+                }
+
+                self.pending_notifications.push(JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "workspace/applyEdit".to_string(),
+                    params: serde_json::json!({
+                        "label": "Update imports for renamed file",
+                        "edit": {
+                            "changes": changes,
+                        },
+                    }),
+                });
+            }
+
+            // Update project state: remove old file, add new
+            if let Some(file) = self.project.file(&old_path) {
+                let source = file.source_text().to_string();
+                self.project.remove_file(&old_path);
+                self.project.set_file(new_path.clone(), source);
+            }
+        }
+    }
+
+    // ─── Execute Command ───────────────────────────────────────────────
+
+    fn handle_execute_command(&mut self, params: Option<Value>) -> Result<Value> {
+        let command = params
+            .as_ref()
+            .and_then(|p| p.get("command"))
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing command"))?;
+
+        let arguments = params
+            .as_ref()
+            .and_then(|p| p.get("arguments"))
+            .and_then(|a| a.as_array());
+
+        match command {
+            "tsz.organizeImports" => {
+                // Extract file URI from arguments
+                if let Some(args) = arguments
+                    && let Some(uri) = args.first().and_then(|a| a.as_str())
+                {
+                    let file_name = Self::uri_to_file_name(uri);
+                    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+                    let context = tsz::lsp::CodeActionContext {
+                        diagnostics: vec![],
+                        only: Some(vec![tsz::lsp::CodeActionKind::SourceOrganizeImports]),
+                        import_candidates: vec![],
+                    };
+
+                    if let Some(file) = self.project.file(&file_name) {
+                        let provider = tsz::lsp::CodeActionProvider::new(
+                            file.arena(),
+                            file.binder(),
+                            file.line_map(),
+                            file_name,
+                            file.source_text(),
+                        );
+                        let actions = provider.provide_code_actions(file.root(), range, context);
+                        if let Some(action) = actions.first() {
+                            if let Some(ref edit) = action.edit {
+                                // Apply the workspace edit
+                                return Ok(serde_json::to_value(edit).unwrap_or(Value::Null));
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Null)
+            }
+            _ => {
+                debug!("Unknown command: {}", command);
+                Ok(Value::Null)
+            }
+        }
     }
 }
 

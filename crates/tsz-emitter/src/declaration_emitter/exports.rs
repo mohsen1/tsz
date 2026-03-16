@@ -347,6 +347,20 @@ impl<'a> DeclarationEmitter<'a> {
                 // Value expression - synthesize _default variable
                 let var_name = self.unique_default_export_name();
 
+                // TS2883: Check for non-portable inferred type references
+                // in export default expressions
+                if let Some(type_id) = self.get_node_type(assign.expression)
+                    && let Some(file_path) = self.current_file_path.clone()
+                {
+                    self.check_non_portable_type_references(
+                        type_id,
+                        "default",
+                        &file_path,
+                        assign_node.pos,
+                        assign_node.end - assign_node.pos,
+                    );
+                }
+
                 // First, emit the synthesized variable with inferred type
                 self.write_indent();
                 self.write("declare const ");

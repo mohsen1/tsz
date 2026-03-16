@@ -133,6 +133,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Augment with CommonJS property assignment exports (including aliases).
+            // The binder-level exports table may not include exports made through
+            // variable aliases like `var x = exports; x.prop = value`.
+            // resolve_import_target_from_file already tries module_specifier_candidates.
+            let augment_target = source_file_idx
+                .and_then(|src_idx| {
+                    self.ctx
+                        .resolve_import_target_from_file(src_idx, module_name)
+                })
+                .or(target_file_idx);
+            if let Some(target_idx) = augment_target {
+                self.augment_namespace_props_with_commonjs_exports_for_file(target_idx, &mut props);
+            }
+
             let namespace_type = factory.object(props);
             let display_module_name =
                 self.resolve_namespace_display_module_name(&exports_table, module_name);
@@ -150,8 +164,19 @@ impl<'a> CheckerState<'a> {
             return Some(namespace_type);
         }
 
-        self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx)
-            .or_else(|| self.commonjs_define_property_namespace_type(module_name, source_file_idx))
+        // Fallback: resolve `module.exports = <expr>` and merge with property
+        // assignment exports (e.g. `exports.func = ...` after `module.exports = {}`).
+        let direct_type =
+            self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx);
+        let namespace_type =
+            self.commonjs_define_property_namespace_type(module_name, source_file_idx);
+
+        match (direct_type, namespace_type) {
+            (Some(dt), Some(ns)) => Some(factory.intersection2(dt, ns)),
+            (Some(dt), None) => Some(dt),
+            (None, Some(ns)) => Some(ns),
+            (None, None) => None,
+        }
     }
 
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {
@@ -1278,6 +1303,16 @@ impl<'a> CheckerState<'a> {
                     (alias_type, params)
                 };
 
+                // When a same-file type alias contains `typeof expr` inside a
+                // narrowed scope (e.g. inside `if (typeof c === 'string')`),
+                // the lowering path creates TypeQuery(SymbolRef) which resolves
+                // to the declared type, not the flow-narrowed type. Resolve
+                // such TypeQuery references using flow narrowing now.
+                if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    alias_type =
+                        self.resolve_type_queries_with_flow(alias_type, type_alias.type_node);
+                }
+
                 // Pop enclosing type parameters that were pushed for local type aliases.
                 self.pop_type_parameters(enclosing_tp_updates);
 
@@ -1655,6 +1690,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Binding element from variable declaration destructuring:
+            // `let { a, ...rest } = expr` — resolve element type from initializer.
+            if resolved_value_decl.is_some()
+                && let Some(t) = self.resolve_binding_element_from_variable_initializer(
+                    resolved_value_decl,
+                    &escaped_name,
+                )
+            {
+                return (t, Vec::new());
+            }
             if resolved_value_decl.is_some()
                 && let Some(t) = self.resolve_binding_element_from_annotated_param(
                     resolved_value_decl,
@@ -1833,7 +1878,14 @@ impl<'a> CheckerState<'a> {
                 // This happens when: import Alias = NS.NotExported (where NotExported is not exported)
 
                 // 1. Check for TS2694 (Namespace has no exported member)
-                if self.report_type_query_missing_member(import.module_specifier) {
+                // But suppress when the left part resolves to a pure interface that
+                // shadows an outer namespace which has the member (tsc uses namespace
+                // meaning for import-equals entity name resolution).
+                let suppress_ts2694 =
+                    self.check_import_qualified_shadows_namespace(import.module_specifier);
+                if !suppress_ts2694
+                    && self.report_type_query_missing_member(import.module_specifier)
+                {
                     return (TypeId::ERROR, Vec::new());
                 }
 
@@ -2315,5 +2367,119 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    /// Resolve `TypeQuery` references in a type alias body using flow narrowing.
+    ///
+    /// When a same-file type alias is lowered via `lower_cross_arena_type_alias_declaration`,
+    /// `typeof expr` creates `TypeQuery(SymbolRef)` which resolves to the declared type
+    /// of the referenced symbol. If the type alias is inside a narrowed scope (e.g.
+    /// `if (typeof c === 'string') { type C = { [key: string]: typeof c }; }`),
+    /// the declared type is wrong — it should be the narrowed type.
+    ///
+    /// This method checks if the lowered type contains `TypeQuery` references and, if
+    /// any resolve to a flow-narrowed type different from the declared type, rebuilds
+    /// the type with the narrowed values substituted in.
+    pub(crate) fn resolve_type_queries_with_flow(
+        &mut self,
+        alias_type: TypeId,
+        type_node: NodeIndex,
+    ) -> TypeId {
+        // Quick check: does the lowered type contain any TypeQuery references?
+        if tsz_solver::collect_type_queries(self.ctx.types, alias_type).is_empty() {
+            return alias_type;
+        }
+
+        // Collect TYPE_QUERY nodes from the AST by scanning the type node tree.
+        // We use typed accessors since NodeArena doesn't have generic child iteration.
+        let mut type_query_nodes = Vec::new();
+        self.collect_type_query_nodes(type_node, &mut type_query_nodes);
+
+        if type_query_nodes.is_empty() {
+            return alias_type;
+        }
+
+        // Resolve each TYPE_QUERY with flow narrowing and cache in node_types
+        let mut any_changed = false;
+        for tq_idx in &type_query_nodes {
+            let narrowed = self.get_type_from_type_query(*tq_idx);
+            let existing = self.ctx.node_types.get(&tq_idx.0).copied();
+            if existing != Some(narrowed) {
+                self.ctx.node_types.insert(tq_idx.0, narrowed);
+                any_changed = true;
+            }
+        }
+
+        if !any_changed {
+            return alias_type;
+        }
+
+        // Clear the cached type for the root type node and recompute
+        // using the now-cached flow-narrowed TYPE_QUERY results.
+        self.ctx.node_types.remove(&type_node.0);
+        self.get_type_from_type_node(type_node)
+    }
+
+    /// Recursively collect `TYPE_QUERY` node indices from a type node subtree.
+    fn collect_type_query_nodes(&self, idx: NodeIndex, out: &mut Vec<NodeIndex>) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            out.push(idx);
+            return; // Don't recurse into TYPE_QUERY children
+        }
+
+        // Handle type literal: scan members
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            if let Some(data) = self.ctx.arena.get_type_literal(node) {
+                for &member_idx in &data.members.nodes {
+                    self.collect_type_query_nodes(member_idx, out);
+                }
+            }
+            return;
+        }
+
+        // Handle index signature: scan type annotation
+        if node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+            if let Some(data) = self.ctx.arena.get_index_signature(node)
+                && data.type_annotation.is_some()
+            {
+                self.collect_type_query_nodes(data.type_annotation, out);
+            }
+            return;
+        }
+
+        // Handle property signature/declaration: scan type annotation
+        if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+        {
+            if let Some(data) = self.ctx.arena.get_property_decl(node)
+                && data.type_annotation.is_some()
+            {
+                self.collect_type_query_nodes(data.type_annotation, out);
+            }
+            return;
+        }
+
+        // Handle union/intersection types: scan constituent types
+        if node.kind == syntax_kind_ext::UNION_TYPE
+            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            if let Some(data) = self.ctx.arena.get_composite_type(node) {
+                for &member_idx in &data.types.nodes {
+                    self.collect_type_query_nodes(member_idx, out);
+                }
+            }
+            return;
+        }
+
+        // Handle array type: scan element type
+        if node.kind == syntax_kind_ext::ARRAY_TYPE
+            && let Some(data) = self.ctx.arena.get_array_type(node)
+        {
+            self.collect_type_query_nodes(data.element_type, out);
+        }
     }
 }

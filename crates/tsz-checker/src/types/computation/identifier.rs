@@ -1027,12 +1027,11 @@ impl<'a> CheckerState<'a> {
                 );
                 return TypeId::ERROR;
             }
-            // In CommonJS module mode, these globals are implicitly available
-            if self.ctx.compiler_options.module.is_commonjs() {
-                if name == "exports" {
-                    return self.current_file_commonjs_namespace_type();
-                }
-                return TypeId::ANY;
+            // In CommonJS module mode, `exports` is implicitly available as the module namespace.
+            // Other node globals (module, require, __dirname, __filename) still need @types/node;
+            // tsc emits TS2591 for them even in CommonJS mode when type definitions are absent.
+            if self.ctx.compiler_options.module.is_commonjs() && name == "exports" {
+                return self.current_file_commonjs_namespace_type();
             }
             // JS files implicitly have CommonJS globals (require, exports, module, etc.)
             // tsc never emits TS2580 for JS files — they're treated as CommonJS by default

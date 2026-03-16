@@ -1248,7 +1248,35 @@ impl ModuleResolver {
         if needs_extension_check {
             // Try to resolve to determine what extension to suggest (TS2835)
             if let Some(resolved) = try_resolve_candidate(&candidate) {
-                // Resolution succeeded implicitly - this is an error in ESM mode
+                // Resolution succeeded implicitly - this is an error in ESM mode.
+                // Only suggest an extension (TS2835) when the resolution was via direct file
+                // extension addition (e.g., ./foo → ./foo.ts). If the resolution went through
+                // a directory index (e.g., ./pkg → ./pkg/index.d.ts), don't suggest an
+                // extension (TS2834) because adding .js to the specifier won't work.
+                let resolved_via_index = {
+                    let resolved_path = Path::new(&resolved);
+                    // Check if resolved through directory index (e.g., ./pkg → ./pkg/index.d.ts)
+                    // file_stem() returns "index.d" for "index.d.ts", so also check file_name starts with "index."
+                    resolved_path.file_name().is_some_and(|name| {
+                        let name = name.to_string_lossy();
+                        name == "index.ts"
+                            || name == "index.tsx"
+                            || name == "index.js"
+                            || name == "index.jsx"
+                            || name == "index.d.ts"
+                            || name == "index.d.mts"
+                            || name == "index.d.cts"
+                    })
+                };
+                if resolved_via_index {
+                    // Directory index resolution - no suggestion (TS2834)
+                    return Err(ResolutionFailure::ImportPathNeedsExtension {
+                        specifier: specifier.to_string(),
+                        suggested_extension: String::new(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
+                }
                 let resolved_ext = ModuleExtension::from_path(&resolved);
                 // Suggest the .js extension (TypeScript convention: import .js, compile from .ts)
                 let suggested_ext = match resolved_ext {

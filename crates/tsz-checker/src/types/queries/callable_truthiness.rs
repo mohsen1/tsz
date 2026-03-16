@@ -45,6 +45,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Gated on `strictNullChecks`: without it, all types implicitly include
     /// `null | undefined`, so nothing is semantically "always truthy."
+    #[allow(dead_code)]
     pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex) {
         if !self.ctx.compiler_options.strict_null_checks {
             return;

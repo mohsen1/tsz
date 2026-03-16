@@ -209,6 +209,9 @@ impl<'a> CheckerState<'a> {
         let mut force_module_not_found = false;
         let mut force_module_not_found_as_2307 = false;
         let mut inside_namespace = false;
+        // When in a wrong context (inside block/function), skip module resolution
+        // errors. The grammar error (TS1232) is the primary diagnostic.
+        let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
         if require_module_specifier.is_some()
             && self.ctx.arena.get(import.module_specifier).is_some()
         {
@@ -248,14 +251,15 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1147: Import declarations in a namespace cannot reference a module.
-            // tsc emits TS1147 AND TS2307 together for `import x = require("...")`
-            // inside namespaces — don't return early, let TS2307 fire too.
+            // tsc emits ONLY TS1147 for `import x = require("...")` inside namespaces,
+            // without the additional TS2307 module-not-found error. Return early.
             if inside_namespace {
                 self.error_at_node(
                     import.module_specifier,
                     diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                 );
+                return;
             }
 
             // TS2439: Ambient modules cannot use relative imports
@@ -585,10 +589,14 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .map_or(0, |s| s.flags);
-                        // If the resolved symbol is NOT a namespace, it shadows the module.
-                        // Check if there's an actual namespace with this name that has
-                        // value semantics (is instantiated).
-                        if (sym_flags & tsz_binder::symbol_flags::NAMESPACE) == 0 {
+                        // If the resolved symbol is NOT a namespace and HAS value meaning,
+                        // it shadows the module. Check if there's an actual namespace with
+                        // this name that has value semantics (is instantiated).
+                        // Pure type declarations (interfaces, type aliases) don't shadow
+                        // namespaces for import-equals resolution in tsc.
+                        if (sym_flags & tsz_binder::symbol_flags::NAMESPACE) == 0
+                            && (sym_flags & tsz_binder::symbol_flags::VALUE) != 0
+                        {
                             let ns_has_value = self
                                 .check_namespace_has_value_in_outer_scope(&first_name, stmt_idx);
                             if ns_has_value {
@@ -638,12 +646,16 @@ impl<'a> CheckerState<'a> {
         // Exception: `import type X = require(...)` is a type-only form and never emits TS1202.
         // Exception: When the import is inside a namespace, TS1147 takes priority and
         // tsc does not also emit TS1202.
+        // Exception: When the import is inside a function body,
+        // TS1232 takes priority and tsc does not emit TS1202.
         let is_ambient_context = self.is_ambient_declaration(stmt_idx);
+        let in_function = self.is_inside_function_body(stmt_idx);
         if self.ctx.compiler_options.module.is_es_module()
             && self.ctx.compiler_options.module != ModuleKind::Preserve
             && !is_ambient_context
             && !import.is_type_only
             && !inside_namespace
+            && !in_function
         {
             self.error_at_node(
                 stmt_idx,
@@ -680,6 +692,12 @@ impl<'a> CheckerState<'a> {
         let Some(module_name) = require_module_specifier.as_deref() else {
             return;
         };
+
+        // When the import-equals is inside a function body (not just a block),
+        // skip module resolution errors. tsc doesn't resolve require() inside functions.
+        if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+            return;
+        }
 
         if force_module_not_found {
             let (message, code) = self.module_not_found_diagnostic(module_name);
@@ -805,9 +823,28 @@ impl<'a> CheckerState<'a> {
                     return; // Don't check for TS2694 if left doesn't exist
                 }
 
-                // If left is resolved, check if right member exists (TS2694)
-                // Use the existing report_type_query_missing_member which handles this correctly
-                self.report_type_query_missing_member(module_ref);
+                // Only check for missing member (TS2694) if the resolved left symbol
+                // actually has namespace/module meaning. If the resolved symbol is a
+                // pure type (e.g. a local interface shadowing an outer namespace),
+                // the import-equals should resolve to the outer namespace instead,
+                // so don't emit a misleading TS2694.
+                let left_is_namespace = if let Some(sym_id) = left_resolved {
+                    let lib_binders = self.get_lib_binders();
+                    self.ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .map_or(false, |s| {
+                            (s.flags & tsz_binder::symbol_flags::NAMESPACE) != 0
+                        })
+                } else {
+                    false
+                };
+
+                if left_is_namespace {
+                    // If left is resolved, check if right member exists (TS2694)
+                    // Use the existing report_type_query_missing_member which handles this correctly
+                    self.report_type_query_missing_member(module_ref);
+                }
 
                 // TS1380/TS1379: Check if any symbol in the qualified name chain
                 // references a type-only import or export.

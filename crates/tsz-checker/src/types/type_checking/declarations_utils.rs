@@ -51,17 +51,28 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Collect interface type parameter names and constraint type ids.
+    /// Collect type parameter names and constraint type ids from an interface
+    /// or class declaration.
     fn interface_type_parameter_profile(
         &mut self,
         decl_idx: NodeIndex,
     ) -> Option<Vec<(String, Option<TypeId>)>> {
         let node = self.ctx.arena.get(decl_idx)?;
-        let interface = self.ctx.arena.get_interface(node)?;
-        let list = match interface.type_parameters.as_ref() {
-            Some(list) => list,
-            None => return Some(Vec::new()),
+        // Handle both interface and class declarations
+        let list = if let Some(interface) = self.ctx.arena.get_interface(node) {
+            match interface.type_parameters.as_ref() {
+                Some(list) => list.clone(),
+                None => return Some(Vec::new()),
+            }
+        } else if let Some(class) = self.ctx.arena.get_class(node) {
+            match class.type_parameters.as_ref() {
+                Some(list) => list.clone(),
+                None => return Some(Vec::new()),
+            }
+        } else {
+            return None;
         };
+        let list = &list;
 
         let mut profile = Vec::with_capacity(list.nodes.len());
         for &param_idx in &list.nodes {

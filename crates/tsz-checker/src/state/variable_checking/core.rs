@@ -1002,6 +1002,25 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        // TS7031: For destructuring patterns without type annotation or initializer,
+        // emit TS7031 for each leaf binding element under noImplicitAny.
+        // This must be done before the symbol check since destructuring declarations
+        // don't get a symbol assigned to the declaration node itself.
+        if self.ctx.no_implicit_any()
+            && !self.ctx.has_real_syntax_errors
+            && var_decl.type_annotation.is_none()
+            && var_decl.initializer.is_none()
+        {
+            let is_destructuring_pattern =
+                self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                });
+            if is_destructuring_pattern {
+                self.emit_implicit_any_for_var_destructuring(var_decl.name);
+            }
+        }
+
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
             self.push_symbol_dependency(sym_id, true);
             // Snapshot whether symbol was already cached BEFORE compute_final_type.
@@ -1119,21 +1138,24 @@ impl<'a> CheckerState<'a> {
             // even if the symbol type was previously cached as a concrete type.
             // `compute_final_type` may return a cached type for for-in/for-of loops,
             // so we must override that for bare redeclarations.
-            let raw_declared_type =
-                if var_decl.type_annotation.is_none() && var_decl.initializer.is_none() {
-                    TypeId::ANY
-                } else if var_decl.type_annotation.is_none() && var_decl.initializer.is_some() {
-                    // For TS2403, when the initializer is a bare enum identifier (e.g., `var x = E`),
-                    // tsc treats the declared type as `typeof E` (the enum object type), not `E`.
-                    // This ensures `var x = E; var x = E.a;` correctly triggers TS2403 because
-                    // `typeof E` and `E` are not type-identical.
-                    self.initializer_ts2403_type(var_decl.initializer, final_type)
-                } else {
-                    // When the type annotation is `typeof EnumSymbol`, resolve to the enum
-                    // object type. This matches tsc where `typeof E` is the enum object
-                    // shape, ensuring `var e = E; var e: typeof E;` is compatible.
-                    self.annotation_ts2403_type(var_decl.type_annotation, final_type)
-                };
+            let is_in_for_in_or_for_of = self.is_var_decl_in_for_in_or_for_of(decl_idx);
+            let raw_declared_type = if var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && !is_in_for_in_or_for_of
+            {
+                TypeId::ANY
+            } else if var_decl.type_annotation.is_none() && var_decl.initializer.is_some() {
+                // For TS2403, when the initializer is a bare enum identifier (e.g., `var x = E`),
+                // tsc treats the declared type as `typeof E` (the enum object type), not `E`.
+                // This ensures `var x = E; var x = E.a;` correctly triggers TS2403 because
+                // `typeof E` and `E` are not type-identical.
+                self.initializer_ts2403_type(var_decl.initializer, final_type)
+            } else {
+                // When the type annotation is `typeof EnumSymbol`, resolve to the enum
+                // object type. This matches tsc where `typeof E` is the enum object
+                // shape, ensuring `var e = E; var e: typeof E;` is compatible.
+                self.annotation_ts2403_type(var_decl.type_annotation, final_type)
+            };
             // Variables without an initializer/annotation can still get a contextual type in some
             // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
             // type may already be cached from the contextual typing logic; prefer that over the
@@ -1342,8 +1364,11 @@ impl<'a> CheckerState<'a> {
             // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
             // Bare declarations (`var x;` with no annotation/initializer) don't establish a
             // type constraint and never trigger TS2403 in tsc.
-            let is_bare_declaration =
-                var_decl.type_annotation.is_none() && var_decl.initializer.is_none();
+            // Exception: for-in/for-of loop variables (`for (var x in obj)`) ARE typed
+            // (string for for-in, element type for for-of) even without explicit annotation.
+            let is_bare_declaration = var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && !is_in_for_in_or_for_of;
             let is_block_scoped = if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
                 && let Some(parent) = self.ctx.arena.get(ext.parent)
                 && parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
@@ -1420,7 +1445,6 @@ impl<'a> CheckerState<'a> {
                             false
                         };
                     if !is_mergeable_declaration
-                        && !is_bare_declaration
                         && !is_non_exported_ns_var
                         && !has_ns_export_visibility_mismatch
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
@@ -1527,10 +1551,15 @@ impl<'a> CheckerState<'a> {
                                 break;
                             }
                             if other_decl.is_some() {
-                                if self.is_bare_var_declaration_node(other_decl) {
-                                    continue;
-                                }
-                                let other_type = self.get_type_of_node(other_decl);
+                                let other_is_bare = self.is_bare_var_declaration_node(other_decl)
+                                    && !self.is_var_decl_in_for_in_or_for_of(other_decl);
+                                let other_type = if other_is_bare {
+                                    // Bare `var x;` declarations have type `any`.
+                                    // tsc treats them as establishing type `any` for TS2403.
+                                    TypeId::ANY
+                                } else {
+                                    self.get_type_of_node(other_decl)
+                                };
                                 // Check if other declaration is mergeable (namespace, etc.)
                                 let other_node_kind =
                                     self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
@@ -1586,12 +1615,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         raw_declared_type
                     };
-                    // Don't store bare declarations (`var x;`) unless a prior type
-                    // was found from lib or earlier local declarations — bare vars
-                    // don't establish a type constraint for TS2403.
-                    if !is_bare_declaration || prior_type_found.is_some() {
-                        self.ctx.var_decl_types.insert(sym_id, type_to_store);
-                    }
+                    // Always store the declared type, including bare declarations
+                    // (`var x;` → type `any`). In tsc, bare declarations establish
+                    // type `any` for TS2403 purposes, so subsequent declarations
+                    // with different types correctly trigger TS2403.
+                    self.ctx.var_decl_types.insert(sym_id, type_to_store);
                 }
             }
         } else {
@@ -1632,20 +1660,26 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS2488: Check array destructuring for iterability before assigning types
+            let mut effective_pattern_type = pattern_type;
             if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                self.check_destructuring_iterability(
+                let is_iterable = self.check_destructuring_iterability(
                     var_decl.name,
                     pattern_type,
                     var_decl.initializer,
                 );
+                // When not iterable (e.g., `unknown` in catch clause), use ERROR
+                // to suppress cascading diagnostics in nested patterns.
+                if !is_iterable {
+                    effective_pattern_type = TypeId::ERROR;
+                }
                 self.report_empty_array_destructuring_bounds(var_decl.name, var_decl.initializer);
             }
 
             // Ensure binding element identifiers get the correct inferred types.
-            self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
+            self.assign_binding_pattern_symbol_types(var_decl.name, effective_pattern_type);
             self.check_binding_pattern(
                 var_decl.name,
-                pattern_type,
+                effective_pattern_type,
                 var_decl.type_annotation.is_some(),
             );
 

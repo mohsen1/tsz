@@ -352,7 +352,10 @@ impl<'a> Printer<'a> {
             // or check if all meaningful members serialize to the same type.
             k if k == syntax_kind_ext::UNION_TYPE => {
                 if let Some(composite) = self.arena.get_composite_type(type_node) {
-                    // Filter out null, undefined, void, never from union members
+                    let strict_null_checks = self.ctx.options.strict_null_checks;
+                    // Filter out null, undefined, void, never from union members.
+                    // When strictNullChecks is true, null and undefined are meaningful
+                    // types in unions and should NOT be stripped (only never is stripped).
                     let meaningful: Vec<NodeIndex> = composite
                         .types
                         .nodes
@@ -363,16 +366,21 @@ impl<'a> Printer<'a> {
                                 return false;
                             };
                             let sk = |s: SyntaxKind| s as u16;
-                            // Skip null/undefined/void/never keyword types
-                            if member.kind == sk(SyntaxKind::NullKeyword)
-                                || member.kind == sk(SyntaxKind::UndefinedKeyword)
-                                || member.kind == sk(SyntaxKind::VoidKeyword)
-                                || member.kind == sk(SyntaxKind::NeverKeyword)
+                            // Always skip never
+                            if member.kind == sk(SyntaxKind::NeverKeyword) {
+                                return false;
+                            }
+                            // Skip null/undefined/void only when strictNullChecks is false
+                            if !strict_null_checks
+                                && (member.kind == sk(SyntaxKind::NullKeyword)
+                                    || member.kind == sk(SyntaxKind::UndefinedKeyword)
+                                    || member.kind == sk(SyntaxKind::VoidKeyword))
                             {
                                 return false;
                             }
-                            // Skip literal type null
-                            if member.kind == syntax_kind_ext::LITERAL_TYPE
+                            // Skip literal type null (only when strictNullChecks is false)
+                            if !strict_null_checks
+                                && member.kind == syntax_kind_ext::LITERAL_TYPE
                                 && let Some(lit) = self.arena.get_literal_type(member)
                                 && let Some(lit_node) = self.arena.get(lit.literal)
                                 && lit_node.kind == sk(SyntaxKind::NullKeyword)
@@ -380,15 +388,16 @@ impl<'a> Printer<'a> {
                                 return false;
                             }
                             // Skip TypeReference to null/undefined/void/never
-                            // (parser emits these as TypeReference with keyword name)
                             if member.kind == syntax_kind_ext::TYPE_REFERENCE
                                 && let Some(type_ref) = self.arena.get_type_ref(member)
                             {
                                 let ref_name = self.get_identifier_text_idx(type_ref.type_name);
-                                if matches!(
-                                    ref_name.as_str(),
-                                    "null" | "undefined" | "void" | "never"
-                                ) {
+                                if ref_name == "never" {
+                                    return false;
+                                }
+                                if !strict_null_checks
+                                    && matches!(ref_name.as_str(), "null" | "undefined" | "void")
+                                {
                                     return false;
                                 }
                             }
@@ -532,11 +541,29 @@ impl<'a> Printer<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
+                // Skip `this` parameter — it's TypeScript-only and erased in JS emit.
+                if let Some(name_node) = self.arena.get(param.name) {
+                    let sk = |s: SyntaxKind| s as u16;
+                    if name_node.kind == sk(SyntaxKind::ThisKeyword) {
+                        continue;
+                    }
+                    if name_node.kind == sk(SyntaxKind::Identifier)
+                        && let Some(id) = self.arena.get_identifier(name_node)
+                        && id.escaped_text == "this"
+                    {
+                        continue;
+                    }
+                }
                 if !first {
                     self.write(", ");
                 }
                 first = false;
-                if param.type_annotation.is_some() {
+                if param.dot_dot_dot_token {
+                    // Rest parameter: serialize the element type if it's an array type,
+                    // otherwise emit Object (matching tsc behavior).
+                    let serialized = self.serialize_rest_param_element_type(param.type_annotation);
+                    self.write(&serialized);
+                } else if param.type_annotation.is_some() {
                     let serialized = self.serialize_type_for_metadata(param.type_annotation);
                     self.write(&serialized);
                 } else {
@@ -544,6 +571,19 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// For a rest parameter, serialize the element type of the array type annotation.
+    /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
+    /// If the type is not an array type or has no annotation, returns "Object".
+    fn serialize_rest_param_element_type(&self, type_annotation: NodeIndex) -> String {
+        if let Some(type_node) = self.arena.get(type_annotation)
+            && type_node.kind == syntax_kind_ext::ARRAY_TYPE
+            && let Some(arr) = self.arena.get_array_type(type_node)
+        {
+            return self.serialize_type_for_metadata(arr.element_type);
+        }
+        "Object".to_string()
     }
 
     /// Emit metadata for constructor paramtypes (used with class-level decorators).
@@ -577,7 +617,18 @@ impl<'a> Printer<'a> {
         emit_commonjs_pre_assignment: bool,
         class_members: &[NodeIndex],
     ) {
-        if class_name.is_empty() || decorators.is_empty() {
+        if class_name.is_empty() {
+            return;
+        }
+
+        // Check for constructor parameter decorators up front
+        let ctor_param_decorators_early = self.collect_constructor_param_decorators(class_members);
+
+        // Early return only if there's truly nothing to emit at the class level.
+        // Class-level __decorate is needed when:
+        // 1. There are class-level decorators, OR
+        // 2. There are constructor parameter decorators
+        if decorators.is_empty() && ctor_param_decorators_early.is_empty() {
             return;
         }
 
@@ -1007,6 +1058,15 @@ impl<'a> Printer<'a> {
                     false
                 };
 
+            // Check if the class needs a class-level __decorate call due to constructor
+            // parameter decorators (even without class-level decorators).
+            let has_ctor_param_decorators = !self
+                .collect_constructor_param_decorators(&class.members.nodes)
+                .is_empty();
+            // A class-level __decorate is needed for class decorators OR ctor param decorators
+            let needs_class_decorate =
+                !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
+
             // Detect if the class body has self-references that need aliasing.
             // When a decorated class references itself (e.g. `static x() { return C.y; }`),
             // tsc emits: `var C_1; let C = C_1 = class C { static x() { return C_1.y; } };`
@@ -1030,9 +1090,10 @@ impl<'a> Printer<'a> {
                 None
             };
 
-            // When there are class-level decorators, emit as `let Name = class { ... };`
+            // When there are class-level decorators or ctor param decorators,
+            // emit as `let Name = class { ... };`
             // When only member decorators, emit as normal `class Name { ... }`
-            if !legacy_class_decorators.is_empty() {
+            if needs_class_decorate {
                 if let Some(ref alias) = alias_name {
                     // Emit: `let Name = Name_1 = class Name { ... };`
                     // First capture the class body, then replace self-refs
@@ -1895,13 +1956,20 @@ impl<'a> Printer<'a> {
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
                     {
-                        static_field_inits.push((
-                            name_emit,
-                            prop.initializer,
-                            member_node.pos,
-                            Vec::new(), // leading_comments filled during class body emission
-                            Vec::new(), // trailing_comments filled during class body emission
-                        ));
+                        // At ES2022+, static fields are emitted as `static { this.f = v; }`
+                        // blocks inside the class body, not as external assignments.
+                        if !needs_static_block_lowering {
+                            // Don't collect for external emission; these will be
+                            // emitted inline as static initialization blocks.
+                        } else {
+                            static_field_inits.push((
+                                name_emit,
+                                prop.initializer,
+                                member_node.pos,
+                                Vec::new(), // leading_comments filled during class body emission
+                                Vec::new(), // trailing_comments filled during class body emission
+                            ));
+                        }
                     } else {
                         // Non-static field inits use String names for `this.name = val`,
                         // `this["name"] = val`, or `this[0] = val`. Bracket names use
@@ -2164,6 +2232,10 @@ impl<'a> Printer<'a> {
                 && !(self.arena.get(prop.name).is_some_and(|n| {
                     n.kind == SyntaxKind::PrivateIdentifier as u16
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
+                // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
+                // blocks, not deferred to external assignments.
+                && !(self.arena.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                    && !needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved

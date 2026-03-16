@@ -526,6 +526,29 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::INTERFACE)
                 != 0
         {
+            // If the left symbol is a pure interface (no namespace meaning) and a
+            // local declaration shadows an outer namespace, the member might exist
+            // on the outer namespace. In tsc, import-equals and qualified type names
+            // prefer namespace meaning, so a local interface shouldn't cause TS2694
+            // when an outer namespace with the same name has the member.
+            let is_pure_interface = (symbol.flags & symbol_flags::INTERFACE) != 0
+                && (symbol.flags & symbol_flags::MODULE) == 0
+                && (symbol.flags & symbol_flags::CLASS) == 0
+                && (symbol.flags & symbol_flags::REGULAR_ENUM) == 0
+                && (symbol.flags & symbol_flags::CONST_ENUM) == 0;
+            if is_pure_interface {
+                // Check if an outer namespace with this name has the member
+                let left_name_str = self
+                    .entity_name_text(qn.left)
+                    .unwrap_or_else(|| symbol.escaped_name.clone());
+                if self.outer_namespace_has_member(qn.left, &left_name_str, &right_name) {
+                    // The member exists on an outer namespace — don't emit TS2694.
+                    // Return ERROR type since we can't resolve through the local interface,
+                    // but avoid the misleading diagnostic.
+                    return TypeId::ERROR;
+                }
+            }
+
             let namespace_name = self
                 .get_symbol_qualified_name(left_sym_id)
                 .or_else(|| self.entity_name_text(qn.left))
@@ -623,6 +646,45 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Check if an outer scope has a namespace with the given name that exports the member.
+    /// Used to avoid false TS2694 when a local interface shadows an outer namespace.
+    fn outer_namespace_has_member(
+        &self,
+        node: NodeIndex,
+        namespace_name: &str,
+        member_name: &str,
+    ) -> bool {
+        let lib_binders = self.get_lib_binders();
+        // Walk up scopes from the enclosing scope's parent
+        let Some(scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, node) else {
+            return false;
+        };
+        let Some(current_scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+            return false;
+        };
+        let mut walk_id = current_scope.parent;
+
+        while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
+            if let Some(sym_id) = scope.table.get(namespace_name) {
+                if let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    if (sym.flags & symbol_flags::NAMESPACE) != 0 {
+                        // Found a namespace - check if it has the member
+                        if let Some(exports) = sym.exports.as_ref() {
+                            if exports.has(member_name) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            if walk_id == scope.parent {
+                break;
+            }
+            walk_id = scope.parent;
+        }
+        false
     }
 
     /// Build a fully qualified name from a symbol by walking its parent chain.
@@ -1514,6 +1576,9 @@ impl<'a> CheckerState<'a> {
                     &[&name],
                 );
             }
+
+            // Check for reserved type names (TS2368)
+            self.check_type_name_is_reserved(data.name, &name);
 
             let atom = self.ctx.types.intern_string(&name);
 

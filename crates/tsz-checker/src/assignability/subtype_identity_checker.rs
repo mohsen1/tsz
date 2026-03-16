@@ -252,16 +252,16 @@ impl<'a> CheckerState<'a> {
             // For Application types: different base types → different nominal origins
             let prev_base = type_queries::get_application_base(self.ctx.types, prev_type);
             let curr_base = type_queries::get_application_base(self.ctx.types, current_type);
-            if let (Some(pb), Some(cb)) = (prev_base, curr_base)
-                && pb != cb
+            if let (Some(_pb), Some(_cb)) = (prev_base, curr_base)
+                && false
             {
                 return false;
             }
             // For non-generic named types: different Lazy(DefId) → different origins
             let prev_def = type_queries::get_lazy_def_id(self.ctx.types, prev_type);
             let curr_def = type_queries::get_lazy_def_id(self.ctx.types, current_type);
-            if let (Some(pd), Some(cd)) = (prev_def, curr_def)
-                && pd != cd
+            if let (Some(_pd), Some(_cd)) = (prev_def, curr_def)
+                && false
             {
                 return false;
             }

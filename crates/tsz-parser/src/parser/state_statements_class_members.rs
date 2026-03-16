@@ -552,12 +552,20 @@ impl ParserState {
             type_params
         });
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         let saved_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS;
-        let parameters = self.parse_parameter_list();
-        self.context_flags = saved_flags;
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        let parameters = if has_open_paren {
+            let params = self.parse_parameter_list();
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            params
+        } else {
+            // When `(` is missing (e.g., `constructor\n}`), skip parameter parsing
+            // and `)` expectation to avoid cascading `')' expected` errors.
+            self.context_flags = saved_flags;
+            NodeList::new()
+        };
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)
         if self.parse_optional(SyntaxKind::ColonToken) {
@@ -632,10 +640,20 @@ impl ParserState {
             self.make_node_list(vec![])
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'get' accessor cannot have parameters.",
-                diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
-            );
+            // Report error at the accessor name, matching tsc behavior
+            if let Some(name_node) = self.arena.get(name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A 'get' accessor cannot have parameters.",
+                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "A 'get' accessor cannot have parameters.",
+                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                );
+            }
             self.parse_parameter_list()
         };
         self.parse_expected(SyntaxKind::CloseParenToken);
@@ -792,10 +810,20 @@ impl ParserState {
         // emitter can preserve it.
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'set' accessor cannot have a return type annotation.",
-                diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-            );
+            // Report error at the accessor name, matching tsc behavior
+            if let Some(name_node) = self.arena.get(name) {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A 'set' accessor cannot have a return type annotation.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "A 'set' accessor cannot have a return type annotation.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                );
+            }
             self.parse_type()
         } else {
             NodeIndex::NONE
@@ -1601,7 +1629,8 @@ impl ParserState {
                 && self.class_member_initializer_continues_on_next_line()
                 && !(is_computed_name
                     && type_annotation == NodeIndex::NONE
-                    && self.is_token(SyntaxKind::OpenBracketToken))
+                    && self.is_token(SyntaxKind::OpenBracketToken)
+                    && !self.look_ahead_is_invalid_class_member_method_like_continuation())
             {
                 self.report_missing_semicolon_after_class_field_initializer();
                 self.recover_invalid_class_member_initializer_continuation();

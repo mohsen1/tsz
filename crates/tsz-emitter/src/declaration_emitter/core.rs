@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_common::comments::CommentRange;
+use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::node::{MethodDeclData, Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -145,6 +146,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_skipped_reexports: FxHashSet<NodeIndex>,
     /// Synthetic JSDoc type aliases already emitted for the current file.
     pub(super) emitted_jsdoc_type_aliases: FxHashSet<String>,
+    /// Diagnostics collected during declaration emit (e.g., TS2883 for non-portable types).
+    pub(super) diagnostics: Vec<Diagnostic>,
 }
 
 pub(super) struct SourceMapState {
@@ -230,6 +233,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -297,6 +301,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_grouped_reexports: FxHashMap::default(),
             js_skipped_reexports: FxHashSet::default(),
             emitted_jsdoc_type_aliases: FxHashSet::default(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -361,6 +366,11 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub const fn set_strip_internal(&mut self, strip: bool) {
         self.strip_internal = strip;
+    }
+
+    /// Take diagnostics collected during declaration emit (e.g., TS2883).
+    pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        std::mem::take(&mut self.diagnostics)
     }
 
     /// Build a map of imported `SymbolId` -> `ModuleSpecifier` for elision.

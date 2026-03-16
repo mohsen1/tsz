@@ -604,6 +604,14 @@ impl<'a> Printer<'a> {
         name
     }
 
+    /// Like `make_unique_name` but records the temp for CJS destructuring export hoisting.
+    /// These temps are emitted as `var _a;` BEFORE the `__esModule` marker.
+    pub(super) fn make_unique_name_cjs_destructuring(&mut self) -> String {
+        let name = self.make_unique_name();
+        self.cjs_destructuring_export_temps.push(name.clone());
+        name
+    }
+
     /// Like `make_unique_name` but also records the temp for hoisting before references.
     /// Used for assignment target values in logical-assignment lowering.
     pub(super) fn make_unique_name_hoisted_value(&mut self) -> String {
@@ -950,6 +958,16 @@ impl<'a> Printer<'a> {
                             }
                         }
                     }
+                    // With --verbatimModuleSyntax, non-type-only imports are
+                    // always preserved (no heuristic elision).
+                    if self.ctx.options.verbatim_module_syntax {
+                        return false;
+                    }
+                    // JS files (.js/.jsx/.cjs/.mjs) do not undergo import elision;
+                    // tsc's checker treats all imports in JS files as value imports.
+                    if self.source_is_js_file {
+                        return false;
+                    }
                     // In both CJS and ESM modes, erase imports whose bindings
                     // have no value-level usage in the rest of the file.
                     // In --noCheck mode this uses a text-based heuristic.
@@ -979,6 +997,11 @@ impl<'a> Printer<'a> {
                         return true;
                     }
                     if self.ctx.is_commonjs() && is_external {
+                        // With --verbatimModuleSyntax or in JS files, non-type-only
+                        // import-equals declarations are always preserved.
+                        if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+                            return false;
+                        }
                         // When JSX mode requires a factory (React by default),
                         // don't erase imports matching the factory name — JSX
                         // elements implicitly reference it but the text-based

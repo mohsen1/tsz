@@ -287,6 +287,15 @@ pub trait StatementCheckCallbacks {
     /// Check a with statement and emit TS2410.
     /// The 'with' statement is not supported in TypeScript.
     fn check_with_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Check if a module element (import/export/namespace/ambient module) is in
+    /// a valid context (SourceFile or ModuleBlock). If not, emit the appropriate
+    /// grammar error (TS1231-1235, TS1258). Returns true if the context is invalid
+    /// (error was emitted), false if the context is valid.
+    fn check_grammar_module_element_context(&mut self, stmt_idx: NodeIndex) -> bool {
+        let _ = stmt_idx;
+        false
+    }
 }
 
 /// Statement type checker that dispatches to specialized handlers.
@@ -779,6 +788,7 @@ impl StatementChecker {
                 state.check_interface_declaration(stmt_idx);
             }
             syntax_kind_ext::EXPORT_DECLARATION => {
+                state.check_grammar_module_element_context(stmt_idx);
                 state.check_export_declaration(stmt_idx);
             }
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
@@ -826,12 +836,15 @@ impl StatementChecker {
                 state.check_continue_statement(stmt_idx);
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
+                state.check_grammar_module_element_context(stmt_idx);
                 state.check_import_declaration(stmt_idx);
             }
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                state.check_grammar_module_element_context(stmt_idx);
                 state.check_import_equals_declaration(stmt_idx);
             }
             syntax_kind_ext::MODULE_DECLARATION => {
+                // Note: TS1234/TS1235 are checked inside check_module_declaration
                 state.check_module_declaration(stmt_idx);
             }
             syntax_kind_ext::CLASS_DECLARATION | syntax_kind_ext::CLASS_EXPRESSION => {
@@ -873,6 +886,12 @@ impl StatementChecker {
                     // Pop label from stack
                     state.leave_labeled_statement();
                 }
+            }
+            syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                state.check_grammar_module_element_context(stmt_idx);
+                // Export assignments are mainly checked in check_export_assignment
+                // at the source file level
+                state.get_type_of_node(stmt_idx);
             }
             _ => {
                 // Catch-all for other statement types

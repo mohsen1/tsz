@@ -497,6 +497,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Check if type parameter name is a reserved type name (TS2368)
+        if let Some(name_node) = self.ctx.arena.get(param.name) {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                self.check_type_name_is_reserved(param.name, &ident.escaped_text);
+            }
+        }
+
         // Check constraint type (missing names + structural validation like TS2313)
         if param.constraint.is_some() {
             self.check_type_for_missing_names(param.constraint);
@@ -506,6 +513,33 @@ impl<'a> CheckerState<'a> {
         // Check default type
         if param.default.is_some() {
             self.check_type_for_missing_names(param.default);
+        }
+    }
+
+    /// Check if a type name is a reserved type keyword (TS2368).
+    ///
+    /// The predefined type keywords (string, number, boolean, etc.) are reserved
+    /// and cannot be used as names of user-defined types.
+    pub(crate) fn check_type_name_is_reserved(&mut self, name_idx: NodeIndex, name: &str) {
+        if matches!(
+            name,
+            "any"
+                | "unknown"
+                | "never"
+                | "number"
+                | "bigint"
+                | "boolean"
+                | "string"
+                | "symbol"
+                | "void"
+                | "object"
+                | "undefined"
+        ) {
+            self.error_at_node_msg(
+                name_idx,
+                crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_NAME_CANNOT_BE,
+                &[name],
+            );
         }
     }
 
@@ -1846,6 +1880,11 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 // Force tuple element validation (TS1257, TS1265, TS1266)
                 // which lives inside get_type_from_tuple_type.
+                let _ = self.get_type_from_type_node(node_idx);
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                // Force function/constructor type validation (TS2371 for parameter
+                // initializers in type position, including binding element defaults).
                 let _ = self.get_type_from_type_node(node_idx);
             }
             _ => {}
