@@ -1338,7 +1338,7 @@ impl<'a> Printer<'a> {
                 // the trailing-comma detection use case.
                 let mut scan = line_start;
                 let mut found_line_comment = None;
-                while scan + 1 <= pos {
+                while scan < pos {
                     let b = bytes[scan];
                     if b == b'/' && scan + 1 < bytes.len() && bytes[scan + 1] == b'/' {
                         found_line_comment = Some(scan);
@@ -1360,8 +1360,8 @@ impl<'a> Printer<'a> {
                     scan += 1;
                 }
 
-                if let Some(comment_start) = found_line_comment {
-                    if pos >= comment_start {
+                if let Some(comment_start) = found_line_comment
+                    && pos >= comment_start {
                         // `pos` is inside (or at) the line comment; rewind
                         // to just before the `//`.
                         pos = comment_start;
@@ -1369,7 +1369,6 @@ impl<'a> Printer<'a> {
                         // pos and re-check.
                         continue;
                     }
-                }
             }
 
             return bytes[pos] == b',';
