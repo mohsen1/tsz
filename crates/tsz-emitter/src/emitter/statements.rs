@@ -2111,7 +2111,7 @@ impl<'a> Printer<'a> {
 
     /// Get info about a for-of initializer that has `using`: returns the variable
     /// name and whether it's `await using`.
-    /// For `for (using d of items)`, the initializer is a VariableDeclarationList
+    /// For `for (using d of items)`, the initializer is a `VariableDeclarationList`
     /// with one declaration `d` (no initializer in for-of context).
     pub(in crate::emitter) fn for_of_initializer_using_info(
         &self,
