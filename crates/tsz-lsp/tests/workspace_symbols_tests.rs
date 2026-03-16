@@ -1474,3 +1474,33 @@ fn test_find_symbols_location_info_preserved() {
     assert_eq!(results[0].location.range.start.line, 42);
     assert_eq!(results[0].location.range.start.character, 5);
 }
+
+#[test]
+fn test_find_symbols_underscore_prefix() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("_private", make_location("a.ts", 0, 0, 8));
+    index.add_definition("__dunder", make_location("b.ts", 0, 0, 8));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("_private");
+    assert!(!results.is_empty());
+}
+
+#[test]
+fn test_find_symbols_with_kind_class_animal() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind("Animal", make_location("a.ts", 0, 0, 6), SymbolKind::Class);
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Animal");
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn test_find_symbols_same_name_different_files() {
+    let mut index = SymbolIndex::new();
+    index.add_definition("Config", make_location("a.ts", 0, 0, 6));
+    index.add_definition("Config", make_location("b.ts", 0, 0, 6));
+    index.add_definition("Config", make_location("c.ts", 0, 0, 6));
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("Config");
+    assert_eq!(results.len(), 3);
+}
