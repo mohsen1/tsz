@@ -1,7 +1,6 @@
 //! Type query (typeof) resolution — `get_type_from_type_query` and helpers.
 
 use crate::state::CheckerState;
-use crate::symbol_resolver::TypeSymbolResolution;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
