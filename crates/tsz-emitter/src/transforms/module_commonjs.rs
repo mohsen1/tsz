@@ -467,9 +467,7 @@ pub fn collect_export_names_with_options(
                                         if spec.is_type_only {
                                             continue;
                                         }
-                                        if let Some(name) =
-                                            specifier_name_text(arena, spec.name)
-                                        {
+                                        if let Some(name) = specifier_name_text(arena, spec.name) {
                                             exports.push(name);
                                         }
                                     }

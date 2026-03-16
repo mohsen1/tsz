@@ -621,8 +621,7 @@ impl<'a> Printer<'a> {
                             if let Some(spec_node) = self.arena.get(spec_idx)
                                 && let Some(spec) = self.arena.get_specifier(spec_node)
                             {
-                                let Some(export_name) =
-                                    self.get_specifier_name_text(spec.name)
+                                let Some(export_name) = self.get_specifier_name_text(spec.name)
                                 else {
                                     continue;
                                 };

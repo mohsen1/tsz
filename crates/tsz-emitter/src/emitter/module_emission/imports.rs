@@ -572,13 +572,12 @@ impl<'a> Printer<'a> {
             } else {
                 (local_ident.escaped_text.to_string(), false)
             };
-            let substitution = if is_string_import
-                || !super::super::is_valid_identifier_name(&import_name)
-            {
-                format!("{module_var}[\"{import_name}\"]")
-            } else {
-                format!("{module_var}.{import_name}")
-            };
+            let substitution =
+                if is_string_import || !super::super::is_valid_identifier_name(&import_name) {
+                    format!("{module_var}[\"{import_name}\"]")
+                } else {
+                    format!("{module_var}.{import_name}")
+                };
             self.commonjs_named_import_substitutions
                 .insert(local_ident.escaped_text.to_string(), substitution);
         }
