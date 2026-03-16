@@ -241,6 +241,19 @@ fn serialize_param_types(arena: &NodeArena, parameters: &NodeList) -> String {
         if let Some(param_node) = arena.get(param_idx)
             && let Some(param) = arena.get_parameter(param_node)
         {
+            // Skip `this` parameter — it's TypeScript-only and erased in JS emit.
+            if let Some(name_node) = arena.get(param.name) {
+                if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                    continue;
+                }
+                if name_node.kind == SyntaxKind::Identifier as u16
+                    && arena
+                        .get_identifier(name_node)
+                        .is_some_and(|id| id.escaped_text == "this")
+                {
+                    continue;
+                }
+            }
             if param.type_annotation.is_some() {
                 parts.push(serialize_type_for_metadata(arena, param.type_annotation));
             } else {
@@ -614,6 +627,60 @@ impl<'a> ES5ClassTransformer<'a> {
             .collect()
     }
 
+    /// Collect parameter decorators from a method's parameter list for ES5 emit.
+    /// Returns Vec of (runtime_param_index, decorator_node_indices).
+    /// Skips the `this` parameter since it's erased in JS emit.
+    fn collect_param_decorators_es5(&self, parameters: &NodeList) -> Vec<(usize, Vec<NodeIndex>)> {
+        let mut result = Vec::new();
+        let mut runtime_index = 0usize;
+        for &param_idx in &parameters.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Skip `this` parameter
+            if let Some(name_node) = self.arena.get(param.name) {
+                if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                    continue;
+                }
+                if name_node.kind == SyntaxKind::Identifier as u16
+                    && self
+                        .arena
+                        .get_identifier(name_node)
+                        .is_some_and(|id| id.escaped_text == "this")
+                {
+                    continue;
+                }
+            }
+
+            let decorators = self.collect_decorators_from_modifiers(&param.modifiers);
+            if !decorators.is_empty() {
+                result.push((runtime_index, decorators));
+            }
+            runtime_index += 1;
+        }
+        result
+    }
+
+    /// Render a single decorator expression as a string using the IR printer.
+    fn render_single_decorator_expression(&self, dec_idx: NodeIndex) -> Option<String> {
+        use crate::transforms::ir_printer::IRPrinter;
+        let dec_node = self.arena.get(dec_idx)?;
+        let dec = self.arena.get_decorator(dec_node)?;
+        let ir_expr = self.convert_expression(dec.expression);
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(source_text) = self.source_text {
+            printer.set_source_text(source_text);
+        }
+        if let Some(ref transforms) = self.transforms {
+            printer.set_transforms(transforms.clone());
+        }
+        Some(printer.emit(&ir_expr).to_string())
+    }
+
     /// Render decorator expressions as strings using the IR printer.
     fn render_decorator_expressions(&self, decorators: &[NodeIndex]) -> Vec<String> {
         use crate::transforms::ir_printer::IRPrinter;
@@ -710,7 +777,17 @@ impl<'a> ES5ClassTransformer<'a> {
             };
 
             let decorators = self.collect_decorators_from_modifiers(modifiers);
-            if decorators.is_empty() {
+
+            // Collect parameter decorators for methods/constructors.
+            // Each entry is (runtime_param_index, decorator_nodes).
+            let param_decorators: Vec<(usize, Vec<NodeIndex>)> = match &meta {
+                MemberMeta::Method { parameters, .. } => {
+                    self.collect_param_decorators_es5(parameters)
+                }
+                _ => Vec::new(),
+            };
+
+            if decorators.is_empty() && param_decorators.is_empty() {
                 continue;
             }
 
@@ -732,7 +809,16 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
 
-            let dec_strs = self.render_decorator_expressions(&decorators);
+            let mut dec_strs = self.render_decorator_expressions(&decorators);
+            // Add __param entries for parameter decorators
+            for (param_idx, param_decs) in &param_decorators {
+                for dec_idx in param_decs {
+                    let dec_str = self.render_single_decorator_expression(*dec_idx);
+                    if let Some(dec_str) = dec_str {
+                        dec_strs.push(format!("__param({param_idx}, {dec_str})"));
+                    }
+                }
+            }
             let target_str = if is_static {
                 self.class_name.clone()
             } else {
@@ -1761,7 +1847,18 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
+            // Skip `this` parameter — it's TypeScript-only and erased in JS emit.
+            // The parser may store it as an Identifier with text "this" or as a ThisKeyword token.
+            if let Some(name_node) = self.arena.get(param.name) {
+                if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                    continue;
+                }
+            }
+
             let mut name = get_identifier_text(self.arena, param.name).unwrap_or_default();
+            if name == "this" {
+                continue;
+            }
             // For destructured parameters (binding patterns), generate a temp name
             if name.is_empty() {
                 let name_node = self.arena.get(param.name);
@@ -1817,6 +1914,15 @@ impl<'a> ES5ClassTransformer<'a> {
             };
 
             let name_node = self.arena.get(param.name);
+
+            // Skip `this` parameter — it was also skipped in extract_parameters,
+            // so don't increment ir_idx.
+            let is_this = name_node.is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
+                || get_identifier_text(self.arena, param.name).as_deref() == Some("this");
+            if is_this {
+                continue;
+            }
+
             let is_binding_pattern = name_node.is_some_and(|n| {
                 n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
