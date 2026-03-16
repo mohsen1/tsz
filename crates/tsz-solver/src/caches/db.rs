@@ -138,6 +138,14 @@ pub trait TypeDatabase {
         None
     }
 
+    /// Atomically read and clear the "union too complex" flag.
+    ///
+    /// Returns `true` if a union construction was aborted due to complexity
+    /// since the last call. The checker uses this to emit TS2590.
+    fn take_union_too_complex(&self) -> bool {
+        false
+    }
+
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
@@ -424,6 +432,10 @@ impl TypeDatabase for TypeInterner {
 
     fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
         Self::get_display_properties(self, type_id)
+    }
+
+    fn take_union_too_complex(&self) -> bool {
+        Self::take_union_too_complex(self)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {

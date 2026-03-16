@@ -324,6 +324,11 @@ pub struct TypeInterner {
     /// Key: `ObjectShapeId` of the widened (interned) shape.
     /// Value: Vec of `PropertyInfo` with original (non-widened) `type_ids`.
     display_properties: DashMap<TypeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
+    /// Flag set when union normalization detects that a union type is too complex
+    /// to represent (would require > 1M pairwise subtype comparisons during
+    /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
+    /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
+    union_too_complex: AtomicBool,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -366,6 +371,7 @@ impl TypeInterner {
             alloc_order: DashMap::with_hasher(FxBuildHasher),
             no_unchecked_indexed_access: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
+            union_too_complex: AtomicBool::new(false),
         }
     }
 
@@ -378,6 +384,16 @@ impl TypeInterner {
     pub fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access
             .store(enabled, Ordering::Relaxed);
+    }
+
+    /// Atomically read and clear the "union too complex" flag.
+    ///
+    /// Returns `true` if a union construction was aborted due to complexity
+    /// since the last call to this method. The flag is cleared after reading.
+    /// The checker uses this to emit TS2590.
+    #[inline]
+    pub fn take_union_too_complex(&self) -> bool {
+        self.union_too_complex.swap(false, Ordering::Relaxed)
     }
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
@@ -1371,6 +1387,29 @@ impl TypeInterner {
         }
         if flat.len() == 1 {
             return flat[0];
+        }
+
+        // TS2590: Check if the union would be too complex for subtype reduction.
+        // tsc's removeSubtypes iterates backward over the union members, counting
+        // pairwise subtype comparisons. After 100K checks, it estimates remaining
+        // work: if estimated total > 1M, it aborts with TS2590. This effectively
+        // caps unions at ~1000 unique object types. We check this upfront since
+        // the O(n²) cost is predictable from member count.
+        if flat.len() > 1000 {
+            let has_object_types = flat.iter().any(|&id| {
+                matches!(
+                    self.lookup(id),
+                    Some(
+                        TypeData::Object(_)
+                            | TypeData::ObjectWithIndex(_)
+                            | TypeData::Intersection(_)
+                    )
+                )
+            });
+            if has_object_types {
+                self.union_too_complex.store(true, Ordering::Relaxed);
+                return TypeId::ERROR;
+            }
         }
 
         // Reduce union using subtype checks (e.g., {a: 1} | {a: 1 | number} => {a: 1 | number})
