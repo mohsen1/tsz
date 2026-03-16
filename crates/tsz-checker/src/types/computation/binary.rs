@@ -616,7 +616,15 @@ impl<'a> CheckerState<'a> {
                 // Don't report TS2869 for them — the right operand IS reachable.
                 let left_is_top_type =
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
-                if cause.is_none() && !left_is_top_type {
+                // tsc only emits TS2869 for syntactically non-nullish expressions
+                // (literals, parenthesized literals), not for variable references
+                // whose type happens to be non-nullable.
+                let left_is_identifier = self
+                    .ctx
+                    .arena
+                    .get(left_idx)
+                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16);
+                if cause.is_none() && !left_is_top_type && !left_is_identifier {
                     // TS2869: Left operand is never nullish, right is unreachable.
                     // This replaces the generic TS2872 ("always truthy") for ?? context.
                     use crate::diagnostics::diagnostic_codes;
