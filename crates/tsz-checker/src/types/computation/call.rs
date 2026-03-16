@@ -251,11 +251,20 @@ impl<'a> CheckerState<'a> {
             if let Some(ref type_args_list) = call.type_arguments
                 && !type_args_list.nodes.is_empty()
             {
-                self.error_at_node(
-                    idx,
-                    crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
-                    crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
-                );
+                // When the callee is a property access on `this` inside a class and
+                // the property doesn't exist, tsc emits TS2339 (property not found)
+                // instead of TS2347 (untyped function calls). The ANY here came from
+                // this_type_stack suppression; check if the property genuinely doesn't
+                // exist and emit TS2339 in that case.
+                let suppressed_ts2347 =
+                    self.try_emit_ts2339_for_missing_this_property(call.expression);
+                if !suppressed_ts2347 {
+                    self.error_at_node(
+                        idx,
+                        crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                        crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                    );
+                }
             }
             // Still need to check arguments for definite assignment (TS2454) and other errors.
             // Return Some(ANY) for every index so spread arguments are accepted (avoids
@@ -2342,6 +2351,66 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = Some(original_ctx);
         }
         self.handle_call_result(result, call_context)
+    }
+}
+
+impl<'a> CheckerState<'a> {
+    /// When a call expression like `this.foo<T>()` has callee type ANY
+    /// (from this_type_stack suppression of a non-existent property), TSC emits
+    /// TS2339 (property not found) rather than TS2347 (untyped function calls).
+    /// This checks if the callee is a `this.x` property access in a class where
+    /// the property doesn't exist, and if so emits TS2339.
+    /// Returns true if TS2339 was emitted (caller should skip TS2347).
+    fn try_emit_ts2339_for_missing_this_property(&mut self, callee_expr: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Must be inside a class context
+        if self.ctx.enclosing_class.is_none() {
+            return false;
+        }
+
+        // Callee must be a property access expression
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+
+        // The expression must be `this`
+        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return false;
+        }
+
+        // Get the property name
+        let Some(property_name) = self.get_property_name(access.name_or_argument) else {
+            return false;
+        };
+
+        // Get the class instance type and check if the property exists
+        let this_type = self.get_type_of_node(access.expression);
+        if this_type == TypeId::ANY || this_type == TypeId::ERROR {
+            return false;
+        }
+
+        // Check if property exists on the type
+        let result = self.resolve_property_access_with_env(this_type, &property_name);
+        if matches!(
+            result,
+            crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. }
+        ) {
+            // Property genuinely doesn't exist - emit TS2339
+            self.error_property_not_exist_at(&property_name, this_type, access.name_or_argument);
+            return true;
+        }
+
+        false
     }
 }
 
