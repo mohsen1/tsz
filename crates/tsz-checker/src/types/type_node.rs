@@ -1277,7 +1277,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get type from a type query node (typeof X).
     ///
     /// Creates a `TypeQuery` type that captures the type of a value.
-    fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_lowering::TypeLowering;
 
         let Some(node) = self.ctx.arena.get(idx) else {

@@ -165,17 +165,15 @@ impl<'a> CheckerState<'a> {
                         self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                         && (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                        && let Some(&decl_idx) = symbol.declarations.first()
+                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
+                        && let Some(alias_type_node) = self.ctx.arena.get(type_alias.type_node)
                     {
-                        if let Some(&decl_idx) = symbol.declarations.first()
-                            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                            && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
-                            && let Some(alias_type_node) = self.ctx.arena.get(type_alias.type_node)
-                        {
-                            return self.is_valid_index_sig_param_type(
-                                alias_type_node.kind,
-                                type_alias.type_node,
-                            );
-                        }
+                        return self.is_valid_index_sig_param_type(
+                            alias_type_node.kind,
+                            type_alias.type_node,
+                        );
                     }
 
                     false
@@ -213,11 +211,10 @@ impl<'a> CheckerState<'a> {
                 && let Some(composite) = self.ctx.arena.get_composite_type(type_node)
             {
                 for &member_idx in &composite.types.nodes {
-                    if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                        if self.is_type_param_or_literal_in_index_sig(member_node.kind, member_idx)
-                        {
-                            return true;
-                        }
+                    if let Some(member_node) = self.ctx.arena.get(member_idx)
+                        && self.is_type_param_or_literal_in_index_sig(member_node.kind, member_idx)
+                    {
+                        return true;
                     }
                 }
             }
@@ -238,18 +235,16 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 // If it's a type alias, check the underlying type
-                if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0 {
-                    if let Some(&decl_idx) = symbol.declarations.first()
-                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                        && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
-                    {
-                        if let Some(alias_type_node) = self.ctx.arena.get(type_alias.type_node) {
-                            return self.is_type_param_or_literal_in_index_sig(
-                                alias_type_node.kind,
-                                type_alias.type_node,
-                            );
-                        }
-                    }
+                if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                    && let Some(&decl_idx) = symbol.declarations.first()
+                    && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && let Some(type_alias) = self.ctx.arena.get_type_alias(decl_node)
+                    && let Some(alias_type_node) = self.ctx.arena.get(type_alias.type_node)
+                {
+                    return self.is_type_param_or_literal_in_index_sig(
+                        alias_type_node.kind,
+                        type_alias.type_node,
+                    );
                 }
             }
             // Fallback: check the checker's type parameter stack (covers type params

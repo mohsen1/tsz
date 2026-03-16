@@ -1,4 +1,4 @@
-//! Isolated declarations checking (TS9xxx series).
+//! Isolated declarations checking (`TS9xxx` series).
 //!
 //! When `--isolatedDeclarations` is enabled, exported declarations must have
 //! explicit type annotations so that declaration emit can work without
@@ -37,27 +37,24 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
                         let export_clause = export_decl.export_clause;
-                        if export_clause.is_some() {
-                            if let Some(exported_node) = self.ctx.arena.get(export_clause) {
-                                match exported_node.kind {
-                                    syntax_kind_ext::VARIABLE_STATEMENT => {
-                                        self.check_isolated_decl_variable_statement(export_clause);
-                                    }
-                                    syntax_kind_ext::FUNCTION_DECLARATION => {
-                                        self.check_isolated_decl_function(export_clause);
-                                        self.check_isolated_decl_expando_function(
-                                            export_clause,
-                                            stmts,
-                                        );
-                                    }
-                                    syntax_kind_ext::CLASS_DECLARATION => {
-                                        self.check_isolated_decl_class(export_clause);
-                                    }
-                                    syntax_kind_ext::ENUM_DECLARATION => {
-                                        self.check_isolated_decl_enum(export_clause);
-                                    }
-                                    _ => {}
+                        if export_clause.is_some()
+                            && let Some(exported_node) = self.ctx.arena.get(export_clause)
+                        {
+                            match exported_node.kind {
+                                syntax_kind_ext::VARIABLE_STATEMENT => {
+                                    self.check_isolated_decl_variable_statement(export_clause);
                                 }
+                                syntax_kind_ext::FUNCTION_DECLARATION => {
+                                    self.check_isolated_decl_function(export_clause);
+                                    self.check_isolated_decl_expando_function(export_clause, stmts);
+                                }
+                                syntax_kind_ext::CLASS_DECLARATION => {
+                                    self.check_isolated_decl_class(export_clause);
+                                }
+                                syntax_kind_ext::ENUM_DECLARATION => {
+                                    self.check_isolated_decl_enum(export_clause);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -166,43 +163,41 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // TS9018: arrays with spread elements (even const)
-                    if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-                        if self.array_has_spread(decl.initializer) {
-                            self.error_at_node(
+                    if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        && self.array_has_spread(decl.initializer)
+                    {
+                        self.error_at_node(
                                 decl.initializer,
                                 diagnostic_messages::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                 diagnostic_codes::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
                             );
-                            continue;
-                        }
+                        continue;
                     }
 
                     // TS9018: `[...] as const` with spread elements
-                    if init_node.kind == syntax_kind_ext::AS_EXPRESSION {
-                        if let Some(assertion) = self.ctx.arena.get_type_assertion(init_node) {
-                            if let Some(inner_node) = self.ctx.arena.get(assertion.expression) {
-                                if inner_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                    && self.array_has_spread(assertion.expression)
-                                {
-                                    self.error_at_node(
+                    if init_node.kind == syntax_kind_ext::AS_EXPRESSION
+                        && let Some(assertion) = self.ctx.arena.get_type_assertion(init_node)
+                        && let Some(inner_node) = self.ctx.arena.get(assertion.expression)
+                        && inner_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        && self.array_has_spread(assertion.expression)
+                    {
+                        self.error_at_node(
                                         assertion.expression,
                                         diagnostic_messages::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                         diagnostic_codes::ARRAYS_WITH_SPREAD_ELEMENTS_CANT_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                     );
-                                    continue;
-                                }
-                            }
-                        }
+                        continue;
                     }
                 }
 
                 // Template expressions infer as `string` for non-const variables.
                 // For `const`, the type is a template literal type which can't be
                 // inferred in isolated declarations mode.
-                if let Some(init_node2) = self.ctx.arena.get(decl.initializer) {
-                    if !is_const && init_node2.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
-                        continue;
-                    }
+                if let Some(init_node2) = self.ctx.arena.get(decl.initializer)
+                    && !is_const
+                    && init_node2.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+                {
+                    continue;
                 }
 
                 // tsc emits TS9010 only when the initializer type genuinely
@@ -374,16 +369,13 @@ impl<'a> CheckerState<'a> {
             }
 
             // Also recurse into function expression defaults to check their inner params
-            if param.initializer.is_some() {
-                if let Some(init_node) = self.ctx.arena.get(param.initializer) {
-                    if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    {
-                        if let Some(func) = self.ctx.arena.get_function(init_node) {
-                            self.check_isolated_decl_function_params(&func.parameters);
-                        }
-                    }
-                }
+            if param.initializer.is_some()
+                && let Some(init_node) = self.ctx.arena.get(param.initializer)
+                && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                && let Some(func) = self.ctx.arena.get_function(init_node)
+            {
+                self.check_isolated_decl_function_params(&func.parameters);
             }
         }
     }
@@ -526,20 +518,19 @@ impl<'a> CheckerState<'a> {
         };
 
         // Skip private methods
-        if let Some(ref modifiers) = method.modifiers {
-            if self
+        if let Some(ref modifiers) = method.modifiers
+            && self
                 .ctx
                 .arena
                 .has_modifier_ref(Some(modifiers), SyntaxKind::PrivateKeyword)
-            {
-                return;
-            }
+        {
+            return;
         }
         // Skip #private methods
-        if let Some(name_node) = self.ctx.arena.get(method.name) {
-            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                return;
-            }
+        if let Some(name_node) = self.ctx.arena.get(method.name)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            return;
         }
 
         if method.type_annotation.is_none()
@@ -566,20 +557,19 @@ impl<'a> CheckerState<'a> {
         };
 
         // Skip private properties
-        if let Some(ref modifiers) = prop.modifiers {
-            if self
+        if let Some(ref modifiers) = prop.modifiers
+            && self
                 .ctx
                 .arena
                 .has_modifier_ref(Some(modifiers), SyntaxKind::PrivateKeyword)
-            {
-                return;
-            }
+        {
+            return;
         }
         // Skip #private properties
-        if let Some(name_node) = self.ctx.arena.get(prop.name) {
-            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                return;
-            }
+        if let Some(name_node) = self.ctx.arena.get(prop.name)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            return;
         }
 
         if prop.type_annotation.is_some() || prop.initializer.is_none() {
@@ -595,38 +585,35 @@ impl<'a> CheckerState<'a> {
 
         // Template expressions are inferrable as `string` for non-readonly properties.
         // For `readonly` properties, the type is a template literal type (not inferrable).
-        if let Some(init_node) = self.ctx.arena.get(prop.initializer) {
-            if is_readonly && init_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
-                self.error_at_node(
+        if let Some(init_node) = self.ctx.arena.get(prop.initializer)
+            && is_readonly
+            && init_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+        {
+            self.error_at_node(
                     prop.name,
                     diagnostic_messages::PROPERTY_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
                     diagnostic_codes::PROPERTY_MUST_HAVE_AN_EXPLICIT_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
                 );
-                return;
-            }
+            return;
         }
 
         // Check if initializer is inferrable (literals, as const, etc.)
         if self.is_isolated_decl_property_inferrable(prop.initializer) {
             // Even if the property value is inferrable, check function expressions
             // for missing return types
-            if let Some(init_node) = self.ctx.arena.get(prop.initializer) {
-                if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                {
-                    if let Some(func) = self.ctx.arena.get_function(init_node) {
-                        if func.type_annotation.is_none()
-                            && func.body.is_some()
-                            && self.body_has_value_return(func.body)
-                        {
-                            self.error_at_node(
-                                prop.name,
-                                diagnostic_messages::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
-                                diagnostic_codes::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
-                            );
-                        }
-                    }
-                }
+            if let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                && let Some(func) = self.ctx.arena.get_function(init_node)
+                && func.type_annotation.is_none()
+                && func.body.is_some()
+                && self.body_has_value_return(func.body)
+            {
+                self.error_at_node(
+                    prop.name,
+                    diagnostic_messages::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                    diagnostic_codes::FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS,
+                );
             }
             return;
         }
@@ -795,15 +782,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 // Check if the initializer is a function expression or arrow function
-                if let Some(init_node) = self.ctx.arena.get(decl.initializer) {
-                    if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    {
-                        // Get the variable name and scan for property assignments
-                        if let Some(name_ident) = self.ctx.arena.get_identifier_at(decl.name) {
-                            let var_name = name_ident.escaped_text.clone();
-                            self.scan_expando_assignments(&var_name, stmts);
-                        }
+                if let Some(init_node) = self.ctx.arena.get(decl.initializer)
+                    && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                {
+                    // Get the variable name and scan for property assignments
+                    if let Some(name_ident) = self.ctx.arena.get_identifier_at(decl.name) {
+                        let var_name = name_ident.escaped_text.clone();
+                        self.scan_expando_assignments(&var_name, stmts);
                     }
                 }
             }
@@ -836,38 +822,31 @@ impl<'a> CheckerState<'a> {
             if bin.operator_token != SyntaxKind::EqualsToken as u16 {
                 continue;
             }
-            if let Some(left_node) = self.ctx.arena.get(bin.left) {
-                if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    if let Some(access) = self.ctx.arena.get_access_expr(left_node) {
-                        if let Some(target_node) = self.ctx.arena.get(access.expression) {
-                            if target_node.kind == SyntaxKind::Identifier as u16 {
-                                if let Some(ident) =
-                                    self.ctx.arena.get_identifier_at(access.expression)
-                                {
-                                    if ident.escaped_text == func_name {
-                                        // Get property name for deduplication
-                                        let prop_name = self
-                                            .ctx
-                                            .arena
-                                            .get_identifier_at(access.name_or_argument)
-                                            .map(|id| id.escaped_text.clone());
-                                        if let Some(name) = prop_name {
-                                            if !seen_props.insert(name) {
-                                                // Already reported for this property
-                                                continue;
-                                            }
-                                        }
-                                        self.error_at_node(
+            if let Some(left_node) = self.ctx.arena.get(bin.left)
+                && left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(left_node)
+                && let Some(target_node) = self.ctx.arena.get(access.expression)
+                && target_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier_at(access.expression)
+                && ident.escaped_text == func_name
+            {
+                // Get property name for deduplication
+                let prop_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|id| id.escaped_text.clone());
+                if let Some(name) = prop_name
+                    && !seen_props.insert(name)
+                {
+                    // Already reported for this property
+                    continue;
+                }
+                self.error_at_node(
                                             stmt_idx,
                                             diagnostic_messages::ASSIGNING_PROPERTIES_TO_FUNCTIONS_WITHOUT_DECLARING_THEM_IS_NOT_SUPPORTED_WITH_I,
                                             diagnostic_codes::ASSIGNING_PROPERTIES_TO_FUNCTIONS_WITHOUT_DECLARING_THEM_IS_NOT_SUPPORTED_WITH_I,
                                         );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -968,14 +947,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         for &member_idx in &enum_data.members.nodes {
-            if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                if let Some(member) = self.ctx.arena.get_enum_member(member_node) {
-                    if let Some(member_ident) = self.ctx.arena.get_identifier_at(member.name) {
-                        if member_ident.escaped_text == *name {
-                            return true;
-                        }
-                    }
-                }
+            if let Some(member_node) = self.ctx.arena.get(member_idx)
+                && let Some(member) = self.ctx.arena.get_enum_member(member_node)
+                && let Some(member_ident) = self.ctx.arena.get_identifier_at(member.name)
+                && member_ident.escaped_text == *name
+            {
+                return true;
             }
         }
         false
@@ -1015,18 +992,19 @@ impl<'a> CheckerState<'a> {
             match node.kind {
                 // `export default <expr>` via ExportAssignment (export = expr)
                 syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                    if let Some(export_assign) = self.ctx.arena.get_export_assignment(node) {
-                        if !export_assign.is_export_equals {
-                            self.check_isolated_decl_default_export_expr(export_assign.expression);
-                        }
+                    if let Some(export_assign) = self.ctx.arena.get_export_assignment(node)
+                        && !export_assign.is_export_equals
+                    {
+                        self.check_isolated_decl_default_export_expr(export_assign.expression);
                     }
                 }
                 // `export default <expr>` via ExportDeclaration
                 syntax_kind_ext::EXPORT_DECLARATION => {
-                    if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
-                        if export_decl.is_default_export && export_decl.export_clause.is_some() {
-                            self.check_isolated_decl_default_export_expr(export_decl.export_clause);
-                        }
+                    if let Some(export_decl) = self.ctx.arena.get_export_decl(node)
+                        && export_decl.is_default_export
+                        && export_decl.export_clause.is_some()
+                    {
+                        self.check_isolated_decl_default_export_expr(export_decl.export_clause);
                     }
                 }
                 _ => {}
@@ -1085,18 +1063,17 @@ impl<'a> CheckerState<'a> {
                 // Check if the expression inside is an array/object literal with `as const`
                 if let Some(assertion) = self.ctx.arena.get_type_assertion(expr_node) {
                     // Check if this is `<something> as const` where something has non-inferrable expressions
-                    if let Some(inner_node) = self.ctx.arena.get(assertion.expression) {
-                        if inner_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                            || inner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        {
-                            // Check if inner elements contain non-inferrable expressions
-                            if self.has_non_inferrable_elements(assertion.expression) {
-                                self.error_at_node(
+                    if let Some(inner_node) = self.ctx.arena.get(assertion.expression)
+                        && (inner_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            || inner_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                    {
+                        // Check if inner elements contain non-inferrable expressions
+                        if self.has_non_inferrable_elements(assertion.expression) {
+                            self.error_at_node(
                                     assertion.expression,
                                     diagnostic_messages::EXPRESSION_TYPE_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                     diagnostic_codes::EXPRESSION_TYPE_CANT_BE_INFERRED_WITH_ISOLATEDDECLARATIONS,
                                 );
-                            }
                         }
                     }
                 }
@@ -1121,22 +1098,20 @@ impl<'a> CheckerState<'a> {
         if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             if let Some(obj) = self.ctx.arena.get_literal_expr(expr_node) {
                 for &elem_idx in &obj.elements.nodes {
-                    if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
-                        if let Some(prop_assign) = self.ctx.arena.get_property_assignment(elem_node)
-                        {
-                            if !self.is_isolated_decl_simple_value(prop_assign.initializer) {
-                                return true;
-                            }
-                        }
+                    if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                        && let Some(prop_assign) = self.ctx.arena.get_property_assignment(elem_node)
+                        && !self.is_isolated_decl_simple_value(prop_assign.initializer)
+                    {
+                        return true;
                     }
                 }
             }
-        } else if expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            if let Some(arr) = self.ctx.arena.get_literal_expr(expr_node) {
-                for &elem_idx in &arr.elements.nodes {
-                    if !self.is_isolated_decl_simple_value(elem_idx) {
-                        return true;
-                    }
+        } else if expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && let Some(arr) = self.ctx.arena.get_literal_expr(expr_node)
+        {
+            for &elem_idx in &arr.elements.nodes {
+                if !self.is_isolated_decl_simple_value(elem_idx) {
+                    return true;
                 }
             }
         }
@@ -1188,12 +1163,12 @@ impl<'a> CheckerState<'a> {
         };
         // Check declaration list for CONST flag via node flags
         for &list_idx in &var_data.declarations.nodes {
-            if let Some(list_node) = self.ctx.arena.get(list_idx) {
-                if list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                    use tsz_parser::parser::flags::node_flags;
-                    if list_node.flags as u32 & node_flags::CONST != 0 {
-                        return true;
-                    }
+            if let Some(list_node) = self.ctx.arena.get(list_idx)
+                && list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                use tsz_parser::parser::flags::node_flags;
+                if list_node.flags as u32 & node_flags::CONST != 0 {
+                    return true;
                 }
             }
         }
@@ -1218,10 +1193,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         for &elem_idx in &arr.elements.nodes {
-            if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
-                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                    return true;
-                }
+            if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+            {
+                return true;
             }
         }
         false
@@ -1247,12 +1222,11 @@ impl<'a> CheckerState<'a> {
                     // Unwrap EXPORT_DECLARATION to check the inner variable statement
                     if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
                         let export_clause = export_decl.export_clause;
-                        if export_clause.is_some() {
-                            if let Some(inner_node) = self.ctx.arena.get(export_clause) {
-                                if inner_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                                    self.scan_for_class_expressions(export_clause);
-                                }
-                            }
+                        if export_clause.is_some()
+                            && let Some(inner_node) = self.ctx.arena.get(export_clause)
+                            && inner_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        {
+                            self.scan_for_class_expressions(export_clause);
                         }
                     }
                 }
