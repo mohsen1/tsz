@@ -58,6 +58,52 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             checker.check_function_declaration(func_idx);
         }
 
+        // TS8030: In JS files, if a function declaration has a @type tag that doesn't
+        // resolve to a callable type, emit "The type of a function declaration must match
+        // the function's signature." TSC points the error at the type expression inside
+        // the @type tag (e.g. at "MyClass" in `@type {MyClass}`).
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION && self.is_js_file() {
+            if let Some(jsdoc) = self.get_jsdoc_for_function(func_idx)
+                && let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc)
+                // Skip types that are syntactically callable (arrow functions, function types,
+                // or generic signatures) — these may not resolve but are valid function types.
+                && !Self::is_syntactically_callable_type(&type_expr)
+                && self
+                    .jsdoc_callable_type_annotation_for_function(func_idx)
+                    .is_none()
+            {
+                // Find the position of the type expression inside the JSDoc comment
+                if let Some(sf) = self.source_file_data_for_node(func_idx) {
+                    let source_text = sf.text.to_string();
+                    let comments = sf.comments.clone();
+                    if let Some((_, jsdoc_start)) =
+                        self.try_jsdoc_with_ancestor_walk_and_pos(func_idx, &comments, &source_text)
+                    {
+                        // Find "@type {expr}" in the source text starting from jsdoc_start
+                        let jsdoc_text = &source_text[jsdoc_start as usize..];
+                        if let Some(type_tag_off) = jsdoc_text.find("@type") {
+                            let after_type = &jsdoc_text[type_tag_off + 5..];
+                            if let Some(brace_off) = after_type.find('{') {
+                                let expr_start =
+                                    jsdoc_start + type_tag_off as u32 + 5 + brace_off as u32 + 1;
+                                // Find matching close brace
+                                let after_brace = &after_type[brace_off + 1..];
+                                let expr_end = after_brace
+                                    .find('}')
+                                    .map_or(type_expr.len() as u32, |i| i as u32);
+                                self.ctx.error(
+                                    expr_start,
+                                    expr_end,
+                                    "The type of a function declaration must match the function's signature.".to_string(),
+                                    8030,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Re-get node after DeclarationChecker borrows ctx
         let Some(node) = self.ctx.arena.get(func_idx) else {
             return;
