@@ -8,6 +8,68 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    /// Emit a module specifier, rewriting extension if rewriteRelativeImportExtensions is set.
+    pub(in crate::emitter) fn emit_module_specifier(&mut self, specifier_idx: NodeIndex) {
+        if !self.ctx.options.rewrite_relative_import_extensions {
+            self.emit(specifier_idx);
+            return;
+        }
+        let Some(node) = self.arena.get(specifier_idx) else {
+            self.emit(specifier_idx);
+            return;
+        };
+        let text = if let Some(lit) = self.arena.get_literal(node) {
+            &lit.text
+        } else {
+            self.emit(specifier_idx);
+            return;
+        };
+        if !text.starts_with("./") && !text.starts_with("../") {
+            self.emit(specifier_idx);
+            return;
+        }
+        let rewritten = self.rewrite_module_spec(text);
+        if rewritten == *text {
+            self.emit(specifier_idx);
+            return;
+        }
+        let quote = if let Some(src) = self.source_text_for_map() {
+            let pos = node.pos as usize;
+            if pos < src.len() && src.as_bytes()[pos] == b'\'' {
+                '\''
+            } else {
+                '"'
+            }
+        } else {
+            '"'
+        };
+        self.write(&format!("{quote}{rewritten}{quote}"));
+    }
+
+    /// Rewrite a module specifier if rewriteRelativeImportExtensions is enabled.
+    /// Transforms .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs for relative paths.
+    pub(in crate::emitter) fn rewrite_module_spec(&self, spec: &str) -> String {
+        if !self.ctx.options.rewrite_relative_import_extensions {
+            return spec.to_string();
+        }
+        if !spec.starts_with("./") && !spec.starts_with("../") {
+            return spec.to_string();
+        }
+        if let Some(base) = spec.strip_suffix(".ts") {
+            return format!("{base}.js");
+        }
+        if let Some(base) = spec.strip_suffix(".tsx") {
+            return format!("{base}.jsx");
+        }
+        if let Some(base) = spec.strip_suffix(".mts") {
+            return format!("{base}.mjs");
+        }
+        if let Some(base) = spec.strip_suffix(".cts") {
+            return format!("{base}.cjs");
+        }
+        spec.to_string()
+    }
+
     pub(in crate::emitter) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         let base = crate::transforms::emit_utils::sanitize_module_name(module_spec);
         let next = self
@@ -391,7 +453,7 @@ impl<'a> Printer<'a> {
             self.write("export *");
             if export.module_specifier.is_some() {
                 self.write(" from ");
-                self.emit(export.module_specifier);
+                self.emit_module_specifier(export.module_specifier);
             }
             self.emit_import_attributes(export.attributes);
             self.write_semicolon();
@@ -443,7 +505,7 @@ impl<'a> Printer<'a> {
             }
             if export.module_specifier.is_some() {
                 self.write(" from ");
-                self.emit(export.module_specifier);
+                self.emit_module_specifier(export.module_specifier);
             }
             self.emit_import_attributes(export.attributes);
             self.write_semicolon();
@@ -458,7 +520,7 @@ impl<'a> Printer<'a> {
             self.write("export * as ");
             self.emit(export.export_clause);
             self.write(" from ");
-            self.emit(export.module_specifier);
+            self.emit_module_specifier(export.module_specifier);
             self.emit_import_attributes(export.attributes);
             self.write_semicolon();
             return;
@@ -530,7 +592,7 @@ impl<'a> Printer<'a> {
 
         if export.module_specifier.is_some() {
             self.write(" from ");
-            self.emit(export.module_specifier);
+            self.emit_module_specifier(export.module_specifier);
         }
 
         // Don't add semicolon for declarations - they handle their own
