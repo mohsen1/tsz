@@ -6142,7 +6142,9 @@ c2 = c;
         "Expected TS2720 for implementing class A, got: {relevant_diagnostics:#?}"
     );
     assert!(
-        relevant_diagnostics.iter().any(|(code, _)| *code == 2322 || *code == 2741),
+        relevant_diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2322 || *code == 2741),
         "Expected TS2322 or TS2741 for class assignment, got: {relevant_diagnostics:#?}"
     );
 }
