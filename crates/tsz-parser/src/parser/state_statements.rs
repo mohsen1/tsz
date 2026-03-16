@@ -583,8 +583,15 @@ impl ParserState {
             SyntaxKind::TypeKeyword => self.parse_statement_type_keyword(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::DeclareKeyword => {
-                // Note: TS1184 for `declare` in block context is NOT emitted by the parser.
-                // The checker emits TS1234 (ambient module) or TS1235 (namespace) instead.
+                // TS1184: 'declare' modifier cannot appear inside a block statement.
+                // tsc emits this alongside the ambient declaration's own diagnostics.
+                if self.in_block_context() {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
                 self.parse_statement_declare_or_expression()
             }
             SyntaxKind::NamespaceKeyword
