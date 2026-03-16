@@ -1075,8 +1075,15 @@ impl<'a> FlowAnalyzer<'a> {
             for (position, element) in elements.iter().enumerate() {
                 if element.rest {
                     if index >= position {
-                        return get_array_element_type(db, element.type_id)
-                            .unwrap_or(element.type_id);
+                        let rest_elem =
+                            get_array_element_type(db, element.type_id).unwrap_or(element.type_id);
+                        // With noUncheckedIndexedAccess, rest element positions are
+                        // not guaranteed to exist, so add | undefined.
+                        return if self.interner.no_unchecked_indexed_access() {
+                            self.interner.union2(rest_elem, TypeId::UNDEFINED)
+                        } else {
+                            rest_elem
+                        };
                     }
                     break;
                 }
@@ -1084,6 +1091,15 @@ impl<'a> FlowAnalyzer<'a> {
                 if index == position {
                     if element.optional {
                         return self.interner.union2(element.type_id, TypeId::UNDEFINED);
+                    }
+                    // With noUncheckedIndexedAccess, fixed elements beyond the
+                    // minimum guaranteed count (due to preceding rest/optional
+                    // elements shifting positions) need | undefined.
+                    if self.interner.no_unchecked_indexed_access() {
+                        let min_guaranteed = elements.iter().filter(|e| e.is_required()).count();
+                        if index >= min_guaranteed {
+                            return self.interner.union2(element.type_id, TypeId::UNDEFINED);
+                        }
                     }
                     return element.type_id;
                 }
