@@ -35,12 +35,18 @@ impl<'a> Printer<'a> {
         }
         let quote = if let Some(src) = self.source_text_for_map() {
             let pos = node.pos as usize;
-            if pos < src.len() && src.as_bytes()[pos] == b'\'' { '\'' } else { '"' }
-        } else { '"' };
+            if pos < src.len() && src.as_bytes()[pos] == b'\'' {
+                '\''
+            } else {
+                '"'
+            }
+        } else {
+            '"'
+        };
         self.write(&format!("{quote}{rewritten}{quote}"));
     }
 
-        /// Rewrite a module specifier if rewriteRelativeImportExtensions is enabled.
+    /// Rewrite a module specifier if rewriteRelativeImportExtensions is enabled.
     /// Transforms .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs for relative paths.
     pub(in crate::emitter) fn rewrite_module_spec(&self, spec: &str) -> String {
         if !self.ctx.options.rewrite_relative_import_extensions {
@@ -769,7 +775,7 @@ impl<'a> Printer<'a> {
         crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
-        /// Get text from a specifier name node (either an identifier or string literal).
+    /// Get text from a specifier name node (either an identifier or string literal).
     pub(in crate::emitter) fn get_specifier_name_text(&self, idx: NodeIndex) -> Option<String> {
         crate::transforms::emit_utils::specifier_name_text(self.arena, idx)
     }
