@@ -147,7 +147,8 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check that JSX fragments have a valid fragment factory when jsxFactory is set (TS17016).
+    /// Check that JSX fragments have a valid fragment factory when jsxFactory is set (TS17016),
+    /// and that the fragment factory is in scope (TS2879).
     pub(crate) fn check_jsx_fragment_factory(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
 
@@ -155,25 +156,63 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !self.ctx.compiler_options.jsx_factory_from_config {
+        // When @jsxImportSource pragma overrides react mode, skip fragment checks.
+        if self.extract_jsx_import_source_pragma().is_some() {
             return;
         }
 
-        // When jsxFragmentFactory is configured, mark it as referenced
-        // so unused-import checking (TS6192) doesn't flag it.
-        if self.ctx.compiler_options.jsx_fragment_factory_from_config {
-            self.mark_jsx_name_as_referenced(
-                &self.ctx.compiler_options.jsx_fragment_factory.clone(),
+        if self.ctx.compiler_options.jsx_factory_from_config {
+            // When jsxFragmentFactory is configured, mark it as referenced
+            // so unused-import checking (TS6192) doesn't flag it.
+            if self.ctx.compiler_options.jsx_fragment_factory_from_config {
+                self.mark_jsx_name_as_referenced(
+                    &self.ctx.compiler_options.jsx_fragment_factory.clone(),
+                    node_idx,
+                );
+                return;
+            }
+
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
                 node_idx,
+                "The 'jsxFragmentFactory' compiler option must be provided to use JSX fragments with the 'jsxFactory' compiler option.",
+                diagnostic_codes::THE_JSXFRAGMENTFACTORY_COMPILER_OPTION_MUST_BE_PROVIDED_TO_USE_JSX_FRAGMENTS_WIT,
             );
             return;
         }
 
-        use crate::diagnostics::diagnostic_codes;
-        self.error_at_node(
+        // TS2879: check that the fragment factory root identifier is in scope.
+        // Default fragment factory is React.Fragment, so root is "React" (or
+        // whatever reactNamespace is configured to).
+        let factory = self.ctx.compiler_options.jsx_factory.clone();
+        let root_ident_owned = factory.split('.').next().unwrap_or(&factory).to_string();
+        if root_ident_owned.is_empty() {
+            return;
+        }
+
+        let lib_binders = self.get_lib_binders();
+        let found = self.ctx.binder.resolve_name_with_filter(
+            &root_ident_owned,
+            self.ctx.arena,
             node_idx,
-            "The 'jsxFragmentFactory' compiler option must be provided to use JSX fragments with the 'jsxFactory' compiler option.",
-            diagnostic_codes::THE_JSXFRAGMENTFACTORY_COMPILER_OPTION_MUST_BE_PROVIDED_TO_USE_JSX_FRAGMENTS_WIT,
+            &lib_binders,
+            |_| true,
+        );
+        if found.is_some() {
+            return;
+        }
+        if self
+            .resolve_global_value_symbol(&root_ident_owned)
+            .is_some()
+        {
+            return;
+        }
+
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            node_idx,
+            diagnostic_codes::USING_JSX_FRAGMENTS_REQUIRES_FRAGMENT_FACTORY_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE,
+            &[&root_ident_owned],
         );
     }
 }
