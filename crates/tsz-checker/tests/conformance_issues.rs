@@ -10867,9 +10867,7 @@ const result: A[] = from(inputB, ({ b }): A => ({ a: b }));
     );
 }
 
-#[test]
-#[ignore = "diagnostic count changed after merge"]
-fn test_destructuring_union_with_undefined_reports_ts2339() {
+#[test]fn test_destructuring_union_with_undefined_reports_ts2339() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 const fInferred = ({ a = 0 } = {}) => a;
