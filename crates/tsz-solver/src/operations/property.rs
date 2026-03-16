@@ -537,6 +537,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let mut nullable_causes = Vec::new();
                 let mut saw_unknown = false;
 
+                // Suppress `this` binding during intersection member resolution.
+                // Each member would otherwise bind `ThisType` to itself (e.g. Thing1),
+                // but the correct receiver is the full intersection (Thing1 & Thing2).
+                // The checker substitutes `this` with the nominal receiver type afterward.
+                let prev_skip = self.skip_this_binding.get();
+                self.skip_this_binding.set(true);
+
                 for &member in members.iter() {
                     match self.resolve_property_access_inner(member, prop_name, Some(prop_atom)) {
                         PropertyAccessResult::Success {
@@ -571,6 +578,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         PropertyAccessResult::PropertyNotFound { .. } => {}
                     }
                 }
+
+                self.skip_this_binding.set(prev_skip);
 
                 if results.is_empty() {
                     if !nullable_causes.is_empty() {
@@ -629,6 +638,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 } else {
                     self.interner().intersection(results)
                 };
+
                 if any_from_index && self.no_unchecked_indexed_access {
                     type_id = self.add_undefined_if_unchecked(type_id);
                 }
