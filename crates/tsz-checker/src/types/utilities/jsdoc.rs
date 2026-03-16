@@ -214,41 +214,6 @@ impl<'a> CheckerState<'a> {
         self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
         result
     }
-    pub(crate) fn jsdoc_template_constraints(jsdoc: &str) -> Vec<(String, Option<String>)> {
-        let mut out = Vec::new();
-        for raw_line in jsdoc.lines() {
-            let trimmed = raw_line.trim().trim_start_matches('*').trim();
-            let Some(rest) = trimmed.strip_prefix("@template") else {
-                continue;
-            };
-            let rest = rest.trim();
-            let (constraint, names_str) = if let Some(rest) = rest.strip_prefix('{') {
-                if let Some(close_idx) = rest.find('}') {
-                    (
-                        Some(rest[..close_idx].trim().to_string()),
-                        rest[close_idx + 1..].trim(),
-                    )
-                } else {
-                    (None, rest)
-                }
-            } else {
-                (None, rest)
-            };
-            for token in names_str.split([',', ' ', '\t']) {
-                let name = token.trim();
-                if name.is_empty() {
-                    continue;
-                }
-                if name
-                    .chars()
-                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                {
-                    out.push((name.to_string(), constraint.clone()));
-                }
-            }
-        }
-        out
-    }
     fn jsdoc_typedef_template_constraints_before(
         &mut self,
         typedef_name: &str,
@@ -449,63 +414,6 @@ impl<'a> CheckerState<'a> {
         let keyword_pos = jsdoc_start + tag_offset + 1;
         let resolved = self.resolve_jsdoc_type_str(type_expr)?;
         Some((self.judge_evaluate(resolved), keyword_pos))
-    }
-    fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
-        let tag_pos = jsdoc.find("@satisfies")?;
-        let rest = &jsdoc[tag_pos + "@satisfies".len()..];
-        let open = rest.find('{')?;
-        let after_open = &rest[open + 1..];
-        let mut depth = 1usize;
-        let mut end_idx = None;
-        for (i, ch) in after_open.char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_idx = Some(i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let end_idx = end_idx?;
-        Some(after_open[..end_idx].trim())
-    }
-    fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, Option<String>)> {
-        let expr = type_expr.trim();
-        let rest = expr.strip_prefix("import(")?;
-        let mut rest = rest.trim_start();
-        let quote = rest.chars().next()?;
-        if quote != '"' && quote != '\'' && quote != '`' {
-            return None;
-        }
-        rest = &rest[quote.len_utf8()..];
-        let close_quote = rest.find(quote)?;
-        let module_specifier = rest[..close_quote].trim().to_string();
-        let after_quote = rest[close_quote + quote.len_utf8()..].trim_start();
-        let after_quote = after_quote.strip_prefix(')')?.trim_start();
-        if after_quote.is_empty() {
-            return Some((module_specifier, None));
-        }
-        let after_dot = after_quote.strip_prefix('.')?;
-        let after_dot = after_dot.trim_start();
-        let mut end = 0usize;
-        for (idx, ch) in after_dot.char_indices() {
-            if idx == 0 {
-                if !ch.is_ascii_alphabetic() && ch != '_' && ch != '$' {
-                    return None;
-                }
-            } else if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
-                break;
-            }
-            end = idx + ch.len_utf8();
-        }
-        if end == 0 {
-            return None;
-        }
-        Some((module_specifier, Some(after_dot[..end].to_string())))
     }
 
     fn resolve_jsdoc_import_type_reference(&mut self, type_expr: &str) -> Option<TypeId> {
@@ -954,17 +862,15 @@ impl<'a> CheckerState<'a> {
                 return Some(resolved);
             }
         }
-        // Try @typedef resolution from JSDoc comments.
-        // Use the anchor position from context for proper scoping (if set).
+        // Try @typedef resolution from JSDoc comments
         if let Some(sf) = self.ctx.arena.source_files.first() {
             if sf.comments.is_empty() {
                 return None;
             }
             let comments = sf.comments.clone();
             let source_text: String = sf.text.to_string();
-            let anchor_pos = self.ctx.jsdoc_typedef_anchor_pos.get();
             if let Some(ty) =
-                self.resolve_jsdoc_typedef_type(name, anchor_pos, &comments, &source_text)
+                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
             {
                 self.register_jsdoc_typedef_def(name, ty);
                 return Some(ty);
@@ -1313,128 +1219,6 @@ impl<'a> CheckerState<'a> {
         let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
         Some(instantiated)
     }
-    /// Find the first occurrence of a character at the top level.
-    fn find_top_level_char(s: &str, target: char) -> Option<usize> {
-        let mut angle_depth = 0u32;
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut square_depth = 0u32;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        for (i, ch) in s.char_indices() {
-            if ch == '\'' && !in_double_quote {
-                in_single_quote = !in_single_quote;
-                continue;
-            }
-            if ch == '"' && !in_single_quote {
-                in_double_quote = !in_double_quote;
-                continue;
-            }
-            if in_single_quote || in_double_quote {
-                continue;
-            }
-            if ch == target
-                && angle_depth == 0
-                && paren_depth == 0
-                && brace_depth == 0
-                && square_depth == 0
-            {
-                return Some(i);
-            }
-            match ch {
-                '<' => angle_depth += 1,
-                '>' if angle_depth > 0 => angle_depth -= 1,
-                '(' => paren_depth += 1,
-                ')' if paren_depth > 0 => paren_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' if brace_depth > 0 => brace_depth -= 1,
-                '[' => square_depth += 1,
-                ']' if square_depth > 0 => square_depth -= 1,
-                _ => {}
-            }
-        }
-        None
-    }
-    /// Split a type expression on a top-level binary operator (`|` or `&`).
-    fn split_top_level_binary(s: &str, op: char) -> Option<Vec<&str>> {
-        let mut parts = Vec::new();
-        let mut start = 0;
-        let mut angle_depth = 0u32;
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut square_depth = 0u32;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        for (i, ch) in s.char_indices() {
-            match ch {
-                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-                '"' if !in_single_quote => in_double_quote = !in_double_quote,
-                _ if in_single_quote || in_double_quote => continue,
-                '<' => angle_depth += 1,
-                '>' if angle_depth > 0 => angle_depth -= 1,
-                '(' => paren_depth += 1,
-                ')' if paren_depth > 0 => paren_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' if brace_depth > 0 => brace_depth -= 1,
-                '[' => square_depth += 1,
-                ']' if square_depth > 0 => square_depth -= 1,
-                c if c == op
-                    && angle_depth == 0
-                    && paren_depth == 0
-                    && brace_depth == 0
-                    && square_depth == 0 =>
-                {
-                    parts.push(&s[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        if parts.is_empty() {
-            return None; // no split found — not a binary type
-        }
-        parts.push(&s[start..]);
-        Some(parts)
-    }
-    /// Split a comma-separated list of type arguments, respecting `<>`, `()`, `{}` nesting.
-    fn split_type_args_respecting_nesting(s: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut start = 0;
-        let mut angle_depth = 0u32;
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut square_depth = 0u32;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        for (i, ch) in s.char_indices() {
-            match ch {
-                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-                '"' if !in_single_quote => in_double_quote = !in_double_quote,
-                _ if in_single_quote || in_double_quote => continue,
-                '<' => angle_depth += 1,
-                '>' if angle_depth > 0 => angle_depth -= 1,
-                '(' => paren_depth += 1,
-                ')' if paren_depth > 0 => paren_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' if brace_depth > 0 => brace_depth -= 1,
-                '[' => square_depth += 1,
-                ']' if square_depth > 0 => square_depth -= 1,
-                ',' if angle_depth == 0
-                    && paren_depth == 0
-                    && brace_depth == 0
-                    && square_depth == 0 =>
-                {
-                    parts.push(&s[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        if start < s.len() {
-            parts.push(&s[start..]);
-        }
-        parts
-    }
     fn parse_jsdoc_tuple_type(&mut self, type_expr: &str) -> Option<TypeId> {
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
@@ -1701,196 +1485,7 @@ impl<'a> CheckerState<'a> {
             declaration_order: (existing_props.len() + 1) as u32,
         })
     }
-    /// Split parameter list by commas at the top level.
-    fn split_top_level_params(s: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut start = 0;
-        let mut angle_depth = 0u32;
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut square_depth = 0u32;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        for (i, ch) in s.char_indices() {
-            match ch {
-                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-                '"' if !in_single_quote => in_double_quote = !in_double_quote,
-                _ if in_single_quote || in_double_quote => continue,
-                '<' => angle_depth += 1,
-                '>' if angle_depth > 0 => angle_depth -= 1,
-                '(' => paren_depth += 1,
-                ')' if paren_depth > 0 => paren_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' if brace_depth > 0 => brace_depth -= 1,
-                '[' => square_depth += 1,
-                ']' if square_depth > 0 => square_depth -= 1,
-                ',' if angle_depth == 0
-                    && paren_depth == 0
-                    && brace_depth == 0
-                    && square_depth == 0 =>
-                {
-                    parts.push(&s[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        if start < s.len() {
-            parts.push(&s[start..]);
-        }
-        parts
-    }
-    /// Split object literal properties by ',' or ';' at the top level.
-    fn split_object_properties(s: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut start = 0;
-        let mut angle_depth = 0u32;
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut square_depth = 0u32;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        for (i, ch) in s.char_indices() {
-            match ch {
-                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-                '"' if !in_single_quote => in_double_quote = !in_double_quote,
-                _ if in_single_quote || in_double_quote => continue,
-                '<' => angle_depth += 1,
-                '>' if angle_depth > 0 => angle_depth -= 1,
-                '(' => paren_depth += 1,
-                ')' if paren_depth > 0 => paren_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' if brace_depth > 0 => brace_depth -= 1,
-                '[' => square_depth += 1,
-                ']' if square_depth > 0 => square_depth -= 1,
-                ',' | ';'
-                    if angle_depth == 0
-                        && paren_depth == 0
-                        && brace_depth == 0
-                        && square_depth == 0 =>
-                {
-                    parts.push(&s[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        if start < s.len() {
-            parts.push(&s[start..]);
-        }
-        parts
-    }
     /// Resolve a `@typedef` referenced by name from preceding JSDoc comments.
-    /// Check if a position is inside a function body that does NOT contain
-    /// the anchor position. Used for typedef scoping: typedefs declared inside
-    /// a function are only visible within that function.
-    pub(crate) fn is_in_different_function_scope(&self, comment_pos: u32, anchor_pos: u32) -> bool {
-        // anchor_pos == u32::MAX means global search (cross-file resolution)
-        if anchor_pos == u32::MAX {
-            return false;
-        }
-        let source_text = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .map(|sf| &*sf.text)
-            .unwrap_or("");
-        for node in &self.ctx.arena.nodes {
-            if !node.is_function_like() {
-                continue;
-            }
-            let body_end = Self::find_function_body_end(node.pos, node.end, source_text);
-            // Comment is inside this function but anchor is outside
-            if comment_pos >= node.pos
-                && comment_pos < body_end
-                && (anchor_pos < node.pos || anchor_pos >= body_end)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Find the actual end of a function body by locating the matching closing
-    /// brace. Function declaration nodes in the parser may include trailing
-    /// trivia (whitespace/comments) past the closing `}`, so we track brace
-    /// nesting to find the real body end.
-    pub(crate) fn find_function_body_end(node_pos: u32, node_end: u32, source_text: &str) -> u32 {
-        let func_end = (node_end as usize).min(source_text.len());
-        let func_text = &source_text[node_pos as usize..func_end];
-        // Find the opening brace of the function body
-        let mut depth = 0i32;
-        let mut in_string = false;
-        let mut string_char = '\0';
-        let mut in_line_comment = false;
-        let mut in_block_comment = false;
-        let bytes = func_text.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            if in_line_comment {
-                if ch == '\n' {
-                    in_line_comment = false;
-                }
-                i += 1;
-                continue;
-            }
-            if in_block_comment {
-                if ch == '*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                    in_block_comment = false;
-                    i += 2;
-                    continue;
-                }
-                i += 1;
-                continue;
-            }
-            if in_string {
-                if ch == '\\' {
-                    i += 2; // skip escaped char
-                    continue;
-                }
-                if ch == string_char {
-                    in_string = false;
-                }
-                i += 1;
-                continue;
-            }
-            // Check for comment starts
-            if ch == '/' && i + 1 < bytes.len() {
-                if bytes[i + 1] == b'/' {
-                    in_line_comment = true;
-                    i += 2;
-                    continue;
-                }
-                if bytes[i + 1] == b'*' {
-                    in_block_comment = true;
-                    i += 2;
-                    continue;
-                }
-            }
-            // Check for string starts
-            if ch == '\'' || ch == '"' || ch == '`' {
-                in_string = true;
-                string_char = ch;
-                i += 1;
-                continue;
-            }
-            if ch == '{' {
-                depth += 1;
-            } else if ch == '}' {
-                depth -= 1;
-                if depth == 0 {
-                    // Found the matching closing brace
-                    return node_pos + i as u32 + 1;
-                }
-            }
-            i += 1;
-        }
-        // Fallback: use node.end
-        node_end
-    }
-
     pub(crate) fn resolve_jsdoc_typedef_type(
         &mut self,
         type_expr: &str,
@@ -1905,11 +1500,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            // Skip typedefs declared inside a function body when the use site
-            // is outside that function (typedef scoping).
-            if self.is_in_different_function_scope(comment.pos, anchor_pos) {
                 continue;
             }
             let content = get_jsdoc_content(comment, source_text);
@@ -2093,347 +1683,6 @@ impl<'a> CheckerState<'a> {
             (None, None) => None,
         }
     }
-    pub(crate) fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
-        let mut typedefs = Vec::new();
-        let mut current_name: Option<String> = None;
-        let mut current_info = JsdocTypedefInfo {
-            base_type: None,
-            properties: Vec::new(),
-            callback: None,
-        };
-        for raw_line in jsdoc.lines() {
-            let line = raw_line.trim_start_matches('*').trim();
-            if line.is_empty() || !line.starts_with('@') {
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("@import") {
-                for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
-                    let import_type = if import_name == "*" || import_name == "default" {
-                        format!("import(\"{specifier}\")")
-                    } else {
-                        format!("import(\"{specifier}\").{import_name}")
-                    };
-                    if let Some(previous_name) = current_name.take() {
-                        typedefs.push((previous_name, current_info));
-                        current_info = JsdocTypedefInfo {
-                            base_type: None,
-                            properties: Vec::new(),
-                            callback: None,
-                        };
-                    }
-                    typedefs.push((
-                        local_name,
-                        JsdocTypedefInfo {
-                            base_type: Some(import_type),
-                            properties: Vec::new(),
-                            callback: None,
-                        },
-                    ));
-                }
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("@typedef") {
-                if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(rest) {
-                    if let Some(previous_name) = current_name.take() {
-                        typedefs.push((previous_name, current_info));
-                        current_info = JsdocTypedefInfo {
-                            base_type: None,
-                            properties: Vec::new(),
-                            callback: None,
-                        };
-                    }
-                    current_name = Some(name);
-                    current_info.base_type = base_type;
-                    current_info.properties.clear();
-                    current_info.callback = None;
-                }
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("@callback") {
-                let name = rest.trim().to_string();
-                if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                {
-                    if let Some(previous_name) = current_name.take() {
-                        typedefs.push((previous_name, current_info));
-                    }
-                    current_name = Some(name);
-                    current_info = JsdocTypedefInfo {
-                        base_type: None,
-                        properties: Vec::new(),
-                        callback: Some(JsdocCallbackInfo {
-                            params: Vec::new(),
-                            return_type: None,
-                            predicate: None,
-                        }),
-                    };
-                }
-                continue;
-            }
-            if current_info.callback.is_some() {
-                if let Some(rest) = line.strip_prefix("@param") {
-                    let rest = rest.trim();
-                    if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}')
-                    {
-                        let type_expr = rest[1..1 + end].trim().to_string();
-                        let after = rest[2 + end..].trim();
-                        let name = after.split_whitespace().next().unwrap_or("").to_string();
-                        if !name.is_empty()
-                            && let Some(ref mut cb) = current_info.callback
-                        {
-                            cb.params.push((name, type_expr));
-                        }
-                    }
-                    continue;
-                }
-                if let Some(rest) = line
-                    .strip_prefix("@returns")
-                    .or_else(|| line.strip_prefix("@return"))
-                {
-                    let rest = rest.trim();
-                    if rest.starts_with('{')
-                        && let Some(end) = rest[1..].find('}')
-                    {
-                        let type_expr = rest[1..1 + end].trim();
-                        let predicate =
-                            Self::jsdoc_returns_type_predicate_from_type_expr(type_expr);
-                        if let Some(ref mut cb) = current_info.callback {
-                            cb.return_type = Some(type_expr.to_string());
-                            cb.predicate = predicate;
-                        }
-                    }
-                    continue;
-                }
-            }
-            if let Some((name, prop_type)) = Self::parse_jsdoc_property_type(line)
-                && current_name.is_some()
-            {
-                current_info.properties.push((name, prop_type));
-            }
-        }
-        if let Some(previous_name) = current_name.take() {
-            typedefs.push((previous_name, current_info));
-        }
-        typedefs
-    }
-    /// Parse a type predicate from a JSDoc type expression (`x is T`, `asserts x is T`).
-    fn jsdoc_returns_type_predicate_from_type_expr(
-        type_expr: &str,
-    ) -> Option<(bool, String, Option<String>)> {
-        let (is_asserts, remainder) = if let Some(after) = type_expr.strip_prefix("asserts ") {
-            (true, after.trim())
-        } else {
-            (false, type_expr)
-        };
-        if let Some(is_pos) = remainder.find(" is ") {
-            let param_name = remainder[..is_pos].trim();
-            let type_str = remainder[is_pos + 4..].trim();
-            if !param_name.is_empty()
-                && (param_name == "this"
-                    || param_name
-                        .chars()
-                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-                && !type_str.is_empty()
-            {
-                return Some((
-                    is_asserts,
-                    param_name.to_string(),
-                    Some(type_str.to_string()),
-                ));
-            }
-        } else if is_asserts {
-            let param_name = remainder;
-            if !param_name.is_empty()
-                && (param_name == "this"
-                    || param_name
-                        .chars()
-                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-            {
-                return Some((true, param_name.to_string(), None));
-            }
-        }
-        None
-    }
-    fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
-        let rest = rest.trim();
-        let mut results = Vec::new();
-        if let Some(from_idx) = rest.rfind("from") {
-            let before_from = rest[..from_idx].trim();
-            let after_from = rest[from_idx + 4..].trim();
-            let quote = after_from.chars().next().unwrap_or(' ');
-            if quote == '"' || quote == '\'' || quote == '`' {
-                let specifier = after_from[1..]
-                    .split(quote)
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-                if before_from.starts_with('{') && before_from.ends_with('}') {
-                    let inner = &before_from[1..before_from.len() - 1];
-                    for part in inner.split(',') {
-                        let part = part.trim();
-                        if part.is_empty() {
-                            continue;
-                        }
-                        let parts: Vec<&str> = part.split(" as ").collect();
-                        if parts.len() == 2 {
-                            results.push((
-                                parts[1].trim().to_string(),
-                                specifier.clone(),
-                                parts[0].trim().to_string(),
-                            ));
-                        } else {
-                            results.push((part.to_string(), specifier.clone(), part.to_string()));
-                        }
-                    }
-                } else if let Some(ns_name) = before_from.strip_prefix("* as ") {
-                    let ns_name = ns_name.trim().to_string();
-                    if !ns_name.is_empty() {
-                        results.push((ns_name, specifier, "*".to_string()));
-                    }
-                } else {
-                    let default_name = before_from.to_string();
-                    if !default_name.is_empty() {
-                        results.push((default_name, specifier, "default".to_string()));
-                    }
-                }
-            }
-        }
-        results
-    }
-    fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {
-        let mut rest = line.trim();
-        if rest.is_empty() {
-            return None;
-        }
-        let base_type = if rest.starts_with('{') {
-            let (expr, after_expr) = Self::parse_jsdoc_curly_type_expr(rest)?;
-            rest = after_expr.trim();
-            Some(expr.trim().to_string())
-        } else {
-            None
-        };
-        let name = rest.split_whitespace().next()?;
-        Some((name.to_string(), base_type))
-    }
-    fn parse_jsdoc_property_type(line: &str) -> Option<(String, String)> {
-        let mut rest = line.trim();
-        if !rest.starts_with("@property") {
-            return None;
-        }
-        rest = &rest["@property".len()..];
-        rest = rest.trim();
-        let prop_type = if rest.starts_with('{') {
-            let (expr, after_expr) = Self::parse_jsdoc_curly_type_expr(rest)?;
-            rest = after_expr.trim();
-            expr.trim().to_string()
-        } else {
-            "any".to_string()
-        };
-        let name = rest
-            .split_whitespace()
-            .next()
-            .map(|name| {
-                name.trim_end_matches(',')
-                    .trim()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split('=')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string()
-            })
-            .filter(|name| !name.is_empty())?;
-        Some((name, prop_type))
-    }
-    pub(crate) fn parse_jsdoc_curly_type_expr(line: &str) -> Option<(&str, &str)> {
-        if !line.starts_with('{') {
-            return None;
-        }
-        let mut depth = 0usize;
-        for (idx, ch) in line.char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some((&line[1..idx], &line[idx + 1..]));
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-    fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
-        let typedef_pos = jsdoc.find("@typedef");
-        let mut tag_pos = jsdoc.find("@type");
-        while let Some(pos) = tag_pos {
-            let next_char = jsdoc[pos + "@type".len()..].chars().next();
-            if !next_char.is_some_and(|c| c.is_alphabetic()) {
-                if let Some(td_pos) = typedef_pos
-                    && td_pos < pos
-                {
-                    let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
-                    let mut has_non_object_base = false;
-                    if let Some(open) = typedef_rest.find('{')
-                        && let Some(close) = typedef_rest[open..].find('}')
-                    {
-                        let base = typedef_rest[open + 1..open + close].trim();
-                        if base != "Object" && base != "object" && !base.is_empty() {
-                            has_non_object_base = true;
-                        }
-                    }
-                    if !has_non_object_base {
-                        return None; // The @type is absorbed by the @typedef
-                    }
-                }
-                break;
-            }
-            tag_pos = jsdoc[pos + 1..].find("@type").map(|p| p + pos + 1);
-        }
-        let tag_pos = tag_pos?;
-        let rest = &jsdoc[tag_pos + "@type".len()..];
-        // Try braced form first: @type {expression}
-        if let Some(open) = rest.find('{') {
-            let after_open = &rest[open + 1..];
-            let mut depth = 1usize;
-            let mut end_idx = None;
-            for (i, ch) in after_open.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end_idx = Some(i);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(end_idx) = end_idx {
-                return Some(after_open[..end_idx].trim());
-            }
-        }
-        // Braceless form: @type expression (rest of line after whitespace)
-        // Used in tsc for inline types like `@type () => string` or
-        // `@type ({ type: 'foo' } | { type: 'bar' }) & { prop: number }`.
-        let rest = rest.trim_start();
-        if rest.is_empty() || rest.starts_with('@') || rest.starts_with('*') {
-            return None;
-        }
-        // Take the rest of the line (up to end-of-line, closing comment, or next @tag)
-        let end = rest
-            .find('\n')
-            .or_else(|| rest.find("*/"))
-            .unwrap_or(rest.len());
-        let expr = rest[..end].trim().trim_end_matches('*').trim();
-        if expr.is_empty() { None } else { Some(expr) }
-    }
     /// Check if a node has a JSDoc `@readonly` tag.
     pub(crate) fn jsdoc_has_readonly_tag(&self, idx: NodeIndex) -> bool {
         let Some(sf) = self.ctx.arena.source_files.first() else {
@@ -2470,24 +1719,6 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
-    }
-    /// Check if a JSDoc comment string contains a specific `@tag`.
-    fn jsdoc_contains_tag(jsdoc: &str, tag_name: &str) -> bool {
-        let needle = format!("@{tag_name}");
-        for pos_match in jsdoc.match_indices(&needle) {
-            let after = pos_match.0 + needle.len();
-            if after >= jsdoc.len() {
-                return true;
-            }
-            let next_ch = jsdoc[after..]
-                .chars()
-                .next()
-                .expect("after < jsdoc.len() checked above");
-            if !next_ch.is_ascii_alphanumeric() {
-                return true;
-            }
-        }
-        false
     }
     /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
     pub(crate) fn find_orphaned_extends_tags_for_statements(
@@ -2587,5 +1818,55 @@ impl<'a> CheckerState<'a> {
             results.push((tag, pos, len));
         }
         results
+    }
+
+    /// Check if two source positions are in different function scopes.
+    /// Used for JSDoc typedef scoping — a typedef defined inside a function
+    /// should not be visible outside that function.
+    pub(crate) fn is_in_different_function_scope(&self, comment_pos: u32, anchor_pos: u32) -> bool {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let source_text = sf.text.to_string();
+        // Walk from anchor_pos backward to see if we cross a function boundary
+        // before reaching comment_pos. If comment_pos is inside a function body
+        // and anchor_pos is outside it, they're in different scopes.
+        let text = &source_text[..anchor_pos as usize];
+        let mut depth: i32 = 0;
+        for ch in text[comment_pos as usize..].chars() {
+            match ch {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        // If depth != 0, the comment is inside a nested scope relative to anchor
+        depth != 0
+    }
+
+    /// Find the end position of a function body by scanning for the matching '}'.
+    pub(crate) fn find_function_body_end(node_pos: u32, node_end: u32, source_text: &str) -> u32 {
+        let start = node_pos as usize;
+        let end = node_end as usize;
+        if end > source_text.len() {
+            return node_end;
+        }
+        let slice = &source_text[start..end];
+        let mut depth = 0i32;
+        let mut last_close = node_end;
+        for (i, ch) in slice.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        last_close = (start + i + 1) as u32;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        last_close
     }
 }
