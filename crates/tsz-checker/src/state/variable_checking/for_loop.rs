@@ -96,15 +96,19 @@ impl<'a> CheckerState<'a> {
                 // Only check with single declaration (TSC suppresses when TS1188 is reported)
                 if is_for_in && single_declaration {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    // tsc anchors this error at the `: type` annotation (including
+                    // the colon). Our type_annotation node only covers the type
+                    // itself (excluding colon). Use the variable name node — its
+                    // end position is the colon, giving the closest match to tsc.
                     self.error_at_node(
-                        var_decl.type_annotation,
+                        var_decl.name,
                         diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                         diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                     );
                 } else if !is_for_in && single_declaration {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
-                        var_decl.type_annotation,
+                        var_decl.name,
                         diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                         diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                     );
