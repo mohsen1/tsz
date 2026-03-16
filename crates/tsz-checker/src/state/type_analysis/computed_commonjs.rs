@@ -221,10 +221,18 @@ impl<'a> CheckerState<'a> {
                 names.insert(name);
             }
 
-            if node.kind == syntax_kind_ext::CALL_EXPRESSION
-                && let Some(name) = self.current_file_commonjs_define_property_export_name(idx)
-            {
-                names.insert(name);
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                if let Some(name) = self.current_file_commonjs_define_property_export_name(idx) {
+                    names.insert(name);
+                }
+                // If this call is an IIFE, scan its body for export assignments.
+                // IIFEs don't create a new module scope — `exports` still refers to
+                // the module's exports object inside `(function() { ... })()`.
+                if let Some(iife_stmts) = Self::get_iife_body_statements(self.ctx.arena, idx) {
+                    for &stmt_idx in iife_stmts {
+                        stack.push(stmt_idx);
+                    }
+                }
             }
 
             for child_idx in self.ctx.arena.get_children(idx) {
@@ -861,6 +869,29 @@ impl<'a> CheckerState<'a> {
         (rhs_type != TypeId::UNDEFINED).then_some(rhs_type)
     }
 
+    /// Extract the body statements of an IIFE (Immediately Invoked Function Expression).
+    /// Recognizes patterns like `(function() { ... })()` and `(function() { ... }.call(this))`.
+    fn get_iife_body_statements<'b>(
+        arena: &'b tsz_parser::parser::NodeArena,
+        call_idx: NodeIndex,
+    ) -> Option<&'b [NodeIndex]> {
+        let call_node = arena.get(call_idx)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = arena.get_call_expr(call_node)?;
+        // Unwrap parentheses: `(function() { ... })()`
+        let callee_idx = arena.skip_parenthesized(call.expression);
+        let callee_node = arena.get(callee_idx)?;
+        if callee_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return None;
+        }
+        let func = arena.get_function(callee_node)?;
+        let body_node = arena.get(func.body)?;
+        let block = arena.get_block(body_node)?;
+        Some(&block.statements.nodes)
+    }
+
     fn augment_namespace_props_with_direct_assignment_exports_for_file(
         &mut self,
         target_file_idx: usize,
@@ -874,8 +905,27 @@ impl<'a> CheckerState<'a> {
         let mut pending_props: FxHashMap<String, NodeIndex> = FxHashMap::default();
         let mut ordered_names: Vec<String> = Vec::new();
 
+        // Collect statements to scan: top-level statements + IIFE body statements.
+        // In CommonJS files, `exports.X = value` inside IIFEs like `(function() { ... })()`
+        // are valid export declarations (tsc recognizes them regardless of scope).
+        let mut all_stmts: Vec<NodeIndex> = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+            all_stmts.push(stmt_idx);
+            // Check if this statement is an IIFE and extract its body statements
+            if let Some(stmt_node) = target_arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(stmt) = target_arena.get_expression_statement(stmt_node)
+            {
+                if let Some(iife_stmts) =
+                    Self::get_iife_body_statements(target_arena, stmt.expression)
+                {
+                    all_stmts.extend_from_slice(iife_stmts);
+                }
+            }
+        }
+
+        for stmt_idx in &all_stmts {
+            let Some(stmt_node) = target_arena.get(*stmt_idx) else {
                 continue;
             };
             if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {

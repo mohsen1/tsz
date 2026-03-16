@@ -693,6 +693,51 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// In JS files, `module.exports = X` and `exports = X` are declarations, not assignments.
+    /// tsc does not check assignability for these — the type flows from the RHS.
+    /// Without this suppression, tsz would emit false TS2322/TS2741 errors when the
+    /// module's augmented export type (with later `.D = ...` property assignments)
+    /// is used as the assignment target type.
+    fn is_commonjs_module_exports_assignment(&self, target_idx: NodeIndex) -> bool {
+        if !self.is_js_file() {
+            return false;
+        }
+
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return false;
+        };
+
+        // Check for `exports` identifier (unbound)
+        if target_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(target_node) {
+                if ident.escaped_text == "exports" {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Check for `module.exports` property access
+        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(target_node) {
+                let is_module = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.expression)
+                    .is_some_and(|ident| ident.escaped_text == "module");
+                let is_exports = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .is_some_and(|ident| ident.escaped_text == "exports");
+                return is_module && is_exports;
+            }
+        }
+
+        false
+    }
+
     fn is_js_namespace_enum_rebind_assignment_target(&self, target_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -953,6 +998,12 @@ impl<'a> CheckerState<'a> {
         };
 
         if !is_const && self.is_js_namespace_enum_rebind_assignment_target(left_idx) {
+            return right_type;
+        }
+
+        // In JS files, `module.exports = X` and `exports = X` are declarations.
+        // Skip assignability checking — the type flows from the RHS, not to it.
+        if !is_const && self.is_commonjs_module_exports_assignment(left_idx) {
             return right_type;
         }
 
