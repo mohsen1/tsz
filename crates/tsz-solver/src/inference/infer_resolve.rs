@@ -264,12 +264,8 @@ impl<'a> InferenceContext<'a> {
             // Keep `any` candidates when bounds are only top types (unknown/any/error).
             // Otherwise unconstrained generic parameters can collapse from `any` to `unknown`
             // (e.g. Promise/iterable inference with implicit `extends unknown`).
-            let has_informative_upper_bound = upper_bounds
-                .iter()
-                .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
             candidates.retain(|candidate| match candidate.type_id {
                 TypeId::UNKNOWN | TypeId::ERROR => false,
-                TypeId::ANY => !has_informative_upper_bound,
                 _ => true,
             });
         }
@@ -1323,13 +1319,8 @@ impl<'a> InferenceContext<'a> {
             let dc = self.declared_constraints.get(&root).copied();
             let mut candidates = info.candidates.clone();
             if !info.upper_bounds.is_empty() {
-                let has_informative_upper_bound = info
-                    .upper_bounds
-                    .iter()
-                    .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
                 candidates.retain(|candidate| match candidate.type_id {
                     TypeId::UNKNOWN | TypeId::ERROR => false,
-                    TypeId::ANY => !has_informative_upper_bound,
                     _ => true,
                 });
             }
