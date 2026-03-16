@@ -166,9 +166,11 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
-                return true;
-            }
+            // Non-array-applicable object-like members (e.g., interfaces without
+            // array/tuple structure) do NOT contribute to ambiguity. They are simply
+            // irrelevant to array literal contextual typing and should be skipped,
+            // matching tsc's behavior of filtering to applicable types only.
+            // Only array-applicable shapes that differ from each other create ambiguity.
         }
 
         applicable_shapes.len() > 1
@@ -185,7 +187,10 @@ impl<'a> CheckerState<'a> {
             let Some(applicable) =
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
             else {
-                return false;
+                // Non-array-applicable members (e.g., interfaces without index signatures)
+                // should be skipped — they don't influence whether the array literal
+                // should be typed as a tuple. Only array-applicable members matter.
+                continue;
             };
 
             if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
