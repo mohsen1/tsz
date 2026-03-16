@@ -1349,8 +1349,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut visitor = TupleKeyVisitor::new(self.interner(), elements);
         let result = visitor.evaluate(index_type);
 
-        // Add undefined if unchecked indexed access is allowed
-        self.add_undefined_if_unchecked(result)
+        // Under noUncheckedIndexedAccess, add `| undefined` only when the
+        // accessed position is not guaranteed to exist.  Fixed tuple elements
+        // that are within the minimum guaranteed length never need it.
+        if self.no_unchecked_indexed_access() {
+            // Single pass: count required elements and detect variable length.
+            let min_guaranteed = elements.iter().filter(|e| e.is_required()).count();
+            if min_guaranteed == elements.len() {
+                // All positions are fixed and guaranteed — no undefined needed.
+                return result;
+            }
+
+            // For literal numeric indices, check against the minimum guaranteed
+            // length (count of required non-rest elements).
+            if let Some(n) = literal_number(self.interner(), index_type) {
+                if (n.0 as usize) < min_guaranteed {
+                    // Position is guaranteed to exist — no undefined needed.
+                    return result;
+                }
+            }
+
+            return self.add_undefined_if_unchecked(result);
+        }
+
+        result
     }
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
