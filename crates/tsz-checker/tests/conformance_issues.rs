@@ -15528,3 +15528,116 @@ const a2: string[][][][][][][][][][] = [[[[[[[[[[42]]]]]]]]]];
         "Expected TS2322 for deeply nested array type mismatch. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_ts2403_promise_identity_with_constraints_and_lib() {
+    // Same test but with lib files loaded (matches conformance binary behavior)
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+export interface IPromise<T, V> {
+    then<U extends T, W extends V>(callback: (x: T) => IPromise<U, W>): IPromise<U, W>;
+}
+export interface Promise<T, V> {
+    then<U extends T, W extends V>(callback: (x: T) => Promise<U, W>): Promise<U, W>;
+}
+
+// Error because constraint V doesn't match
+var x: IPromise<string, number>;
+var x: Promise<string, boolean>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2403),
+        "Expected TS2403 for redeclaration with different generic interface types (with lib).\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2403_promise_identity_with_constraints() {
+    // promiseIdentityWithConstraints.ts: different constraints on type params
+    // should cause TS2403 because the types are not identical
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+export interface IPromise<T, V> {
+    then<U extends T, W extends V>(callback: (x: T) => IPromise<U, W>): IPromise<U, W>;
+}
+export interface Promise<T, V> {
+    then<U extends T, W extends V>(callback: (x: T) => Promise<U, W>): Promise<U, W>;
+}
+
+// Error because constraint V doesn't match
+var x: IPromise<string, number>;
+var x: Promise<string, boolean>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2403),
+        "Expected TS2403 for redeclaration with different generic interface types.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2403_promise_identity_different_type_param_arity() {
+    // promiseIdentityWithAny2.ts: different type parameter arity should cause TS2403
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+export interface IPromise<T, V> {
+    then<U, W>(callback: (x: T) => IPromise<U, W>): IPromise<U, W>;
+}
+interface Promise<T, V> {
+    then(callback: (x: T) => Promise<any, any>): Promise<any, any>;
+}
+
+// Error because type parameter arity doesn't match
+var x: IPromise<string, number>;
+var x: Promise<string, boolean>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2403),
+        "Expected TS2403 for redeclaration with different generic interface types (different arity).\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2403_promise_identity_structurally_identical_no_error() {
+    // promiseIdentity.ts lines 8-9: IPromise<string> vs Promise<string>
+    // with structurally identical interfaces should NOT produce TS2403
+    // (tsc considers these identical via structural identity with coinductive cycles)
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+export interface IPromise<T> {
+    then<U>(callback: (x: T) => IPromise<U>): IPromise<U>;
+}
+interface Promise2<T> {
+    then<U>(callback: (x: T) => Promise2<U>): Promise2<U>;
+}
+var x: IPromise<string>;
+var x: Promise2<string>;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2403),
+        "Should NOT get TS2403 when interfaces are structurally identical.\nActual: {diagnostics:#?}"
+    );
+}
