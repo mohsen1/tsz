@@ -967,6 +967,19 @@ impl<'a> CheckerState<'a> {
             )
         };
 
+        // TS2590: Expression produces a union type that is too complex to represent.
+        // The solver sets a flag when union normalization detects that pairwise subtype
+        // reduction would exceed tsc's complexity threshold (~1M comparisons).
+        if element_type == TypeId::ERROR && self.ctx.types.take_union_too_complex() {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+            return factory.array(TypeId::ERROR);
+        }
+
         factory.array(element_type)
     }
 
