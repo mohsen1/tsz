@@ -921,14 +921,25 @@ impl ParserState {
         let has_decorators = decorators.is_some();
 
         // If decorators were found before a static block, emit TS1206
+        // TSC anchors this error at the decorator position, not the `static` keyword.
         if decorators.is_some()
             && self.is_token(SyntaxKind::StaticKeyword)
             && self.look_ahead_is_static_block()
         {
-            self.parse_error_at_current_token(
-                "Decorators are not valid here.",
-                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-            );
+            if let Some(ref dec_list) = decorators {
+                if let Some(&first_dec_idx) = dec_list.nodes.first() {
+                    if let Some(dec_node) = self.arena.get(first_dec_idx) {
+                        let start = dec_node.pos;
+                        let length = dec_node.end.saturating_sub(dec_node.pos);
+                        self.parse_error_at(
+                            start,
+                            length,
+                            "Decorators are not valid here.",
+                            diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                        );
+                    }
+                }
+            }
             return self.parse_static_block();
         }
 
