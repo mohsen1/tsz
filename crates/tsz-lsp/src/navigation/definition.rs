@@ -506,50 +506,48 @@ impl<'a> GoToDefinition<'a> {
         for &decl_idx in &expr_symbol.declarations {
             if let Some(decl_node) = self.arena.get(decl_idx) {
                 // Handle variable declarations
-                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                    if let Some(var_data) = self.arena.get_variable_declaration(decl_node) {
-                        // Try type annotation first (e.g., `const x: MyInterface = ...`)
-                        if let Some(member_id) = self.resolve_member_from_type_annotation(
-                            root,
-                            var_data.type_annotation,
-                            member_name,
-                        ) {
-                            return Some(member_id);
-                        }
+                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                    && let Some(var_data) = self.arena.get_variable_declaration(decl_node)
+                {
+                    // Try type annotation first (e.g., `const x: MyInterface = ...`)
+                    if let Some(member_id) = self.resolve_member_from_type_annotation(
+                        root,
+                        var_data.type_annotation,
+                        member_name,
+                    ) {
+                        return Some(member_id);
+                    }
 
-                        // Fallback: check if the initializer is `new ClassName()`
-                        if var_data.initializer.is_some()
-                            && let Some(init_node) = self.arena.get(var_data.initializer)
-                            && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                    // Fallback: check if the initializer is `new ClassName()`
+                    if var_data.initializer.is_some()
+                        && let Some(init_node) = self.arena.get(var_data.initializer)
+                        && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                        && let Some(new_data) = self.arena.get_call_expr(init_node)
+                    {
+                        let mut walker2 = ScopeWalker::new(self.arena, self.binder);
+                        if let Some(class_symbol_id) =
+                            walker2.resolve_node(root, new_data.expression)
                         {
-                            if let Some(new_data) = self.arena.get_call_expr(init_node) {
-                                let mut walker2 = ScopeWalker::new(self.arena, self.binder);
-                                if let Some(class_symbol_id) =
-                                    walker2.resolve_node(root, new_data.expression)
-                                {
-                                    let class_symbol = self.binder.symbols.get(class_symbol_id)?;
-                                    if let Some(ref members) = class_symbol.members
-                                        && let Some(member_id) = members.get(member_name)
-                                    {
-                                        return Some(member_id);
-                                    }
-                                }
+                            let class_symbol = self.binder.symbols.get(class_symbol_id)?;
+                            if let Some(ref members) = class_symbol.members
+                                && let Some(member_id) = members.get(member_name)
+                            {
+                                return Some(member_id);
                             }
                         }
                     }
                 }
 
                 // Handle parameter declarations (e.g., `function f(x: Foo) { x.member }`)
-                if decl_node.kind == syntax_kind_ext::PARAMETER {
-                    if let Some(param_data) = self.arena.get_parameter(decl_node) {
-                        if let Some(member_id) = self.resolve_member_from_type_annotation(
-                            root,
-                            param_data.type_annotation,
-                            member_name,
-                        ) {
-                            return Some(member_id);
-                        }
-                    }
+                if decl_node.kind == syntax_kind_ext::PARAMETER
+                    && let Some(param_data) = self.arena.get_parameter(decl_node)
+                    && let Some(member_id) = self.resolve_member_from_type_annotation(
+                        root,
+                        param_data.type_annotation,
+                        member_name,
+                    )
+                {
+                    return Some(member_id);
                 }
             }
         }
@@ -719,10 +717,10 @@ impl<'a> GoToDefinition<'a> {
         node_idx: NodeIndex,
     ) -> Option<Vec<Location>> {
         // First try symbol-based resolution
-        if let Some(member_symbol_id) = self.try_resolve_member_access(root, node_idx) {
-            if let Some(locations) = self.locations_from_symbol(member_symbol_id) {
-                return Some(locations);
-            }
+        if let Some(member_symbol_id) = self.try_resolve_member_access(root, node_idx)
+            && let Some(locations) = self.locations_from_symbol(member_symbol_id)
+        {
+            return Some(locations);
         }
         // Then try direct AST-based resolution (for interface members without SymbolIds)
         self.try_resolve_member_access_from_ast(root, node_idx)
@@ -774,12 +772,10 @@ impl<'a> GoToDefinition<'a> {
 
                 if let Some(type_ann) = type_annotation
                     && type_ann.is_some()
-                {
-                    if let Some(loc) =
+                    && let Some(loc) =
                         self.find_member_location_from_type(root, type_ann, member_name)
-                    {
-                        return Some(vec![loc]);
-                    }
+                {
+                    return Some(vec![loc]);
                 }
             }
         }

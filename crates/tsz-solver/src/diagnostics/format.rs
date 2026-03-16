@@ -357,10 +357,10 @@ impl<'a> TypeFormatter<'a> {
                     return name.into();
                 }
                 // Use display properties (pre-widened literal types) when enabled.
-                if self.use_display_properties {
-                    if let Some(display_props) = self.interner.get_display_properties(type_id) {
-                        return self.format_object(display_props.as_slice()).into();
-                    }
+                if self.use_display_properties
+                    && let Some(display_props) = self.interner.get_display_properties(type_id)
+                {
+                    return self.format_object(display_props.as_slice()).into();
                 }
                 self.format_object(shape.properties.as_slice()).into()
             }
@@ -369,12 +369,12 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name.into();
                 }
-                if self.use_display_properties {
-                    if let Some(display_props) = self.interner.get_display_properties(type_id) {
-                        let mut display_shape = shape.as_ref().clone();
-                        display_shape.properties = display_props.as_ref().clone();
-                        return self.format_object_with_index(&display_shape).into();
-                    }
+                if self.use_display_properties
+                    && let Some(display_props) = self.interner.get_display_properties(type_id)
+                {
+                    let mut display_shape = shape.as_ref().clone();
+                    display_shape.properties = display_props.as_ref().clone();
+                    return self.format_object_with_index(&display_shape).into();
                 }
                 self.format_object_with_index(shape.as_ref()).into()
             }

@@ -46,7 +46,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
     // Single-file tests emit normally (bundle would just wrap the same content).
     let has_multiple_files = context.program.files.len() > 1;
     let js_bundle_path: Option<PathBuf> = if has_multiple_files {
-        context.options.out_file.as_ref().map(|p| p.clone())
+        context.options.out_file.clone()
     } else {
         None
     };

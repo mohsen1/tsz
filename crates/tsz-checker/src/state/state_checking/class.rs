@@ -1504,19 +1504,18 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         // Check if parent is an export default (ExportDeclaration with is_default_export)
-        if let Some(ext) = self.ctx.arena.get_extended(class_idx) {
-            if let Some(parent) = self.ctx.arena.get(ext.parent) {
-                if parent.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                    if let Some(export_data) = self.ctx.arena.get_export_decl(parent) {
-                        if export_data.is_default_export {
-                            return true;
-                        }
-                    }
-                }
-                // Also check for ExportAssignment (export = class { ... })
-                if parent.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                    return true;
-                }
+        if let Some(ext) = self.ctx.arena.get_extended(class_idx)
+            && let Some(parent) = self.ctx.arena.get(ext.parent)
+        {
+            if parent.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_data) = self.ctx.arena.get_export_decl(parent)
+                && export_data.is_default_export
+            {
+                return true;
+            }
+            // Also check for ExportAssignment (export = class { ... })
+            if parent.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                return true;
             }
         }
         false

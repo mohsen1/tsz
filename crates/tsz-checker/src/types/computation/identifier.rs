@@ -350,7 +350,7 @@ impl<'a> CheckerState<'a> {
                 let symbol_declarations = local_symbol
                     .map(|s| s.declarations.clone())
                     .unwrap_or_default();
-                let is_umd_export = local_symbol.map_or(false, |s| s.is_umd_export);
+                let is_umd_export = local_symbol.is_some_and(|s| s.is_umd_export);
                 (flags, value_decl, symbol_declarations, is_umd_export)
             };
 
@@ -1272,23 +1272,23 @@ impl<'a> CheckerState<'a> {
     fn has_non_umd_global_value(&self, name: &str) -> bool {
         // Check lib_contexts (lib files + some user files)
         for lib_ctx in &self.ctx.lib_contexts {
-            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                if let Some(sym) = lib_ctx.binder.get_symbol(sym_id) {
-                    if (sym.flags & symbol_flags::VALUE) != 0 && !sym.is_umd_export {
-                        return true;
-                    }
-                }
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && let Some(sym) = lib_ctx.binder.get_symbol(sym_id)
+                && (sym.flags & symbol_flags::VALUE) != 0
+                && !sym.is_umd_export
+            {
+                return true;
             }
         }
         // Check all_binders (all project files in multi-file mode)
         if let Some(ref all_binders) = self.ctx.all_binders {
             for binder in all_binders.iter() {
-                if let Some(sym_id) = binder.file_locals.get(name) {
-                    if let Some(sym) = binder.get_symbol(sym_id) {
-                        if (sym.flags & symbol_flags::VALUE) != 0 && !sym.is_umd_export {
-                            return true;
-                        }
-                    }
+                if let Some(sym_id) = binder.file_locals.get(name)
+                    && let Some(sym) = binder.get_symbol(sym_id)
+                    && (sym.flags & symbol_flags::VALUE) != 0
+                    && !sym.is_umd_export
+                {
+                    return true;
                 }
             }
         }
