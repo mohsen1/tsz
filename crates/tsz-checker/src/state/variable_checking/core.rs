@@ -1660,20 +1660,26 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS2488: Check array destructuring for iterability before assigning types
+            let mut effective_pattern_type = pattern_type;
             if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                self.check_destructuring_iterability(
+                let is_iterable = self.check_destructuring_iterability(
                     var_decl.name,
                     pattern_type,
                     var_decl.initializer,
                 );
+                // When not iterable (e.g., `unknown` in catch clause), use ERROR
+                // to suppress cascading diagnostics in nested patterns.
+                if !is_iterable {
+                    effective_pattern_type = TypeId::ERROR;
+                }
                 self.report_empty_array_destructuring_bounds(var_decl.name, var_decl.initializer);
             }
 
             // Ensure binding element identifiers get the correct inferred types.
-            self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
+            self.assign_binding_pattern_symbol_types(var_decl.name, effective_pattern_type);
             self.check_binding_pattern(
                 var_decl.name,
-                pattern_type,
+                effective_pattern_type,
                 var_decl.type_annotation.is_some(),
             );
 
