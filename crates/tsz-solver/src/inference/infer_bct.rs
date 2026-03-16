@@ -116,10 +116,12 @@ impl<'a> InferenceContext<'a> {
     ///
     /// Unlike `best_common_type` (which creates unions as fallback), this function
     /// matches tsc's behavior for covariant inference:
-    /// 1. If all candidates are literals with the same base type → union (e.g., `3 | 4`)
-    /// 2. Otherwise → find single common supertype via tournament reduction
+    /// 1. Strip nullable members from each candidate (matching tsc's filterType)
+    /// 2. If all candidates are literals with the same base type → union (e.g., `3 | 4`)
+    /// 3. Otherwise → find single common supertype via tournament reduction
     ///    If no single supertype exists, picks the first non-superseded candidate
     ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
+    /// 4. Add back combined nullable flags from original candidates
     pub fn get_common_supertype_for_inference(&self, types: &[TypeId]) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
@@ -128,6 +130,86 @@ impl<'a> InferenceContext<'a> {
             return types[0];
         }
 
+        // Match tsc's getCommonSupertype: strip nullable members from each candidate
+        // type (using filterType), run the tournament on non-nullable types, then add
+        // back the combined nullable flags via getNullableType.
+        //
+        // For candidates [B, undefined | D] in strictNullChecks mode:
+        //   primaryTypes = [B, D]  (undefined stripped from second candidate)
+        //   tournament picks B (since D <: B)
+        //   add back undefined → B | undefined
+        let mut has_null = false;
+        let mut has_undefined = false;
+        let primary_types: Vec<TypeId> = types
+            .iter()
+            .map(|&ty| self.strip_nullable_from_type(ty, &mut has_null, &mut has_undefined))
+            .collect();
+
+        let result = self.get_common_supertype_inner(&primary_types, types);
+
+        // Add back nullable types that were stripped
+        if has_null || has_undefined {
+            let mut parts = vec![result];
+            if has_undefined {
+                parts.push(TypeId::UNDEFINED);
+            }
+            if has_null {
+                parts.push(TypeId::NULL);
+            }
+            self.interner.union(parts)
+        } else {
+            result
+        }
+    }
+
+    /// Strip nullable members (null, undefined) from a type. For union types,
+    /// this removes nullable members from the union. For non-union types, if the
+    /// type itself is nullable, it becomes never.
+    fn strip_nullable_from_type(
+        &self,
+        ty: TypeId,
+        has_null: &mut bool,
+        has_undefined: &mut bool,
+    ) -> TypeId {
+        if ty == TypeId::NULL {
+            *has_null = true;
+            return TypeId::NEVER;
+        }
+        if ty == TypeId::UNDEFINED {
+            *has_undefined = true;
+            return TypeId::NEVER;
+        }
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(ty) {
+            let members = self.interner.type_list(members_id);
+            let mut non_nullable: Vec<TypeId> = Vec::new();
+            let mut changed = false;
+            for &member in members.iter() {
+                if member == TypeId::NULL {
+                    *has_null = true;
+                    changed = true;
+                } else if member == TypeId::UNDEFINED {
+                    *has_undefined = true;
+                    changed = true;
+                } else {
+                    non_nullable.push(member);
+                }
+            }
+            if !changed {
+                return ty;
+            }
+            match non_nullable.len() {
+                0 => TypeId::NEVER,
+                1 => non_nullable[0],
+                _ => self.interner.union(non_nullable),
+            }
+        } else {
+            ty
+        }
+    }
+
+    /// Inner implementation of common supertype resolution, operating on
+    /// nullable-stripped types.
+    fn get_common_supertype_inner(&self, types: &[TypeId], original_types: &[TypeId]) -> TypeId {
         // Deduplicate and filter never
         let mut seen = FxHashSet::default();
         let mut unique: Vec<TypeId> = Vec::new();
@@ -190,7 +272,7 @@ impl<'a> InferenceContext<'a> {
         // For [number, string, number] (or [string, number, number]):
         //   number appears 2x, string 1x → pick number.
         let count_in_original =
-            |ty: TypeId| -> usize { types.iter().filter(|&&t| t == ty).count() };
+            |ty: TypeId| -> usize { original_types.iter().filter(|&&t| t == ty).count() };
         let mut best = unique[0];
         let mut best_count = count_in_original(best);
         for &candidate in &unique[1..] {
