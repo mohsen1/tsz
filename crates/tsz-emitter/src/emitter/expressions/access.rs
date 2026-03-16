@@ -160,6 +160,13 @@ impl<'a> Printer<'a> {
             self.map_token_after(expr_node.end, node.end, b'.');
         }
         self.write_dot_token(access.expression);
+        // When the property name is missing (error recovery, e.g. `bar.\n}`),
+        // tsc emits the dot followed by a newline so the expression statement's
+        // semicolon ends up on its own line: `bar.\n    ;`
+        if access.name_or_argument.is_none() {
+            self.write_line();
+            return;
+        }
         self.emit_property_name_without_import_substitution(access.name_or_argument);
     }
 
