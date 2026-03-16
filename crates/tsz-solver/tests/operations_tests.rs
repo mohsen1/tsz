@@ -4281,7 +4281,8 @@ fn test_infer_generic_application_param() {
     assert_eq!(result, TypeId::NUMBER);
 }
 
-#[test]fn test_generic_call_uses_contextual_return_inference_for_application() {
+#[test]
+fn test_generic_call_uses_contextual_return_inference_for_application() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
     let mut evaluator = CallEvaluator::new(&interner, &mut checker);
