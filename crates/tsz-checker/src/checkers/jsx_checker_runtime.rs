@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract `@jsxImportSource <package>` pragma from the current file's
     /// leading comments. Returns the package name or None.
-    fn extract_jsx_import_source_pragma(&self) -> Option<String> {
+    pub(crate) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
         let sf = self.ctx.arena.source_files.first()?;
         let text = &sf.text;
         let scan_limit = text.len().min(4096);
