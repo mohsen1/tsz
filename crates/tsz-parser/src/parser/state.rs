@@ -2345,26 +2345,6 @@ impl ParserState {
         precedence > 0
     }
 
-    /// Resynchronize to next expression boundary after parse error
-    pub(crate) fn resync_to_next_expression_boundary(&mut self) {
-        let max_iterations = 100;
-        for _ in 0..max_iterations {
-            if self.is_token(SyntaxKind::EndOfFileToken) {
-                break;
-            }
-            if self.is_expression_boundary() {
-                break;
-            }
-            if self.is_binary_operator() {
-                break;
-            }
-            if self.is_expression_start() {
-                break;
-            }
-            self.next_token();
-        }
-    }
-
     /// Check if current token is at an expression boundary (a natural stopping point)
     pub(crate) const fn is_expression_boundary(&self) -> bool {
         matches!(

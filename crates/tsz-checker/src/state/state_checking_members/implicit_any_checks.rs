@@ -513,7 +513,6 @@ mod tests {
         checker.ctx.has_syntax_parse_errors = true;
         checker.check_source_file(sf);
         let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-        eprintln!("Codes with has_syntax_parse_errors=true: {:?}", codes);
         assert!(
             codes.contains(&7019),
             "Should have TS7019 for rest param with has_syntax_parse_errors, got {:?}",
