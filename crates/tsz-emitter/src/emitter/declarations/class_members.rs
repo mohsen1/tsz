@@ -348,6 +348,60 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // For ES2022+ targets, static fields with initializers are emitted as
+        // `static { this.fieldName = value; }` blocks (class static initialization blocks).
+        // This preserves the correct `this` and `super` binding inside the class body.
+        let is_static = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword);
+        let target_es2022_plus = (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+
+        let is_private_field = self
+            .arena
+            .get(prop.name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+        let has_accessor = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+        if is_static
+            && target_es2022_plus
+            && prop.initializer.is_some()
+            && !is_private_field
+            && !has_accessor
+            && !self.ctx.options.use_define_for_class_fields
+        {
+            // Determine if the property name needs bracket notation
+            let name_node = self.arena.get(prop.name);
+            let is_computed = name_node
+                .is_some_and(|n| n.kind == super::super::syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let is_string_or_numeric = name_node.is_some_and(|n| {
+                n.kind == SyntaxKind::StringLiteral as u16
+                    || n.kind == SyntaxKind::NumericLiteral as u16
+            });
+            if is_computed || is_string_or_numeric {
+                // `static { this[expr] = value; }`
+                self.write("static { this[");
+                if is_computed {
+                    if let Some(computed) =
+                        name_node.and_then(|n| self.arena.get_computed_property(n))
+                    {
+                        self.emit(computed.expression);
+                    }
+                } else {
+                    self.emit(prop.name);
+                }
+                self.write("] = ");
+            } else {
+                // `static { this.fieldName = value; }`
+                self.write("static { this.");
+                self.emit(prop.name);
+                self.write(" = ");
+            }
+            self.emit(prop.initializer);
+            self.write("; }");
+            return;
+        }
+
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
 
