@@ -178,9 +178,11 @@ impl<'a> Printer<'a> {
         // Unwrap parentheses, type assertions, and `as` expressions to find the
         // innermost expression. After type erasure, `(<any>1)` becomes just `1`.
         let mut idx = expr_idx;
+        let mut is_parenthesized = false;
         while let Some(node) = self.arena.get(idx) {
             match node.kind {
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    is_parenthesized = true;
                     if let Some(paren) = self.arena.get_parenthesized(node) {
                         idx = paren.expression;
                         continue;
@@ -190,6 +192,11 @@ impl<'a> Printer<'a> {
                     || k == syntax_kind_ext::AS_EXPRESSION
                     || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
                 {
+                    // Type assertions are fully erased during emit — they and
+                    // any surrounding parens do NOT survive in the output.
+                    // `(<any>1).foo` becomes `1.foo` which needs `1..foo`.
+                    // Reset is_parenthesized since the parens are erased too.
+                    is_parenthesized = false;
                     if let Some(assert) = self.arena.get_type_assertion(node) {
                         idx = assert.expression;
                         continue;
@@ -228,7 +235,10 @@ impl<'a> Printer<'a> {
                 } else {
                     false
                 };
-                if needs_extra_dot {
+                // If the numeric literal is wrapped in parentheses (or a type
+                // assertion that was erased), the parens already disambiguate and
+                // a single dot suffices: `(1).toString()` not `(1)..toString()`.
+                if needs_extra_dot && !is_parenthesized {
                     self.write("..");
                     return;
                 }
@@ -239,6 +249,7 @@ impl<'a> Printer<'a> {
             // Only needed when comments are removed — with comments the inline
             // comment `/* Foo.X */` separates the number from the dot.
             if self.ctx.options.remove_comments
+                && !is_parenthesized
                 && self.resolve_const_enum_needs_double_dot(idx, inner_node)
             {
                 self.write("..");

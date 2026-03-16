@@ -165,6 +165,25 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // CJS dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
+        // In CommonJS module mode, dynamic import() expressions need to be transformed
+        // to use require() wrapped in __importStar for proper ESM/CJS interop.
+        if self.ctx.is_commonjs()
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            self.write("Promise.resolve().then(() => ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            if let Some(ref args) = call.arguments {
+                let valid_args: Vec<_> =
+                    args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+                self.emit_comma_separated(&valid_args);
+            }
+            self.write(")))");
+            return;
+        }
+
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).
         let prev = self.paren_in_access_position;
         self.paren_in_access_position = true;

@@ -435,9 +435,15 @@ impl<'a> Printer<'a> {
         // module file, we must emit "use strict" at the correct position (before
         // __esModule marker / exports preamble) and skip the source's own
         // directive during statement iteration to avoid duplication.
-        let skip_source_use_strict = source_has_use_strict && needs_use_strict_cjs;
+        let skip_source_use_strict = source_has_use_strict
+            && (needs_use_strict_cjs || self.ctx.options.suppress_use_strict);
 
-        if should_emit_use_strict || skip_source_use_strict {
+        // Emit "use strict" when either:
+        // - we need to add it (source doesn't have it), or
+        // - the source has it but needs repositioning (CJS: before helpers/exports)
+        // But NOT when suppress_use_strict is set (wrapper already emitted it).
+        if should_emit_use_strict || (skip_source_use_strict && !self.ctx.options.suppress_use_strict)
+        {
             self.write("\"use strict\";");
             self.write_line();
         }

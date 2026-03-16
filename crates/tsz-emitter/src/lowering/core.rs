@@ -1436,6 +1436,18 @@ impl<'a> LoweringPass<'a> {
                 .insert(idx, TransformDirective::ES5SuperCall);
         }
 
+        // CJS dynamic import: import("mod") needs __importStar helper
+        // This applies regardless of esModuleInterop setting
+        if self.commonjs_mode
+            && !is_super_call
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            let helpers = self.transforms.helpers_mut();
+            helpers.import_star = true;
+            helpers.create_binding = true;
+        }
+
         // Check if call has spread arguments and needs ES5 transformation
         if self.ctx.target_es5
             && !is_super_call

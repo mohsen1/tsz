@@ -512,7 +512,14 @@ impl<'a> ES5ClassTransformer<'a> {
         // Track which static accessor names we've emitted
         let mut emitted_static_accessors: FxHashSet<String> = FxHashSet::default();
 
-        // Second pass: emit static members in source order
+        // Two-pass emission: methods/accessors first, then properties/static blocks.
+        // TSC emits static methods and accessors before property initializers, so that
+        // `ClassName.method = function() {}` precedes `ClassName.prop = value;`.
+        // Static blocks are interleaved with properties in source order (second pass).
+        // We collect property/static-block nodes into a deferred list, then append after
+        // methods and accessors are emitted.
+        let mut deferred_props_and_blocks: Vec<IRNode> = Vec::new();
+
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -675,7 +682,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     };
 
                     // ClassName.prop = value;
-                    body.push(IRNode::expr_stmt(IRNode::assign(target, value)));
+                    // Deferred to after methods/accessors (TSC ordering)
+                    deferred_props_and_blocks
+                        .push(IRNode::expr_stmt(IRNode::assign(target, value)));
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // Static block: wrap in IIFE to preserve block scoping
@@ -696,7 +705,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     let iife = IRNode::StaticBlockIIFE { statements };
                     if has_static_props {
                         // Inline: maintain initialization order with other static members
-                        body.push(iife);
+                        // Deferred to after methods/accessors (TSC ordering)
+                        deferred_props_and_blocks.push(iife);
                     } else {
                         // Deferred: emit after the class IIFE
                         deferred_static_blocks.push(iife);
@@ -765,6 +775,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+
+        // Append deferred properties and static blocks after methods/accessors
+        body.append(&mut deferred_props_and_blocks);
 
         deferred_static_blocks
     }
