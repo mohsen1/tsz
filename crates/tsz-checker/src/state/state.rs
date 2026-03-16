@@ -346,7 +346,21 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is a narrowable identifier (variable with flow analysis).
     /// This is pure — depends only on AST structure, not type-checking state.
+    /// Results are cached per-NodeIndex to avoid 4-5 binder/arena lookups on
+    /// repeated visits (e.g., 34 references to `options` in the same function).
     fn is_narrowable_identifier(&self, idx: NodeIndex) -> bool {
+        if let Some(&cached) = self.ctx.narrowable_identifier_cache.borrow().get(&idx.0) {
+            return cached;
+        }
+        let result = self.is_narrowable_identifier_uncached(idx);
+        self.ctx
+            .narrowable_identifier_cache
+            .borrow_mut()
+            .insert(idx.0, result);
+        result
+    }
+
+    fn is_narrowable_identifier_uncached(&self, idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
 
