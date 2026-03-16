@@ -573,8 +573,9 @@ impl ParserState {
                 "Type annotation cannot appear on a constructor declaration.",
                 diagnostic_codes::TYPE_ANNOTATION_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
             );
-            // Consume the type annotation for recovery
-            let _ = self.parse_type();
+            // Consume the type annotation for recovery (use parse_return_type to match tsc,
+            // which parses type predicates even in invalid constructor return types)
+            let _ = self.parse_return_type();
         }
 
         // Push a new label scope for the constructor body
@@ -824,7 +825,9 @@ impl ParserState {
                     diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
                 );
             }
-            self.parse_type()
+            // Use parse_return_type to match tsc, which parses type predicates
+            // even in invalid setter return types
+            self.parse_return_type()
         } else {
             NodeIndex::NONE
         };
