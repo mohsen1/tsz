@@ -128,15 +128,55 @@ pub fn look_ahead_is_import_equals(
         return true;
     }
 
-    if next1 == SyntaxKind::TypeKeyword && is_identifier_fn(next2) {
-        let next3 = scanner.scan();
-        if next3 == SyntaxKind::EqualsToken {
+    // Handle `import type ...` and `import defer ...` — these contextual keywords
+    // can be either modifiers or the import name itself.
+    // tsc uses `tokenAfterImportDefinitelyProducesImportDeclaration` which checks
+    // for `{`, `*`, `from` to decide if the keyword is a modifier. If it IS a
+    // modifier and a real identifier follows, then the standard `,`/`from` check
+    // decides import-declaration vs import-equals.
+    if next1 == SyntaxKind::TypeKeyword || next1 == SyntaxKind::DeferKeyword {
+        // `import type/defer {` or `import type/defer *` → modifier, import-declaration
+        if next2 == SyntaxKind::OpenBraceToken || next2 == SyntaxKind::AsteriskToken {
             scanner.restore_state(snapshot);
-            return true;
+            return false;
         }
+        // `import type/defer from ...` → type/defer is the import name, `from` is keyword
+        // tsc: `token() !== FromKeyword` check fails, so type/defer stays as import name.
+        // Then `tokenAfterImportedIdentifierDefinitelyProducesImportDeclaration()` sees `from` → true
+        // → import-declaration (not import-equals).
+        if next2 == SyntaxKind::FromKeyword {
+            scanner.restore_state(snapshot);
+            return false;
+        }
+        // `import type/defer <identifier> ...` where identifier is not `from`
+        if is_identifier_fn(next2) {
+            let next3 = scanner.scan();
+            scanner.restore_state(snapshot);
+            if next3 == SyntaxKind::EqualsToken {
+                return true;
+            }
+            // Match tsc: after `import type <id>`, if the next token is NOT `,` or
+            // `from`, the identifier doesn't definitely produce an import declaration,
+            // so tsc falls through to parseImportEqualsDeclaration.
+            if next3 != SyntaxKind::CommaToken && next3 != SyntaxKind::FromKeyword {
+                return true;
+            }
+            return false;
+        }
+        // `import type/defer <other>` — keyword is the import name (falls through below)
     }
 
     scanner.restore_state(snapshot);
+
+    // Match tsc: after `import <identifier>`, if the next token is NOT `,` or
+    // `from` keyword, tsc's `tokenAfterImportedIdentifierDefinitelyProducesImportDeclaration`
+    // returns false and tsc falls through to parseImportEqualsDeclaration.
+    // This handles cases like `import Foo From './Foo'` (capital F — not the `from` keyword)
+    // where tsc emits "'=' expected." instead of "'from' expected.".
+    if next2 != SyntaxKind::CommaToken && next2 != SyntaxKind::FromKeyword {
+        return true;
+    }
+
     false
 }
 
