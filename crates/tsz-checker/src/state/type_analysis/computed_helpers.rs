@@ -46,7 +46,9 @@ impl<'a> CheckerState<'a> {
         // solver's ContextualTypeContext cannot extract parameter types from,
         // causing false TS7006 ("Parameter implicitly has 'any' type").
         {
-            use tsz_solver::type_queries::{TypeQueryKind, classify_type_query};
+            use crate::query_boundaries::type_checking_utilities::{
+                TypeQueryKind, classify_type_query,
+            };
             if matches!(
                 classify_type_query(self.ctx.types, type_id),
                 TypeQueryKind::TypeQuery(_) | TypeQueryKind::ApplicationWithTypeQuery { .. }
