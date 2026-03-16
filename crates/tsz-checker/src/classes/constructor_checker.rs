@@ -317,7 +317,21 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         shape_id,
                     )?;
-                    return Some(self.resolve_type_for_property_access(instance_type));
+                    let resolved = self.resolve_type_for_property_access(instance_type);
+                    // Register TypeId→DefId so the TypeFormatter can display the
+                    // interface name (e.g., "String", "Date") instead of structural
+                    // expansion in diagnostics. The resolve step produces a new TypeId
+                    // that loses the Lazy(DefId) wrapper.
+                    if resolved != instance_type {
+                        if let Some(def_id) =
+                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, instance_type)
+                        {
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(resolved, def_id);
+                        }
+                    }
+                    return Some(resolved);
                 }
                 InstanceTypeKind::Function(_) => {
                     // Delegate to solver query for Function constructor return type
@@ -326,7 +340,17 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             current,
                         )?;
-                    return Some(self.resolve_type_for_property_access(return_type));
+                    let resolved = self.resolve_type_for_property_access(return_type);
+                    if resolved != return_type {
+                        if let Some(def_id) =
+                            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, return_type)
+                        {
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(resolved, def_id);
+                        }
+                    }
+                    return Some(resolved);
                 }
                 InstanceTypeKind::Intersection(members) => {
                     let instance_types: Vec<TypeId> = members
