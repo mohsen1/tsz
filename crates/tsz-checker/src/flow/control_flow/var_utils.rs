@@ -371,6 +371,36 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
+        // Prefix unary `!` inverts the sense: `!(expr)` in TRUE_CONDITION means
+        // expr is false, and in FALSE_CONDITION means expr is true.
+        // For example: `!(typeof x === "string")` + FALSE_CONDITION → inner is true → proves assignment.
+        if node_data.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(node_data)
+                && unary.operator == SyntaxKind::ExclamationToken as u16
+            {
+                return self.expr_proves_assignment(
+                    unary.operand,
+                    is_false_condition, // flip: outer false = inner true
+                    is_true_condition,  // flip: outer true = inner false
+                    reference,
+                );
+            }
+            return false;
+        }
+
+        // Parenthesized expression: unwrap and recurse.
+        if node_data.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.arena.get_parenthesized(node_data) {
+                return self.expr_proves_assignment(
+                    paren.expression,
+                    is_true_condition,
+                    is_false_condition,
+                    reference,
+                );
+            }
+            return false;
+        }
+
         // Call expression in TRUE_CONDITION: if any argument is the reference,
         // the variable was evaluated (passed as an argument), proving assignment.
         // This handles user-defined type predicates like `isFoo(value)`.
@@ -398,6 +428,20 @@ impl<'a> FlowAnalyzer<'a> {
         // `&&`: TRUE_CONDITION means both operands are true, so either
         // proving assignment is sufficient.
         if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 && is_true_condition {
+            return self.expr_proves_assignment(bin.left, true, false, reference)
+                || self.expr_proves_assignment(bin.right, true, false, reference);
+        }
+
+        // `&&`: FALSE_CONDITION means at least one operand is false (!A || !B),
+        // so either side proving assignment in the negative sense is sufficient.
+        if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 && is_false_condition {
+            return self.expr_proves_assignment(bin.left, false, true, reference)
+                || self.expr_proves_assignment(bin.right, false, true, reference);
+        }
+
+        // `||`: TRUE_CONDITION means at least one operand is true, so either
+        // side proving assignment in the positive sense is sufficient.
+        if bin.operator_token == SyntaxKind::BarBarToken as u16 && is_true_condition {
             return self.expr_proves_assignment(bin.left, true, false, reference)
                 || self.expr_proves_assignment(bin.right, true, false, reference);
         }
