@@ -431,7 +431,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-
     /// TS6133: Check for unused `infer` type parameters in conditional types.
     pub(super) fn check_unused_infer_type_params_in_conditional(
         &mut self,
@@ -440,7 +439,9 @@ impl<'a> CheckerState<'a> {
         let mut infer_params: Vec<(String, NodeIndex)> = Vec::new();
         let mut stack: Vec<NodeIndex> = vec![cond.extends_type];
         while let Some(idx) = stack.pop() {
-            let Some(node) = self.ctx.arena.get(idx) else { continue };
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
             if node.kind == syntax_kind_ext::INFER_TYPE {
                 if let Some(infer_data) = self.ctx.arena.get_infer_type(node)
                     && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
@@ -455,7 +456,9 @@ impl<'a> CheckerState<'a> {
                 stack.push(child);
             }
         }
-        if infer_params.is_empty() { return; }
+        if infer_params.is_empty() {
+            return;
+        }
         for (name, name_idx) in &infer_params {
             let mut found = false;
             for &branch in &[cond.true_type, cond.false_type] {
@@ -481,7 +484,9 @@ impl<'a> CheckerState<'a> {
     fn type_node_references_name(&self, root: NodeIndex, name: &str) -> bool {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
-            let Some(node) = self.ctx.arena.get(idx) else { continue };
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 if let Some(tr) = self.ctx.arena.get_type_ref(node)
                     && let Some(tn) = self.ctx.arena.get(tr.type_name)
