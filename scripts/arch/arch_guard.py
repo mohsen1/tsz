@@ -292,17 +292,14 @@ LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-checker" / "src",
         2000,
         # TODO: split these into smaller modules
+        # Files removed from exclusion after dropping below 2000 lines:
+        # jsx_checker.rs (1985), complex.rs (1907), type_resolution/core.rs (1018),
+        # variable_checking/core.rs (1689), dispatch.rs (1981), type_node.rs (1997)
         {
-            "crates/tsz-checker/src/checkers/jsx_checker.rs",
-            "crates/tsz-checker/src/types/computation/complex.rs",
-            "crates/tsz-checker/src/state/type_resolution/core.rs",
             "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/utilities/jsdoc.rs",
-            "crates/tsz-checker/src/state/variable_checking/core.rs",
-            "crates/tsz-checker/src/dispatch.rs",
             "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
             "crates/tsz-checker/src/state/type_analysis/computed.rs",
-            "crates/tsz-checker/src/types/type_node.rs",
             "crates/tsz-checker/src/types/property_access_type.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/computation/call.rs",
