@@ -7376,11 +7376,10 @@ namespace myModule {
         has_error(&diagnostics, 1147),
         "Expected TS1147 for import = require inside namespace. Actual: {diagnostics:#?}"
     );
-    // TODO: tsc only emits TS1147, not TS2307. We currently emit both.
-    // assert!(
-    //     !has_error(&diagnostics, 2307),
-    //     "Should NOT emit TS2307 alongside TS1147 — tsc only emits TS1147. Actual: {diagnostics:#?}"
-    // );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 alongside TS1147 — tsc only emits TS1147. Actual: {diagnostics:#?}"
+    );
 }
 
 #[test]

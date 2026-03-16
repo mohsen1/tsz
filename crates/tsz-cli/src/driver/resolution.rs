@@ -1506,6 +1506,14 @@ fn resolve_package_imports_specifier(
             if let Some(resolved) = resolve_package_entry(current, &target, options, package_type) {
                 return Some(resolved);
             }
+            // Output-to-source remapping for package imports.
+            // When outDir/declarationDir is set, import targets like "./dist/index.js"
+            // point to the output directory which doesn't exist at compile time.
+            // Remap back to source files (e.g., "./index.ts").
+            if let Some(resolved) = try_remap_output_to_source(current, &target, from_file, options)
+            {
+                return Some(resolved);
+            }
         }
 
         if current == base_dir {
@@ -1789,7 +1797,12 @@ fn try_remap_output_to_source(
     // since export targets are relative to it.
     let source_dir_owned;
     let source_dir = if let Some(ref root_dir) = options.root_dir {
-        root_dir.as_path()
+        if root_dir.is_absolute() {
+            source_dir_owned = root_dir.clone();
+        } else {
+            source_dir_owned = package_root.join(root_dir);
+        }
+        source_dir_owned.as_path()
     } else {
         source_dir_owned = canonicalize_or_owned(package_root);
         source_dir_owned.as_path()
