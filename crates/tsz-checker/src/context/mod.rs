@@ -428,7 +428,7 @@ pub struct CheckerContext<'a> {
     /// Used for correlated discriminant narrowing (TS 4.6+ feature).
     pub(crate) destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
     /// Counter for generating unique binding group IDs.
-    pub next_binding_group_id: u32,
+    pub(crate) next_binding_group_id: u32,
     /// Maps destructured binding element symbols to (`source_expression`, `property_name`).
     /// Used for flow narrowing: when `const { bar } = aFoo` and `aFoo.bar` has been
     /// narrowed by a condition, `bar`'s type should use the narrowed property type.
