@@ -348,6 +348,10 @@ impl<'a> Printer<'a> {
                         }
                     } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
                         self.write("async ");
+                    } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                        // `export` on a class member is a parse error, but tsc
+                        // preserves it in emit for error-recovery fidelity.
+                        self.write("export ");
                     }
                     // Skip private/protected/public/readonly/abstract
                 }
@@ -485,6 +489,10 @@ impl<'a> Printer<'a> {
                         self.write("static ");
                     } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
                         self.write("accessor ");
+                    } else if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                        // `export` on a class member is a parse error, but tsc
+                        // preserves it in emit for error-recovery fidelity.
+                        self.write("export ");
                     }
                 }
             }
