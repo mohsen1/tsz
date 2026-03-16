@@ -134,6 +134,7 @@ impl UnifyValue for InferenceInfo {
 
 /// Inference error
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // Variants/fields reserved for full inference error reporting
 pub(crate) enum InferenceError {
     /// Two incompatible types were unified
     Conflict(TypeId, TypeId),
@@ -158,6 +159,7 @@ pub(crate) enum InferenceError {
 /// Constraint set for an inference variable.
 /// Tracks both lower bounds (L <: α) and upper bounds (α <: U).
 #[derive(Clone, Debug, Default)]
+#[allow(dead_code)] // Methods reserved for constraint-based inference resolution
 pub(crate) struct ConstraintSet {
     /// Lower bounds: types that must be subtypes of this variable
     /// e.g., from argument types being assigned to a parameter
@@ -167,6 +169,7 @@ pub(crate) struct ConstraintSet {
     pub(crate) upper_bounds: Vec<TypeId>,
 }
 
+#[allow(dead_code)] // Methods reserved for constraint-based inference resolution
 impl ConstraintSet {
     pub const fn new() -> Self {
         Self {
@@ -223,6 +226,7 @@ impl ConstraintSet {
 pub(crate) const MAX_CONSTRAINT_ITERATIONS: usize = 100;
 
 /// Maximum recursion depth for type containment checks.
+#[allow(dead_code)] // Used by conditional type inference (not yet wired up)
 pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 
 /// Type inference context for a single function call or expression.
@@ -324,6 +328,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Get the declared `extends` constraint for an inference variable.
+    #[allow(dead_code)] // Reserved for full constraint-based inference
     pub fn get_declared_constraint(&mut self, var: InferenceVar) -> Option<TypeId> {
         let root = self.table.find(var);
         self.declared_constraints.get(&root).copied()
@@ -343,6 +348,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Unify an inference variable with a concrete type
+    #[allow(dead_code)] // Reserved for full constraint-based inference
     pub fn unify_var_type(&mut self, var: InferenceVar, ty: TypeId) -> Result<(), InferenceError> {
         // Get the root variable
         let root = self.table.find(var);
@@ -860,6 +866,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Resolve all type parameters to concrete types
+    #[allow(dead_code)] // Reserved for full constraint-based inference
     pub fn resolve_all(&mut self) -> Result<Vec<(Atom, TypeId)>, InferenceError> {
         // Clone type_params to avoid borrow conflict
         let type_params: Vec<_> = self.type_params.clone();
@@ -874,6 +881,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Get the interner reference
+    #[allow(dead_code)] // Reserved for full constraint-based inference
     pub fn interner(&self) -> &dyn TypeDatabase {
         self.interner
     }
@@ -985,6 +993,7 @@ impl<'a> InferenceContext<'a> {
     /// Add a lower bound constraint: ty <: var
     /// This is used when an argument type flows into a type parameter.
     /// Updated to use `NakedTypeVariable` (highest priority) for direct argument inference.
+    #[allow(dead_code)] // Reserved for full constraint-based inference
     pub fn add_lower_bound(&mut self, var: InferenceVar, ty: TypeId) {
         self.add_candidate(var, ty, InferencePriority::NakedTypeVariable);
     }
