@@ -495,6 +495,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         result
                     };
 
+                    // Discriminated union matching: if source and all placeholder
+                    // members are objects, check if they share a discriminant
+                    // property (a literal-typed property with different values in
+                    // each member). If so, only constrain against the member(s)
+                    // that match the source's discriminant value.
+                    let discriminant_matches =
+                        self.find_discriminant_matches(source, &placeholder_members);
+
+                    if !discriminant_matches.is_empty() {
+                        for member in discriminant_matches {
+                            self.constrain_types(ctx, var_map, source, member, priority);
+                        }
+                    } else {
                     // Check if any placeholder member structurally matches the source
                     let structural_matches: Vec<TypeId> = placeholder_members
                         .iter()
@@ -515,6 +528,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     }
+                    } // close discriminant else
                 } else if placeholder_count == 0 {
                     // No placeholder members in the target union, but the SOURCE may
                     // contain placeholders (e.g., from contextual return type seeding).
@@ -2013,6 +2027,84 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Array(_), TypeData::Array(_)) => true,
             _ => false,
         }
+    }
+
+    /// Find union members that match the source based on discriminant properties.
+    ///
+    /// For discriminated union targets like `{kind: 'a', data: T} | {kind: 'b', data: T[]}`,
+    /// match the source's discriminant value against each member's discriminant to select
+    /// the correct inference branch. This prevents cross-branch pollution where T gets
+    /// candidates from the wrong branch.
+    fn find_discriminant_matches(&self, source: TypeId, members: &[TypeId]) -> Vec<TypeId> {
+        // Source must be an object type
+        let source_shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+            _ => return Vec::new(),
+        };
+        let source_shape = self.interner.object_shape(source_shape_id);
+        if source_shape.properties.is_empty() {
+            return Vec::new();
+        }
+
+        // All members must be object types — collect their shape IDs
+        let mut member_shape_ids: Vec<(TypeId, crate::types::ObjectShapeId)> = Vec::new();
+        for &member in members {
+            let shape_id = match self.interner.lookup(member) {
+                Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => id,
+                _ => return Vec::new(),
+            };
+            member_shape_ids.push((member, shape_id));
+        }
+        if member_shape_ids.len() < 2 {
+            return Vec::new();
+        }
+
+        // Find a discriminant property: a property that exists in all members
+        // with literal types that differ between members.
+        for source_prop in &source_shape.properties {
+            let source_value = source_prop.type_id;
+            let source_name = source_prop.name;
+            // Source property must be a literal
+            if !matches!(
+                self.interner.lookup(source_value),
+                Some(TypeData::Literal(_))
+            ) {
+                continue;
+            }
+
+            // Check if this property exists in all members with literal values
+            let mut is_discriminant = true;
+            let mut any_match = false;
+            let mut matches = Vec::new();
+            for &(member, shape_id) in &member_shape_ids {
+                let member_shape = self.interner.object_shape(shape_id);
+                let member_prop = member_shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == source_name);
+                let Some(mp) = member_prop else {
+                    is_discriminant = false;
+                    break;
+                };
+                let mp_type = mp.type_id;
+                if !matches!(
+                    self.interner.lookup(mp_type),
+                    Some(TypeData::Literal(_))
+                ) {
+                    is_discriminant = false;
+                    break;
+                }
+                if mp_type == source_value {
+                    any_match = true;
+                    matches.push(member);
+                }
+            }
+            if is_discriminant && any_match {
+                return matches;
+            }
+        }
+
+        Vec::new()
     }
 
     fn constrain_properties(
