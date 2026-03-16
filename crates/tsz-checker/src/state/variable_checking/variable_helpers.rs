@@ -100,6 +100,7 @@ impl<'a> CheckerState<'a> {
         let mut scope_id = start_scope_id;
         let mut found_block_scoped_symbol = None;
         let mut found_scope_kind = None;
+        let mut found_scope_id = tsz_binder::ScopeId::NONE;
         let mut depth = 0;
         while scope_id.is_some() && depth < 50 {
             let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
@@ -111,6 +112,7 @@ impl<'a> CheckerState<'a> {
             {
                 found_block_scoped_symbol = Some(sym_id);
                 found_scope_kind = Some(scope.kind);
+                found_scope_id = scope_id;
                 break;
             }
             // If we hit a function scope, var hoists to this level — stop searching
@@ -128,14 +130,87 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let names_share_scope = matches!(
+        // Check if the found scope is at a function-level boundary.
+        // If so, the var hoists to the same level and this is just a
+        // TS2451 duplicate, not a TS2481 initialization conflict.
+        let names_share_scope = if matches!(
             scope_kind,
             tsz_binder::ContainerKind::SourceFile
                 | tsz_binder::ContainerKind::Function
                 | tsz_binder::ContainerKind::Module
-        );
+        ) {
+            true
+        } else if scope_kind == tsz_binder::ContainerKind::Block {
+            // A function body creates a Block scope inside the Function scope.
+            // When the let/const lives in that function-body Block, the Block's
+            // AST container_node should be a direct child of a function-like node.
+            // Check if this Block scope is a function body by examining the AST.
+            let is_function_body_block = self
+                .ctx
+                .binder
+                .scopes
+                .get(found_scope_id.0 as usize)
+                .and_then(|s| {
+                    // Get the AST node that created this scope (the Block node)
+                    let block_node_idx = s.container_node;
+                    // Get the Block's parent in the AST
+                    self.ctx
+                        .arena
+                        .get_extended(block_node_idx)
+                        .map(|ext| ext.parent)
+                })
+                .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                .is_some_and(|parent_node| {
+                    use tsz_parser::parser::syntax_kind_ext;
+                    matches!(
+                        parent_node.kind,
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || k == syntax_kind_ext::METHOD_DECLARATION
+                            || k == syntax_kind_ext::CONSTRUCTOR
+                            || k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR
+                            || k == syntax_kind_ext::ARROW_FUNCTION
+                    )
+                });
+            is_function_body_block
+        } else {
+            false
+        };
 
-        if !names_share_scope {
+        if names_share_scope {
+            // The var hoists to the same scope as the let/const — emit TS2451
+            // on both the var declaration and the block-scoped declaration,
+            // matching tsc's behavior for cases like:
+            //   function f() { let x; { var x; } }
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let msg = crate::diagnostics::format_message(
+                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                &[var_name],
+            );
+            // Error on the var declaration name
+            self.error_at_node(
+                var_decl.name,
+                &msg,
+                diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+            );
+            // Error on the block-scoped declaration (let/const)
+            if let Some(block_sym) = self.ctx.binder.get_symbol(_block_sym_id) {
+                for &block_decl_idx in &block_sym.declarations {
+                    if !block_decl_idx.is_some() {
+                        continue;
+                    }
+                    let name_node = self
+                        .get_declaration_name_node(block_decl_idx)
+                        .unwrap_or(block_decl_idx);
+                    self.error_at_node(
+                        name_node,
+                        &msg,
+                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                    );
+                }
+            }
+        } else {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 var_decl.name,

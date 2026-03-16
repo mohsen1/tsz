@@ -62,6 +62,19 @@ mod ts2481_tests {
     }
 
     #[test]
+    fn no_error_when_var_in_child_block_of_function() {
+        // function f() { let x; { var x; } } — no TS2481 (names share function scope)
+        // tsc emits TS2451, not TS2481, for this case
+        let source = "function f() {\n    let x;\n    {\n        var x;\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2481 when var in child block of function: {errors:?}"
+        );
+    }
+
+    #[test]
     fn no_error_for_let_only() {
         let source = "{\n    let x;\n    {\n        let x;\n    }\n}";
         let errors = check_and_collect(source, 2481);
