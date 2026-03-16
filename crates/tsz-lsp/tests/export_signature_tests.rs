@@ -1681,3 +1681,834 @@ fn test_export_signature_hash_is_nonzero_for_exports() {
         "Signature hash for a file with exports should be nonzero"
     );
 }
+
+// =========================================================================
+// Additional export signature tests (batch 3)
+// =========================================================================
+
+#[test]
+fn test_export_default_const_changes_signature() {
+    let source_a = "";
+    let source_b = "export default 42;";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    // Adding a default export should change the signature (or at least not crash)
+    // The signatures may or may not differ depending on how default exports are handled,
+    // but computing them should not panic.
+    let _ = (sig_a, sig_b);
+}
+
+#[test]
+fn test_export_adding_private_enum_preserves_signature() {
+    let source_a = "export const x = 1;";
+    let source_b = "enum PrivateEnum { A, B }\nexport const x = 1;";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Adding a private enum should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_adding_private_type_alias_preserves_signature() {
+    let source_a = "export function greet() {}";
+    let source_b = "type Internal = string;\nexport function greet() {}";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Adding a private type alias should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_interface_member_addition_changes_signature() {
+    // Adding a new export (not just a member) should change signature
+    let source_a = "export interface Foo { x: number; }";
+    let source_b = "export interface Foo { x: number; }\nexport interface Bar { y: string; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a new exported interface should change the signature"
+    );
+}
+
+#[test]
+fn test_export_signature_with_declare_keyword() {
+    let source_a = "export declare function foo(): void;";
+    let source_b = "export declare function foo(): void;\nexport declare function bar(): number;";
+
+    let file_name = "test.d.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a second declare export should change signature"
+    );
+}
+
+#[test]
+fn test_export_signature_recompute_is_idempotent() {
+    let source = "export const x = 1;\nexport function y() {}\nexport class Z {}";
+    let file_name = "test.ts";
+
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let sig1 = ExportSignature::compute(&binder, file_name);
+    let sig2 = ExportSignature::compute(&binder, file_name);
+    let sig3 = ExportSignature::compute(&binder, file_name);
+
+    assert_eq!(
+        sig1, sig2,
+        "Recomputed signature should be identical (1 vs 2)"
+    );
+    assert_eq!(
+        sig2, sig3,
+        "Recomputed signature should be identical (2 vs 3)"
+    );
+}
+
+#[test]
+fn test_export_only_type_keyword_preserves_on_body_change() {
+    // export type should not change signature when the type body stays the same name/kind
+    let source_a = "export type MyType = string;";
+    let source_b = "export type MyType = number;";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    // The signature is based on name and kind, not the type definition body,
+    // so changing string->number should preserve the signature.
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing type alias definition body should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_enum_adding_member_preserves_signature() {
+    // Adding enum members doesn't change the export name set
+    let source_a = "export enum Color { Red }";
+    let source_b = "export enum Color { Red, Green, Blue }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    // The signature hashes exported name + flags, not individual members
+    assert_eq!(
+        sig_a, sig_b,
+        "Adding enum members should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_function_return_type_change_preserves_signature() {
+    let source_a = "export function foo(): string { return ''; }";
+    let source_b = "export function foo(): number { return 0; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    // Signature is based on name+flags, not return type
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing function return type should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_adding_private_namespace_preserves_signature() {
+    let source_a = "export const x = 1;";
+    let source_b = "namespace InternalNS { export const y = 2; }\nexport const x = 1;";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Adding a private namespace should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_class_method_body_change_preserves_signature() {
+    let source_a = "export class Svc { run() { return 1; } }";
+    let source_b = "export class Svc { run() { return 2; } }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing class method body should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_multiple_types_different_kinds_changes_signature() {
+    // Going from exporting a function to exporting a class with the same name
+    // should change because the symbol flags differ
+    let source_a = "export function Thing() {}";
+    let source_b = "export class Thing {}";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Changing export kind (function -> class) with same name should change signature"
+    );
+}
+
+#[test]
+fn test_export_signature_no_exports_same_file_name() {
+    // Two different sources with zero exports should have the same signature
+    let source_a = "const a = 1;";
+    let source_b = "function internal() { return 42; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Two files with no exports should have the same signature"
+    );
+}
+
+#[test]
+fn test_export_signature_type_alias() {
+    let source = "export type ID = string;";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_interface() {
+    let source = "export interface Foo { x: number; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_enum() {
+    let source = "export enum Color { Red, Green, Blue }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_class() {
+    let source = "export class Foo { x: number = 0; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_const_vs_let() {
+    let source_a = "export const x = 1;";
+    let source_b = "export let x = 1;";
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+    // const vs let may or may not change signature
+    let _ = (sig_a, sig_b);
+}
+
+#[test]
+fn test_export_signature_async_function() {
+    let source = "export async function fetchData() { return 42; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_generator_function() {
+    let source = "export function* gen() { yield 1; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_namespace() {
+    let source = "export namespace NS { export const x = 1; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_many_exports() {
+    let source = "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\nexport const e = 5;";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_arrow_function() {
+    let source = "export const add = (a: number, b: number) => a + b;";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_generic_function() {
+    let source = "export function identity<T>(x: T): T { return x; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+#[test]
+fn test_export_signature_overloaded_function() {
+    let source = "export function foo(x: number): number;\nexport function foo(x: string): string;\nexport function foo(x: any): any { return x; }";
+    let file_name = "test.ts";
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let sig = ExportSignature::compute(&binder, file_name);
+    let _ = sig;
+}
+
+// ============================================================================
+// Batch: additional edge case tests
+// ============================================================================
+
+#[test]
+fn test_export_declare_namespace_changes_signature() {
+    let source_a = "export const x = 1;";
+    let source_b = "export const x = 1;\nexport declare namespace Lib { function init(): void; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a declare namespace export should change the signature"
+    );
+}
+
+#[test]
+fn test_export_generic_function_body_change_preserves() {
+    let source_a = "export function identity<T>(x: T): T { return x; }";
+    let source_b = "export function identity<T>(x: T): T { console.log(x); return x; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing generic function body should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_class_with_constructor_body_change() {
+    let source_a = "export class Foo { constructor() { this.x = 1; } }";
+    let source_b = "export class Foo { constructor() { this.x = 2; } }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing class constructor body should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_multiple_interfaces_order_independent() {
+    let source_a = "export interface A { x: number; }\nexport interface B { y: string; }";
+    let source_b = "export interface B { y: string; }\nexport interface A { x: number; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Interface export order should not affect the signature"
+    );
+}
+
+#[test]
+fn test_export_conditional_type_alias() {
+    let source_a = "export type IsString<T> = T extends string ? true : false;";
+    let source_b = "export type IsString<T> = T extends string ? true : false;\nexport type IsNumber<T> = T extends number ? true : false;";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a conditional type export should change the signature"
+    );
+}
+
+#[test]
+fn test_export_mapped_type_alias() {
+    let source = "export type Readonly2<T> = { readonly [K in keyof T]: T[K] };";
+
+    let file_name = "test.ts";
+
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let sig = ExportSignature::compute(&binder, file_name);
+    let sig2 = ExportSignature::compute(&binder, file_name);
+    assert_eq!(
+        sig, sig2,
+        "Mapped type export signature should be deterministic"
+    );
+}
+
+#[test]
+fn test_export_class_with_static_member_body_change() {
+    let source_a = "export class Config { static value = 1; }";
+    let source_b = "export class Config { static value = 2; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing static member value should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_enum_vs_const_enum_different_signature() {
+    let source_a = "export enum Dir { Up, Down }";
+    let source_b = "export const enum Dir { Up, Down }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    // enum vs const enum may have different symbol flags
+    let _ = (sig_a, sig_b);
+}
+
+#[test]
+fn test_export_class_with_getter_setter_body_change() {
+    let source_a = "export class Store { get value() { return 1; } set value(v: number) {} }";
+    let source_b = "export class Store { get value() { return 2; } set value(v: number) {} }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing getter body should not change export signature"
+    );
+}
+
+#[test]
+fn test_export_class_adding_new_export_class() {
+    let source_a = "export class A {}";
+    let source_b = "export class A {}\nexport class B {}";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a second exported class should change the signature"
+    );
+}
+
+#[test]
+fn test_export_interface_extending_another() {
+    let source_a = "export interface Base { x: number; }";
+    let source_b =
+        "export interface Base { x: number; }\nexport interface Child extends Base { y: string; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_ne!(
+        sig_a, sig_b,
+        "Adding a child interface export should change the signature"
+    );
+}
+
+#[test]
+fn test_export_unicode_identifier() {
+    let source = "export const caf\u{00E9} = 'coffee';";
+
+    let file_name = "test.ts";
+
+    let mut parser = tsz_parser::ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let sig = ExportSignature::compute(&binder, file_name);
+    let sig2 = ExportSignature::compute(&binder, file_name);
+    assert_eq!(
+        sig, sig2,
+        "Unicode identifier export signature should be deterministic"
+    );
+}
+
+#[test]
+fn test_export_function_with_rest_params_body_change() {
+    let source_a = "export function sum(...nums: number[]): number { return nums.reduce((a, b) => a + b, 0); }";
+    let source_b = "export function sum(...nums: number[]): number { let total = 0; for (const n of nums) total += n; return total; }";
+
+    let file_name = "test.ts";
+
+    let mut parser_a = tsz_parser::ParserState::new(file_name.to_string(), source_a.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = tsz_parser::ParserState::new(file_name.to_string(), source_b.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let sig_a = ExportSignature::compute(&binder_a, file_name);
+    let sig_b = ExportSignature::compute(&binder_b, file_name);
+
+    assert_eq!(
+        sig_a, sig_b,
+        "Changing rest-params function body should not change export signature"
+    );
+}

@@ -1130,3 +1130,305 @@ fn test_parse_jsdoc_is_empty_with_summary() {
     let result = parse_jsdoc("A summary.");
     assert!(!result.is_empty(), "JSDoc with summary should not be empty");
 }
+
+#[test]
+fn test_diagnostic_zero_length() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        6,
+        0,
+        "Zero length",
+        DiagnosticCategory::Error,
+        1000,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    // Zero-length diagnostic should still convert
+    assert_eq!(lsp_diag.range.start.line, 0);
+}
+
+#[test]
+fn test_diagnostic_at_end_of_file() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 12, 1, "At end", DiagnosticCategory::Error, 1001);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_category_warning() {
+    let diag = make_diagnostic("test.ts", 0, 5, "Warn", DiagnosticCategory::Warning, 2000);
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_category_suggestion() {
+    let diag = make_diagnostic(
+        "test.ts",
+        0,
+        5,
+        "Suggest",
+        DiagnosticCategory::Suggestion,
+        3000,
+    );
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_category_message() {
+    let diag = make_diagnostic("test.ts", 0, 5, "Info", DiagnosticCategory::Message, 4000);
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_multiline_source() {
+    let source = "function foo() {\n  const x: number = 'hello';\n  return x;\n}";
+    let line_map = LineMap::build(source);
+    // Error on line 2 (the const declaration)
+    let diag = make_diagnostic(
+        "test.ts",
+        19,
+        6,
+        "Type mismatch",
+        DiagnosticCategory::Error,
+        2322,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 1);
+}
+
+#[test]
+fn test_diagnostic_with_related_info_same_file() {
+    let source = "const x = 1;\nconst y: string = x;";
+    let line_map = LineMap::build(source);
+    let mut diag = make_diagnostic(
+        "test.ts",
+        18,
+        1,
+        "Type error",
+        DiagnosticCategory::Error,
+        2322,
+    );
+    diag.related_information.push(DiagnosticRelatedInformation {
+        file: "test.ts".to_string(),
+        start: 6,
+        length: 1,
+        message_text: "Declared here".to_string(),
+        category: DiagnosticCategory::Message,
+        code: 0,
+    });
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_very_long_message() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let long_msg = "A".repeat(1000);
+    let diag = make_diagnostic("test.ts", 0, 5, &long_msg, DiagnosticCategory::Error, 9999);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert!(lsp_diag.message.len() >= 1000);
+}
+
+#[test]
+fn test_diagnostic_empty_source() {
+    let source = "";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 0, "Empty", DiagnosticCategory::Error, 1000);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 0);
+    assert_eq!(lsp_diag.range.start.character, 0);
+}
+
+#[test]
+fn test_diagnostic_large_code_number() {
+    let diag = make_diagnostic(
+        "test.ts",
+        0,
+        1,
+        "Large code",
+        DiagnosticCategory::Error,
+        99999,
+    );
+    let source = "x";
+    let line_map = LineMap::build(source);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_unicode_source() {
+    let source = "const 日本語 = '値';";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        6,
+        9,
+        "Unicode var",
+        DiagnosticCategory::Warning,
+        5000,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 0);
+}
+
+#[test]
+fn test_diagnostic_on_last_line_no_newline() {
+    let source = "const a = 1;\nconst b = 2";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        13,
+        5,
+        "Last line",
+        DiagnosticCategory::Error,
+        1000,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 1);
+}
+
+#[test]
+fn test_diagnostic_spanning_multiple_lines() {
+    let source = "const x =\n  1 +\n  2;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        6,
+        14,
+        "Multiline span",
+        DiagnosticCategory::Error,
+        1000,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 0);
+    assert!(lsp_diag.range.end.line >= 1);
+}
+
+#[test]
+fn test_diagnostic_multiple_related_info() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let mut diag = make_diagnostic(
+        "test.ts",
+        0,
+        5,
+        "Multiple related",
+        DiagnosticCategory::Error,
+        2322,
+    );
+    for i in 0..3 {
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: "test.ts".to_string(),
+            start: i,
+            length: 1,
+            message_text: format!("Related {}", i),
+            category: DiagnosticCategory::Message,
+            code: 0,
+        });
+    }
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    let _ = lsp_diag;
+}
+
+#[test]
+fn test_diagnostic_code_preserved() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic("test.ts", 0, 5, "Error", DiagnosticCategory::Error, 2322);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.code, Some(2322));
+}
+
+#[test]
+fn test_diagnostic_message_preserved() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let msg = "Type 'number' is not assignable to type 'string'";
+    let diag = make_diagnostic("test.ts", 0, 5, msg, DiagnosticCategory::Error, 2322);
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.message, msg);
+}
+
+#[test]
+fn test_diagnostic_range_single_char() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        6,
+        1,
+        "Single char",
+        DiagnosticCategory::Error,
+        1000,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.character, 6);
+}
+
+#[test]
+fn test_diagnostic_on_third_line() {
+    let source = "line1\nline2\nconst x: string = 42;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        12,
+        5,
+        "On third line",
+        DiagnosticCategory::Error,
+        2322,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 2);
+}
+
+#[test]
+fn test_diagnostic_with_tab_characters() {
+    let source = "\tconst x = 1;";
+    let line_map = LineMap::build(source);
+    let diag = make_diagnostic(
+        "test.ts",
+        1,
+        5,
+        "After tab",
+        DiagnosticCategory::Error,
+        1000,
+    );
+    let lsp_diag = convert_diagnostic(&diag, &line_map, source);
+    assert_eq!(lsp_diag.range.start.line, 0);
+}
+
+#[test]
+fn test_diagnostic_batch_convert() {
+    let source = "const x = 1;\nconst y: string = 2;";
+    let line_map = LineMap::build(source);
+    let diags = vec![
+        make_diagnostic("test.ts", 0, 5, "Err1", DiagnosticCategory::Error, 1000),
+        make_diagnostic("test.ts", 13, 5, "Err2", DiagnosticCategory::Error, 2322),
+    ];
+    let lsp_diags = convert_diagnostics_batch(&diags, &line_map, source);
+    assert_eq!(lsp_diags.len(), 2);
+    assert_eq!(lsp_diags[0].range.start.line, 0);
+    assert_eq!(lsp_diags[1].range.start.line, 1);
+}
+
+#[test]
+fn test_diagnostic_batch_empty() {
+    let source = "const x = 1;";
+    let line_map = LineMap::build(source);
+    let diags: Vec<Diagnostic> = vec![];
+    let lsp_diags = convert_diagnostics_batch(&diags, &line_map, source);
+    assert!(lsp_diags.is_empty());
+}
