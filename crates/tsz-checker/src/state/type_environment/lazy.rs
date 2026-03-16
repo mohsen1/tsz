@@ -943,7 +943,13 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                let resolved = self.type_reference_symbol_type(sym_id);
+                // Use get_type_of_symbol (value-space type) for TypeQuery resolution,
+                // NOT type_reference_symbol_type (type-position type). TypeQuery is
+                // `typeof X` which must resolve to the constructor type for classes,
+                // not the instance type. type_reference_symbol_type returns the instance
+                // type for classes, which would overwrite the correct constructor type
+                // previously inserted by ensure_refs_resolved.
+                let resolved = self.get_type_of_symbol(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR {
