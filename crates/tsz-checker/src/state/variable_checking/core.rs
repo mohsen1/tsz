@@ -1006,18 +1006,37 @@ impl<'a> CheckerState<'a> {
         // emit TS7031 for each leaf binding element under noImplicitAny.
         // This must be done before the symbol check since destructuring declarations
         // don't get a symbol assigned to the declaration node itself.
+        // Skip for:
+        //   - for-in/for-of loops (iterator provides the type)
+        //   - catch clauses (variable is implicitly `any` or `unknown`)
         if self.ctx.no_implicit_any()
             && !self.ctx.has_real_syntax_errors
+            && !is_catch_variable
             && var_decl.type_annotation.is_none()
             && var_decl.initializer.is_none()
         {
-            let is_destructuring_pattern =
-                self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
-                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            // Check if this declaration is part of a for-in/for-of loop.
+            // Structure: ForOfStatement/ForInStatement → VariableDeclarationList → VariableDeclaration
+            let is_in_for_in_of = self
+                .ctx
+                .arena
+                .get_extended(decl_idx)
+                .and_then(|ext| self.ctx.arena.get_extended(ext.parent))
+                .and_then(|parent_ext| self.ctx.arena.get(parent_ext.parent))
+                .is_some_and(|gp_node| {
+                    gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                 });
-            if is_destructuring_pattern {
-                self.emit_implicit_any_for_var_destructuring(var_decl.name);
+
+            if !is_in_for_in_of {
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if is_destructuring_pattern {
+                    self.emit_implicit_any_for_var_destructuring(var_decl.name);
+                }
             }
         }
 
