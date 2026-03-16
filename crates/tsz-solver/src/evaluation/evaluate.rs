@@ -150,6 +150,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
+    /// Pre-seed the evaluator's local cache with previously computed results.
+    /// This avoids re-evaluating deeply nested type applications that were
+    /// already resolved in earlier evaluator instances (e.g., across sequential
+    /// variable declarations that build on each other).
+    pub fn seed_cache(&mut self, entries: impl Iterator<Item = (TypeId, TypeId)>) {
+        self.cache.extend(entries);
+    }
+
     /// Drain the evaluator's internal cache, returning all intermediate results.
     /// This allows callers to persist intermediate evaluation results
     /// (e.g., from recursive mapped type expansion) into a longer-lived cache.

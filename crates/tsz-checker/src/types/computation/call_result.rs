@@ -36,6 +36,19 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         };
+        // Eagerly evaluate monomorphic TypeApplication return types to prevent
+        // deeply nested application chains from accumulating. Without this,
+        // sequential calls like `merge(merge(merge(...)))` build a chain of
+        // unevaluated TypeApplications where each level references the previous
+        // one. Later evaluation of the outermost type re-evaluates the entire
+        // chain from scratch, leading to exponential blowup.
+        let return_type = if tsz_solver::query::is_generic_application(self.ctx.types, return_type)
+            && !self.contains_type_parameters_cached(return_type)
+        {
+            self.evaluate_type_with_env(return_type)
+        } else {
+            return_type
+        };
         if is_optional_chain {
             self.ctx
                 .types
