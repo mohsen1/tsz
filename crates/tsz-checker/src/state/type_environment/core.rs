@@ -1366,25 +1366,29 @@ impl<'a> CheckerState<'a> {
 
         // First check if this is a type that needs special handling with binder resolution
         if let Some(node) = self.ctx.arena.get(idx) {
+            // TS1228: "A type predicate is only allowed in return type position for
+            // functions and methods." The parser restricts predicate parsing to return
+            // type positions, but some return types (constructors, getters, setters,
+            // construct signatures, constructor types) still parse predicates for error
+            // recovery. The checker must flag these, matching tsc's getTypePredicateParent.
             if node.kind == syntax_kind_ext::TYPE_PREDICATE {
-                let mut is_valid = false;
-                if let Some(ext) = self.ctx.arena.get_extended(idx)
-                    && let Some(parent) = self.ctx.arena.get(ext.parent)
-                    && matches!(
-                        parent.kind,
-                        syntax_kind_ext::FUNCTION_DECLARATION
-                            | syntax_kind_ext::FUNCTION_EXPRESSION
-                            | syntax_kind_ext::METHOD_DECLARATION
-                            | syntax_kind_ext::METHOD_SIGNATURE
-                            | syntax_kind_ext::CALL_SIGNATURE
-                            | syntax_kind_ext::ARROW_FUNCTION
-                            | syntax_kind_ext::CONSTRUCT_SIGNATURE
-                            | syntax_kind_ext::FUNCTION_TYPE
-                            | syntax_kind_ext::CONSTRUCTOR_TYPE
-                    )
-                {
-                    is_valid = true;
-                }
+                let is_valid = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .is_some_and(|parent| {
+                        matches!(
+                            parent.kind,
+                            syntax_kind_ext::FUNCTION_DECLARATION
+                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                | syntax_kind_ext::METHOD_DECLARATION
+                                | syntax_kind_ext::METHOD_SIGNATURE
+                                | syntax_kind_ext::CALL_SIGNATURE
+                                | syntax_kind_ext::ARROW_FUNCTION
+                                | syntax_kind_ext::FUNCTION_TYPE
+                        )
+                    });
                 if !is_valid {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
