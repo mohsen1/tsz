@@ -559,48 +559,19 @@ impl<'a> CheckerState<'a> {
                 // can see through the alias to extract the non-nullable component.
                 let evaluated_left = self.evaluate_type_with_env(left_type);
                 let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
-                // TS2869: Right operand of ?? is unreachable because the left
-                // operand is never nullish.
-                //
-                // tsc only emits TS2869 when the left operand is SYNTACTICALLY
-                // a nullish coalescing expression itself — i.e., `(a ?? b) ?? c`
-                // where the inner `a ?? b` always produces a non-null result.
-                // tsc does NOT emit TS2869 for every non-nullable ?? left operand
-                // (e.g., `stringVar ?? fallback` does NOT trigger it).
-                if cause.is_none() {
-                    let left_is_nullish_coalescing =
-                        self.ctx.arena.get(left_idx).is_some_and(|n| {
-                            // Direct ?? expression
-                            if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                                if let Some(bin) = self.ctx.arena.get_binary_expr(n) {
-                                    return bin.operator_token
-                                        == SyntaxKind::QuestionQuestionToken as u16;
-                                }
-                            }
-                            // Parenthesized ?? expression: (a ?? b) ?? c
-                            if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                if let Some(paren) = self.ctx.arena.get_parenthesized(n) {
-                                    if let Some(inner) = self.ctx.arena.get(paren.expression) {
-                                        if inner.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                                            if let Some(bin) = self.ctx.arena.get_binary_expr(inner)
-                                            {
-                                                return bin.operator_token
-                                                    == SyntaxKind::QuestionQuestionToken as u16;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            false
-                        });
-                    if left_is_nullish_coalescing {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node(
-                            right_idx,
-                            "Right operand of ?? is unreachable because the left operand is never nullish.",
-                            diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
-                        );
-                    }
+                // `unknown` and `any` are top types that include null/undefined.
+                // Don't report TS2869 for them — the right operand IS reachable.
+                let left_is_top_type = evaluated_left == TypeId::UNKNOWN
+                    || evaluated_left == TypeId::ANY;
+                if cause.is_none() && !left_is_top_type {
+                    // TS2869: Left operand is never nullish, right is unreachable.
+                    // This replaces the generic TS2872 ("always truthy") for ?? context.
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        right_idx,
+                        "Right operand of ?? is unreachable because the left operand is never nullish.",
+                        diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
+                    );
                     type_stack.push(left_type);
                 } else {
                     let result = match non_nullish {
