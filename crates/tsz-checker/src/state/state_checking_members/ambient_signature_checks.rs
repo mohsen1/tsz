@@ -25,7 +25,27 @@ impl<'a> CheckerState<'a> {
         // This check only fires when the expression is NOT an entity name expression
         // (i.e., not a simple identifier or property access chain like a.b.c).
         // Entity name expressions are always allowed regardless of their type.
-        self.check_class_computed_property_name(prop.name);
+        //
+        // TSC suppresses TS1166 for decorated properties in class expressions when
+        // experimentalDecorators is enabled (those get TS1206 instead).
+        let suppress_ts1166 = self.ctx.compiler_options.experimental_decorators
+            && self.ctx.enclosing_class.as_ref().is_some_and(|c| {
+                self.ctx
+                    .arena
+                    .get(c.class_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            })
+            && prop.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.ctx
+                        .arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
+        if !suppress_ts1166 {
+            self.check_class_computed_property_name(prop.name);
+        }
         self.check_modifier_combinations(&prop.modifiers);
 
         // TS8009/TS8010: Check for TypeScript-only features in JavaScript files

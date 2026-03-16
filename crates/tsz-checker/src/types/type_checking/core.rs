@@ -1882,6 +1882,11 @@ impl<'a> CheckerState<'a> {
                 // which lives inside get_type_from_tuple_type.
                 let _ = self.get_type_from_type_node(node_idx);
             }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                // Force function/constructor type validation (TS2371 for parameter
+                // initializers in type position, including binding element defaults).
+                let _ = self.get_type_from_type_node(node_idx);
+            }
             _ => {}
         }
     }
