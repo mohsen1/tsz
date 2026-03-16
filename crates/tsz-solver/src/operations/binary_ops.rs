@@ -998,13 +998,33 @@ impl<'a> BinaryOpEvaluator<'a> {
                     .iter()
                     .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
             }
-            // Deferred types (generic applications, lazy refs, conditionals) cannot be fully
-            // resolved without instantiation context. When checking mapped type constraints,
-            // assume valid to avoid false positives.
-            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::Conditional(_))
-                if defer_unresolved =>
-            {
-                true
+            // TypeQuery (typeof expr) — try to evaluate to the underlying type.
+            // Function return types annotated as `typeof x` resolve to TypeQuery;
+            // we need to resolve them before checking validity.
+            Some(TypeData::TypeQuery(_)) => {
+                let evaluated = self.interner.evaluate_type(type_id);
+                if evaluated != type_id {
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                } else {
+                    // Unresolvable TypeQuery in generic context — conservatively accept
+                    // to avoid false TS2464 positives.
+                    true
+                }
+            }
+            // Deferred types (generic applications, lazy refs, conditionals) — try to
+            // evaluate first. If they resolve to a concrete type, check it recursively.
+            // If they remain unresolved (generic context), accept conservatively to
+            // avoid false TS2464 positives. tsc uses full assignability which resolves
+            // these through getBaseConstraintOfType; our pattern-matching approach needs
+            // to be conservative with unresolvable generics.
+            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::Conditional(_)) => {
+                let evaluated = self.interner.evaluate_type(type_id);
+                if evaluated != type_id {
+                    self.is_valid_key_type_impl(evaluated, defer_unresolved)
+                } else {
+                    // Unresolvable in generic context — conservatively accept
+                    true
+                }
             }
 
             // For indexed access, try resolving first. If it remains unresolved in generic
