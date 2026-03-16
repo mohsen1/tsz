@@ -10,6 +10,7 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     fn is_valid_in_operator_rhs(&mut self, ty: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
+        use tsz_solver::TypeData;
 
         if matches!(
             ty,
@@ -18,9 +19,18 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if query::is_type_parameter_like(self.ctx.types, ty)
-            || query::is_object_like_type(self.ctx.types, ty)
-        {
+        // For type parameters, check if their constraint is assignable to object.
+        // Unconstrained type params are NOT valid (could be primitive).
+        // For union constraints, if ANY constituent is object-like, the param
+        // is valid (tsc allows `T extends object | "hello"` for `in`).
+        if let Some(TypeData::TypeParameter(tp)) = self.ctx.types.lookup(ty) {
+            return match tp.constraint {
+                Some(c) => self.is_type_param_constraint_valid_for_in(c),
+                None => false, // Unconstrained T could be primitive
+            };
+        }
+
+        if query::is_object_like_type(self.ctx.types, ty) {
             return true;
         }
 
@@ -37,6 +47,40 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// For type parameter constraints: ALL constituents must be valid for `in`.
+    /// `T extends object` is valid, but `T extends object | "hello"` is not
+    /// because T could be instantiated with `"hello"` (a primitive).
+    fn is_type_param_constraint_valid_for_in(&mut self, constraint: TypeId) -> bool {
+        // Just delegate to the main check — the constraint itself must be fully valid
+        self.is_valid_in_operator_rhs(constraint)
+    }
+
+    /// Check if a type "may represent a primitive value" for TS2638.
+    /// This applies to types like `{}` that structurally accept primitives,
+    /// and type parameters whose constraint is `{}` or missing.
+    fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
+        use tsz_solver::TypeData;
+
+        // `{}` (empty object type) may represent primitives
+        if tsz_solver::is_empty_object_type(self.ctx.types, ty) {
+            return true;
+        }
+
+        // Type parameters: check if constraint is missing or is `{}`
+        match self.ctx.types.lookup(ty) {
+            Some(TypeData::TypeParameter(tp)) => {
+                match tp.constraint {
+                    None => true, // Unconstrained type param may be primitive
+                    Some(c) => self.type_may_represent_primitive(c),
+                }
+            }
+            // BoundParameter is a de Bruijn index with no constraint info
+            // at the solver level; treat as potentially primitive.
+            Some(TypeData::BoundParameter(_)) => true,
+            _ => false,
+        }
     }
 
     /// Get the type of a binary expression.
@@ -406,6 +450,15 @@ impl<'a> CheckerState<'a> {
                         TypeId::OBJECT,
                         right_idx,
                         right_idx,
+                    );
+                } else if self.type_may_represent_primitive(right_type) {
+                    // TS2638: Type '{}' may represent a primitive value, which is not
+                    // permitted as the right operand of the 'in' operator.
+                    let type_str = self.format_type(right_type);
+                    self.error_at_node_msg(
+                        right_idx,
+                        tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND,
+                        &[&type_str],
                     );
                 }
 
