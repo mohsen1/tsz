@@ -38,6 +38,21 @@ pub(super) fn is_object_prototype_method(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Get the declaring type name for a property in a target type.
+    /// For inherited properties (e.g., from a base class), returns the base class name.
+    /// Falls back to formatting the target type if no parent info is available.
+    fn property_declaring_type_name(
+        &self,
+        target_type: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let prop_info = self.property_info_for_display(target_type, property_name)?;
+        prop_info
+            .parent_id
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .map(|sym| sym.escaped_name.clone())
+    }
+
     fn property_info_for_display(
         &self,
         ty: TypeId,
@@ -347,11 +362,13 @@ impl<'a> CheckerState<'a> {
     // Type Assignability Errors
     // =========================================================================
 
+    /// Report a type not assignable error (delegates to `diagnose_assignment_failure`).
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
+    /// Report a type not assignable error at an exact AST node anchor.
     pub fn error_type_not_assignable_at_with_anchor(
         &mut self,
         source: TypeId,
@@ -443,12 +460,14 @@ impl<'a> CheckerState<'a> {
         self.ctx.push_diagnostic(base_diag);
     }
 
+    /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
-    /// Reports a detailed assignability failure using an already-resolved diagnostic anchor.
+    /// Internal helper that reports a detailed assignability failure using an
+    /// already-resolved diagnostic anchor.
     pub(super) fn diagnose_assignment_failure_with_anchor(
         &mut self,
         source: TypeId,
@@ -513,23 +532,6 @@ impl<'a> CheckerState<'a> {
             )
             .with_related(self.ctx.file_name.clone(), loc.0, loc.1 - loc.0, detail);
 
-            self.ctx.push_diagnostic(diag);
-            return;
-        }
-
-        // TS2820: "Type '{0}' is not assignable to type '{1}'. Did you mean '{2}'?"
-        // When the source is a string literal and the target contains string literal
-        // union members, check for a close Levenshtein match and emit TS2820 instead
-        // of the generic TS2322.
-        if let Some(loc) = self.get_source_location(anchor_idx)
-            && let Some(diag) = self.try_string_literal_suggestion_diagnostic(
-                source,
-                target,
-                anchor_idx,
-                loc.start,
-                loc.length(),
-            )
-        {
             self.ctx.push_diagnostic(diag);
             return;
         }
@@ -619,18 +621,6 @@ impl<'a> CheckerState<'a> {
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
             if self.has_more_specific_diagnostic_at_span(loc.start, loc.length()) {
-                return;
-            }
-
-            // TS2820: string literal "did you mean" suggestion
-            if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
-                source,
-                target,
-                anchor_idx,
-                loc.start,
-                loc.length(),
-            ) {
-                self.ctx.push_diagnostic(diag);
                 return;
             }
 
@@ -833,15 +823,71 @@ impl<'a> CheckerState<'a> {
 
                 // Private brand properties are internal implementation details for
                 // nominal private member checking. They should never appear in
-                // user-facing diagnostics — emit TS2322 instead of TS2741.
+                // user-facing diagnostics — emit TS2322 with private/protected
+                // member detail when available (matching the TypeMismatch handler).
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 if prop_name.starts_with("__private_brand") {
-                    let src_str = self.format_type_for_assignability_message(*source_type);
-                    let tgt_str_with_args =
-                        self.format_type_for_assignability_message(*target_type);
+                    let src_str = if depth == 0 {
+                        self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    } else {
+                        self.format_type_for_assignability_message(*source_type)
+                    };
+                    let tgt_str = if depth == 0 {
+                        self.format_assignability_type_for_message(target, source)
+                    } else {
+                        self.format_type_for_assignability_message(*target_type)
+                    };
+                    // Try to find the backing private/protected member for a detailed
+                    // message. First: source missing a private member entirely.
+                    if depth == 0
+                        && let Some((member_name, owner_name, visibility)) =
+                            self.private_or_protected_member_missing_display(source, target, None)
+                    {
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &member_name,
+                            &owner_name,
+                            visibility,
+                            None,
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
+                    // Second: source HAS the property but with wrong visibility/nominal
+                    // identity. Use the brand's backing member display for the detail.
+                    if depth == 0
+                        && let Some((display_prop, owner_name, visibility)) =
+                            self.private_or_protected_brand_backing_member_display(target, None)
+                    {
+                        let message = self.private_or_protected_assignability_message(
+                            &src_str,
+                            &tgt_str,
+                            &display_prop,
+                            &owner_name,
+                            visibility,
+                            self.property_info_for_display(
+                                source,
+                                self.ctx.types.intern_string(&display_prop),
+                            )
+                            .map(|prop| prop.visibility),
+                        );
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str_with_args],
+                        &[&src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1135,32 +1181,44 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // After filtering brands, if exactly 1 property remains, emit TS2741
-                // (single missing property) instead of TS2739 (multiple missing).
-                // This happens when a class with private members has one non-brand
-                // missing property — e.g. `c2 = c` where C implements A (private x).
+                // When filtering removed brand/prototype properties and only 1 remains,
+                // emit TS2741 (single missing property) instead of TS2739 (multiple).
+                // This matches tsc behavior: e.g., class with private member where the brand
+                // is filtered out, leaving only the real property like 'x'.
                 if filtered_names.len() == 1 {
-                    let prop_atom = filtered_names[0];
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop_atom).to_string();
-                    let widened_source = self.widen_type_for_display(*source_type);
-                    let (src_str, tgt_str_qualified) = if depth == 0 {
-                        let src = if *source_type == TypeId::OBJECT {
+                    let prop_name = self
+                        .ctx
+                        .types
+                        .resolve_atom_ref(filtered_names[0])
+                        .to_string();
+                    let src_str = if depth == 0 {
+                        if *source_type == TypeId::OBJECT {
                             "{}".to_string()
                         } else {
                             self.format_assignment_source_type_for_diagnostic(source, target, idx)
-                        };
-                        (
-                            src,
-                            self.format_assignability_type_for_message(target, source),
-                        )
+                        }
                     } else if *source_type == TypeId::OBJECT {
-                        ("{}".to_string(), self.format_type_diagnostic(*target_type))
+                        "{}".to_string()
                     } else {
-                        self.format_type_pair_diagnostic(widened_source, target)
+                        let widened_source = self.widen_type_for_display(*source_type);
+                        self.format_type_diagnostic(widened_source)
                     };
+                    // TSC uses the declaring type name for "required in type 'X'" when the
+                    // property is inherited from a base class. For example, if property 'x'
+                    // is declared in class A and inherited by C2 via extends, tsc says
+                    // "required in type 'A'", not "required in type 'C2'".
+                    let tgt_str = self
+                        .property_declaring_type_name(*target_type, filtered_names[0])
+                        .unwrap_or_else(|| {
+                            if depth == 0 {
+                                self.format_assignability_type_for_message(target, source)
+                            } else {
+                                self.format_type_diagnostic(*target_type)
+                            }
+                        });
                     let message = format_message(
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                        &[&prop_name, &src_str, &tgt_str_qualified],
+                        &[&prop_name, &src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -1705,16 +1763,6 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
-                // TS2820: check for string literal "did you mean" suggestion
-                if let Some(diag) = self.try_string_literal_suggestion_diagnostic(
-                    *source_type,
-                    target,
-                    idx,
-                    start,
-                    length,
-                ) {
-                    return diag;
-                }
                 let (source_str, target_str) = if depth == 0 {
                     let use_structural_source_display =
                         tsz_solver::type_queries::get_enum_def_id(self.ctx.types, source).is_none();
@@ -1773,12 +1821,6 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                // TS2820: check for string literal "did you mean" suggestion
-                if let Some(diag) = self
-                    .try_string_literal_suggestion_diagnostic(source, target, idx, start, length)
-                {
-                    return diag;
-                }
                 let source_str = if depth == 0 {
                     self.format_assignment_source_type_for_diagnostic(source, target, idx)
                 } else {
