@@ -492,10 +492,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && let Some(member) = placeholder_member
                 {
                     // Single placeholder-containing member in a union like
-                    // `T | undefined | null` — constrain source against it.
-                    // Defaults don't prevent inference; they're used as fallback
-                    // during resolution when no candidates are found.
-                    self.constrain_types(ctx, var_map, source, member, priority);
+                    // `T | undefined | null` — constrain source against it,
+                    // BUT only if the source doesn't already match a fixed
+                    // (non-placeholder) member of the target union.
+                    // This implements tsc's inferFromMatchingTypes behavior:
+                    // when source `number` matches fixed target `number` in
+                    // `T | number | string | boolean | Date`, don't infer T = number.
+                    if self.source_matches_fixed_union_member(
+                        source,
+                        t_members.iter().copied(),
+                        var_map,
+                    ) {
+                        // Source is already "explained" by a fixed member — skip inference
+                    } else {
+                        self.constrain_types(ctx, var_map, source, member, priority);
+                    }
                 } else if placeholder_count > 1 {
                     // Multiple placeholder-containing members: prefer structural matches.
                     // For example, when source is `Foo<U>` and target is `V | Foo<V>`,
@@ -2093,6 +2104,70 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | (TypeData::Tuple(_), TypeData::Tuple(_))
             | (TypeData::Array(_), TypeData::Array(_)) => true,
             _ => false,
+        }
+    }
+
+    /// Check if a source type matches any fixed (non-placeholder) member of a target union.
+    ///
+    /// This implements tsc's `inferFromMatchingTypes` + `isTypeOrBaseIdenticalTo`:
+    /// a source type matches a fixed member if:
+    /// 1. The source TypeId is identical to a fixed member, OR
+    /// 2. The source is a literal type whose base type (e.g., `13` → `number`) matches
+    ///    a fixed member.
+    ///
+    /// Additionally, fixed members that are type aliases (Lazy) are resolved and their
+    /// constituent union members are also checked.
+    fn source_matches_fixed_union_member(
+        &mut self,
+        source: TypeId,
+        target_members: impl Iterator<Item = TypeId>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> bool {
+        // Collect fixed (non-placeholder) members, expanding Lazy types and flattening unions
+        let mut fixed_set = FxHashSet::default();
+        let mut member_visited = FxHashSet::default();
+        for member in target_members {
+            member_visited.clear();
+            if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
+                self.collect_expanded_members(member, &mut fixed_set);
+            }
+        }
+
+        if fixed_set.is_empty() {
+            return false;
+        }
+
+        // Direct match
+        if fixed_set.contains(&source) {
+            return true;
+        }
+
+        // Literal-to-base match: `13` → `number`, `"hi"` → `string`, `true` → `boolean`
+        let widened = crate::operations::widening::widen_literal_type(self.interner, source);
+        widened != source && fixed_set.contains(&widened)
+    }
+
+    /// Collect all leaf types from a type, resolving Lazy (type alias) references
+    /// and flattening unions. Uses the checker's evaluate_type to resolve Lazy types
+    /// since the interner's evaluate_type cannot resolve DefIds without checker context.
+    fn collect_expanded_members(&mut self, ty: TypeId, out: &mut FxHashSet<TypeId>) {
+        out.insert(ty);
+        match self.interner.lookup(ty) {
+            Some(TypeData::Union(members)) => {
+                let list = self.interner.type_list(members);
+                for &m in list.iter() {
+                    self.collect_expanded_members(m, out);
+                }
+            }
+            Some(TypeData::Lazy(_)) => {
+                // Use the checker's evaluate_type which has access to the full
+                // type environment and can resolve DefIds through the checker context.
+                let evaluated = self.checker.evaluate_type(ty);
+                if evaluated != ty {
+                    self.collect_expanded_members(evaluated, out);
+                }
+            }
+            _ => {}
         }
     }
 
