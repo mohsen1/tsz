@@ -1453,6 +1453,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         true
     }
 
+    /// Check if `candidate` matches `target_placeholder`, accounting for
+    /// intersection-typed placeholders. When `target_placeholder` is an
+    /// intersection (e.g. `T & {}` from `LowInfer<T>`), `candidate` matches
+    /// if it equals the intersection OR any of its members.
+    fn is_placeholder_match(&self, candidate: TypeId, target_placeholder: TypeId) -> bool {
+        if candidate == target_placeholder {
+            return true;
+        }
+        if let Some(TypeData::Intersection(members_id)) = self.interner.lookup(target_placeholder) {
+            let members = self.interner.type_list(members_id);
+            return members.contains(&candidate);
+        }
+        false
+    }
+
     /// Find the `keyof T` inference target from a mapped type constraint,
     /// decomposing Union and Intersection constraints recursively.
     ///
@@ -1510,6 +1525,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> bool {
         let template = mapped.template;
         let iter_param_name = mapped.type_param.name;
+        trace!(
+            template = ?template,
+            target_placeholder = ?target_placeholder,
+            num_source_props = source_obj.properties.len(),
+            "constrain_reverse_mapped_type"
+        );
 
         let mut reverse_properties = Vec::new();
         let mut any_reversed = false;
@@ -1728,9 +1749,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         template: TypeId,
         target_placeholder: TypeId,
     ) -> Option<TypeId> {
-        // Case 1: template is directly IndexAccess(T, key) → source IS the reversed value
+        // Case 1: template is directly IndexAccess(T, key) → source IS the reversed value.
+        // Also handles when target_placeholder is `T & {}` (from LowInfer<T> = T & {})
+        // but the IndexAccess references the raw T — we check if T is a member of
+        // the intersection.
         if let Some(TypeData::IndexAccess(obj, _idx)) = self.interner.lookup(template)
-            && obj == target_placeholder
+            && self.is_placeholder_match(obj, target_placeholder)
         {
             return Some(source_value);
         }
@@ -1890,19 +1914,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Case 5: template is a Union type — try reversing through each member.
-        // This handles templates like `(() => T[K]) | Definition<T[K]>` where the
-        // source value can match one of the union members. We try each member in
-        // order and return the first successful reversal.
+        // This handles templates like `((ctx: T) => T[K]) | T[K]` where the
+        // source value can match one of the union members.
+        //
+        // Important: `IndexAccess(T, K)` (i.e. `T[K]`) is a catch-all that matches
+        // any source value. When the union also contains structural members (functions,
+        // objects, applications), we must try those first. Otherwise a function source
+        // would match `T[K]` directly, inferring T.prop = fn_type instead of reversing
+        // through the function template to extract T.prop = return_type.
         if let Some(TypeData::Union(members_id)) = self.interner.lookup(template) {
             let members = self.interner.type_list(members_id);
+
+            // Partition: try structural members first, then IndexAccess catch-all.
+            // T[K] is a catch-all that matches any source value, so structural
+            // members (functions, objects, etc.) must be tried first.
+            let mut catch_all: Option<TypeId> = None;
             for &member in members.iter() {
+                if let Some(TypeData::IndexAccess(obj, _)) = self.interner.lookup(member)
+                    && self.is_placeholder_match(obj, target_placeholder)
+                {
+                    debug_assert!(
+                        catch_all.is_none(),
+                        "multiple IndexAccess catch-all members in union template"
+                    );
+                    catch_all = Some(member);
+                    continue;
+                }
                 if let Some(reversed) =
                     self.reverse_infer_through_template(source_value, member, target_placeholder)
                 {
                     return Some(reversed);
                 }
             }
-            // None of the union members could be reversed
+            // Fall back to the catch-all T[K] if no structural member matched
+            if let Some(ca) = catch_all
+                && let Some(reversed) =
+                    self.reverse_infer_through_template(source_value, ca, target_placeholder)
+            {
+                return Some(reversed);
+            }
             return None;
         }
 
