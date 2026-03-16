@@ -221,6 +221,37 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2304/TS2552 for expression inside `export default` in a namespace.
+        // TS1319 is the correct diagnostic; name resolution produces false positives.
+        {
+            let mut cur = idx;
+            for _ in 0..8 {
+                if let Some(n) = self.ctx.arena.get(cur) {
+                    if n.kind == syntax_kind_ext::EXPORT_DECLARATION
+                        || n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    {
+                        let mut ns = cur;
+                        for _ in 0..8 {
+                            if let Some(nn) = self.ctx.arena.get(ns) {
+                                if nn.kind == syntax_kind_ext::MODULE_DECLARATION {
+                                    return;
+                                }
+                            }
+                            match self.ctx.arena.get_extended(ns) {
+                                Some(e) if e.parent.is_some() => ns = e.parent,
+                                _ => break,
+                            }
+                        }
+                        break;
+                    }
+                }
+                match self.ctx.arena.get_extended(cur) {
+                    Some(e) if e.parent.is_some() => cur = e.parent,
+                    _ => break,
+                }
+            }
+        }
+
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
         // before any TS2304 suppression logic. This fires independently of TS2304.
         // Suppressed when file has parse errors (tsc's grammarErrorOnNode pattern).
