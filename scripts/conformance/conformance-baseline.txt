@@ -24,6 +24,7 @@ FAIL TypeScript/tests/cases/compiler/classExpressionWithResolutionOfNamespaceOfS
 FAIL TypeScript/tests/cases/compiler/classFieldSuperAccessibleJs1.ts | expected:[TS2565] actual:[TS2551]
 FAIL TypeScript/tests/cases/compiler/classFieldSuperNotAccessibleJs.ts | expected:[TS2855] actual:[TS2339,TS7053]
 FAIL TypeScript/tests/cases/compiler/classMemberInitializerWithLamdaScoping3.ts | expected:[TS2301] actual:[TS2663]
+FAIL TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts | expected:[] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/clodulesDerivedClasses.ts | expected:[TS2322,TS2417,TS2564] actual:[TS2322,TS2564]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS7031]
@@ -393,7 +394,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx | expected:[TS
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx | expected:[TS1003,TS1005,TS1109] actual:[TS1003,TS1005,TS1109]
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx | expected:[TS7026] actual:[]
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts | expected:[] actual:[TS2874,TS2879]
 FAIL TypeScript/tests/cases/compiler/jsxViaImport.2.tsx | expected:[TS7008] actual:[TS2607,TS7008]
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
@@ -446,6 +446,7 @@ FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexp
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts | expected:[TS2564] actual:[TS2339,TS2564]
+FAIL TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationOfAlias.ts | expected:[] actual:[TS2339,TS2666]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1202,TS2307]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext2.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258] actual:[TS1184]
@@ -675,7 +676,6 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties3.ts | expected:[TS
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts | expected:[TS2353] actual:[TS2322,TS2344,TS2345,TS2353,TS2536]
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts | expected:[TS1002,TS1125] actual:[TS1002,TS1125]
-FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts | expected:[TS2344] actual:[]
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts | expected:[TS2322,TS2344,TS2416,TS2744] actual:[TS2322,TS2344,TS2416,TS2744]
 FAIL TypeScript/tests/cases/compiler/subtypeReductionWithAnyFunctionType.ts | expected:[TS7006] actual:[]
 FAIL TypeScript/tests/cases/compiler/superPropertyAccessInSuperCall01.ts | expected:[TS17011] actual:[]
@@ -810,6 +810,7 @@ FAIL TypeScript/tests/cases/conformance/classes/classDeclarations/declaredClassM
 FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock26.ts | expected:[TS1003,TS1005,TS1109] actual:[TS1109,TS1213]
 FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/constructorParameters/constructorParameterProperties2.ts | expected:[TS2300,TS2564,TS2687] actual:[TS2300,TS2564,TS2687]
 FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/derivedClassSuperCallsInNonConstructorMembers.ts | expected:[TS1068,TS1441] actual:[TS1068,TS1359,TS2564]
+FAIL TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/superPropertyInConstructorBeforeSuperCall.ts | expected:[TS17011] actual:[TS17011]
 FAIL TypeScript/tests/cases/conformance/classes/members/accessibility/privateInstanceMemberAccessibility.ts | expected:[TS1442] actual:[TS5107]
 FAIL TypeScript/tests/cases/conformance/classes/members/classTypes/staticPropertyNotInClassType.ts | expected:[TS2302,TS2339,TS2576] actual:[TS2302,TS2339,TS2576]
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedGenericClassWithAny.ts | expected:[TS2322,TS2564] actual:[TS2322,TS2564]
@@ -1280,7 +1281,6 @@ FAIL TypeScript/tests/cases/conformance/override/override19.ts | expected:[TS411
 FAIL TypeScript/tests/cases/conformance/override/override21.ts | expected:[TS4113] actual:[TS4127]
 FAIL TypeScript/tests/cases/conformance/override/overrideLateBindableName1.ts | expected:[TS4113,TS5024] actual:[TS4127,TS5024]
 FAIL TypeScript/tests/cases/conformance/override/override_js4.ts | expected:[TS4123] actual:[TS4122]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS1213,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionDeclarations.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.functionExpressions.es2018.ts | expected:[TS1109,TS5024] actual:[TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.objectLiteralMethods.es2018.ts | expected:[TS1005,TS1109,TS5024] actual:[TS1005,TS1109,TS1212,TS1359,TS2523,TS2524,TS5024]
@@ -2371,7 +2371,6 @@ PASS TypeScript/tests/cases/compiler/classOverloadForFunction.ts
 PASS TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
 PASS TypeScript/tests/cases/compiler/classPropInitializationInferenceWithElementAccess.ts
 PASS TypeScript/tests/cases/compiler/classPropertyErrorOnNameOnly.ts
-PASS TypeScript/tests/cases/compiler/classReferencedInContextualParameterWithinItsOwnBaseExpression.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance1.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance2.ts
 PASS TypeScript/tests/cases/compiler/classSideInheritance3.ts
@@ -5369,7 +5368,6 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule3.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule4.ts
-PASS TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInDependency.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationInDependency2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationNoNewNames.ts
@@ -7699,7 +7697,6 @@ PASS TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCal
 PASS TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/emitStatementsBeforeSuperCall.ts
 PASS TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/emitStatementsBeforeSuperCallWithDefineFields.ts
 PASS TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/superCallInConstructorWithNoBaseType.ts
-PASS TypeScript/tests/cases/conformance/classes/constructorDeclarations/superCalls/superPropertyInConstructorBeforeSuperCall.ts
 PASS TypeScript/tests/cases/conformance/classes/indexMemberDeclarations/privateIndexer.ts
 PASS TypeScript/tests/cases/conformance/classes/indexMemberDeclarations/privateIndexer2.ts
 PASS TypeScript/tests/cases/conformance/classes/indexMemberDeclarations/publicIndexer.ts
