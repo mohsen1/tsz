@@ -1038,7 +1038,6 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1095 // A 'set' accessor cannot have a return type annotation
         | 1096 // An index signature must have exactly one parameter
         | 1097 // '{0}' list cannot be empty
-        | 1110 // Type expected
         | 1113 // A 'default' clause cannot appear more than once in a 'switch' statement
         | 1114 // Duplicate label
         | 1123 // Variable declaration list cannot be empty
