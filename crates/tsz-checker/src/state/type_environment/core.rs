@@ -490,9 +490,8 @@ impl<'a> CheckerState<'a> {
         let result = self.evaluate_mapped_type_with_resolution(result);
 
         // Evaluate meta-types (conditional, index access, keyof) with symbol resolution
-        let result = self.evaluate_type_with_env(result);
 
-        result
+        self.evaluate_type_with_env(result)
     }
 
     /// Instantiate callable type parameters for instantiation expressions.

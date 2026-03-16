@@ -4,9 +4,7 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
-use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
