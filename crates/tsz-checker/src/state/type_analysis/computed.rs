@@ -2327,7 +2327,7 @@ impl<'a> CheckerState<'a> {
         (TypeId::ANY, Vec::new())
     }
 
-    /// Resolve TypeQuery references in a type alias body using flow narrowing.
+    /// Resolve `TypeQuery` references in a type alias body using flow narrowing.
     ///
     /// When a same-file type alias is lowered via `lower_cross_arena_type_alias_declaration`,
     /// `typeof expr` creates `TypeQuery(SymbolRef)` which resolves to the declared type
@@ -2335,7 +2335,7 @@ impl<'a> CheckerState<'a> {
     /// `if (typeof c === 'string') { type C = { [key: string]: typeof c }; }`),
     /// the declared type is wrong — it should be the narrowed type.
     ///
-    /// This method checks if the lowered type contains TypeQuery references and, if
+    /// This method checks if the lowered type contains `TypeQuery` references and, if
     /// any resolve to a flow-narrowed type different from the declared type, rebuilds
     /// the type with the narrowed values substituted in.
     pub(crate) fn resolve_type_queries_with_flow(
@@ -2378,7 +2378,7 @@ impl<'a> CheckerState<'a> {
         self.get_type_from_type_node(type_node)
     }
 
-    /// Recursively collect TYPE_QUERY node indices from a type node subtree.
+    /// Recursively collect `TYPE_QUERY` node indices from a type node subtree.
     fn collect_type_query_nodes(&self, idx: NodeIndex, out: &mut Vec<NodeIndex>) {
         let Some(node) = self.ctx.arena.get(idx) else {
             return;
@@ -2401,11 +2401,10 @@ impl<'a> CheckerState<'a> {
 
         // Handle index signature: scan type annotation
         if node.kind == syntax_kind_ext::INDEX_SIGNATURE {
-            if let Some(data) = self.ctx.arena.get_index_signature(node) {
-                if data.type_annotation.is_some() {
+            if let Some(data) = self.ctx.arena.get_index_signature(node)
+                && data.type_annotation.is_some() {
                     self.collect_type_query_nodes(data.type_annotation, out);
                 }
-            }
             return;
         }
 
@@ -2413,11 +2412,10 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
             || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
         {
-            if let Some(data) = self.ctx.arena.get_property_decl(node) {
-                if data.type_annotation.is_some() {
+            if let Some(data) = self.ctx.arena.get_property_decl(node)
+                && data.type_annotation.is_some() {
                     self.collect_type_query_nodes(data.type_annotation, out);
                 }
-            }
             return;
         }
 
@@ -2438,7 +2436,6 @@ impl<'a> CheckerState<'a> {
             if let Some(data) = self.ctx.arena.get_array_type(node) {
                 self.collect_type_query_nodes(data.element_type, out);
             }
-            return;
         }
     }
 }
