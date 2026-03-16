@@ -491,6 +491,10 @@ pub struct CheckerContext<'a> {
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
     pub class_constructor_resolution_set: FxHashSet<SymbolId>,
+    /// Classes/interfaces with circular inheritance (TS2506/TS2310). Used to
+    /// fix the return type of `new` on circular generic classes: tsc returns
+    /// `C<unknown>` instead of the raw `C<T>`.
+    pub circular_class_symbols: FxHashSet<SymbolId>,
     /// Deferred TS7034 candidates: non-ambient variables with no annotation, no init, and type ANY.
     /// Maps symbol ID → declaration name node. Consumed when a capture is detected.
     pub pending_implicit_any_vars: FxHashMap<SymbolId, NodeIndex>,
