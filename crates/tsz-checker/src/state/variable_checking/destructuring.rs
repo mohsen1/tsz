@@ -778,7 +778,7 @@ impl<'a> CheckerState<'a> {
                 let key_is_symbol = key_type == TypeId::SYMBOL
                     || tsz_solver::visitor::unique_symbol_ref(self.ctx.types, key_type).is_some();
                 let key_is_type_param =
-                    tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, key_type);
+                    crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, key_type);
                 if !key_is_string
                     && !key_is_number
                     && !key_is_symbol
