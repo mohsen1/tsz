@@ -1690,6 +1690,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Binding element from variable declaration destructuring:
+            // `let { a, ...rest } = expr` — resolve element type from initializer.
+            if resolved_value_decl.is_some()
+                && let Some(t) = self.resolve_binding_element_from_variable_initializer(
+                    resolved_value_decl,
+                    &escaped_name,
+                )
+            {
+                return (t, Vec::new());
+            }
             if resolved_value_decl.is_some()
                 && let Some(t) = self.resolve_binding_element_from_annotated_param(
                     resolved_value_decl,
