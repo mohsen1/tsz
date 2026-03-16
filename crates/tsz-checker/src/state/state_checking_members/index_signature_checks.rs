@@ -814,11 +814,37 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
 
         let mut own_names = std::collections::HashSet::new();
+        // Find index signature nodes to use as error positions (matching TSC behavior).
+        // TSC reports TS2411 for inherited properties on the index signature member,
+        // not on the interface declaration.
+        let mut number_index_sig_node: Option<NodeIndex> = None;
+        let mut string_index_sig_node: Option<NodeIndex> = None;
         for &member_idx in own_members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
             if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                // Determine if this is a number or string index signature by checking
+                // the parameter's type annotation keyword
+                if let Some(idx_data) = self.ctx.arena.get_index_signature(member_node) {
+                    for &param_idx in &idx_data.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx) {
+                            if let Some(param_data) = self.ctx.arena.get_parameter(param_node) {
+                                if let Some(type_node) =
+                                    self.ctx.arena.get(param_data.type_annotation)
+                                {
+                                    if type_node.kind
+                                        == tsz_scanner::SyntaxKind::NumberKeyword as u16
+                                    {
+                                        number_index_sig_node = Some(member_idx);
+                                    } else {
+                                        string_index_sig_node = Some(member_idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             if let Some(name_text) = self.get_member_name(member_idx) {
@@ -862,9 +888,10 @@ impl<'a> CheckerState<'a> {
             {
                 let prop_type_str = self.format_type(prop_type);
                 let index_type_str = self.format_type(number_idx.value_type);
+                let error_node = number_index_sig_node.unwrap_or(iface_node);
 
                 self.error_at_node_msg(
-                    iface_node,
+                    error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                     &[&prop_name, &prop_type_str, "number", &index_type_str],
                 );
@@ -875,9 +902,10 @@ impl<'a> CheckerState<'a> {
             {
                 let prop_type_str = self.format_type(prop_type);
                 let index_type_str = self.format_type(string_idx.value_type);
+                let error_node = string_index_sig_node.unwrap_or(iface_node);
 
                 self.error_at_node_msg(
-                    iface_node,
+                    error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                     &[&prop_name, &prop_type_str, "string", &index_type_str],
                 );
