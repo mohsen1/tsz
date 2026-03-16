@@ -150,6 +150,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
+    /// Suppress `this` type substitution during Lazy type evaluation.
+    /// When set, `ThisType` references inside resolved Lazy types are preserved
+    /// rather than being bound to the Lazy type's own identity. This is used
+    /// during interface heritage merging so that `this` can later be correctly
+    /// bound to the final derived interface type.
+    pub fn with_suppress_this_binding(mut self) -> Self {
+        self.suppress_this_binding = true;
+        self
+    }
+
     /// Drain the evaluator's internal cache, returning all intermediate results.
     /// This allows callers to persist intermediate evaluation results
     /// (e.g., from recursive mapped type expansion) into a longer-lived cache.
