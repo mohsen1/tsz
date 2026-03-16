@@ -497,8 +497,24 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const target = variant.target ? parseTarget(variant.target)
       : directives.target ? parseTarget(String(directives.target))
       : 12;  // TS6 default: ES2025 (LatestStandard)
+    // Also check tsconfig.json files embedded in sourceFiles for compiler options
+    const tsconfigOptions: Record<string, unknown> = {};
+    for (const sf of sourceFiles) {
+      if (sf.name.endsWith('tsconfig.json')) {
+        try {
+          const parsed = JSON.parse(sf.content);
+          if (parsed?.compilerOptions) {
+            Object.assign(tsconfigOptions, parsed.compilerOptions);
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+    const tsconfigModule = tsconfigOptions.module
+      ? parseModule(String(tsconfigOptions.module))
+      : undefined;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
+      : tsconfigModule !== undefined ? tsconfigModule
       : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
 
     // TS6: alwaysStrict defaults to true unless explicitly set to false.
