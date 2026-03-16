@@ -275,6 +275,13 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub use_unknown_in_catch_variables: Option<bool>,
+    /// Interpret optional property types as written, rather than adding 'undefined'
+    #[serde(
+        default,
+        alias = "exactOptionalPropertyTypes",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub exact_optional_property_types: Option<bool>,
     /// Add 'undefined' to a type when accessed using an index
     #[serde(
         default,
@@ -810,6 +817,9 @@ pub fn resolve_compiler_options(
     }
     if let Some(v) = options.no_unchecked_indexed_access {
         resolved.checker.no_unchecked_indexed_access = v;
+    }
+    if let Some(v) = options.exact_optional_property_types {
+        resolved.checker.exact_optional_property_types = v;
     }
     if let Some(v) = options.no_property_access_from_index_signature {
         resolved.checker.no_property_access_from_index_signature = v;
@@ -2876,6 +2886,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_implicit_this,
             use_unknown_in_catch_variables,
             strict_bind_call_apply,
+            exact_optional_property_types,
             no_unchecked_indexed_access,
             no_property_access_from_index_signature,
             no_unused_locals,
