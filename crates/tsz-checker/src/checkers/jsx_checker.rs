@@ -1985,6 +1985,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When @jsxImportSource pragma is present, it overrides react mode
+        // to react-jsx behavior, so the factory scope check doesn't apply.
+        if self.extract_jsx_import_source_pragma().is_some() {
+            return;
+        }
+
         // tsc 6.0 skips scope checking when jsxFactory is explicitly set.
         // However, we still need to mark the factory symbol as referenced
         // so that unused-import checking (TS6192) doesn't flag it.
