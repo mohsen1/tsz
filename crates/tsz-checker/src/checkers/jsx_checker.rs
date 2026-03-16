@@ -185,6 +185,9 @@ impl<'a> CheckerState<'a> {
                     &["IntrinsicElements"],
                 );
             }
+            // Grammar check: TS17000 for empty expressions in JSX attributes.
+            self.check_grammar_jsx_element(jsx_opening.attributes);
+
             // Even when IntrinsicElements is missing, evaluate attribute expressions
             // to trigger definite-assignment checks (TS2454) and other diagnostics.
             // tsc evaluates these expressions regardless of JSX infrastructure availability.
@@ -242,6 +245,9 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.tag_name,
                 );
             } else {
+                // Grammar check: TS17000 for empty expressions in JSX attributes.
+                self.check_grammar_jsx_element(jsx_opening.attributes);
+
                 // TS2604: JSX element type does not have any construct or call signatures.
                 // Emit when the component type is concrete but lacks call/construct signatures.
                 self.check_jsx_element_has_signatures(evaluated, tag_name_idx);
@@ -264,6 +270,29 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                 );
+
+                // Evaluate attribute values to trigger nested JSX processing and
+                // definite-assignment checks, even when props type is unknown.
+                if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
+                    && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
+                {
+                    for &attr_idx in &attrs.properties.nodes {
+                        if let Some(attr_node) = self.ctx.arena.get(attr_idx) {
+                            if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                                if let Some(spread_data) =
+                                    self.ctx.arena.get_jsx_spread_attribute(attr_node)
+                                {
+                                    self.compute_type_of_node(spread_data.expression);
+                                }
+                            } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                                && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
+                                && !attr_data.initializer.is_none()
+                            {
+                                self.compute_type_of_node(attr_data.initializer);
+                            }
+                        }
+                    }
+                }
             }
 
             // The type of a JSX component element expression is always JSX.Element
@@ -656,13 +685,6 @@ impl<'a> CheckerState<'a> {
                         // unresolved type params that can't be checked until
                         // instantiation. Call sigs (SFCs) are still checked.
                         if !is_call_sig && !sig.type_params.is_empty() {
-                            return true;
-                        }
-                        // Skip construct sigs with no params — these are
-                        // synthesized default constructors from class
-                        // declarations where inherited members (e.g. render()
-                        // from React.Component) aren't in the instance type.
-                        if !is_call_sig && sig.params.is_empty() {
                             return true;
                         }
                         let ret = self.evaluate_type_with_env(sig.return_type);
@@ -1242,6 +1264,10 @@ impl<'a> CheckerState<'a> {
         raw_props_has_type_params: bool,
         display_target: String,
     ) {
+        // Grammar check: TS17000 for empty expressions in JSX attributes.
+        // Matches tsc: only the first empty expression per element is reported.
+        self.check_grammar_jsx_element(attributes_idx);
+
         // Take children_info EARLY — nested JSX in attribute values would steal it.
         let children_info = self.ctx.jsx_children_info.take();
 
@@ -1620,6 +1646,10 @@ impl<'a> CheckerState<'a> {
             if child_count > 1 && !skip_prop_checks {
                 self.check_jsx_children_count(props_type, tag_name_idx);
             }
+            // TS2745: multiple children expected but single child provided.
+            if child_count == 1 && !skip_prop_checks {
+                self.check_jsx_needs_multiple_children(props_type, tag_name_idx);
+            }
             // TS2747: text children not accepted by component.
             if has_text_child && !skip_prop_checks {
                 self.check_jsx_text_children_accepted(
@@ -1739,6 +1769,39 @@ impl<'a> CheckerState<'a> {
         self.error_at_node_msg(
             tag_name_idx,
             diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO,
+            &["children", &children_type_str],
+        );
+    }
+
+    /// Check TS2745: children prop expects an array type (multiple children) but only
+    /// a single child was provided.
+    fn check_jsx_needs_multiple_children(&mut self, props_type: TypeId, tag_name_idx: NodeIndex) {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let resolved = self.resolve_type_for_property_access(props_type);
+        let children_type = match self.resolve_property_access_with_env(resolved, "children") {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return,
+        };
+        let children_type = self.evaluate_type_with_env(children_type);
+        if children_type == TypeId::ANY || children_type == TypeId::ERROR {
+            return;
+        }
+
+        // Only emit TS2745 if the children type requires multiple children (is array-like)
+        // but we only have a single child.
+        if !self.type_accepts_multiple_children(children_type) {
+            return;
+        }
+
+        // Check that a single child is NOT assignable to the array children type.
+        // If it is (e.g., children: ReactNode[] and child is ReactNode[]), no error needed.
+        // We only report when the array requirement is strict.
+        let children_type_str = self.format_type(children_type);
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            tag_name_idx,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING,
             &["children", &children_type_str],
         );
     }
@@ -1981,5 +2044,52 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
             &[root_ident],
         );
+    }
+
+    /// Grammar check: TS17000 for empty expressions in JSX attributes.
+    /// Matches tsc's `checkGrammarJsxElement`: reports only the first empty
+    /// expression per JSX opening element, then returns.
+    fn check_grammar_jsx_element(&mut self, attributes_idx: NodeIndex) {
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind != syntax_kind_ext::JSX_ATTRIBUTE {
+                continue;
+            }
+            let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                continue;
+            };
+            if attr_data.initializer.is_none() {
+                continue;
+            }
+            let Some(init_node) = self.ctx.arena.get(attr_data.initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::JSX_EXPRESSION {
+                continue;
+            }
+            let Some(expr_data) = self.ctx.arena.get_jsx_expression(init_node) else {
+                continue;
+            };
+            // Empty expression {} without spread
+            if expr_data.expression.is_none() && !expr_data.dot_dot_dot_token {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    attr_data.initializer,
+                    "JSX attributes must only be assigned a non-empty 'expression'.",
+                    diagnostic_codes::JSX_ATTRIBUTES_MUST_ONLY_BE_ASSIGNED_A_NON_EMPTY_EXPRESSION,
+                );
+                // tsc returns after the first grammar error per element
+                return;
+            }
+        }
     }
 }
