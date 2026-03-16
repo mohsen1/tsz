@@ -4034,6 +4034,43 @@ s2.toUpperCase();
         ts2339_count, 0,
         "Expected no TS2339 string[] property error for destructured rest elements, got: {non_lib:?}"
     );
+
+    // s1 and s2 are from the rest region (index >= 1 fixed element), so with
+    // noUncheckedIndexedAccess they should be `string | undefined` and calling
+    // .toUpperCase() on them should produce TS18048.
+    let ts18048_count = non_lib.iter().filter(|(code, _)| *code == 18048).count();
+    assert_eq!(
+        ts18048_count, 2,
+        "Expected 2 TS18048 errors for s1 and s2 possibly undefined; got all diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_tuple_destructuring_fixed_tuple_no_ts18048() {
+    // Fixed-length tuples should NOT produce TS18048 - all elements are guaranteed to exist
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        no_unchecked_indexed_access: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare const arr: [string, string];
+const [s0, s1] = arr;
+s0.toUpperCase();
+s1.toUpperCase();
+"#,
+        options,
+    );
+    let non_lib: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !non_lib.iter().any(|(code, _)| *code == 18048),
+        "Fixed tuple should NOT produce TS18048; got: {non_lib:?}"
+    );
 }
 
 #[test]
