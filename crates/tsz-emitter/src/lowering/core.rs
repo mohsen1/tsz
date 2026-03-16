@@ -1545,6 +1545,9 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.target_es5 {
             if func.is_async {
                 self.mark_async_helpers();
+                if func.asterisk_token {
+                    self.mark_async_generator_helpers();
+                }
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5AsyncFunction { function_node: idx },
@@ -1559,6 +1562,9 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5FunctionParameters { function_node: idx },
                 );
             }
+        } else if self.ctx.needs_async_lowering && func.is_async && func.asterisk_token {
+            // ES2015+: async generators need __asyncGenerator + __await helpers
+            self.mark_async_generator_helpers();
         }
 
         for &param_idx in &func.parameters.nodes {
