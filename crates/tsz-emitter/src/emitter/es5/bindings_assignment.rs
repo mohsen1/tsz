@@ -226,11 +226,115 @@ impl<'a> Printer<'a> {
 
         // Scope was already entered above (before emitting the initialization expression)
 
-        self.emit_for_of_value_binding_array_es5(for_in_of.initializer, &array_name, &index_name);
-        self.write_line();
+        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
+        let using_info = if !self.ctx.options.target.supports_es2025() {
+            self.for_of_initializer_using_info(for_in_of.initializer)
+        } else {
+            None
+        };
 
-        // Emit the loop body
-        self.emit_for_of_body(for_in_of.statement);
+        if let Some((var_name, using_async)) = using_info {
+            // ES5 for-of with `using`: emit temp binding + dispose wrapper
+            // Emit: var d1_1 = _b[_i];
+            let (env_name, error_name, result_name) = self.next_disposable_env_names();
+            let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
+            self.generated_temp_names.insert(temp_var_name.clone());
+
+            self.write("var ");
+            self.write(&temp_var_name);
+            self.write(" = ");
+            self.write(&array_name);
+            self.write("[");
+            self.write(&index_name);
+            self.write("];");
+            self.write_line();
+
+            // Emit dispose wrapper
+            self.write("var ");
+            self.write(&env_name);
+            self.write(" = { stack: [], error: void 0, hasError: false };");
+            self.write_line();
+            self.write("try {");
+            self.write_line();
+            self.increase_indent();
+            self.write("var ");
+            self.write(&var_name);
+            self.write(" = ");
+            self.write_helper("__addDisposableResource");
+            self.write("(");
+            self.write(&env_name);
+            self.write(", ");
+            self.write(&temp_var_name);
+            self.write(", ");
+            self.write(if using_async { "true" } else { "false" });
+            self.write(");");
+            self.write_line();
+
+            // Emit body
+            self.emit_for_of_body(for_in_of.statement);
+
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("catch (");
+            self.write(&error_name);
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.write(&env_name);
+            self.write(".error = ");
+            self.write(&error_name);
+            self.write(";");
+            self.write_line();
+            self.write(&env_name);
+            self.write(".hasError = true;");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("finally {");
+            self.write_line();
+            self.increase_indent();
+            if using_async {
+                self.write("var ");
+                self.write(&result_name);
+                self.write(" = ");
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+                self.write("if (");
+                self.write(&result_name);
+                self.write(")");
+                self.write_line();
+                self.increase_indent();
+                self.write("await ");
+                self.write(&result_name);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+            } else {
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+        } else {
+            self.emit_for_of_value_binding_array_es5(
+                for_in_of.initializer,
+                &array_name,
+                &index_name,
+            );
+            self.write_line();
+
+            // Emit the loop body
+            self.emit_for_of_body(for_in_of.statement);
+        }
 
         // Exit the loop body scope
         self.ctx.block_scope_state.exit_scope();

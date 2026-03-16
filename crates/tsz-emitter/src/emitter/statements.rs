@@ -506,6 +506,12 @@ impl<'a> Printer<'a> {
             if using_async {
                 // tsc emits: const result_N = __disposeResources(env_N);
                 //            if (result_N) await result_N;
+                // (inside __awaiter generator, `await` becomes `yield`)
+                let await_kw = if self.ctx.emit_await_as_yield {
+                    "yield"
+                } else {
+                    "await"
+                };
                 self.write("const ");
                 self.write(&result_name);
                 self.write(" = ");
@@ -519,7 +525,8 @@ impl<'a> Printer<'a> {
                 self.write(")");
                 self.write_line();
                 self.increase_indent();
-                self.write("await ");
+                self.write(await_kw);
+                self.write(" ");
                 self.write(&result_name);
                 self.write(";");
                 self.write_line();
@@ -809,6 +816,12 @@ impl<'a> Printer<'a> {
         if using_async {
             // tsc emits: const result_N = __disposeResources(env_N);
             //            if (result_N) await result_N;
+            // (inside __awaiter generator, `await` becomes `yield`)
+            let await_kw = if self.ctx.emit_await_as_yield {
+                "yield"
+            } else {
+                "await"
+            };
             self.write("const ");
             self.write(&result_name);
             self.write(" = ");
@@ -822,7 +835,8 @@ impl<'a> Printer<'a> {
             self.write(")");
             self.write_line();
             self.increase_indent();
-            self.write("await ");
+            self.write(await_kw);
+            self.write(" ");
             self.write(&result_name);
             self.write(";");
             self.write_line();
@@ -1324,6 +1338,18 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Check if the for initializer has `using` that needs lowering.
+        // `for (using d1 = expr, d2 = expr2;;) { body }`
+        // becomes:
+        // `{ const env_1 = ...; try { const d1 = __addDisposable(env_1, expr, false), d2 = ...; for (;;) { body } } catch ... finally ... }`
+        if !self.ctx.target_es5
+            && !self.ctx.options.target.supports_es2025()
+            && self.for_initializer_has_using(loop_stmt.initializer)
+        {
+            self.emit_for_with_using_lowering(node, loop_stmt);
+            return;
+        }
+
         // ES5: Check if closures capture loop variables (let/const) —
         // if so, emit the _loop_N IIFE pattern instead of a plain for-loop.
         // Capture can happen with let/const from the initializer OR the body.
@@ -1425,6 +1451,15 @@ impl<'a> Printer<'a> {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
+
+        // Check if the for-of initializer has `using` that needs lowering.
+        if !self.ctx.target_es5
+            && !self.ctx.options.target.supports_es2025()
+            && let Some(using_info) = self.for_of_initializer_using_info(for_in_of.initializer)
+        {
+            self.emit_for_of_with_using_lowering(node, for_in_of, using_info);
+            return;
+        }
 
         // Check if the for-of initializer has object rest that needs ES2018 lowering.
         if self.ctx.needs_es2018_lowering
@@ -2061,6 +2096,368 @@ impl<'a> Printer<'a> {
             }
             self.decrease_indent();
         }
+    }
+
+    /// Check if a for-statement initializer is a `using` declaration list.
+    fn for_initializer_has_using(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+        (init_node.flags as u32 & node_flags::USING) != 0
+    }
+
+    /// Get info about a for-of initializer that has `using`: returns the variable
+    /// name and whether it's `await using`.
+    /// For `for (using d of items)`, the initializer is a VariableDeclarationList
+    /// with one declaration `d` (no initializer in for-of context).
+    pub(in crate::emitter) fn for_of_initializer_using_info(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(String, bool)> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        let flags = init_node.flags as u32;
+        if (flags & node_flags::USING) == 0 {
+            return None;
+        }
+        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let decl_list = self.arena.get_variable(init_node)?;
+        if decl_list.declarations.nodes.len() != 1 {
+            return None;
+        }
+        let decl_idx = decl_list.declarations.nodes[0];
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        let name_node = self.arena.get(decl.name)?;
+        let ident = self.arena.get_identifier(name_node)?;
+        Some((ident.escaped_text.clone(), using_async))
+    }
+
+    /// Emit `for (using d of items) { body }` with dispose lowering.
+    /// Transforms to:
+    /// ```js
+    /// for (const d_1 of items) {
+    ///     const env_1 = { stack: [], error: void 0, hasError: false };
+    ///     try {
+    ///         const d = __addDisposableResource(env_1, d_1, false);
+    ///         // ... body statements
+    ///     }
+    ///     catch (e_1) { env_1.error = e_1; env_1.hasError = true; }
+    ///     finally { __disposeResources(env_1); }
+    /// }
+    /// ```
+    fn emit_for_of_with_using_lowering(
+        &mut self,
+        node: &Node,
+        for_in_of: &tsz_parser::parser::node::ForInOfData,
+        using_info: (String, bool),
+    ) {
+        let (var_name, using_async) = using_info;
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        // Generate a temp name based on original: d1 -> d1_1 (uses the env counter)
+        let temp_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
+        self.generated_temp_names.insert(temp_name.clone());
+
+        self.write("for ");
+        if for_in_of.await_modifier {
+            self.write("await ");
+        }
+        self.write("(const ");
+        self.write(&temp_name);
+        self.write(" of ");
+        self.emit(for_in_of.expression);
+        // Map closing `)` — scan backward from body start
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            self.map_closing_paren_backward(node.pos, body_node.pos);
+        }
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit: const env_1 = { stack: [], error: void 0, hasError: false };
+        self.write("const ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+
+        // Emit: try {
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit: const d = __addDisposableResource(env_1, d_1, false);
+        self.write("const ");
+        self.write(&var_name);
+        self.write(" = ");
+        self.write_helper("__addDisposableResource");
+        self.write("(");
+        self.write(&env_name);
+        self.write(", ");
+        self.write(&temp_name);
+        self.write(", ");
+        self.write(if using_async { "true" } else { "false" });
+        self.write(");");
+        self.write_line();
+
+        // Emit the original loop body statements (unwrap the block)
+        if let Some(body_node) = self.arena.get(for_in_of.statement) {
+            if body_node.kind == syntax_kind_ext::BLOCK {
+                if let Some(block) = self.arena.get_block(body_node) {
+                    for &stmt in &block.statements.nodes {
+                        self.emit(stmt);
+                        if !self.writer.is_at_line_start() {
+                            self.write_line();
+                        }
+                    }
+                }
+            } else {
+                self.emit(for_in_of.statement);
+                if !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
+            }
+        }
+
+        // Close try
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // Emit catch
+        self.write("catch (");
+        self.write(&error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&env_name);
+        self.write(".error = ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // Emit finally
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        if using_async {
+            let await_kw = if self.ctx.emit_await_as_yield {
+                "yield"
+            } else {
+                "await"
+            };
+            self.write("const ");
+            self.write(&result_name);
+            self.write(" = ");
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+            self.write("if (");
+            self.write(&result_name);
+            self.write(")");
+            self.write_line();
+            self.increase_indent();
+            self.write(await_kw);
+            self.write(" ");
+            self.write(&result_name);
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+        } else {
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // Close outer for loop body
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    /// Emit `for (using d1 = expr, d2 = expr2;;) { body }` with dispose lowering.
+    /// Transforms to:
+    /// ```js
+    /// {
+    ///     const env_1 = { stack: [], error: void 0, hasError: false };
+    ///     try {
+    ///         const d1 = __addDisposableResource(env_1, expr, false), d2 = ...;
+    ///         for (;;) { body }
+    ///     }
+    ///     catch (e_1) { env_1.error = e_1; env_1.hasError = true; }
+    ///     finally { __disposeResources(env_1); }
+    /// }
+    /// ```
+    fn emit_for_with_using_lowering(
+        &mut self,
+        node: &Node,
+        loop_stmt: &tsz_parser::parser::node::LoopData,
+    ) {
+        let init_node = self.arena.get(loop_stmt.initializer).unwrap();
+        let flags = init_node.flags as u32;
+        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let decl_list = self.arena.get_variable(init_node).unwrap();
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+
+        // Emit wrapping block: {
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit: const env_1 = { stack: [], error: void 0, hasError: false };
+        self.write("const ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+
+        // Emit: try {
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit: const d1 = __addDisposableResource(env_1, expr, false), d2 = ...;
+        let initialized_decls: Vec<_> = decl_list
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&decl_idx| {
+                self.arena
+                    .get(decl_idx)
+                    .and_then(|n| self.arena.get_variable_declaration(n))
+                    .is_some_and(|d| d.initializer.is_some())
+            })
+            .collect();
+
+        if !initialized_decls.is_empty() {
+            self.write("const ");
+            for (i, &decl_idx) in initialized_decls.iter().enumerate() {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.emit(decl.name);
+                    self.write(" = ");
+                    self.write_helper("__addDisposableResource");
+                    self.write("(");
+                    self.write(&env_name);
+                    self.write(", ");
+                    self.emit(decl.initializer);
+                    self.write(", ");
+                    self.write(if using_async { "true" } else { "false" });
+                    self.write(")");
+                    if i + 1 < initialized_decls.len() {
+                        self.write(", ");
+                    }
+                }
+            }
+            self.write(";");
+            self.write_line();
+        }
+
+        // Emit the for loop with no initializer: for (;;) { body }
+        self.write("for (");
+        // No initializer
+        // Emit condition and incrementor (both should be None for `using` in for-init)
+        self.write(";");
+        if loop_stmt.condition.is_some() {
+            self.write(" ");
+            self.emit(loop_stmt.condition);
+        }
+        self.write(";");
+        if loop_stmt.incrementor.is_some() {
+            self.write(" ");
+            self.emit(loop_stmt.incrementor);
+        }
+        // Map closing `)` — scan backward from body start
+        if let Some(body_node) = self.arena.get(loop_stmt.statement) {
+            self.map_closing_paren_backward(node.pos, body_node.pos);
+        }
+        self.write(")");
+        self.emit_loop_body(loop_stmt.statement);
+        self.write_line();
+
+        // Close try
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // Emit catch
+        self.write("catch (");
+        self.write(&error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&env_name);
+        self.write(".error = ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // Emit finally
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        if using_async {
+            let await_kw = if self.ctx.emit_await_as_yield {
+                "yield"
+            } else {
+                "await"
+            };
+            self.write("const ");
+            self.write(&result_name);
+            self.write(" = ");
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+            self.write("if (");
+            self.write(&result_name);
+            self.write(")");
+            self.write_line();
+            self.increase_indent();
+            self.write(await_kw);
+            self.write(" ");
+            self.write(&result_name);
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+        } else {
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // Close wrapping block
+        self.decrease_indent();
+        self.write("}");
     }
 
     /// Check if a statement list contains any `using`/`await using` declarations.
