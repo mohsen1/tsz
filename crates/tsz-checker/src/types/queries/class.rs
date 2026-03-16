@@ -913,12 +913,10 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // TS1040: 'async' modifier cannot be used in an ambient context
+                // The parser emits TS1040 at the 'async' keyword for both
+                // top-level `declare async function` and class member async
+                // methods in ambient context. Skip the checker's duplicate.
                 if is_declared && is_async {
-                    self.error_at_node(
-                        stmt_idx,
-                        "'async' modifier cannot be used in an ambient context.",
-                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
-                    );
                     i += 1;
                     continue;
                 }

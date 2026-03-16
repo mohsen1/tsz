@@ -1481,6 +1481,15 @@ impl ParserState {
             SyntaxKind::AsyncKeyword => {
                 // declare async function
                 if self.look_ahead_is_async_function() {
+                    // TS1040: 'async' modifier cannot be used in an ambient context
+                    // Emit at the 'async' keyword before consuming it, matching tsc.
+                    {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'async' modifier cannot be used in an ambient context.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                        );
+                    }
                     // Pass the declare modifier to the function
                     self.parse_expected(SyntaxKind::AsyncKeyword);
                     let modifiers = Some(self.make_node_list(vec![declare_modifier]));
