@@ -130,6 +130,27 @@ impl<'a> CheckerState<'a> {
         ));
     }
 
+    /// Report TS6138: "Property '{name}' is declared but its value is never read."
+    ///
+    /// Used for unused constructor parameter properties (parameters with
+    /// `public`, `private`, `protected`, or `readonly` modifiers).
+    pub(crate) fn error_property_declared_but_never_read(
+        &mut self,
+        name: &str,
+        start: u32,
+        length: u32,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        let message = format!("Property '{name}' is declared but its value is never read.");
+        self.ctx.push_diagnostic(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            start,
+            length,
+            message,
+            diagnostic_codes::PROPERTY_IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+        ));
+    }
+
     /// Report TS6196: '{name}' is declared but never used.
     ///
     /// Used for unused type-only declarations (classes, interfaces, type aliases,
