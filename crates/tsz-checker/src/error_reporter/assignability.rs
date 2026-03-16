@@ -347,13 +347,11 @@ impl<'a> CheckerState<'a> {
     // Type Assignability Errors
     // =========================================================================
 
-    /// Report a type not assignable error (delegates to `diagnose_assignment_failure`).
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
-    /// Report a type not assignable error at an exact AST node anchor.
     pub fn error_type_not_assignable_at_with_anchor(
         &mut self,
         source: TypeId,
@@ -445,14 +443,12 @@ impl<'a> CheckerState<'a> {
         self.ctx.push_diagnostic(base_diag);
     }
 
-    /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 
-    /// Internal helper that reports a detailed assignability failure using an
-    /// already-resolved diagnostic anchor.
+    /// Reports a detailed assignability failure using an already-resolved diagnostic anchor.
     pub(super) fn diagnose_assignment_failure_with_anchor(
         &mut self,
         source: TypeId,
@@ -1999,82 +1995,6 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
-        }
-    }
-
-    /// TS2820: Try to build a "Did you mean" diagnostic for string literal mismatches.
-    ///
-    /// When the source is a string literal and the target is (or contains) a union of
-    /// string literals with a close Levenshtein match, returns a TS2820 diagnostic
-    /// instead of the generic TS2322.
-    ///
-    /// `anchor_idx` is used to recover the literal value from the AST when the source
-    /// TypeId has been widened (e.g., from `"hdpvd"` to `string`).
-    fn try_string_literal_suggestion_diagnostic(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        anchor_idx: NodeIndex,
-        start: u32,
-        length: u32,
-    ) -> Option<Diagnostic> {
-        // Try to get the string literal value from the TypeId first
-        let source_str = if let Some(source_atom) =
-            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
-        {
-            self.ctx.types.resolve_atom_ref(source_atom).to_string()
-        } else {
-            // Fallback: if the TypeId is widened (e.g., `string`), check the AST node
-            // for a string literal expression value.
-            self.get_string_literal_from_ast(anchor_idx)?
-        };
-        let suggestion = self.find_string_literal_suggestion(&source_str, target)?;
-        let src_display = format!("\"{source_str}\"");
-        let tgt_display = self.format_type_diagnostic(target);
-        let suggestion_quoted = format!("\"{suggestion}\"");
-        let message = format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-            &[&src_display, &tgt_display, &suggestion_quoted],
-        );
-        Some(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            start,
-            length,
-            message,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
-        ))
-    }
-
-    /// Extract a string literal value from an AST node, if it is a string literal
-    /// or contains one as a direct initializer.
-    fn get_string_literal_from_ast(&self, idx: NodeIndex) -> Option<String> {
-        use tsz_parser::parser::syntax_kind_ext;
-        let node = self.ctx.arena.get(idx)?;
-        match node.kind {
-            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                let lit = self.ctx.arena.get_literal(node)?;
-                Some(lit.text.clone())
-            }
-            // PropertyAssignment: the anchor is the property name, look at the initializer
-            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                let prop = self.ctx.arena.get_property_assignment(node)?;
-                self.get_string_literal_from_ast(prop.initializer)
-            }
-            // Identifier used as property name: look for its initializer in context
-            k if k == tsz_scanner::SyntaxKind::Identifier as u16 => {
-                // Try to look at the parent for PropertyAssignment
-                if let Some(ext) = self.ctx.arena.get_extended(idx)
-                    && let Some(parent) = self.ctx.arena.get(ext.parent)
-                    && parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                    && let Some(prop) = self.ctx.arena.get_property_assignment(parent)
-                {
-                    return self.get_string_literal_from_ast(prop.initializer);
-                }
-                None
-            }
-            _ => None,
         }
     }
 }
