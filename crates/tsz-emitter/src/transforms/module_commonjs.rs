@@ -475,7 +475,8 @@ pub fn collect_export_names_with_options(
                             }
                             // Also collect `export * as "name" from "mod"`
                             else if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
-                                && let Some(name) = specifier_name_text(arena, export_decl.export_clause)
+                                && let Some(name) =
+                                    specifier_name_text(arena, export_decl.export_clause)
                             {
                                 exports.push(name);
                             }

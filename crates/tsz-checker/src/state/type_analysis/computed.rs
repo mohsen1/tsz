@@ -2402,9 +2402,10 @@ impl<'a> CheckerState<'a> {
         // Handle index signature: scan type annotation
         if node.kind == syntax_kind_ext::INDEX_SIGNATURE {
             if let Some(data) = self.ctx.arena.get_index_signature(node)
-                && data.type_annotation.is_some() {
-                    self.collect_type_query_nodes(data.type_annotation, out);
-                }
+                && data.type_annotation.is_some()
+            {
+                self.collect_type_query_nodes(data.type_annotation, out);
+            }
             return;
         }
 
@@ -2413,9 +2414,10 @@ impl<'a> CheckerState<'a> {
             || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
         {
             if let Some(data) = self.ctx.arena.get_property_decl(node)
-                && data.type_annotation.is_some() {
-                    self.collect_type_query_nodes(data.type_annotation, out);
-                }
+                && data.type_annotation.is_some()
+            {
+                self.collect_type_query_nodes(data.type_annotation, out);
+            }
             return;
         }
 
