@@ -935,7 +935,8 @@ impl<'a> CheckerState<'a> {
 
             for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = SymbolId(symbol_ref.0);
-                if self.ctx.binder.get_symbol(sym_id).is_none() {
+                let symbol = self.ctx.binder.get_symbol(sym_id);
+                if symbol.is_none() {
                     continue;
                 }
 
@@ -943,7 +944,18 @@ impl<'a> CheckerState<'a> {
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
 
-                let resolved = self.type_reference_symbol_type(sym_id);
+                // TypeQuery (`typeof X`) resolves to the VALUE type (constructor
+                // for classes), not the type-reference type (instance for classes).
+                // Using `get_type_of_symbol` returns the constructor/value type,
+                // while `type_reference_symbol_type` returns the instance type for
+                // classes — which would incorrectly overwrite the constructor type
+                // already in the TypeEnvironment.
+                let is_class = symbol.is_some_and(|s| s.flags & symbol_flags::CLASS != 0);
+                let resolved = if is_class {
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.type_reference_symbol_type(sym_id)
+                };
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR {
