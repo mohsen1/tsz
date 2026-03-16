@@ -401,9 +401,20 @@ impl<'a> InferenceContext<'a> {
         // are from object properties, use union semantics. This matches tsc's
         // getCommonSupertype behavior for nullable inference patterns like
         // equal<T>(a: T, b: T) called as equal(B, undefined | D) → T = B | undefined | D.
-        let has_nullish_candidates = candidate_types
-            .iter()
-            .any(|&ty| ty == TypeId::UNDEFINED || ty == TypeId::NULL || ty == TypeId::VOID);
+        let has_nullish_candidates = candidate_types.iter().any(|&ty| {
+            if ty == TypeId::UNDEFINED || ty == TypeId::NULL || ty == TypeId::VOID {
+                return true;
+            }
+            // Also check inside union candidates: `undefined | D` contains undefined
+            if let Some(TypeData::Union(members)) = self.interner.lookup(ty) {
+                let member_list = self.interner.type_list(members);
+                member_list
+                    .iter()
+                    .any(|&m| m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID)
+            } else {
+                false
+            }
+        });
         let no_object_property_candidates = !filtered_no_never
             .iter()
             .any(|candidate| candidate.from_object_property);
