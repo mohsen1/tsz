@@ -404,6 +404,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             self.constrain_types(ctx, var_map, combined, *t_arg, priority);
                         }
                     } else {
+                        // When the target Application evaluates to a conditional type
+                        // whose check type is an inference variable, infer the whole
+                        // source union against the check type rather than decomposing.
+                        // This matches tsc's `inferFromConditionalType` behavior.
+                        let cond_eval = self.checker.evaluate_type(target);
+                        if cond_eval != target
+                            && let Some(TypeData::Conditional(cond_id)) =
+                                self.interner.lookup(cond_eval)
+                        {
+                            let cond = self.interner.conditional_type(cond_id);
+                            if var_map.contains_key(&cond.check_type) {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    source,
+                                    cond.check_type,
+                                    priority,
+                                );
+                                return;
+                            }
+                        }
                         for &member in s_members.iter() {
                             self.constrain_types(ctx, var_map, member, target, priority);
                         }
