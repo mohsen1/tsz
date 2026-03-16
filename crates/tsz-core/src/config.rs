@@ -327,6 +327,9 @@ pub struct CompilerOptions {
     /// Allow accessing UMD globals from modules.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_umd_global_access: Option<bool>,
+    /// Preserve const enum declarations in emitted code.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub preserve_const_enums: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -883,6 +886,10 @@ pub fn resolve_compiler_options(
 
     if let Some(allow_umd) = options.allow_umd_global_access {
         resolved.checker.allow_umd_global_access = allow_umd;
+    }
+
+    if let Some(preserve) = options.preserve_const_enums {
+        resolved.checker.preserve_const_enums = preserve;
     }
 
     if let Some(ref custom_conditions) = options.custom_conditions {
@@ -2881,6 +2888,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             module_detection,
             ignore_deprecations,
             allow_umd_global_access,
+            preserve_const_enums,
         }
     )
 }

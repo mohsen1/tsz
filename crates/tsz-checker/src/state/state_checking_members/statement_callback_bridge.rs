@@ -1218,15 +1218,47 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         }
 
-        // Delegate to a helper that checks should_skip
+        // Delegate to a helper that checks should_skip.
+        // Match TSC's isStatementKindThatDoesNotAffectControlFlow:
+        // - Skip type-only declarations (interface, type alias)
+        // - Skip function declarations (hoisted)
+        // - Skip const enums when preserveConstEnums is false (erased, no runtime code)
+        // - Skip non-instantiated module declarations (ambient/declare modules)
+        // - Skip empty statements and blocks
+        // - Skip var declarations without initializers (hoisted)
         let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
-            node.kind == syntax_kind_ext::EMPTY_STATEMENT
+            if node.kind == syntax_kind_ext::EMPTY_STATEMENT
                 || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                || node.kind == syntax_kind_ext::MODULE_DECLARATION
                 || node.kind == syntax_kind_ext::BLOCK
-                || CheckerState::is_var_without_initializer(self, stmt_idx, node)
+            {
+                true
+            } else if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                // Const enums are erased unless preserveConstEnums is set
+                if let Some(enum_data) = self.ctx.arena.get_enum(node) {
+                    let is_const = self
+                        .ctx
+                        .arena
+                        .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
+                    is_const && !self.ctx.compiler_options.preserve_const_enums
+                } else {
+                    false
+                }
+            } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // Skip only ambient (declare) modules; namespace with executable code is instantiated
+                if let Some(module_data) = self.ctx.arena.get_module(node) {
+                    let is_ambient = self
+                        .ctx
+                        .arena
+                        .has_modifier(&module_data.modifiers, SyntaxKind::DeclareKeyword);
+                    is_ambient || self.ctx.arena.get(module_data.body).is_none()
+                } else {
+                    false
+                }
+            } else {
+                CheckerState::is_var_without_initializer(self, stmt_idx, node)
+            }
         } else {
             false
         };
