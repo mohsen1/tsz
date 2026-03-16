@@ -878,9 +878,10 @@ impl<'a> CheckerState<'a> {
             // When one side is an intersection (e.g., from global augmentation merging
             // an interface with additional properties), decompose it and merge the
             // callable/object parts properly so that construct signatures are preserved.
-            (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {
-                self.merge_with_intersection(derived, derived_kind, base, base_kind)
-            }
+            // Use resolved types so that Lazy wrappers (e.g., type aliases) are
+            // expanded to their structural intersection form before decomposition.
+            (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => self
+                .merge_with_intersection(derived_resolved, derived_kind, base_resolved, base_kind),
             // When the derived interface has no own members (TypeId::ANY), just use the base.
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
             _ => derived,
@@ -892,9 +893,16 @@ impl<'a> CheckerState<'a> {
             // Use the solver evaluator directly without ensure_relation_input_ready.
             // evaluate_type_with_env triggers lazy ref resolution which can cause
             // explosive type creation on augmented module interfaces (react + emotion).
+            //
+            // Suppress `this` binding so that ThisType references inside resolved
+            // Lazy types are preserved. During heritage merging, `this` must remain
+            // unbound until the final derived interface is constructed; binding it
+            // here would incorrectly lock it to the base interface identity (e.g.,
+            // `A` instead of the derived `D`).
             use tsz_solver::TypeEvaluator;
             let env = self.ctx.type_env.borrow();
-            let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+            let mut evaluator =
+                TypeEvaluator::with_resolver(self.ctx.types, &*env).with_suppress_this_binding();
             let evaluated = evaluator.evaluate(type_id);
             if evaluated != type_id {
                 return evaluated;
@@ -939,32 +947,42 @@ impl<'a> CheckerState<'a> {
             return factory.intersection2(derived, base);
         };
 
-        // Find the callable member in the intersection (if any)
-        let mut callable_member = None;
+        // Find a structurally mergeable member in the intersection (Callable, Object,
+        // or ObjectWithIndex). Resolve Lazy members first so that interfaces
+        // (e.g., `A` in `A & string[]`) are expanded to their structural form.
+        let mut mergeable_member = None;
         let mut other_members = Vec::new();
 
         for &member in &members {
-            let kind = classify_for_interface_merge(self.ctx.types, member);
-            if callable_member.is_none() && matches!(kind, InterfaceMergeKind::Callable(_)) {
-                callable_member = Some(member);
+            let resolved_member = self.resolve_type_for_interface_merge(member);
+            let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
+            if mergeable_member.is_none()
+                && matches!(
+                    kind,
+                    InterfaceMergeKind::Callable(_)
+                        | InterfaceMergeKind::Object(_)
+                        | InterfaceMergeKind::ObjectWithIndex(_)
+                )
+            {
+                mergeable_member = Some(resolved_member);
             } else {
                 other_members.push(member);
             }
         }
 
-        // If we found a callable in the intersection, merge it with the other side
-        if let Some(callable_id) = callable_member {
+        // If we found a mergeable member, structurally merge it with the other side
+        if let Some(mergeable_id) = mergeable_member {
             let (merge_derived, merge_base) = if other_is_derived {
-                (other_id, callable_id)
+                (other_id, mergeable_id)
             } else {
-                (callable_id, other_id)
+                (mergeable_id, other_id)
             };
 
-            // Recursively merge the callable parts (this will hit Callable+Callable
-            // or Callable+Object paths instead of the Intersection path)
+            // Recursively merge the parts (hits Callable+Callable, Object+Object,
+            // Callable+Object, etc. paths instead of the Intersection path)
             let merged = self.merge_interface_types(merge_derived, merge_base);
 
-            // Re-wrap with the remaining intersection members
+            // Re-wrap with the remaining intersection members (e.g., string[])
             if other_members.is_empty() {
                 merged
             } else {
@@ -973,7 +991,7 @@ impl<'a> CheckerState<'a> {
                 factory.intersection(all)
             }
         } else {
-            // No callable found in intersection - fall back to plain intersection
+            // No mergeable member found - fall back to plain intersection
             factory.intersection2(derived, base)
         }
     }
