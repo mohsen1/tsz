@@ -55,6 +55,12 @@ pub struct EnumES5Transformer<'a> {
     source_text: Option<&'a str>,
     /// Names of all enum members declared so far (for qualifying self-references)
     member_names: HashSet<String>,
+    /// Names of enum members that have been processed (had their IR emitted).
+    /// Used to distinguish forward references (not yet processed → resolve to 0)
+    /// from self-references and back-references (already processed → keep expression).
+    processed_members: HashSet<String>,
+    /// The name of the member currently being processed (for detecting self-references)
+    current_member_name: String,
     /// Names of enum members with string-valued initializers (no reverse mapping)
     string_members: HashSet<String>,
     /// Evaluated numeric values of enum members (for constant folding in subsequent member initializers)
@@ -82,6 +88,8 @@ impl<'a> EnumES5Transformer<'a> {
             source_text: None,
             member_names: HashSet::new(),
             string_members: HashSet::new(),
+            processed_members: HashSet::new(),
+            current_member_name: String::new(),
             member_values: HashMap::new(),
             string_member_values: HashMap::new(),
             current_enum_name: String::new(),
@@ -289,6 +297,8 @@ impl<'a> EnumES5Transformer<'a> {
         let mut statements = Vec::new();
         // Reset per-enum tracking state
         self.member_names.clear();
+        self.processed_members.clear();
+        self.current_member_name.clear();
         self.string_members.clear();
         self.member_values.clear();
         self.string_member_values.clear();
@@ -317,6 +327,7 @@ impl<'a> EnumES5Transformer<'a> {
 
             let name_idx = member_data.name;
             let member_name = crate::transforms::emit_utils::enum_member_name(self.arena, name_idx);
+            self.current_member_name = member_name.clone();
             let has_initializer = member_data.initializer.is_some();
 
             // Check if this is a computed property name: enum E { [expr] = value }
@@ -412,11 +423,14 @@ impl<'a> EnumES5Transformer<'a> {
                         self.last_value = None;
                         self.last_float_value = None;
                     }
-                    // Use the evaluated value if available, otherwise emit the source expression
+                    // Use the evaluated value if available, otherwise emit the source expression.
+                    // TSC resolves forward references within the same enum to 0.
                     let inner_value = if let Some(val) = evaluated {
                         Self::format_numeric_literal(val)
                     } else if let Some(fval) = evaluated_float {
                         Self::format_float_literal(fval)
+                    } else if self.is_forward_enum_reference(member_data.initializer) {
+                        Self::format_numeric_literal(0)
                     } else {
                         self.transform_expression(member_data.initializer)
                     };
@@ -561,12 +575,17 @@ impl<'a> EnumES5Transformer<'a> {
             if let Some(val) = self.last_value {
                 self.member_values.insert(member_name.clone(), val);
             }
+            self.processed_members.insert(member_name.clone());
             self.member_names.insert(member_name);
             statements.push(stmt);
 
-            // Insert trailing comment after the member statement (same line)
+            // Insert trailing comment after the member statement (same line).
+            // Only preserve block comments (/* ... */); tsc strips line comments (//) from
+            // enum members during the transform phase.
             if let Some(text) = trailing_comment {
-                statements.push(IRNode::TrailingComment(text.into()));
+                if text.starts_with("/*") {
+                    statements.push(IRNode::TrailingComment(text.into()));
+                }
             }
         }
 
@@ -880,6 +899,71 @@ impl<'a> EnumES5Transformer<'a> {
                 self.evaluate_constant_float_expression(paren.expression)
             }
             _ => None,
+        }
+    }
+
+    /// Check if an expression is a forward reference to a member of the current enum
+    /// that hasn't been processed yet. TSC resolves such references to 0.
+    ///
+    /// A forward reference is when member X references member Y where Y appears later
+    /// in the enum body and hasn't been emitted yet. Self-references (A = E.A) and
+    /// references to already-processed members with non-numeric values are NOT forward
+    /// references — they should keep their original expression form.
+    fn is_forward_enum_reference(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            // Bare identifier: `Y` where Y is a member of the current enum
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(id) = self.arena.get_identifier(node) {
+                    let name = id.escaped_text.as_str();
+                    self.member_names.contains(name)
+                        && !self.processed_members.contains(name)
+                        && name != self.current_member_name
+                } else {
+                    false
+                }
+            }
+            // Property access: `E1.Y` where E1 is the current enum
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node)
+                    && let Some(obj_node) = self.arena.get(access.expression)
+                    && obj_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(obj_id) = self.arena.get_identifier(obj_node)
+                    && obj_id.escaped_text == self.current_enum_name
+                    && let Some(prop_node) = self.arena.get(access.name_or_argument)
+                    && prop_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(prop_id) = self.arena.get_identifier(prop_node)
+                {
+                    let name = prop_id.escaped_text.as_str();
+                    self.member_names.contains(name)
+                        && !self.processed_members.contains(name)
+                        && name != self.current_member_name
+                } else {
+                    false
+                }
+            }
+            // Element access: `E1["Y"]` where E1 is the current enum
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node)
+                    && let Some(obj_node) = self.arena.get(access.expression)
+                    && obj_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(obj_id) = self.arena.get_identifier(obj_node)
+                    && obj_id.escaped_text == self.current_enum_name
+                    && let Some(index_node) = self.arena.get(access.name_or_argument)
+                    && index_node.kind == SyntaxKind::StringLiteral as u16
+                    && let Some(lit) = self.arena.get_literal(index_node)
+                {
+                    let name = lit.text.as_str();
+                    self.member_names.contains(name)
+                        && !self.processed_members.contains(name)
+                        && name != self.current_member_name
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
