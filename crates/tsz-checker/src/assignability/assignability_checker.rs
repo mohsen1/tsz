@@ -629,7 +629,12 @@ impl<'a> CheckerState<'a> {
 
             for symbol_ref in collect_type_queries(self.ctx.types, current) {
                 let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-                let _ = self.get_type_of_symbol(sym_id);
+                let resolved = self.get_type_of_symbol(sym_id);
+                // Register the TypeQuery symbol's VALUE type in the type_env so
+                // the evaluator's visit_type_query can resolve it via resolve_ref.
+                if resolved != TypeId::ERROR && resolved != TypeId::ANY {
+                    self.insert_type_env_symbol(sym_id, resolved);
+                }
             }
 
             for def_id in collect_lazy_def_ids(self.ctx.types, current) {
