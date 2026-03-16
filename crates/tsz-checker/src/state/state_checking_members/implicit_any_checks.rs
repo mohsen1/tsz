@@ -31,13 +31,10 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
-        // TS7019 (rest parameter implicit any) fires regardless of noImplicitAny.
-        // TS7006/TS7051 (regular parameter implicit any) only fire with noImplicitAny.
-        let is_rest = param.dot_dot_dot_token;
-        if !is_rest && (!self.ctx.no_implicit_any() || has_contextual_type) {
-            return;
-        }
-        if is_rest && has_contextual_type {
+        // Both TS7019 (rest parameter implicit any) and TS7006/TS7051 (regular
+        // parameter implicit any) require noImplicitAny to be enabled.
+        // When a contextual type exists, the parameter is not truly implicit any.
+        if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
         // Skip parameters that have explicit type annotations
