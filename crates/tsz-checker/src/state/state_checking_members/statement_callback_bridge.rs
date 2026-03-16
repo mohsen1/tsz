@@ -1525,15 +1525,39 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         };
 
+        // Unwrap labeled statements to find the inner declaration.
+        // `label: let x = 0;` should still trigger TS1156 on the let.
+        let (check_node, check_idx) = if node.kind == syntax_kind_ext::LABELED_STATEMENT {
+            let mut inner_idx = stmt_idx;
+            let mut inner_node = node;
+            let mut depth = 0;
+            while inner_node.kind == syntax_kind_ext::LABELED_STATEMENT && depth < 10 {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(inner_node) {
+                    inner_idx = labeled.statement;
+                    if let Some(n) = self.ctx.arena.get(inner_idx) {
+                        inner_node = n;
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                }
+                depth += 1;
+            }
+            (inner_node, inner_idx)
+        } else {
+            (node, stmt_idx)
+        };
+
         // TS1156: '{0}' declarations can only be declared inside a block.
         // This fires when a const/let/interface/type declaration appears as
         // the body of a control flow statement (if/while/for) without braces.
-        let decl_kind = match node.kind {
+        let decl_kind = match check_node.kind {
             syntax_kind_ext::INTERFACE_DECLARATION => Some("interface"),
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some("type"),
             syntax_kind_ext::VARIABLE_STATEMENT => {
                 // Check the VariableDeclarationList for const/let flags
-                if let Some(var_data) = self.ctx.arena.get_variable(node) {
+                if let Some(var_data) = self.ctx.arena.get_variable(check_node) {
                     let list_idx = var_data
                         .declarations
                         .nodes
@@ -1574,7 +1598,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // tsc reports TS1156 at the declaration's name identifier, not the keyword.
             // For `type Foo = ...`, tsc points at `Foo`, not `type`.
-            let error_node = self.get_declaration_name_node(stmt_idx).unwrap_or(stmt_idx);
+            let error_node = self
+                .get_declaration_name_node(check_idx)
+                .unwrap_or(check_idx);
 
             self.error_at_node(
                 error_node,
