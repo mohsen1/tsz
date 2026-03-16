@@ -1397,6 +1397,10 @@ impl<'a> CheckerState<'a> {
             .get(alias.name)
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .map(|id| id.escaped_text.to_string());
+        // Push type parameters to scope FIRST so that constraints like
+        // `type Pair<A extends B, B>` can reference sibling type parameters.
+        let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
+
         if let Some(ref name) = alias_name_str {
             self.check_type_parameters_for_missing_names_with_enclosing(
                 &alias.type_parameters,
@@ -1405,8 +1409,6 @@ impl<'a> CheckerState<'a> {
         } else {
             self.check_type_parameters_for_missing_names(&alias.type_parameters);
         }
-
-        let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
         if let Some(type_params) = &alias.type_parameters {
             let factory = self.ctx.types.factory();
             for &param_idx in &type_params.nodes {
