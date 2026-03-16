@@ -529,6 +529,11 @@ impl<'a> LoweringPass<'a> {
                     self.visit(unary.operand);
                 }
             }
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                    self.visit(unary.expression);
+                }
+            }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.arena.get_conditional_expr(node) {
                     self.visit(cond.condition);

@@ -115,6 +115,10 @@ pub struct PrinterOptions {
     /// file extension (.mts) or package.json "type":"module". Such files are
     /// definitively ES modules regardless of import/export content.
     pub resolved_node_module_to_esm: bool,
+    /// When true, this file was resolved from a Node module (node16/nodenext) to CJS format.
+    /// In this context, dynamic `import()` should be kept as native `import()` (Node CJS supports it)
+    /// rather than being transformed to `require()`.
+    pub resolved_node_module_to_cjs: bool,
     /// When true, preserve const enum declarations instead of erasing them
     pub preserve_const_enums: bool,
     /// When true, disable const enum value inlining at usage sites.
@@ -168,6 +172,7 @@ impl Default for PrinterOptions {
             es_module_interop: false,
             module_detection_force: false,
             resolved_node_module_to_esm: false,
+            resolved_node_module_to_cjs: false,
             preserve_const_enums: false,
             no_const_enum_inlining: false,
             import_helpers: false,

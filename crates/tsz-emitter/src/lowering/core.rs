@@ -1443,8 +1443,10 @@ impl<'a> LoweringPass<'a> {
         }
 
         // CJS dynamic import: import("mod") needs __importStar helper
-        // This applies regardless of esModuleInterop setting
+        // This applies regardless of esModuleInterop setting.
+        // Skip for node module CJS files where native import() is supported.
         if self.commonjs_mode
+            && !self.ctx.options.resolved_node_module_to_cjs
             && !is_super_call
             && let Some(expr_node) = self.arena.get(call.expression)
             && expr_node.kind == SyntaxKind::ImportKeyword as u16

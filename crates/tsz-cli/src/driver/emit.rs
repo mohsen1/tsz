@@ -139,6 +139,7 @@ pub(crate) fn emit_outputs(
                     printer_options.resolved_node_module_to_esm = true;
                 } else {
                     printer_options.module = ModuleKind::CommonJS;
+                    printer_options.resolved_node_module_to_cjs = true;
                 }
                 // module_detection_force is already set at config level
                 // (true by default for node modules when moduleDetection not explicit)
