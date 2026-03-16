@@ -241,6 +241,27 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a variable declaration is inside a namespace body and whether
     /// it has an `export` modifier.
+    /// Check if a variable declaration is inside a for-in or for-of statement.
+    /// E.g., `for (var i in obj)` — the `i` declaration is inside a for-in.
+    pub(crate) fn is_var_decl_in_for_in_or_for_of(&self, decl_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+            return false;
+        };
+        let decl_list_idx = ext.parent;
+        let Some(decl_list_ext) = self.ctx.arena.get_extended(decl_list_idx) else {
+            return false;
+        };
+        let parent_idx = decl_list_ext.parent;
+        let Some(parent) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        use tsz_parser::parser::syntax_kind_ext;
+        matches!(
+            parent.kind,
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT
+        )
+    }
+
     pub(crate) fn var_decl_namespace_export_status(&self, decl_idx: NodeIndex) -> Option<bool> {
         let ext = self.ctx.arena.get_extended(decl_idx)?;
         let decl_list_idx = ext.parent;
