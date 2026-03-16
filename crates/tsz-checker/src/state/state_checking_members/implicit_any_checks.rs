@@ -277,35 +277,37 @@ impl<'a> CheckerState<'a> {
 
                         if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
                         {
-                            // Check if this binding element has an initializer
-                            let has_initializer = binding_elem.initializer.is_some();
+                            // Check if name is a nested pattern - if so, only recurse, don't report
+                            // TS7031 for intermediate patterns. tsc only reports for leaf identifiers.
+                            let name_is_pattern = self
+                                .ctx
+                                .arena
+                                .get(binding_elem.name)
+                                .map(|n| {
+                                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                })
+                                .unwrap_or(false);
 
-                            // If no initializer, report error for implicit any
-                            if !has_initializer {
-                                // Get the property name (could be identifier or string literal)
-                                let binding_name = if binding_elem.property_name.is_some() {
-                                    self.parameter_name_for_error(binding_elem.property_name)
-                                } else {
-                                    self.parameter_name_for_error(binding_elem.name)
-                                };
-
-                                let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
-                                self.error_at_node_msg(
+                            if name_is_pattern {
+                                // Recursively check nested patterns only
+                                self.emit_implicit_any_parameter_for_pattern(
                                     binding_elem.name,
-                                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
-                                    &[&binding_name, implicit_type],
+                                    is_rest_parameter,
                                 );
-                            }
+                            } else {
+                                // Leaf binding - report error if no initializer
+                                let has_initializer = binding_elem.initializer.is_some();
+                                if !has_initializer {
+                                    let binding_name =
+                                        self.parameter_name_for_error(binding_elem.name);
 
-                            // Recursively check nested patterns
-                            if let Some(name_node) = self.ctx.arena.get(binding_elem.name) {
-                                let name_kind = name_node.kind;
-                                if name_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                    || name_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                {
-                                    self.emit_implicit_any_parameter_for_pattern(
+                                    let implicit_type =
+                                        if is_rest_parameter { "any[]" } else { "any" };
+                                    self.error_at_node_msg(
                                         binding_elem.name,
-                                        is_rest_parameter,
+                                        diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
+                                        &[&binding_name, implicit_type],
                                     );
                                 }
                             }
@@ -329,28 +331,34 @@ impl<'a> CheckerState<'a> {
 
                     // Check if this element is a binding element with initializer
                     if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
-                        let has_initializer = binding_elem.initializer.is_some();
+                        // Check if name is a nested pattern - if so, only recurse, don't report
+                        // TS7031 for intermediate patterns. tsc only reports for leaf identifiers.
+                        let name_is_pattern = self
+                            .ctx
+                            .arena
+                            .get(binding_elem.name)
+                            .map(|n| {
+                                n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            })
+                            .unwrap_or(false);
 
-                        if !has_initializer {
-                            let binding_name = self.parameter_name_for_error(binding_elem.name);
-
-                            let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
-                            self.error_at_node_msg(
+                        if name_is_pattern {
+                            // Recursively check nested patterns only
+                            self.emit_implicit_any_parameter_for_pattern(
                                 binding_elem.name,
-                                diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
-                                &[&binding_name, implicit_type],
+                                is_rest_parameter,
                             );
-                        }
+                        } else {
+                            let has_initializer = binding_elem.initializer.is_some();
+                            if !has_initializer {
+                                let binding_name = self.parameter_name_for_error(binding_elem.name);
 
-                        // Recursively check nested patterns
-                        if let Some(name_node) = self.ctx.arena.get(binding_elem.name) {
-                            let name_kind = name_node.kind;
-                            if name_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || name_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            {
-                                self.emit_implicit_any_parameter_for_pattern(
+                                let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
+                                self.error_at_node_msg(
                                     binding_elem.name,
-                                    is_rest_parameter,
+                                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
+                                    &[&binding_name, implicit_type],
                                 );
                             }
                         }
