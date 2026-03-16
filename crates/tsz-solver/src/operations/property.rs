@@ -9,9 +9,10 @@ use std::cell::{Cell, RefCell};
 use tsz_common::interner::Atom;
 
 // Re-export readonly helpers
+pub(crate) use super::property_readonly::property_is_readonly;
 pub use super::property_readonly::{
     is_mapped_type_with_readonly_modifier, is_readonly_index_signature,
-    is_readonly_tuple_fixed_element, property_is_readonly,
+    is_readonly_tuple_fixed_element,
 };
 
 // Child module: resolution helpers (mapped types, primitives, arrays, applications, etc.)
