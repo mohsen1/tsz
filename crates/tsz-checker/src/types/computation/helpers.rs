@@ -166,8 +166,13 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            // Non-array-applicable object-like types (e.g., interfaces with required
+            // non-numeric properties) can't meaningfully contextually type array literals.
+            // Skip them rather than treating them as ambiguous. This matches tsc's
+            // getApplicableTypeForExpression which filters union members to only those
+            // applicable to the expression kind (isArrayOrTupleType || unknown[] assignable).
             if tsz_solver::type_queries::is_object_like_type(self.ctx.types, member) {
-                return true;
+                continue;
             }
         }
 
