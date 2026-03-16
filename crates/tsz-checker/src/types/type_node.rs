@@ -1349,10 +1349,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let is_type_only = (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
                 if is_type_only {
                     let escaped_name = symbol.escaped_name.clone();
-                    self.emit_type_query_type_only_error(
-                        &escaped_name,
-                        type_query.expr_name,
-                    );
+                    self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
                     return TypeId::ERROR;
                 }
             }
@@ -1418,8 +1415,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                     let flags = symbol.flags;
                     let has_value = flags & tsz_binder::symbol_flags::VALUE != 0;
-                    let is_type_only =
-                        (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
+                    let is_type_only = (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
                     if is_type_only {
                         self.emit_type_query_type_only_error(name, type_query.expr_name);
                         return TypeId::ERROR;
