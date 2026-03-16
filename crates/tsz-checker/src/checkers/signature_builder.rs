@@ -362,11 +362,6 @@ impl<'a> CheckerState<'a> {
                 || (self.is_js_file() && param.type_annotation.is_none());
             let rest = param.dot_dot_dot_token;
 
-            // Do NOT bake `| undefined` into optional parameter types.
-            // tsc stores the declared type and handles optionality implicitly
-            // via the `optional` flag during assignability checks.  Baking it
-            // in causes `| undefined` to leak into TS2345 error messages.
-
             // Check for "this" parameter by name
             if let Some(name_atom) = name
                 && name_atom == this_atom
