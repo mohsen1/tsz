@@ -381,7 +381,9 @@ impl<'a> InferenceContext<'a> {
             .map(|c| {
                 matches!(
                     c.priority,
-                    InferencePriority::ReturnType | InferencePriority::LowPriority
+                    InferencePriority::ReturnType
+                        | InferencePriority::LowPriority
+                        | InferencePriority::MappedType
                 )
             })
             .unwrap_or(false);
