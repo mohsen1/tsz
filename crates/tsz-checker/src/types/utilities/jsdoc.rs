@@ -192,7 +192,11 @@ impl<'a> CheckerState<'a> {
             &comments,
             &source_text,
         );
-        self.resolve_jsdoc_type_str(type_expr).or_else(|| {
+        // Set the anchor position for typedef scoping so that resolve_jsdoc_type_str
+        // → resolve_jsdoc_type_name → resolve_jsdoc_typedef_type respects function scope.
+        let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        self.ctx.jsdoc_typedef_anchor_pos.set(node.pos);
+        let result = self.resolve_jsdoc_type_str(type_expr).or_else(|| {
             self.resolve_jsdoc_typedef_type(type_expr, node.pos, &comments, &source_text)
                 .or_else(|| {
                     if let Some(resolved) = self.resolve_jsdoc_import_type_reference(type_expr) {
@@ -206,9 +210,11 @@ impl<'a> CheckerState<'a> {
                     }
                     None
                 })
-        })
+        });
+        self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+        result
     }
-    fn jsdoc_template_constraints(jsdoc: &str) -> Vec<(String, Option<String>)> {
+    pub(crate) fn jsdoc_template_constraints(jsdoc: &str) -> Vec<(String, Option<String>)> {
         let mut out = Vec::new();
         for raw_line in jsdoc.lines() {
             let trimmed = raw_line.trim().trim_start_matches('*').trim();
@@ -948,15 +954,17 @@ impl<'a> CheckerState<'a> {
                 return Some(resolved);
             }
         }
-        // Try @typedef resolution from JSDoc comments
+        // Try @typedef resolution from JSDoc comments.
+        // Use the anchor position from context for proper scoping (if set).
         if let Some(sf) = self.ctx.arena.source_files.first() {
             if sf.comments.is_empty() {
                 return None;
             }
             let comments = sf.comments.clone();
             let source_text: String = sf.text.to_string();
+            let anchor_pos = self.ctx.jsdoc_typedef_anchor_pos.get();
             if let Some(ty) =
-                self.resolve_jsdoc_typedef_type(name, u32::MAX, &comments, &source_text)
+                self.resolve_jsdoc_typedef_type(name, anchor_pos, &comments, &source_text)
             {
                 self.register_jsdoc_typedef_def(name, ty);
                 return Some(ty);
@@ -1773,6 +1781,116 @@ impl<'a> CheckerState<'a> {
         parts
     }
     /// Resolve a `@typedef` referenced by name from preceding JSDoc comments.
+    /// Check if a position is inside a function body that does NOT contain
+    /// the anchor position. Used for typedef scoping: typedefs declared inside
+    /// a function are only visible within that function.
+    pub(crate) fn is_in_different_function_scope(&self, comment_pos: u32, anchor_pos: u32) -> bool {
+        // anchor_pos == u32::MAX means global search (cross-file resolution)
+        if anchor_pos == u32::MAX {
+            return false;
+        }
+        let source_text = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .map(|sf| &*sf.text)
+            .unwrap_or("");
+        for node in &self.ctx.arena.nodes {
+            if !node.is_function_like() {
+                continue;
+            }
+            let body_end = Self::find_function_body_end(node.pos, node.end, source_text);
+            // Comment is inside this function but anchor is outside
+            if comment_pos >= node.pos
+                && comment_pos < body_end
+                && (anchor_pos < node.pos || anchor_pos >= body_end)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Find the actual end of a function body by locating the matching closing
+    /// brace. Function declaration nodes in the parser may include trailing
+    /// trivia (whitespace/comments) past the closing `}`, so we track brace
+    /// nesting to find the real body end.
+    pub(crate) fn find_function_body_end(node_pos: u32, node_end: u32, source_text: &str) -> u32 {
+        let func_end = (node_end as usize).min(source_text.len());
+        let func_text = &source_text[node_pos as usize..func_end];
+        // Find the opening brace of the function body
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut string_char = '\0';
+        let mut in_line_comment = false;
+        let mut in_block_comment = false;
+        let bytes = func_text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            if in_line_comment {
+                if ch == '\n' {
+                    in_line_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+            if in_block_comment {
+                if ch == '*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    in_block_comment = false;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+            if in_string {
+                if ch == '\\' {
+                    i += 2; // skip escaped char
+                    continue;
+                }
+                if ch == string_char {
+                    in_string = false;
+                }
+                i += 1;
+                continue;
+            }
+            // Check for comment starts
+            if ch == '/' && i + 1 < bytes.len() {
+                if bytes[i + 1] == b'/' {
+                    in_line_comment = true;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i + 1] == b'*' {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+            }
+            // Check for string starts
+            if ch == '\'' || ch == '"' || ch == '`' {
+                in_string = true;
+                string_char = ch;
+                i += 1;
+                continue;
+            }
+            if ch == '{' {
+                depth += 1;
+            } else if ch == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    // Found the matching closing brace
+                    return node_pos + i as u32 + 1;
+                }
+            }
+            i += 1;
+        }
+        // Fallback: use node.end
+        node_end
+    }
+
     pub(crate) fn resolve_jsdoc_typedef_type(
         &mut self,
         type_expr: &str,
@@ -1787,6 +1905,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            // Skip typedefs declared inside a function body when the use site
+            // is outside that function (typedef scoping).
+            if self.is_in_different_function_scope(comment.pos, anchor_pos) {
                 continue;
             }
             let content = get_jsdoc_content(comment, source_text);

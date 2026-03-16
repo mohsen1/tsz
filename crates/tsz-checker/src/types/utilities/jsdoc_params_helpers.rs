@@ -221,8 +221,38 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Collect @template names defined in this comment so we can skip them
+            // when checking callback param types.
+            let template_names: Vec<String> = Self::jsdoc_template_constraints(&content)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+
             for (_name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
-                if typedef_info.callback.is_some() {
+                if let Some(ref cb) = typedef_info.callback {
+                    // Check callback param types for unresolvable references (TS2304)
+                    for (_param_name, type_expr) in &cb.params {
+                        let expr = type_expr.trim();
+                        let expr = expr.strip_prefix("...").unwrap_or(expr);
+                        if expr.is_empty() {
+                            continue;
+                        }
+                        if !Self::is_simple_type_name(expr) {
+                            continue;
+                        }
+                        // Skip template params defined in this same comment
+                        if template_names.iter().any(|t| t == expr) {
+                            continue;
+                        }
+                        if self.resolve_jsdoc_type_str(expr).is_none() {
+                            self.emit_jsdoc_cannot_find_name(
+                                expr,
+                                comment.pos,
+                                comment.end,
+                                &source_text,
+                            );
+                        }
+                    }
                     continue;
                 }
                 if let Some(ref base_type) = typedef_info.base_type {
@@ -243,6 +273,62 @@ impl<'a> CheckerState<'a> {
                             comment.end,
                             &source_text,
                         );
+                    }
+                }
+            }
+        }
+
+        // Also check @type tag references for unresolvable simple names (TS2304).
+        // Only for @type tags on file-level statements (not inside functions),
+        // since function-level @type tags may reference function-scoped typedefs.
+        for comment in &comments {
+            if !is_jsdoc_comment(comment, &source_text) {
+                continue;
+            }
+            // Skip comments inside function bodies - only check file-level @type tags.
+            // Use find_function_body_end to get the real body end, since function
+            // declaration nodes may include trailing trivia past the closing `}`.
+            let mut in_function = false;
+            for node in &self.ctx.arena.nodes {
+                if !node.is_function_like() {
+                    continue;
+                }
+                let body_end = Self::find_function_body_end(node.pos, node.end, &source_text);
+                if comment.pos >= node.pos && comment.pos < body_end {
+                    in_function = true;
+                    break;
+                }
+            }
+            if in_function {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, &source_text);
+            // Check for @type {Name} where Name is a simple identifier
+            if let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&content) {
+                let expr = type_expr.trim();
+                if !expr.is_empty()
+                    && Self::is_simple_type_name(expr)
+                    && !expr.contains('<')
+                    && !expr.contains('.')
+                {
+                    // Set anchor to the comment position to respect typedef scoping
+                    let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+                    self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
+                    let resolved = self.resolve_jsdoc_type_str(expr);
+                    self.ctx.jsdoc_typedef_anchor_pos.set(prev_anchor);
+                    if resolved.is_none() {
+                        // Also check if it's a typedef (globally) that's just out of scope
+                        let typedef_exists = self
+                            .resolve_jsdoc_typedef_type(expr, u32::MAX, &comments, &source_text)
+                            .is_some();
+                        if typedef_exists {
+                            self.emit_jsdoc_cannot_find_name(
+                                expr,
+                                comment.pos,
+                                comment.end,
+                                &source_text,
+                            );
+                        }
                     }
                 }
             }
