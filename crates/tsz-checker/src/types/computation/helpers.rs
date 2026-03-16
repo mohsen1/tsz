@@ -192,7 +192,10 @@ impl<'a> CheckerState<'a> {
             let Some(applicable) =
                 tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, member)
             else {
-                return false;
+                // Non-array-applicable members (e.g., interfaces without index signatures)
+                // should be skipped — they don't influence whether the array literal
+                // should be typed as a tuple. Only array-applicable members matter.
+                continue;
             };
 
             if !tsz_solver::type_queries::is_tuple_type(self.ctx.types, applicable) {
