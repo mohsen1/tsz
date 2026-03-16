@@ -379,20 +379,32 @@ pub(super) fn collect_type_root_files(
         None => default_type_roots(base_dir),
     };
     if roots.is_empty() {
-        // When no valid type roots exist, any explicitly requested types
-        // (via the `types` config option) are unresolved.
-        // Filter out "*" wildcard and empty strings — these are not literal package names.
-        let unresolved = options
-            .types
-            .as_ref()
-            .map(|t| {
-                t.iter()
-                    .filter(|s| s.as_str() != "*" && !s.trim().is_empty())
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        return (Vec::new(), unresolved);
+        // When no valid type roots exist, try to resolve explicitly requested types
+        // via node_modules fallback before marking them as unresolved.
+        let mut files = std::collections::BTreeSet::new();
+        let mut unresolved = Vec::new();
+        if let Some(types) = options.types.as_ref() {
+            let synthetic_from_file = base_dir.join("__types__.ts");
+            for name in types {
+                if name.as_str() == "*" || name.trim().is_empty() {
+                    continue;
+                }
+                if let Some(entry) =
+                    crate::driver::resolution::resolve_type_reference_from_node_modules(
+                        name,
+                        &synthetic_from_file,
+                        base_dir,
+                        None,
+                        options,
+                    )
+                {
+                    files.insert(entry);
+                } else {
+                    unresolved.push(name.clone());
+                }
+            }
+        }
+        return (files.into_iter().collect(), unresolved);
     }
 
     let mut files = std::collections::BTreeSet::new();
@@ -407,19 +419,20 @@ pub(super) fn collect_type_root_files(
             for name in types {
                 if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
                     files.insert(entry);
+                } else if let Some(entry) =
+                    crate::driver::resolution::resolve_type_reference_from_node_modules(
+                        name,
+                        &synthetic_from_file,
+                        base_dir,
+                        None,
+                        options,
+                    )
+                {
+                    // Found via node_modules fallback — include the file but don't
+                    // report TS2688 since the package exists, just not in @types/.
+                    files.insert(entry);
                 } else {
                     unresolved.push(name.clone());
-                    if let Some(entry) =
-                        crate::driver::resolution::resolve_type_reference_from_node_modules(
-                            name,
-                            &synthetic_from_file,
-                            base_dir,
-                            None,
-                            options,
-                        )
-                    {
-                        files.insert(entry);
-                    }
                 }
             }
             return (files.into_iter().collect(), unresolved);
