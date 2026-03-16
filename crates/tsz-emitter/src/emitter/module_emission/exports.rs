@@ -70,23 +70,14 @@ impl<'a> Printer<'a> {
                 return;
             };
 
-            // Handle `export * as ns from "mod"` -> `exports.ns = require("mod")` or
-            // `exports.ns = __importStar(require("mod"))` when esModuleInterop is enabled.
-            // This does NOT consume a module_var counter (tsc emits inline require).
+            // Handle `export * from "mod"` -> `__exportStar(require("mod"), exports);`
+            // tsc emits an inline require (no temp variable), so we do the same to
+            // avoid wasting a module_var counter value.
             if export.export_clause.is_none() {
-                let module_var = self.next_commonjs_module_var(&module_spec);
-                // TSC emits `var` for CommonJS re-export helper bindings.
-                self.write("var ");
-                self.write(&module_var);
-                self.write(" = require(\"");
-                self.write(&module_spec);
-                self.write("\");");
-                self.write_line();
-
                 self.write_helper("__exportStar");
-                self.write("(");
-                self.write(&module_var);
-                self.write(", exports);");
+                self.write("(require(\"");
+                self.write(&module_spec);
+                self.write("\"), exports);");
                 self.write_line();
                 return;
             }

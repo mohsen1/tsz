@@ -376,7 +376,48 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Check if this is a namespace-only import (import * as ns from "mod")
+        // before allocating a module var, so the counter isn't wasted.
+        // Detect from AST: named_bindings has a name but no elements
+        let is_namespace_only_ast = clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|n| self.arena.get_named_imports(n))
+                .is_some_and(|ni| ni.name.is_some() && ni.elements.nodes.is_empty());
+
+        if is_namespace_only_ast {
+            // Get the namespace name from the AST
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+            {
+                let ns_name = self.get_identifier_text_idx(named_imports.name);
+                if !ns_name.is_empty() {
+                    self.write_var_or_const();
+                    self.write(&ns_name);
+                    if self.ctx.options.es_module_interop {
+                        // `import * as ns from "mod"` -> `const ns = __importStar(require("mod"));`
+                        self.write(" = ");
+                        self.write_helper("__importStar");
+                        self.write("(require(\"");
+                        self.write(&module_spec);
+                        self.write("\"));");
+                    } else {
+                        // `import * as ns from "mod"` -> `const ns = require("mod");`
+                        self.write(" = require(\"");
+                        self.write(&module_spec);
+                        self.write("\");");
+                    }
+                    self.write_line();
+                }
+            }
+            return;
+        }
+
         // Generate module var name: "./foo" -> "foo_1"
+        // This must come after the namespace-only check to avoid wasting
+        // counter values on imports that use their own namespace name.
         let module_var = self.next_commonjs_module_var(&module_spec);
         self.register_commonjs_named_import_substitutions(node, &module_var);
         let is_default_only_ast = clause.name.is_some() && clause.named_bindings.is_none();
@@ -422,44 +463,6 @@ impl<'a> Printer<'a> {
                 self.write("\");");
             }
             self.write_line();
-            return;
-        }
-
-        // Check if this is a namespace-only import (import * as ns from "mod")
-        // Detect from AST: named_bindings has a name but no elements
-        let is_namespace_only_ast = clause.name.is_none()
-            && clause.named_bindings.is_some()
-            && self
-                .arena
-                .get(clause.named_bindings)
-                .and_then(|n| self.arena.get_named_imports(n))
-                .is_some_and(|ni| ni.name.is_some() && ni.elements.nodes.is_empty());
-
-        if is_namespace_only_ast {
-            // Get the namespace name from the AST
-            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
-                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-            {
-                let ns_name = self.get_identifier_text_idx(named_imports.name);
-                if !ns_name.is_empty() {
-                    self.write_var_or_const();
-                    self.write(&ns_name);
-                    if self.ctx.options.es_module_interop {
-                        // `import * as ns from "mod"` -> `const ns = __importStar(require("mod"));`
-                        self.write(" = ");
-                        self.write_helper("__importStar");
-                        self.write("(require(\"");
-                        self.write(&module_spec);
-                        self.write("\"));");
-                    } else {
-                        // `import * as ns from "mod"` -> `const ns = require("mod");`
-                        self.write(" = require(\"");
-                        self.write(&module_spec);
-                        self.write("\");");
-                    }
-                    self.write_line();
-                }
-            }
             return;
         }
 
