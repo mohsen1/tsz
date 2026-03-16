@@ -409,6 +409,11 @@ pub struct CheckerContext<'a> {
     /// Set to true after the first JSX element is checked, to emit at most once per file.
     pub jsx_import_source_checked: bool,
 
+    /// Deferred TS2875 diagnostic. Stored here because the check runs inside JSX
+    /// element type resolution, which may be inside a speculative call-checker
+    /// context that truncates diagnostics. Emitted at end of `check_source_file`.
+    pub deferred_jsx_import_source_error: Option<(NodeIndex, String)>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
