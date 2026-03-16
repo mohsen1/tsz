@@ -664,9 +664,25 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        let mut evaluated = match classify_for_assignability_eval(self.ctx.types, type_id) {
+        let kind = classify_for_assignability_eval(self.ctx.types, type_id);
+        let mut evaluated = match kind {
             AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
-            AssignabilityEvalKind::NeedsEnvEval => self.evaluate_type_with_env(type_id),
+            AssignabilityEvalKind::NeedsEnvEval => {
+                // For TypeQuery (typeof), resolve the value type directly from
+                // get_type_of_symbol. The TypeEnvironment's types map may contain
+                // the instance type for class symbols (stored by type-position
+                // resolution paths like resolve_lazy_def_for_type_env), but
+                // TypeQuery needs the value-position type (constructor for classes).
+                if let Some(symbol_ref) = tsz_solver::visitor::type_query_symbol(
+                    self.ctx.types.as_type_database(),
+                    type_id,
+                ) {
+                    let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.evaluate_type_with_env(type_id)
+                }
+            }
             AssignabilityEvalKind::Resolved => type_id,
         };
 
