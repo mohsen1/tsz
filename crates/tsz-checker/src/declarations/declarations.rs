@@ -227,6 +227,44 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             .arena
             .has_modifier(&func.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword);
 
+        // TS1184: `declare` on a function declaration in a block scope
+        if has_declare {
+            let parent_kind = self
+                .ctx
+                .arena
+                .get_extended(func_idx)
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .map(|p| p.kind);
+            let in_block = !matches!(
+                parent_kind,
+                Some(k) if k == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
+                    || k == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+            ) && parent_kind.is_some();
+            if in_block {
+                // Find the `declare` keyword modifier node for the error span
+                let declare_node = func.modifiers.as_ref().and_then(|mods| {
+                    mods.nodes
+                        .iter()
+                        .find(|&&mod_idx| {
+                            self.ctx.arena.get(mod_idx).is_some_and(|n| {
+                                n.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
+                            })
+                        })
+                        .copied()
+                });
+                if let Some(decl_mod) = declare_node
+                    && let Some(mod_node) = self.ctx.arena.get(decl_mod)
+                {
+                    self.ctx.error(
+                        mod_node.pos,
+                        mod_node.end - mod_node.pos,
+                        "Modifiers cannot appear here.".to_string(),
+                        crate::diagnostics::diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+            }
+        }
+
         if has_declare && !func.parameters.nodes.is_empty() {
             for &param_idx in &func.parameters.nodes {
                 let Some(param_node) = self.ctx.arena.get(param_idx) else {
