@@ -72,20 +72,25 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    const fn preferred_literal_expected_for_mismatch(
+    fn preferred_literal_expected_for_mismatch(
         &self,
-        _arg_types: &[TypeId],
-        _mismatch_index: usize,
+        arg_types: &[TypeId],
+        mismatch_index: usize,
         expected: TypeId,
     ) -> TypeId {
-        // Return the expected type as-is. Argument values from sibling positions
-        // should never influence the displayed parameter type in error messages —
-        // the parameter type comes from the declaration/constraint, not from
-        // other arguments. The previous heuristic replaced non-literal expected
-        // types (e.g., `number`) with literal types from other args (e.g., `2`),
-        // causing wrong messages like "parameter of type '2'" instead of
-        // "parameter of type 'number'" for generic constraints.
-        expected
+        if tsz_solver::literal_value(self.ctx.types, expected).is_some() {
+            return expected;
+        }
+        arg_types
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != mismatch_index)
+            .map(|(_, ty)| *ty)
+            .find(|&candidate| {
+                tsz_solver::literal_value(self.ctx.types, candidate).is_some()
+                    && tsz_solver::widen_literal_type(self.ctx.types, candidate) == expected
+            })
+            .unwrap_or(expected)
     }
 
     fn is_generic_callable_against_nongeneric_target(
