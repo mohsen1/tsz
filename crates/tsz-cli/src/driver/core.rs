@@ -1136,7 +1136,9 @@ fn compile_inner(
     // In the parallel (no-cache) path, type caches are returned via the
     // Mutex parameter. In the cached/incremental path they live in the
     // CompilationCache.
-    let parallel_type_caches = parallel_type_caches.into_inner().unwrap();
+    let parallel_type_caches = parallel_type_caches
+        .into_inner()
+        .expect("parallel_type_caches mutex should not be poisoned");
     let type_caches_ref: &FxHashMap<_, _> = if !parallel_type_caches.is_empty() {
         &parallel_type_caches
     } else {
