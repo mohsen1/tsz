@@ -566,9 +566,11 @@ impl<'a> CheckerState<'a> {
                 if cause.is_none() && !left_is_top_type {
                     // TS2869: Left operand is never nullish, right is unreachable.
                     // This replaces the generic TS2872 ("always truthy") for ?? context.
+                    // tsc reports the error on the inner expression, skipping parentheses.
                     use crate::diagnostics::diagnostic_codes;
+                    let error_node = self.ctx.arena.skip_parenthesized(left_idx);
                     self.error_at_node(
-                        right_idx,
+                        error_node,
                         "Right operand of ?? is unreachable because the left operand is never nullish.",
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );
