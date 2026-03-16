@@ -566,6 +566,20 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return;
                 }
+                // Skip MissingProperty when the property name is a computed symbol
+                // expression (e.g. `[Symbol.nonsense]`). This means the computed key
+                // references a non-existent Symbol member — TSC doesn't infer required
+                // properties for error-type computed keys, so no assignment error
+                // should be produced. The TS2339 error on the symbol access is already
+                // emitted separately.
+                if let tsz_solver::SubtypeFailureReason::MissingProperty { property_name, .. } =
+                    &failure_reason
+                {
+                    let pn = self.ctx.types.resolve_atom_ref(*property_name);
+                    if pn.starts_with("[Symbol.") {
+                        return;
+                    }
+                }
                 let diag =
                     self.render_failure_reason(&failure_reason, source, target, anchor_idx, 0);
                 self.ctx.push_diagnostic(diag);
@@ -805,9 +819,29 @@ impl<'a> CheckerState<'a> {
                 // intersection type. For example: `anb: A & B = a` where `a: A`
                 // → TS2322 "Type 'A' is not assignable to type 'A & B'"
                 // not TS2741 "Property 'b' is missing in type 'A'..."
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
+                // Check the solver's target_type, the original outer target, and
+                // the env-evaluated outer target (resolves Lazy wrapping).
+                let target_evaluated_for_intersection = self.evaluate_type_with_env(target);
+                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type)
+                    || tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
+                    || tsz_solver::type_queries::is_intersection_type(
+                        self.ctx.types,
+                        target_evaluated_for_intersection,
+                    )
+                {
                     let src_str = self.format_type_diagnostic(*source_type);
-                    let tgt_str = self.format_type_diagnostic(*target_type);
+                    // Use the intersection form for display when available
+                    let tgt_str = if tsz_solver::type_queries::is_intersection_type(
+                        self.ctx.types,
+                        target_evaluated_for_intersection,
+                    ) {
+                        self.format_type_diagnostic(target_evaluated_for_intersection)
+                    } else if tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
+                    {
+                        self.format_type_diagnostic(target)
+                    } else {
+                        self.format_type_diagnostic(*target_type)
+                    };
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
@@ -964,6 +998,49 @@ impl<'a> CheckerState<'a> {
                         message,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
+                }
+
+                // When the source has an index signature, the solver may only
+                // report a single MissingProperty even though multiple target
+                // properties are truly absent. Cross-check with the helper to
+                // upgrade TS2741 → TS2739 when there are more missing properties
+                // (matching tsc which reports all missing properties at once).
+                if depth == 0 {
+                    if let Some(all_missing) =
+                        self.missing_required_properties_from_index_signature_source(source, target)
+                    {
+                        if all_missing.len() > 1 {
+                            let src_str = self
+                                .format_assignment_source_type_for_diagnostic(source, target, idx);
+                            let tgt_str =
+                                self.format_assignability_type_for_message(target, source);
+                            let prop_list: Vec<String> = all_missing
+                                .iter()
+                                .take(4)
+                                .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                                .collect();
+                            let props_joined = prop_list.join(", ");
+                            let (message, code) = if all_missing.len() > 4 {
+                                let more_count = (all_missing.len() - 4).to_string();
+                                (
+                                    format_message(
+                                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                        &[&src_str, &tgt_str, &props_joined, &more_count],
+                                    ),
+                                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                                )
+                            } else {
+                                (
+                                    format_message(
+                                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                        &[&src_str, &tgt_str, &props_joined],
+                                    ),
+                                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                                )
+                            };
+                            return Diagnostic::error(file_name, start, length, message, code);
+                        }
+                    }
                 }
 
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
@@ -1875,7 +1952,19 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // Skip single-missing-property lookup when the target is an
+                // intersection type — TSC emits TS2322 (generic "not assignable")
+                // for intersection targets, never TS2741.
+                let target_is_intersection_for_mismatch = {
+                    let target_eval = self.evaluate_type_with_env(target);
+                    tsz_solver::type_queries::is_intersection_type(self.ctx.types, target)
+                        || tsz_solver::type_queries::is_intersection_type(
+                            self.ctx.types,
+                            target_eval,
+                        )
+                };
                 if depth == 0
+                    && !target_is_intersection_for_mismatch
                     && let Some(property_name) =
                         self.missing_single_required_property(source, target)
                 {
@@ -1925,6 +2014,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if depth == 0
+                    && !target_is_intersection_for_mismatch
                     && let Some(missing_props) =
                         self.missing_required_properties_from_index_signature_source(source, target)
                     && missing_props.len() > 1
