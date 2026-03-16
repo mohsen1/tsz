@@ -845,6 +845,32 @@ impl<'a> Printer<'a> {
 
                 let is_empty = non_rest_elems.is_empty() && rest_elem.is_none();
 
+                // Optimization: when there's exactly one binding (no rest), skip the
+                // temp variable and emit `exports.x = (rhs).x` directly. tsc does this.
+                if non_rest_elems.len() == 1 && rest_elem.is_none() {
+                    let (export_name, prop_name) = &non_rest_elems[0];
+                    // Check if RHS is a numeric literal — needs special formatting
+                    // because `1.toString` is a JS parse error (`.` is decimal point).
+                    // tsc emits `1..toString` (trailing dot on number, then prop access).
+                    let init_is_numeric = decl.initializer.is_some()
+                        && self
+                            .arena
+                            .get(decl.initializer)
+                            .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16);
+                    self.write("exports.");
+                    self.write(export_name);
+                    self.write(" = ");
+                    self.emit(decl.initializer);
+                    if init_is_numeric {
+                        // Emit extra dot for numeric literal property access: 1..toString
+                        self.write(".");
+                    }
+                    self.write(".");
+                    self.write(prop_name);
+                    self.write(";");
+                    continue;
+                }
+
                 // Generate a hoisted temp var for the RHS.
                 // CJS destructuring temps are placed BEFORE __esModule marker.
                 let temp_name = self.make_unique_name_cjs_destructuring();
