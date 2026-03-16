@@ -1878,7 +1878,14 @@ impl<'a> CheckerState<'a> {
                 // This happens when: import Alias = NS.NotExported (where NotExported is not exported)
 
                 // 1. Check for TS2694 (Namespace has no exported member)
-                if self.report_type_query_missing_member(import.module_specifier) {
+                // But suppress when the left part resolves to a pure interface that
+                // shadows an outer namespace which has the member (tsc uses namespace
+                // meaning for import-equals entity name resolution).
+                let suppress_ts2694 =
+                    self.check_import_qualified_shadows_namespace(import.module_specifier);
+                if !suppress_ts2694
+                    && self.report_type_query_missing_member(import.module_specifier)
+                {
                     return (TypeId::ERROR, Vec::new());
                 }
 
