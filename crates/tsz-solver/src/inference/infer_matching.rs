@@ -800,8 +800,11 @@ impl<'a> InferenceContext<'a> {
             .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
 
         for &source_ty in source_list.iter() {
-            // Skip source members that match fixed targets
-            if fixed.contains(&source_ty) {
+            // Skip source members that match fixed targets (by identity or base type).
+            // This mirrors tsc's inferFromMatchingTypes with isTypeOrBaseIdenticalTo:
+            // literal types like `13` should match their widened primitive `number` in
+            // the fixed set, so they don't pollute type parameter inference candidates.
+            if fixed.contains(&source_ty) || self.source_matches_fixed(&source_ty, &fixed) {
                 continue;
             }
 
@@ -832,6 +835,25 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Check if a source type matches any fixed target by base type identity.
+    ///
+    /// This handles the case where the source is a literal type (e.g., `13`, `"hello"`,
+    /// `true`) whose widened primitive type (`number`, `string`, `boolean`) appears in
+    /// the fixed target set. Without this check, literal types would be inferred against
+    /// type parameters instead of being matched to their corresponding primitive in the
+    /// fixed union branch, causing incorrect inference results.
+    ///
+    /// Mirrors tsc's `isTypeOrBaseIdenticalTo` in `inferFromMatchingTypes`.
+    fn source_matches_fixed(&self, source: &TypeId, fixed: &[TypeId]) -> bool {
+        match self.interner.lookup(*source) {
+            Some(TypeData::Literal(ref value)) => {
+                let widened = value.primitive_type_id();
+                fixed.contains(&widened)
+            }
+            _ => false,
+        }
     }
 
     /// Check if two types share the same outer structure (same kind / same generic base).
