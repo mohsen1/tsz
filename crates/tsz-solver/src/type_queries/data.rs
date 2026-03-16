@@ -1029,6 +1029,25 @@ pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &s
             let members = db.type_list(list_id).to_vec();
             members.iter().any(|&m| member_has_property(db, m, name))
         }
+        // For type parameters, check the constraint.
+        // E.g., `T extends { abc: number }` — T.abc should resolve through the constraint.
+        Some(TypeData::TypeParameter(info)) => {
+            if let Some(constraint) = info.constraint {
+                type_has_property_by_str(db, constraint, name)
+            } else {
+                false
+            }
+        }
+        // Callable shapes (interfaces with call/construct signatures) also have properties
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            shape
+                .properties
+                .iter()
+                .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+        }
+        // Function shapes have no named properties
+        Some(TypeData::Function(_)) => false,
         _ => false,
     }
 }
