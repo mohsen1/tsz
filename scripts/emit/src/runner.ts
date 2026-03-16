@@ -158,6 +158,7 @@ function getCacheKey(
   isolatedModules: boolean = false,
   importsNotUsedAsValues: string = '',
   preserveValueImports: boolean = false,
+  rewriteRelativeImportExtensions: boolean = false,
   removeComments: boolean = false,
   stripInternal: boolean = false,
   outFile: string = '',
@@ -180,7 +181,7 @@ function getCacheKey(
   } catch {
     runnerSalt = 'runner-unknown';
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${rewriteRelativeImportExtensions}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -575,6 +576,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const importsNotUsedAsValues = typeof directives.importsnotusedasvalues === 'string'
       ? directives.importsnotusedasvalues : undefined;
     const preserveValueImports = directives.preservevalueimports === true;
+    const rewriteRelativeImportExtensions = directives.rewriterelativeimportextensions === true;
     const removeComments = directives.removecomments === true;
     const stripInternal = directives.stripinternal === true;
     const emitDeclarationOnly = directives.emitdeclarationonly === true;
@@ -629,6 +631,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       isolatedModules,
       importsNotUsedAsValues,
       preserveValueImports,
+      rewriteRelativeImportExtensions,
       removeComments,
       stripInternal,
       outFile,
@@ -735,6 +738,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.isolatedModules,
       testCase.importsNotUsedAsValues ?? '',
       testCase.preserveValueImports,
+      testCase.rewriteRelativeImportExtensions,
       testCase.removeComments,
       testCase.stripInternal,
       testCase.outFile ?? '',
@@ -775,6 +779,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         isolatedModules: testCase.isolatedModules,
         importsNotUsedAsValues: testCase.importsNotUsedAsValues,
         preserveValueImports: testCase.preserveValueImports,
+        rewriteRelativeImportExtensions: testCase.rewriteRelativeImportExtensions,
         removeComments: testCase.removeComments,
         stripInternal: testCase.stripInternal,
         outFile: testCase.outFile,

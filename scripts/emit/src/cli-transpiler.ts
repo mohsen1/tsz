@@ -210,6 +210,7 @@ export class CliTranspiler {
       isolatedModules?: boolean;
       importsNotUsedAsValues?: string;
       preserveValueImports?: boolean;
+      rewriteRelativeImportExtensions?: boolean;
       removeComments?: boolean;
       stripInternal?: boolean;
       outFile?: string;
@@ -246,6 +247,7 @@ export class CliTranspiler {
       isolatedModules = false,
       importsNotUsedAsValues,
       preserveValueImports = false,
+      rewriteRelativeImportExtensions = false,
       removeComments = false,
       stripInternal = false,
       outFile,
@@ -354,6 +356,7 @@ export class CliTranspiler {
       if (isolatedModules) args.push('--isolatedModules');
       if (importsNotUsedAsValues) args.push('--importsNotUsedAsValues', importsNotUsedAsValues);
       if (preserveValueImports) args.push('--preserveValueImports');
+      if (rewriteRelativeImportExtensions) args.push('--rewriteRelativeImportExtensions');
       if (removeComments) args.push('--removeComments');
       if (stripInternal) args.push('--stripInternal');
       if (outFile) args.push('--outFile', outFile);
@@ -433,6 +436,7 @@ export class CliTranspiler {
           if (isolatedModules) retryArgs.push('--isolatedModules');
           if (importsNotUsedAsValues) retryArgs.push('--importsNotUsedAsValues', importsNotUsedAsValues);
           if (preserveValueImports) retryArgs.push('--preserveValueImports');
+          if (rewriteRelativeImportExtensions) retryArgs.push('--rewriteRelativeImportExtensions');
           if (removeComments) retryArgs.push('--removeComments');
           if (stripInternal) retryArgs.push('--stripInternal');
           if (outFile) retryArgs.push('--outFile', outFile);
