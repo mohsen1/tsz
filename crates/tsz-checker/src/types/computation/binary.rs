@@ -203,6 +203,22 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Union: any member may represent primitive
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&m| self.type_may_represent_primitive(m));
+        }
+
+        // Intersection: all members may represent primitive
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
+        {
+            return members
+                .iter()
+                .all(|&m| self.type_may_represent_primitive(m));
+        }
+
         false
     }
 
