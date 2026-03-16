@@ -641,54 +641,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                if type_expr.starts_with('(')
+                // Parse arrow function types: `(params) => ReturnType` or `<T>(params) => ReturnType`
+                if (type_expr.starts_with('(') || type_expr.starts_with('<'))
                     && type_expr.contains("=>")
-                    && let Some(arrow_idx) = type_expr.find("=>")
                 {
-                    let params_str = type_expr[..arrow_idx].trim();
-                    if params_str.starts_with('(') && params_str.ends_with(')') {
-                        let params_inner = params_str[1..params_str.len() - 1].trim();
-                        let return_type_str = type_expr[arrow_idx + 2..].trim();
-                        if let Some(return_type) = self.jsdoc_type_from_expression(return_type_str)
-                        {
-                            use tsz_solver::{FunctionShape, ParamInfo};
-                            let mut params = Vec::new();
-                            let mut ok = true;
-                            if !params_inner.is_empty() {
-                                for p in params_inner.split(',') {
-                                    let p = p.trim();
-                                    let (name, t_str) = if let Some(colon) = p.find(':') {
-                                        (Some(p[..colon].trim()), p[colon + 1..].trim())
-                                    } else {
-                                        (None, p)
-                                    };
-                                    if let Some(p_type) = self.jsdoc_type_from_expression(t_str) {
-                                        let atom = name.map(|n| self.ctx.types.intern_string(n));
-                                        params.push(ParamInfo {
-                                            name: atom,
-                                            type_id: p_type,
-                                            optional: false,
-                                            rest: false,
-                                        });
-                                    } else {
-                                        ok = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            if ok {
-                                let shape = FunctionShape {
-                                    type_params: Vec::new(),
-                                    params,
-                                    this_type: None,
-                                    return_type,
-                                    type_predicate: None,
-                                    is_constructor: false,
-                                    is_method: false,
-                                };
-                                return Some(factory.function(shape));
-                            }
-                        }
+                    if let Some(result) = self.parse_jsdoc_arrow_function_type(type_expr) {
+                        return Some(result);
                     }
                 }
                 if let Some(rest) = type_expr.strip_prefix("function") {
@@ -831,6 +789,241 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+    /// Parse an arrow function type expression from JSDoc.
+    ///
+    /// Handles:
+    /// - `(params) => ReturnType`
+    /// - `<T>(params) => ReturnType` (generic arrow types)
+    /// - `(x: boolean) => asserts x` (assertion predicates)
+    /// - `(x: unknown) => x is string` (type predicates)
+    fn parse_jsdoc_arrow_function_type(&mut self, type_expr: &str) -> Option<TypeId> {
+        use tsz_solver::{FunctionShape, ParamInfo};
+
+        // Extract generic type parameters if present: `<T, U>(params) => ReturnType`
+        let (type_params_str, rest) = if type_expr.starts_with('<') {
+            // Find the matching `>` (respecting nesting)
+            let mut depth = 0u32;
+            let mut close_idx = None;
+            for (i, ch) in type_expr.char_indices() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_idx = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let close = close_idx?;
+            let tp_str = &type_expr[1..close];
+            let rest = type_expr[close + 1..].trim();
+            (Some(tp_str), rest)
+        } else {
+            (None, type_expr)
+        };
+
+        // Now `rest` should be `(params) => ReturnType`
+        let arrow_idx = rest.find("=>")?;
+        let params_str = rest[..arrow_idx].trim();
+        if !params_str.starts_with('(') || !params_str.ends_with(')') {
+            return None;
+        }
+        let params_inner = params_str[1..params_str.len() - 1].trim();
+        let return_type_str = rest[arrow_idx + 2..].trim();
+
+        // Parse type parameters
+        let mut type_param_updates = Vec::new();
+        let mut jsdoc_type_params = Vec::new();
+        if let Some(tp_str) = type_params_str {
+            let factory = self.ctx.types.factory();
+            for tp_name in tp_str.split(',') {
+                let tp_name = tp_name.trim();
+                if tp_name.is_empty() {
+                    continue;
+                }
+                // Handle constraints: `T extends Foo`
+                let (name, constraint_str) = if let Some(ext_idx) = tp_name.find(" extends ") {
+                    (&tp_name[..ext_idx], Some(&tp_name[ext_idx + 9..]))
+                } else {
+                    (tp_name, None)
+                };
+                let constraint =
+                    constraint_str.and_then(|s| self.jsdoc_type_from_expression(s.trim()));
+                let atom = self.ctx.types.intern_string(name);
+                let info = tsz_solver::TypeParamInfo {
+                    name: atom,
+                    constraint,
+                    default: None,
+                    is_const: false,
+                };
+                let ty = factory.type_param(info.clone());
+                jsdoc_type_params.push(info);
+                let previous = self.ctx.type_parameter_scope.insert(name.to_string(), ty);
+                type_param_updates.push((name.to_string(), previous));
+            }
+        }
+
+        // Parse return type, handling type predicates
+        let (return_type, type_predicate) =
+            self.parse_jsdoc_arrow_return_type(return_type_str, params_inner);
+
+        // Parse parameters (before restoring type param scope so T is still in scope)
+        let mut params = Vec::new();
+        let mut params_ok = true;
+        if !params_inner.is_empty() {
+            for p in params_inner.split(',') {
+                let p = p.trim();
+                let (name, t_str) = if let Some(colon) = p.find(':') {
+                    (Some(p[..colon].trim()), p[colon + 1..].trim())
+                } else {
+                    (None, p)
+                };
+                if let Some(p_type) = self.jsdoc_type_from_expression(t_str) {
+                    let atom = name.map(|n| self.ctx.types.intern_string(n));
+                    params.push(ParamInfo {
+                        name: atom,
+                        type_id: p_type,
+                        optional: false,
+                        rest: false,
+                    });
+                } else {
+                    params_ok = false;
+                    break;
+                }
+            }
+        }
+
+        // Restore type parameter scope
+        for (name, previous) in type_param_updates {
+            if let Some(prev) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+
+        let return_type = return_type?;
+        if !params_ok {
+            return None;
+        }
+
+        let factory = self.ctx.types.factory();
+        let shape = FunctionShape {
+            type_params: jsdoc_type_params,
+            params,
+            this_type: None,
+            return_type,
+            type_predicate,
+            is_constructor: false,
+            is_method: false,
+        };
+        Some(factory.function(shape))
+    }
+
+    /// Parse the return type of a JSDoc arrow function, handling type predicates.
+    ///
+    /// Handles:
+    /// - Regular types: `string`, `number`, etc.
+    /// - `asserts param` (assertion without type)
+    /// - `asserts param is Type` (assertion with type)
+    /// - `param is Type` (type predicate)
+    fn parse_jsdoc_arrow_return_type(
+        &mut self,
+        return_type_str: &str,
+        params_inner: &str,
+    ) -> (Option<TypeId>, Option<tsz_solver::TypePredicate>) {
+        // Try `asserts param` or `asserts param is Type`
+        if let Some(rest) = return_type_str.strip_prefix("asserts ") {
+            let rest = rest.trim();
+            // Check for `asserts param is Type`
+            if let Some(is_idx) = Self::find_word_boundary(rest, " is ") {
+                let param_name = rest[..is_idx].trim();
+                let type_str = rest[is_idx + 4..].trim();
+                let pred_type = self.jsdoc_type_from_expression(type_str);
+                let (target, parameter_index) =
+                    self.jsdoc_type_predicate_target(param_name, params_inner);
+                let predicate = TypePredicate {
+                    asserts: true,
+                    target,
+                    type_id: pred_type,
+                    parameter_index,
+                };
+                return (Some(TypeId::VOID), Some(predicate));
+            }
+            // `asserts param` (no type)
+            let param_name = rest;
+            let (target, parameter_index) =
+                self.jsdoc_type_predicate_target(param_name, params_inner);
+            let predicate = TypePredicate {
+                asserts: true,
+                target,
+                type_id: None,
+                parameter_index,
+            };
+            return (Some(TypeId::VOID), Some(predicate));
+        }
+
+        // Try `param is Type` (non-assertion type predicate)
+        if let Some(is_idx) = Self::find_word_boundary(return_type_str, " is ") {
+            let param_name = return_type_str[..is_idx].trim();
+            let type_str = return_type_str[is_idx + 4..].trim();
+            // Validate that param_name is a simple identifier, not a type expression
+            if param_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+            {
+                let pred_type = self.jsdoc_type_from_expression(type_str);
+                let (target, parameter_index) =
+                    self.jsdoc_type_predicate_target(param_name, params_inner);
+                let predicate = TypePredicate {
+                    asserts: false,
+                    target,
+                    type_id: pred_type,
+                    parameter_index,
+                };
+                return (Some(TypeId::BOOLEAN), Some(predicate));
+            }
+        }
+
+        // Regular return type
+        (self.jsdoc_type_from_expression(return_type_str), None)
+    }
+
+    /// Find ` is ` at a word boundary (not inside a type expression).
+    fn find_word_boundary(s: &str, needle: &str) -> Option<usize> {
+        s.find(needle)
+    }
+
+    /// Build a `TypePredicateTarget` from a parameter name.
+    fn jsdoc_type_predicate_target(
+        &self,
+        param_name: &str,
+        params_inner: &str,
+    ) -> (tsz_solver::TypePredicateTarget, Option<usize>) {
+        use tsz_solver::TypePredicateTarget;
+        if param_name == "this" {
+            (TypePredicateTarget::This, None)
+        } else {
+            let atom = self.ctx.types.intern_string(param_name);
+            let parameter_index = if !params_inner.is_empty() {
+                params_inner.split(',').position(|p| {
+                    let p = p.trim();
+                    if let Some(colon) = p.find(':') {
+                        p[..colon].trim() == param_name
+                    } else {
+                        p == param_name
+                    }
+                })
+            } else {
+                None
+            };
+            (TypePredicateTarget::Identifier(atom), parameter_index)
+        }
+    }
+
     /// Resolve a JSDoc type expression string to a `TypeId`, trying all strategies.
     pub(crate) fn resolve_jsdoc_type_str(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
