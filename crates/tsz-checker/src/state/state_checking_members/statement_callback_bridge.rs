@@ -1789,11 +1789,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         .arena
                         .get(export_decl.export_clause)
                         .map(|n| n.kind);
-                    let is_class_or_function = matches!(
+                    let is_class_or_function_or_variable = matches!(
                         clause_kind,
                         Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
                             || k == syntax_kind_ext::CLASS_EXPRESSION
                             || k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::VARIABLE_STATEMENT
                     );
 
                     let is_namespace_or_module = matches!(
@@ -1805,7 +1806,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         // Namespace/module gets its own error (TS1235/TS1234) from
                         // check_module_declaration. Don't also emit TS1233 for the export.
                         return false;
-                    } else if is_class_or_function {
+                    } else if is_class_or_function_or_variable {
                         // TS1184: Modifiers cannot appear here.
                         (
                             diagnostic_messages::MODIFIERS_CANNOT_APPEAR_HERE,
