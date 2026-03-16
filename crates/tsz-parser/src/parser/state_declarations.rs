@@ -1402,7 +1402,11 @@ impl ParserState {
                 // TS1029: 'export' modifier must precede 'declare' modifier.
                 // Skip for `declare export as namespace` (valid UMD pattern) and
                 // `declare export = expr` (export assignment — TS1120 handles it).
-                if !self.is_token(SyntaxKind::AsKeyword) && !self.is_token(SyntaxKind::EqualsToken)
+                // Also skip when already in an ambient context (e.g. inside `declare module`),
+                // because the checker will emit TS1038 instead and tsc does not emit both.
+                if !self.is_token(SyntaxKind::AsKeyword)
+                    && !self.is_token(SyntaxKind::EqualsToken)
+                    && (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
                 {
                     self.parse_error_at(
                         export_start,

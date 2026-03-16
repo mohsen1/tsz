@@ -595,7 +595,52 @@ impl ParserState {
                 self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
             }
             SyntaxKind::ConstKeyword => self.parse_export_const_or_variable(),
+            SyntaxKind::ImportKeyword => {
+                if self.look_ahead_is_import_equals() {
+                    self.parse_export_import_equals(start_pos)
+                } else {
+                    self.parse_error_at(
+                        start_pos,
+                        6,
+                        "An import declaration cannot have modifiers.",
+                        diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+                    );
+                    let import_decl = self.parse_import_declaration();
+                    let end_pos = self.token_end();
+                    self.arena.add_export_decl(
+                        syntax_kind_ext::EXPORT_DECLARATION,
+                        start_pos,
+                        end_pos,
+                        ExportDeclData {
+                            modifiers: None,
+                            is_type_only: false,
+                            is_default_export: false,
+                            default_keyword_pos: None,
+                            export_clause: import_decl,
+                            module_specifier: NodeIndex::NONE,
+                            attributes: NodeIndex::NONE,
+                        },
+                    )
+                }
+            }
             SyntaxKind::AtToken => self.parse_export_decorated_declaration(),
+            // TS1044: Class modifiers (public/private/protected/static/readonly) cannot
+            // appear on a module or namespace element.
+            SyntaxKind::PublicKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::ProtectedKeyword
+            | SyntaxKind::StaticKeyword
+            | SyntaxKind::ReadonlyKeyword => {
+                let modifier_text = self.scanner.get_token_text().to_string();
+                self.parse_error_at_current_token(
+                    &format!(
+                        "'{modifier_text}' modifier cannot appear on a module or namespace element."
+                    ),
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+                );
+                self.next_token();
+                self.parse_exported_declaration(start_pos)
+            }
             // Duplicate 'export' modifier (e.g., `export export class Foo {}`)
             SyntaxKind::ExportKeyword => {
                 self.parse_error_at_current_token(
