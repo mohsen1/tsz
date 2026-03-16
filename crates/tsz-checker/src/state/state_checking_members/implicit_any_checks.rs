@@ -38,7 +38,6 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
-        let is_rest = param.dot_dot_dot_token;
         // Skip rest parameters named 'arguments' — tsc emits TS1100 instead of TS7019
         // for `...arguments` because 'arguments' is a reserved identifier in strict mode.
         if param.dot_dot_dot_token
