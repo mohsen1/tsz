@@ -31,8 +31,12 @@ FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts | expected:[TS2344,TS2430] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences6.ts | expected:[TS2322] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/collectionPatternNoError.ts | expected:[] actual:[TS2339,TS2345]
+FAIL TypeScript/tests/cases/compiler/collisionArgumentsArrowFunctions.ts | expected:[TS1100,TS5024] actual:[TS1100,TS5024,TS7019]
+FAIL TypeScript/tests/cases/compiler/collisionArgumentsFunction.ts | expected:[TS1100,TS5024] actual:[TS1100,TS5024,TS7019]
+FAIL TypeScript/tests/cases/compiler/collisionArgumentsFunctionExpressions.ts | expected:[TS1100,TS5024] actual:[TS1100,TS5024,TS7019]
+FAIL TypeScript/tests/cases/compiler/collisionArgumentsInType.ts | expected:[TS1100,TS5024] actual:[TS1100,TS5024,TS7019]
+FAIL TypeScript/tests/cases/compiler/collisionArgumentsInterfaceMembers.ts | expected:[TS1100,TS5024] actual:[TS1100,TS5024,TS7019]
 FAIL TypeScript/tests/cases/compiler/commonJsExportTypeDeclarationError.ts | expected:[TS1005,TS1110] actual:[TS1005,TS1110]
-FAIL TypeScript/tests/cases/compiler/commonMissingSemicolons.ts | expected:[TS1003,TS1005,TS1068,TS1128,TS1359,TS1434,TS1435,TS1438,TS2427] actual:[TS1003,TS1005,TS1068,TS1128,TS1359,TS1434,TS1435,TS1438,TS2427]
 FAIL TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2320,TS2430]
 FAIL TypeScript/tests/cases/compiler/complicatedGenericRecursiveBaseClassReference.ts | expected:[TS2339,TS2506,TS2554] actual:[TS2339,TS2506,TS2554]
 FAIL TypeScript/tests/cases/compiler/complicatedIndexedAccessKeyofReliesOnKeyofNeverUpperBound.ts | expected:[TS2322] actual:[TS2322,TS2339,TS2345]
@@ -431,14 +435,12 @@ FAIL TypeScript/tests/cases/compiler/mappedTypeGenericIndexedAccess.ts | expecte
 FAIL TypeScript/tests/cases/compiler/mappedTypeGenericWithKnownKeys.ts | expected:[TS2551,TS2862] actual:[]
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccess.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mappedTypeIndexedAccessConstraint.ts | expected:[TS2532,TS2722,TS18048] actual:[TS2345,TS2739]
-FAIL TypeScript/tests/cases/compiler/mappedTypeInferenceCircularity.ts | expected:[] actual:[TS2456]
 FAIL TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mappedTypeNotMistakenlyHomomorphic.ts | expected:[TS2741] actual:[TS2322,TS2353]
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts | expected:[TS2345] actual:[TS18046]
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference2.ts | expected:[] actual:[TS2322,TS7006]
 FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstrainTupleTreatedAsArrayLike.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts | expected:[TS2741] actual:[TS2739]
-FAIL TypeScript/tests/cases/compiler/mappedTypeWithCombinedTypeMappers.ts | expected:[TS2322] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/maxConstraints.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/mergeMultipleInterfacesReexported.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/mergeSymbolReexportInterface.ts | expected:[TS2300,TS2741] actual:[TS2741]
@@ -447,7 +449,6 @@ FAIL TypeScript/tests/cases/compiler/mergeSymbolRexportFunction.ts | expected:[T
 FAIL TypeScript/tests/cases/compiler/mergeWithImportedType.ts | expected:[TS2440] actual:[TS2456]
 FAIL TypeScript/tests/cases/compiler/mergedClassNamespaceRecordCast.ts | expected:[TS2339,TS2352] actual:[TS2339,TS2352]
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations7.ts | expected:[TS2322] actual:[]
-FAIL TypeScript/tests/cases/compiler/methodChainError.ts | expected:[TS2349,TS2554,TS2564] actual:[TS2349,TS2554,TS2564]
 FAIL TypeScript/tests/cases/compiler/mismatchedGenericArguments1.ts | expected:[TS2322,TS2416] actual:[TS2322,TS2416]
 FAIL TypeScript/tests/cases/compiler/missingDiscriminants.ts | expected:[TS2353] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/missingDiscriminants2.ts | expected:[TS2353] actual:[TS2353]
@@ -465,6 +466,7 @@ FAIL TypeScript/tests/cases/compiler/moduleAsBaseType.ts | expected:[TS2708,TS27
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesInterfaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationDoesNamespaceMergeOfReexport.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationEnumClassMergeOfReexportIsError.ts | expected:[TS2564,TS2567] actual:[TS2564]
+FAIL TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts | expected:[TS2564] actual:[TS2339,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationInAmbientModule5.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/moduleAugmentationOfAlias.ts | expected:[] actual:[TS2339,TS2666]
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1202,TS2307,TS2661]
@@ -729,7 +731,7 @@ FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts | 
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive2.ts | expected:[TS2683,TS7041] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts | expected:[TS2353,TS2783] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/topFunctionTypeNotCallable.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion2.ts | expected:[TS2774] actual:[TS2339,TS2774,TS2869]
+FAIL TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion2.ts | expected:[TS2774] actual:[TS2339,TS2774]
 FAIL TypeScript/tests/cases/compiler/truthinessPromiseCoercion.ts | expected:[TS2801] actual:[]
 FAIL TypeScript/tests/cases/compiler/tsxDefaultImports.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx | expected:[TS2741] actual:[TS2604]
@@ -773,7 +775,6 @@ FAIL TypeScript/tests/cases/compiler/umdGlobalAugmentationNoCrash.ts | expected:
 FAIL TypeScript/tests/cases/compiler/umdGlobalConflict.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/umdNamespaceMergedWithGlobalAugmentationIsNotCircular.ts | expected:[TS2451] actual:[]
 FAIL TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditional.ts | expected:[TS2774] actual:[TS2774]
-FAIL TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditional2.ts | expected:[TS2774,TS7006] actual:[TS2774,TS2869,TS7006]
 FAIL TypeScript/tests/cases/compiler/undeclaredModuleError.ts | expected:[TS2304,TS2345,TS2591] actual:[TS2304,TS2307,TS2345]
 FAIL TypeScript/tests/cases/compiler/undefinedAssignableToGenericMappedIntersection.ts | expected:[TS2322] actual:[]
 FAIL TypeScript/tests/cases/compiler/undefinedTypeAssignment4.ts | expected:[TS2397,TS2414,TS2427,TS2564] actual:[TS2397,TS2414,TS2427,TS2564]
@@ -1074,7 +1075,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentIn
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceWithConstraints.ts | expected:[TS2322,TS2344,TS2345,TS2349,TS2403] actual:[TS2322,TS2344,TS2345,TS2349,TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator1.ts | expected:[TS2869] actual:[TS2869]
 FAIL TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator11.ts | expected:[TS18049] actual:[TS2339]
-FAIL TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator12.ts | expected:[] actual:[TS2869]
 FAIL TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts | expected:[TS2322] actual:[TS2339,TS2345,TS2353]
 FAIL TypeScript/tests/cases/conformance/expressions/operators/incrementAndDecrement.ts | expected:[TS1005,TS1109] actual:[TS2357,TS2364,TS2584]
 FAIL TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChain.3.ts | expected:[TS2322] actual:[TS2322]
@@ -1155,7 +1155,7 @@ FAIL TypeScript/tests/cases/conformance/internalModules/moduleDeclarations/insta
 FAIL TypeScript/tests/cases/conformance/jsdoc/assertionsAndNonReturningFunctions.ts | expected:[TS7027] actual:[TS7006,TS7027]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNamespace.ts | expected:[] actual:[TS7006]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagNestedParameter.ts | expected:[] actual:[TS2554]
-FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339,TS2345,TS2561]
+FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignProperty.ts | expected:[TS2322,TS2540] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkExportsObjectAssignPrototypeProperty.ts | expected:[TS2322,TS2540,TS2882] actual:[TS2339,TS2882]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag10.ts | expected:[TS2339,TS2353] actual:[TS2339,TS2353]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag14.ts | expected:[TS1005] actual:[]
@@ -1417,7 +1417,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource8.ts 
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parserS7.9_A5.7_T1.ts | expected:[TS1109] actual:[TS2357]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parserUnicode1.ts | expected:[TS2454,TS2552] actual:[TS2454,TS2552]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/parservoidInQualifiedName1.ts | expected:[TS1005] actual:[TS2503]
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName33.ts | expected:[TS1005,TS1128] actual:[TS5107]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName35.ts | expected:[TS1171,TS2695] actual:[TS1171]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName6.ts | expected:[TS2304] actual:[TS2304]
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement11.ts | expected:[TS2304] actual:[TS2304,TS7031]
@@ -2502,13 +2501,8 @@ PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences5.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences7.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences8.ts
-PASS TypeScript/tests/cases/compiler/collisionArgumentsArrowFunctions.ts
 PASS TypeScript/tests/cases/compiler/collisionArgumentsClassConstructor.ts
 PASS TypeScript/tests/cases/compiler/collisionArgumentsClassMethod.ts
-PASS TypeScript/tests/cases/compiler/collisionArgumentsFunction.ts
-PASS TypeScript/tests/cases/compiler/collisionArgumentsFunctionExpressions.ts
-PASS TypeScript/tests/cases/compiler/collisionArgumentsInType.ts
-PASS TypeScript/tests/cases/compiler/collisionArgumentsInterfaceMembers.ts
 PASS TypeScript/tests/cases/compiler/collisionCodeGenEnumWithEnumMemberConflict.ts
 PASS TypeScript/tests/cases/compiler/collisionCodeGenModuleWithAccessorChildren.ts
 PASS TypeScript/tests/cases/compiler/collisionCodeGenModuleWithConstructorChildren.ts
@@ -2678,6 +2672,7 @@ PASS TypeScript/tests/cases/compiler/commentsemitComments.ts
 PASS TypeScript/tests/cases/compiler/commonJsImportClassExpression.ts
 PASS TypeScript/tests/cases/compiler/commonJsIsolatedModules.ts
 PASS TypeScript/tests/cases/compiler/commonJsUnusedLocals.ts
+PASS TypeScript/tests/cases/compiler/commonMissingSemicolons.ts
 PASS TypeScript/tests/cases/compiler/commonSourceDir1.ts
 PASS TypeScript/tests/cases/compiler/commonSourceDir2.ts
 PASS TypeScript/tests/cases/compiler/commonSourceDir3.ts
@@ -5305,6 +5300,7 @@ PASS TypeScript/tests/cases/compiler/mappedTypeContextualTypesApplied.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericInstantiationPreservesHomomorphism.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeGenericInstantiationPreservesInlineForm.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeInferenceAliasSubstitution.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeInferenceCircularity.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeInferenceToMappedType.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeMultiInference.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeNestedGenericInstantiation.ts
@@ -5316,6 +5312,7 @@ PASS TypeScript/tests/cases/compiler/mappedTypePartialNonHomomorphicBaseConstrai
 PASS TypeScript/tests/cases/compiler/mappedTypeTupleConstraintAssignability.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeUnionConstraintInferences.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty2.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeWithCombinedTypeMappers.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithNameClauseAppliedToArrayType.ts
 PASS TypeScript/tests/cases/compiler/matchReturnTypeInAllBranches.ts
 PASS TypeScript/tests/cases/compiler/matchingOfObjectLiteralConstraints.ts
@@ -5353,6 +5350,7 @@ PASS TypeScript/tests/cases/compiler/metadataOfStringLiteral.ts
 PASS TypeScript/tests/cases/compiler/metadataOfUnion.ts
 PASS TypeScript/tests/cases/compiler/metadataOfUnionWithNull.ts
 PASS TypeScript/tests/cases/compiler/metadataReferencedWithinFilteredUnion.ts
+PASS TypeScript/tests/cases/compiler/methodChainError.ts
 PASS TypeScript/tests/cases/compiler/methodContainingLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/methodInAmbientClass1.ts
 PASS TypeScript/tests/cases/compiler/methodSignatureDeclarationEmit1.ts
@@ -5421,7 +5419,6 @@ PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendAmbientModule2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendFileModule1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationExtendFileModule2.ts
-PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal1.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal2.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal3.ts
 PASS TypeScript/tests/cases/compiler/moduleAugmentationGlobal4.ts
@@ -6400,6 +6397,7 @@ PASS TypeScript/tests/cases/compiler/resolveModuleNameWithSameLetDeclarationName
 PASS TypeScript/tests/cases/compiler/resolveModuleNameWithSameLetDeclarationName2.ts
 PASS TypeScript/tests/cases/compiler/resolveNameWithNamspace.ts
 PASS TypeScript/tests/cases/compiler/resolveTypeAliasWithSameLetDeclarationName1.ts
+PASS TypeScript/tests/cases/compiler/resolvingClassDeclarationWhenInBaseTypeResolution.ts
 PASS TypeScript/tests/cases/compiler/restArgAssignmentCompat.ts
 PASS TypeScript/tests/cases/compiler/restArgMissingName.ts
 PASS TypeScript/tests/cases/compiler/restElementAssignable.ts
@@ -7121,6 +7119,7 @@ PASS TypeScript/tests/cases/compiler/umdNamedAmdMode.ts
 PASS TypeScript/tests/cases/compiler/unaryOperators1.ts
 PASS TypeScript/tests/cases/compiler/unaryOperatorsInStrictMode.ts
 PASS TypeScript/tests/cases/compiler/unaryPlus.ts
+PASS TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditional2.ts
 PASS TypeScript/tests/cases/compiler/uncalledFunctionChecksInConditionalPerf.ts
 PASS TypeScript/tests/cases/compiler/uncaughtCompilerError1.ts
 PASS TypeScript/tests/cases/compiler/uncaughtCompilerError2.ts
@@ -9555,6 +9554,7 @@ PASS TypeScript/tests/cases/conformance/expressions/newOperator/newOperatorError
 PASS TypeScript/tests/cases/conformance/expressions/newOperator/newOperatorErrorCases_noImplicitAny.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingAssignmentVsPrivateFieldsJsEmit1.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator10.ts
+PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator12.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator2.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator3.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator4.ts
@@ -11320,6 +11320,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName30.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName31.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName32.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName33.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName34.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName36.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName37.ts
