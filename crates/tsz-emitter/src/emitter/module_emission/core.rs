@@ -713,6 +713,30 @@ impl<'a> Printer<'a> {
         crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
+    /// Get text from a specifier name node (either an identifier or string literal).
+    pub(in crate::emitter) fn get_specifier_name_text(&self, idx: NodeIndex) -> Option<String> {
+        crate::transforms::emit_utils::specifier_name_text(self.arena, idx)
+    }
+
+    /// Write a property access on a module variable: `mod.name` for identifiers,
+    /// `mod["name"]` for non-identifier names.
+    pub(in crate::emitter) fn write_module_property_access(
+        &mut self,
+        module_var: &str,
+        property_name: &str,
+    ) {
+        if super::super::is_valid_identifier_name(property_name) {
+            self.write(module_var);
+            self.write(".");
+            self.write(property_name);
+        } else {
+            self.write(module_var);
+            self.write("[\"");
+            self.write(property_name);
+            self.write("\"]");
+        }
+    }
+
     /// Get property name emit info: identifier → Dot, string literal → Bracket,
     /// numeric literal → `BracketNumeric`. Returns None for computed names.
     pub(in crate::emitter) fn get_property_name_emit(
