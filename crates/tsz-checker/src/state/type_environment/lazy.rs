@@ -101,6 +101,14 @@ impl<'a> CheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+            // Pre-seed the evaluator's local cache with previously computed results.
+            // This is critical for performance with deeply nested type application
+            // chains (e.g., sequential merge<> calls) where each new evaluation would
+            // otherwise re-evaluate the entire chain of intermediate applications.
+            if use_cache {
+                let cache = self.ctx.env_eval_cache.borrow();
+                evaluator.seed_cache(cache.iter().map(|(&k, v)| (k, v.result)));
+            }
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
@@ -125,6 +133,10 @@ impl<'a> CheckerState<'a> {
 
         let final_result = if query::index_access_types(self.ctx.types, result).is_some() {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
+            if use_cache {
+                let cache = self.ctx.env_eval_cache.borrow();
+                evaluator.seed_cache(cache.iter().map(|(&k, v)| (k, v.result)));
+            }
             let result = evaluator.evaluate(type_id);
             if evaluator.is_depth_exceeded() {
                 depth_exceeded = true;
