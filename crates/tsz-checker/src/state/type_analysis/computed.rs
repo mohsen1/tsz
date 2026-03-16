@@ -133,6 +133,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Augment with CommonJS property assignment exports (including aliases).
+            // The binder-level exports table may not include exports made through
+            // variable aliases like `var x = exports; x.prop = value`.
+            // resolve_import_target_from_file already tries module_specifier_candidates.
+            let augment_target = source_file_idx
+                .and_then(|src_idx| {
+                    self.ctx
+                        .resolve_import_target_from_file(src_idx, module_name)
+                })
+                .or(target_file_idx);
+            if let Some(target_idx) = augment_target {
+                self.augment_namespace_props_with_commonjs_exports_for_file(target_idx, &mut props);
+            }
+
             let namespace_type = factory.object(props);
             let display_module_name =
                 self.resolve_namespace_display_module_name(&exports_table, module_name);
@@ -150,8 +164,19 @@ impl<'a> CheckerState<'a> {
             return Some(namespace_type);
         }
 
-        self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx)
-            .or_else(|| self.commonjs_define_property_namespace_type(module_name, source_file_idx))
+        // Fallback: resolve `module.exports = <expr>` and merge with property
+        // assignment exports (e.g. `exports.func = ...` after `module.exports = {}`).
+        let direct_type =
+            self.resolve_direct_commonjs_module_export_type(module_name, source_file_idx);
+        let namespace_type =
+            self.commonjs_define_property_namespace_type(module_name, source_file_idx);
+
+        match (direct_type, namespace_type) {
+            (Some(dt), Some(ns)) => Some(factory.intersection2(dt, ns)),
+            (Some(dt), None) => Some(dt),
+            (None, Some(ns)) => Some(ns),
+            (None, None) => None,
+        }
     }
 
     pub(crate) fn type_has_unresolved_inference_holes(&self, type_id: TypeId) -> bool {

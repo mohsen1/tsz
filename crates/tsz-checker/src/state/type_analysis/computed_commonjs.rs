@@ -1,5 +1,5 @@
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
 use tsz_parser::parser::NodeIndex;
@@ -316,20 +316,199 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a node in an arena is literally `exports` (unbound) or `module.exports`.
+    /// Does not follow variable aliases. Works on any arena.
+    fn is_literal_exports_or_module_exports_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
+        arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "module")
+            && arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|ident| ident.escaped_text == "exports")
+    }
+
+    /// Check if a node is `exports`, `module.exports`, or a chain assignment
+    /// (e.g., `exports = module.exports` or `module.exports = exports = {}`).
+    /// Returns true if any part of the assignment chain is exports/module.exports.
+    fn is_exports_or_module_exports_or_chain_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+
+        if Self::is_literal_exports_or_module_exports_in_arena(arena, idx) {
+            return true;
+        }
+
+        // Chain assignment: `exports = module.exports` or `module.exports = exports = {}`
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(binary) = arena.get_binary_expr(node) {
+                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                    return Self::is_exports_or_module_exports_or_chain_in_arena(
+                        arena,
+                        binary.left,
+                    ) || Self::is_exports_or_module_exports_or_chain_in_arena(
+                        arena,
+                        binary.right,
+                    );
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Collect names of variables that alias `exports` or `module.exports`.
+    /// Scans top-level variable declarations looking for patterns like:
+    /// - `var x = exports`
+    /// - `var x = module.exports`
+    /// - `var x = exports = module.exports`
+    /// - `var x = module.exports = exports = {}`
+    fn collect_commonjs_export_aliases_in_arena(
+        arena: &tsz_parser::parser::NodeArena,
+    ) -> FxHashSet<String> {
+        let mut aliases = FxHashSet::default();
+        let Some(source_file) = arena.source_files.first() else {
+            return aliases;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            Self::collect_export_aliases_from_statement(arena, stmt_idx, &mut aliases);
+        }
+
+        aliases
+    }
+
+    /// Recursively scan a statement (and its children) for variable declarations
+    /// that alias exports/module.exports.
+    fn collect_export_aliases_from_statement(
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+        aliases: &mut FxHashSet<String>,
+    ) {
+        let Some(node) = arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            // VariableStatement → declarations contains VariableDeclarationList nodes
+            if let Some(var_stmt) = arena.get_variable(node) {
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    // VariableDeclarationList → declarations contains VariableDeclaration nodes
+                    if let Some(decl_list) = arena.get_variable(decl_list_node) {
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            Self::check_var_decl_for_export_alias(arena, decl_idx, aliases);
+                        }
+                    } else {
+                        // Fallback: try as direct VariableDeclaration
+                        Self::check_var_decl_for_export_alias(arena, decl_list_idx, aliases);
+                    }
+                }
+            }
+        }
+
+        // Also scan children for nested variable declarations (but not function/class boundaries)
+        for child_idx in arena.get_children(idx) {
+            let Some(child_node) = arena.get(child_idx) else {
+                continue;
+            };
+            // Don't cross function/class boundaries
+            if child_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || child_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || child_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || child_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || child_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            Self::collect_export_aliases_from_statement(arena, child_idx, aliases);
+        }
+    }
+
+    fn check_var_decl_for_export_alias(
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: NodeIndex,
+        aliases: &mut FxHashSet<String>,
+    ) {
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return;
+        };
+        if let Some(var_decl) = arena.get_variable_declaration(decl_node) {
+            if var_decl.initializer.is_some()
+                && Self::is_exports_or_module_exports_or_chain_in_arena(arena, var_decl.initializer)
+            {
+                if let Some(name_ident) = arena.get_identifier_at(var_decl.name) {
+                    aliases.insert(name_ident.escaped_text.clone());
+                }
+            }
+        }
+    }
+
     fn is_current_file_commonjs_export_base(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
 
         if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text == "exports")
-                && self
-                    .resolve_identifier_symbol_without_tracking(idx)
-                    .is_none();
+            if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                // Direct `exports` identifier (not user-declared)
+                if ident.escaped_text == "exports"
+                    && self
+                        .resolve_identifier_symbol_without_tracking(idx)
+                        .is_none()
+                {
+                    return true;
+                }
+
+                // Check if the identifier is a variable alias for exports/module.exports
+                if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0 {
+                            let decl_idx = symbol.value_declaration;
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                if let Some(var_decl) =
+                                    self.ctx.arena.get_variable_declaration(decl_node)
+                                {
+                                    if var_decl.initializer.is_some()
+                                        && Self::is_exports_or_module_exports_or_chain_in_arena(
+                                            self.ctx.arena,
+                                            var_decl.initializer,
+                                        )
+                                    {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -404,6 +583,7 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         pending_props: &mut FxHashMap<String, NodeIndex>,
         ordered_names: &mut Vec<String>,
+        export_aliases: &FxHashSet<String>,
     ) {
         let Some(expr_node) = arena.get(expr_idx) else {
             return;
@@ -451,7 +631,30 @@ impl<'a> CheckerState<'a> {
                         .map(|name| name.escaped_text.to_string())
                 })?
             });
-            if let Some(name_text) = direct_exports_name.or(module_exports_name) {
+
+            // Also check if the expression is a known alias for exports/module.exports
+            let alias_exports_name =
+                if direct_exports_name.is_none() && module_exports_name.is_none() {
+                    arena
+                        .get_identifier_at(left_access.expression)
+                        .and_then(|ident| {
+                            export_aliases
+                                .contains(ident.escaped_text.as_str())
+                                .then(|| {
+                                    arena
+                                        .get_identifier_at(left_access.name_or_argument)
+                                        .map(|name| name.escaped_text.to_string())
+                                })
+                        })
+                        .flatten()
+                } else {
+                    None
+                };
+
+            if let Some(name_text) = direct_exports_name
+                .or(module_exports_name)
+                .or(alias_exports_name)
+            {
                 if !pending_props.contains_key(&name_text) {
                     ordered_names.push(name_text.clone());
                 }
@@ -464,6 +667,7 @@ impl<'a> CheckerState<'a> {
             binary.right,
             pending_props,
             ordered_names,
+            export_aliases,
         );
     }
 
@@ -679,6 +883,7 @@ impl<'a> CheckerState<'a> {
         let Some(source_file) = target_arena.source_files.first() else {
             return;
         };
+        let export_aliases = Self::collect_commonjs_export_aliases_in_arena(target_arena);
         let mut pending_props: FxHashMap<String, NodeIndex> = FxHashMap::default();
         let mut ordered_names: Vec<String> = Vec::new();
 
@@ -697,6 +902,7 @@ impl<'a> CheckerState<'a> {
                 stmt.expression,
                 &mut pending_props,
                 &mut ordered_names,
+                &export_aliases,
             );
         }
 
@@ -744,6 +950,7 @@ impl<'a> CheckerState<'a> {
 
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let source_file = target_arena.source_files.first()?;
+        let export_aliases = Self::collect_commonjs_export_aliases_in_arena(target_arena);
         let mut pending_props: FxHashMap<String, NodeIndex> = FxHashMap::default();
         let mut ordered_names: Vec<String> = Vec::new();
 
@@ -762,6 +969,7 @@ impl<'a> CheckerState<'a> {
                 stmt.expression,
                 &mut pending_props,
                 &mut ordered_names,
+                &export_aliases,
             );
         }
 

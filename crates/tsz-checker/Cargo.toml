@@ -131,5 +131,9 @@ path = "tests/commonjs_constructor_diagnostics_tests.rs"
 name = "type_arg_count_mismatch_tests"
 path = "tests/type_arg_count_mismatch_tests.rs"
 
+[[test]]
+name = "commonjs_module_export_alias_tests"
+path = "tests/commonjs_module_export_alias_tests.rs"
+
 [lints]
 workspace = true
