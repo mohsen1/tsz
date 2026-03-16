@@ -1069,34 +1069,14 @@ impl<'a> CheckerState<'a> {
         // established the member name.
         for (key, accessor_indices) in &accessor_plain_names {
             if let Some(member_info) = seen_names.get(key) {
-                let first_member_pos = member_info
-                    .indices
-                    .iter()
-                    .filter_map(|&idx| self.ctx.arena.get(idx).map(|node| node.pos))
-                    .min()
-                    .unwrap_or(u32::MAX);
-                let first_accessor_pos = accessor_indices
-                    .iter()
-                    .filter_map(|&idx| self.ctx.arena.get(idx).map(|node| node.pos))
-                    .min()
-                    .unwrap_or(u32::MAX);
-
+                // tsc reports TS2300 on both the property/method and the accessor(s)
+                // when they share the same name, regardless of declaration order.
                 for &idx in &member_info.indices {
-                    let Some(pos) = self.ctx.arena.get(idx).map(|node| node.pos) else {
-                        continue;
-                    };
-                    if pos > first_accessor_pos {
-                        self.report_duplicate_class_member_ts2300(idx);
-                    }
+                    self.report_duplicate_class_member_ts2300(idx);
                 }
 
                 for &idx in accessor_indices {
-                    let Some(pos) = self.ctx.arena.get(idx).map(|node| node.pos) else {
-                        continue;
-                    };
-                    if pos > first_member_pos {
-                        self.report_duplicate_class_member_ts2300(idx);
-                    }
+                    self.report_duplicate_class_member_ts2300(idx);
                 }
             }
         }
