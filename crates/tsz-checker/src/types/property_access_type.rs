@@ -920,6 +920,32 @@ impl<'a> CheckerState<'a> {
                             prop_type,
                             original_object_type,
                         );
+                    } else {
+                        // When a method returns `this` on an intersection member,
+                        // the solver's object visitor eagerly binds `this` to the
+                        // structural (flattened) object — so `contains_this_type`
+                        // above returns false. Re-resolve with `this` binding
+                        // deferred to recover raw `ThisType`, then substitute with
+                        // the nominal receiver (e.g., Thing5 instead of {a,b,c}).
+                        let evaluator =
+                            tsz_solver::operations::property::PropertyAccessEvaluator::new(
+                                self.ctx.types,
+                            );
+                        evaluator.set_skip_this_binding(true);
+                        let raw = evaluator
+                            .resolve_property_access(object_type_for_access, property_name);
+                        if let PropertyAccessResult::Success {
+                            type_id: raw_type, ..
+                        } = raw
+                        {
+                            if tsz_solver::contains_this_type(self.ctx.types, raw_type) {
+                                prop_type = tsz_solver::substitute_this_type(
+                                    self.ctx.types,
+                                    raw_type,
+                                    original_object_type,
+                                );
+                            }
+                        }
                     }
 
                     if self.ctx.skip_flow_narrowing
