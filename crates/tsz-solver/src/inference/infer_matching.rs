@@ -280,25 +280,66 @@ impl<'a> InferenceContext<'a> {
 
         // Also check index signatures for inference
         // If target has a string index signature, infer from source's string index
-        if let (Some(target_string_idx), Some(source_string_idx)) =
-            (&target_shape.string_index, &source_shape.string_index)
-        {
-            self.infer_from_types(
-                source_string_idx.value_type,
-                target_string_idx.value_type,
-                priority,
-            )?;
+        if let Some(target_string_idx) = &target_shape.string_index {
+            if let Some(source_string_idx) = &source_shape.string_index {
+                self.infer_from_types(
+                    source_string_idx.value_type,
+                    target_string_idx.value_type,
+                    priority,
+                )?;
+            } else if !source_shape.properties.is_empty() {
+                // Implicit index signature inference: when the source has no explicit
+                // string index but has named properties, synthesize an implicit index
+                // from the union of all property value types. This matches tsc's behavior
+                // where `{ a: string, b: number }` is implicitly indexable as
+                // `{ [x: string]: string | number }` for inference purposes.
+                // Only applies to anonymous object types (no symbol = not a named class/interface).
+                if source_shape.symbol.is_none() {
+                    let prop_types: Vec<TypeId> =
+                        source_shape.properties.iter().map(|p| p.type_id).collect();
+                    let implicit_index_type = if prop_types.len() == 1 {
+                        prop_types[0]
+                    } else {
+                        self.interner.union(prop_types)
+                    };
+                    self.infer_from_types(
+                        implicit_index_type,
+                        target_string_idx.value_type,
+                        priority,
+                    )?;
+                }
+            }
         }
 
         // If target has a number index signature, infer from source's number index
-        if let (Some(target_number_idx), Some(source_number_idx)) =
-            (&target_shape.number_index, &source_shape.number_index)
-        {
-            self.infer_from_types(
-                source_number_idx.value_type,
-                target_number_idx.value_type,
-                priority,
-            )?;
+        if let Some(target_number_idx) = &target_shape.number_index {
+            if let Some(source_number_idx) = &source_shape.number_index {
+                self.infer_from_types(
+                    source_number_idx.value_type,
+                    target_number_idx.value_type,
+                    priority,
+                )?;
+            } else if !source_shape.properties.is_empty() && source_shape.symbol.is_none() {
+                // Implicit number index: collect types of numeric-named properties
+                let numeric_types: Vec<TypeId> = source_shape
+                    .properties
+                    .iter()
+                    .filter(|p| crate::utils::is_numeric_property_name(self.interner, p.name))
+                    .map(|p| p.type_id)
+                    .collect();
+                if !numeric_types.is_empty() {
+                    let implicit_index_type = if numeric_types.len() == 1 {
+                        numeric_types[0]
+                    } else {
+                        self.interner.union(numeric_types)
+                    };
+                    self.infer_from_types(
+                        implicit_index_type,
+                        target_number_idx.value_type,
+                        priority,
+                    )?;
+                }
+            }
         }
 
         Ok(())
